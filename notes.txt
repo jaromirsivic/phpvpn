@@ -19,14 +19,30 @@
   - SERVER_SECRET
   - lokální VPN IP adresu klienta např. 10.99.99.4;
   - access token pro danou ip adresu;
-  - pole bilateral communication contract, kde jsou uvedeny hesla pro zašifrování IP packetu, když klient komunikuje s jiným klientem. Jako šifra se bude používat AES-256.
+  - pole communication contracts, kde jsou uvedeny hesla pro zašifrování IP packetu, když klient komunikuje s jiným klientem. Jako šifra se bude používat AES-256.
 - VPN síť používá adresy z rozsahu `10.99.99.2` až `10.99.99.254`; příklad klientské adresy je `10.99.99.14`.
 - Access token je 256bitový token, typicky zapsaný hexadecimálně.
-- Bilateral communication contract představuje heslo/sdílený klíč pro každou dvojici klientů (například počítač 1 a počítač 2). Jde typicky o 256bitový klíč používaný symetrickou šifrou AES-256.
+- Communication contract představuje heslo/sdílený klíč pro každou dvojici klientů (například počítač 1 a počítač 2). Jde typicky o 256bitový klíč používaný symetrickou šifrou AES-256.
+
+Příklad configuračního json souboru:
+
+```json
+{
+  "serverUrl": "https://example.com/phpvpn.php",
+  "serverSecret": "REPLACE_WITH_A_RANDOM_SECRET",
+  "virtualIp": "10.99.99.4",
+  "accessToken": "0404040404040404040404040404040404040404040404040404040404040404",
+  "bilateralCommunicationContracts": {
+    "10.99.99.2": "AES_256_SHARED_KEY_FOR_10.99.99.2",
+    "10.99.99.3": "AES_256_SHARED_KEY_FOR_10.99.99.3"
+  }
+}
+```
 
 ## Struktura souboru `phpvpn.php`
 
 - Při běžném otevření přes prohlížeč soubor vrátí jednoduchou HTML stránku se stavem serveru, například h1 `Server is running`.
+- Pozor pokud není nastaven SERVER_SECRET na alespoň 16 znaků, tak výchozí stránka vrátí pod úvodním h1 `Server is running` červený text `SERVER_SECRET is not configured correctly. This is a security risk. The secret must be at least 16 characters long and generated randomly using alphanumeric characters. Please open phpvpn.php in a text editor and update SERVER_SECRET.`
 - V horní části souboru bude konfigurační blok; jde prakticky o jedinou část, kterou bude uživatel upravovat.
 - Pořadí konfiguračních parametrů:
   1. `SERVER_SECRET` — výchozí hodnota je prázdná.
