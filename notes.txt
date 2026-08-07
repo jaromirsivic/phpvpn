@@ -1,6 +1,8 @@
 # Návrh PHP VPN serveru a klientů
 
 - Vytvořit nový VPN server běžící v jediném souboru `phpvpn.php`.
+- VPN Server musí být spustitelný na hostingových službách nabízených většinou hostingových společností.
+- Nepoužívá se žádná databáze. Vše se řeší přes souborový systém.
 - Celý server, tedy jeden phpvpn.php soubor, budou volat desítky klientů a každý klient v něm bude udržovat minimálně dvě dlouhá několik sekund streamovaná spojení
 - Funkcionality serveru implementovat jako fault-proof a concurency-safe. **TOTO JE ABSOLUTNÍ NUTNOST!**
 - Kód musí být čitelný a performance musí být skvělá. **MAXIMÁLNĚ SE ZAMĚŘ NA PERFORMANCE A SECURITY**
@@ -13,7 +15,10 @@
 
 - VPN klient je virtuální síťový adaptér / virtuální síťová karta s VPN ovladačem, určený například pro Windows.
 - Klient poběží v oznamovací oblasti systému (tray) a uživatel si jej nainstaluje na svůj počítač; více uživatelů instaluje stejný typ klienta na své počítače.
-- `push` bude používat tento virtuální adaptér pro komunikaci se serverem.
+- Uživatel se bude moci pomocí double clicku na ikonu phpvpn klienta připojit k serveru, nebo odpojit od serveru
+- Při spojení naváže klient dvě http, nebo https spojení se serverem. Spojení push pro odesílání serializovaných packetů a pulll pro příjem.
+- `push` bude používat tento virtuální adaptér pro komunikaci se serverem a čas od času viz CONNECTION_TIMEOUT se uzavře a otevře znovu.
+- `pull` bude také čas od času resetovat spojení. Nebo to vymyslet nějak tak, aby se klient synchronizoval se serverem a v pravidelných intervalech typicky 15 sekund se bezpečně ukončilo http, https spojení push, pull. Následně se spojení naváže znovu.
 - Nastavení každého klienta obsahuje:
   - URL serveru, tedy cestu k jedinému běžícímu PHP souboru;
   - SERVER_SECRET
