@@ -212,7 +212,6 @@ Konstanty, které nejsou uživatelsky editovatelné, budou součástí implement
 | Limit | Doporučení | Důvod |
 |---|---:|---|
 | `MAX_LINE_BYTES` | 1 MiB | ochrana parseru a paměti |
-| `MAX_PACKET_BYTES` | 768 KiB | omezení base64 payloadu |
 | `MAX_TOTAL_BUFFER_BYTES` | 4 MiB na push | ochrana procesu při cílech rozptýlených do více front |
 | `MAX_REQUEST_PACKETS` | 10 000 | limit práce na jedno spojení |
 | `MAX_PULL_BATCH_BYTES` | 8 MiB | omezení načtení poškozeného souboru |
