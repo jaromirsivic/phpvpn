@@ -83,21 +83,21 @@ X-PHPVPN-Timestamp: 2026-08-07T14:20:00Z
 X-PHPVPN-Nonce: <16–32 náhodných bajtů, base64url>
 ```
 
+Čas v `X-PHPVPN-Timestamp` je vždy přesná UTC hodnota vrácená endpointem `health`, beze změny časové zóny a bez lokální reinterpretace. Klient ji převezme z pole `serverTime` a použije ji jako `TIMESTAMP` v canonical requestu pro `push` i `pull`.
+
 Podpis je `base64url(hash_hmac('sha256', canonicalRequest, clientAccessToken, true))`, kde `canonicalRequest` je přesně:
 
 ```text
 v1\nMETHOD\nACTION\nCLIENT_IP\nTIMESTAMP\nNONCE\nSERVER_SECRET
 ```
 
-Server přijme timestamp v toleranci ±60 sekund. Nonce se během platnosti ukládá do malého, atomicky vytvářeného souboru v adresáři klienta `nonces/`; kolize znamená `401 replay_detected`. Při dokončení požadavku ani při pádu se nonce nemaže, protože má zabránit opakování. Garbage collection maže jen nonce starší než 2 minuty. To řeší replay ve stejném časovém okně.
+Server parsuje timestamp výhradně jako ISO 8601 v UTC s povinným suffixem `Z` a přijme jej v toleranci ±60 sekund vůči vlastnímu UTC času. Žádná část autentizace nesmí používat lokální časovou zónu serveru ani klienta. Nonce se během platnosti ukládá do malého, atomicky vytvářeného souboru v adresáři klienta `nonces/`; kolize znamená `401 replay_detected`. Při dokončení požadavku ani při pádu se nonce nemaže, protože má zabránit opakování. Garbage collection maže jen nonce starší než 2 minuty. To řeší replay ve stejném časovém okně.
 
 ### 4.3 Kompatibilní přechodný režim
 
-Pokud musí klienti nejprve implementovat zadaný minutový bearer token, oddělí se do `AUTH_MODE = 'legacy-minute'`. V něm server přijme hlavičku `Authorization`, pro zadaný klientský identifikátor vypočítá token pro aktuální a minulou minutu a porovná oba přes `hash_equals`. Identifikátor klienta musí být v `X-PHPVPN-Client`; nevytváří se tedy mapa 253 tokenů. Tento režim bude označen jako dočasný a při běžící konfiguraci se zapíše varování do `error_log`. V produkci musí být `AUTH_MODE = 'hmac-v1'`.
+Pokud musí klienti nejprve implementovat zadaný minutový bearer token, oddělí se do `AUTH_MODE = 'legacy-minute'`. V něm server přijme hlavičku `Authorization`, pro zadaný klientský identifikátor vypočítá token pro aktuální a minulou **UTC minutu** a porovná oba přes `hash_equals`. Klient odvodí stejnou UTC minutu výhradně z `health.serverTime`. Identifikátor klienta musí být v `X-PHPVPN-Client`; nevytváří se tedy mapa 253 tokenů. Tento režim bude označen jako dočasný a při běžící konfiguraci se zapíše varování do `error_log`. V produkci musí být `AUTH_MODE = 'hmac-v1'`.
 
-`health` nevrací tajemství, konfiguraci ani přesný diagnostický detail. Vrací nejvýše `{"status":"OK","serverTime":"YYYY-MM-DD HH:MM:SS"}` v lokální časové zóně serveru, a pro nový klientský protokol navíc přesnou UTC hodnotu v samostatném poli `serverTimeUtc`.
-
-UPRAVIT
+`health` nevrací tajemství, konfiguraci ani přesný diagnostický detail. Vrací právě jedinou autoritativní časovou hodnotu `serverTime` v UTC ve formátu ISO 8601 se suffixem `Z`, například `{"status":"OK","serverTime":"2026-08-08T14:20:00Z"}`. Pole `serverTimeUtc` ani čas v lokální časové zóně se neposílají. Tato stejná hodnota je zdrojem času pro bearer/HMAC autorizaci `push` i `pull`.
 
 ## 5. Formát streamu a validace
 
