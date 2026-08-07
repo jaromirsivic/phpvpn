@@ -17,7 +17,7 @@ Každý klient opakuje krátký požadavek `POST ?action=sync`, standardně kaž
 5. spojení se uzavře;
 6. klient odpověď rozbalí, deduplikuje podle `uuid` a předá pakety virtuální síťové kartě.
 
-Požadavek může být prázdný: klient tak pouze vyzvedne pakety od ostatních klientů. Může naopak obsahovat velkou dávku; implementace ale musí vynutit bezpečné limity. Jedna odpověď také může obsahovat mnoho paketů, avšak jen do nastaveného limitu. Pokud zůstane více dat, klient je vyzvedne v následujícím cyklu. To chrání PHP worker, paměť i limity hostingu a nevytváří dlouhé spojení.
+Požadavek může být prázdný: klient tak pouze vyzvedne pakety od ostatních klientů. Může naopak obsahovat velkou dávku; implementace ale musí vynutit bezpečné limity a v odpovědi přesně oznámit, které pakety přijala. Virtuální karta například ve Windows tento výsledek heuristicky použije pro velikost následující dávky: po plném úspěchu ji mírně zvětší, při částečném přijetí, zpoždění nebo přetížení ji zmenší. Jedna odpověď také může obsahovat mnoho paketů, avšak jen do nastaveného limitu. Pokud zůstane více dat, klient je vyzvedne v následujícím cyklu. To chrání PHP worker, paměť i limity hostingu a nevytváří dlouhé spojení.
 
 ## 2. Provozní cíle a hranice
 
@@ -45,6 +45,8 @@ const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PACKET_LINE_BYTES = 1024 * 1024;
 const MAX_REQUEST_PACKETS = 10000;
+const MAX_ACCEPTED_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_ACCEPTED_REQUEST_PACKETS = 5000;
 const MAX_BUFFERS = 128;
 const QUEUE_TTL_SECONDS = 60;
 const ACCESS_TOKENS = [
@@ -52,7 +54,7 @@ const ACCESS_TOKENS = [
 ];
 ```
 
-`REQUEST_INTERVAL_MS` je doporučení pro klienta, nikoli serverový sleep interval. Klient jej může krátkodobě upravit podle provozu, ale nesmí vytvořit neomezený počet požadavků. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla; `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. Oba limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
+`REQUEST_INTERVAL_MS` je doporučení pro klienta, nikoli serverový sleep interval. Klient jej může krátkodobě upravit podle provozu, ale nesmí vytvořit neomezený počet požadavků. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla. `MAX_ACCEPTED_REQUEST_BYTES` a `MAX_ACCEPTED_REQUEST_PACKETS` jsou nižší provozní stropy, které server skutečně zpracuje v jednom cyklu. `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. Všechny limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
 
 Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVER_SECRET`, rozsahy čísel, přesný rozsah klientských IP adres a 64hexový tvar tokenů. Neplatná konfigurace nesmí obsloužit `sync` a vrací `503`. Výchozí HTML stránka vždy zobrazí `Server is running`; při chybě secretu přidá požadované červené bezpečnostní varování.
 
@@ -68,7 +70,7 @@ Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVE
 
 Pro `sync` je vyžadován `Content-Type: application/x-ndjson` nebo `application/jsonl`. Odpověď má `Content-Type: application/x-ndjson; charset=utf-8`. Všechny API odpovědi posílají `Cache-Control: no-store` a `X-Content-Type-Options: nosniff`. Neznámá akce vrací `404`, nepovolená metoda `405` a hlavičku `Allow`.
 
-Každý `sync` musí skončit rychle. Server v něm nikdy nečeká na nový paket a nepoužívá polling, `sleep` ani streaming. Pokud pro klienta nic není, odpověď je prázdné NDJSON tělo a ukončí se ihned.
+Každý `sync` musí skončit rychle. Server v něm nikdy nečeká na nový paket a nepoužívá polling, `sleep` ani streaming. Pokud pro klienta nic není, odpověď obsahuje pouze řídicí záznam `sync-result` a ukončí se ihned.
 
 ## 5. Autentizace odolná replay útoku
 
@@ -104,6 +106,8 @@ Tělo požadavku je NDJSON: jeden kompaktní JSON objekt na řádek, zakončený
 
 Server načítá tělo po částech a odmítne řádek delší než `MAX_PACKET_LINE_BYTES` ještě před `json_decode`. Řádek `ack` smí obsahovat pouze bezpečně validovaný identifikátor dávky, která patří tomuto klientovi. Řádek `data` vyžaduje objekt s přesně očekávanými poli, UUID ve formátu RFC 4122, `src` shodné s autentizovanou IP, `dst` v rozsahu `10.99.99.2` až `10.99.99.254` a neprázdná textová data. Neprovádí dešifrování ani hlubokou validaci obsahu šifrovaného paketu.
 
+Server přijímá řádky `data` v pořadí jejich výskytu, pouze dokud nepřekročí `MAX_ACCEPTED_REQUEST_PACKETS` nebo `MAX_ACCEPTED_REQUEST_BYTES`. Platné řádky za tímto provozním limitem nejsou chybou protokolu: server je nezařadí do fronty a v odpovědi uvede jejich UUID v `deferredPacketUuids`. Klient je proto bezpečně ponechá v lokálním bufferu pro další cyklus. Chybný řádek je nadále chyba celého požadavku, protože klient nesmí pokračovat po neznámém nebo podvrženém vstupu.
+
 Při chybném podpisu nebo podvrženém `src` server vrátí `401`. Syntaktická chyba je `400`, překročení limitu `413`, plná fronta `429` a nedostupný disk/fronta `503`. Chybová odpověď má malý obecný JSON tvar a nesmí sdělit citlivé informace ani existenci jiného klienta.
 
 ## 7. Diskové fronty a souběh
@@ -118,7 +122,7 @@ phpvpn/10_99_99_0/004/
 
 Cesta se sestaví pouze z validovaného posledního oktetu funkcí `queueDirectoryForOctet()`. Adresář se vytváří `mkdir(..., 0700, true)` a po případném souběžném vytvoření se znovu ověří. Nikdy se neskládá z neověřeného HTTP vstupu.
 
-V rámci jednoho `sync` server nejprve validuje všechny přijaté řádky a rozdělí je podle cíle. Každou cílovou dávku zapíše zvlášť:
+V rámci jednoho `sync` server validuje řádky a přijímá je v pořadí, dokud nedosáhne provozního stropu. Přijaté pakety rozdělí podle cíle. Každou cílovou dávku zapíše zvlášť:
 
 1. pod krátkým výhradním `flock` na `queue.lock` spustí lokální údržbu a ověří kapacitu;
 2. vytvoří náhodně pojmenovaný soubor s příponou `.writing` výhradním režimem `x+b`;
@@ -136,6 +140,14 @@ Teprve potom server rozbalí obsah vybraných souborů do krátké HTTP odpověd
 
 Odpověď může obsahovat i pakety vložené do fronty jinými klienty těsně před tímto cyklem. Neexistuje však garance, že obsahuje úplně vše bez omezení. Pokud limit odpovědi zbývající data odloží, následující cyklus je vyzvedne. Klient může po odpovědi obsahující limitovanou dávku provést další `sync` bez čekání na běžný interval, avšak s vlastním stropem rychlosti, aby nezahltil hosting.
 
+Posledním řádkem každé úspěšné odpovědi je řídicí objekt, například:
+
+```json
+{"type":"sync-result","acceptedPacketUuids":["…"],"deferredPacketUuids":["…"],"acceptedPackets":120,"acceptedBytes":82000,"responseTruncated":true,"recommendedRequestBytes":65536,"recommendedRequestPackets":100}
+```
+
+`acceptedPacketUuids` určuje jediná data, která smí klient odstranit z lokální odchozí fronty. `deferredPacketUuids` zůstávají pro další cyklus. `recommendedRequestBytes` a `recommendedRequestPackets` jsou horní doporučení serveru pro další požadavek; klient je bere jako vstup do své heuristiky, nikoli jako důvod k rychlému opakování bez omezení. `responseTruncated` říká, že na serveru zůstala další data pro klienta. Server může doporučení snížit při zaplnění front, vysoké době zpracování nebo selhávajícím zápisu.
+
 ## 9. Životní cyklus klienta
 
 Klientská virtuální karta drží odchozí frontu v paměti. V pravidelném krátkém intervalu, výchozích 250 ms, z ní vezme omezenou dávku a spustí jeden `sync` požadavek. Při přetížení musí karta omezit vlastní paměť a stanovit politiku zahazování; server nemůže bezpečně absorbovat neomezený provoz.
@@ -145,10 +157,11 @@ Klient po návratu odpovědi:
 1. rozparsuje NDJSON;
 2. deduplikuje `uuid` v krátkodobé lokální cache;
 3. předá platné pakety virtuální síťové kartě a přidá jejich `batchId` do potvrzovací fronty;
-4. při `200` odstraní úspěšně odeslanou lokální dávku;
-5. v příštím cyklu odešle `ack` pro zpracované doručené dávky;
-6. při síťové chybě, `429` nebo `503` ponechá dávku pro retry s exponenciálním backoffem a jitterem;
-7. při `401` obnoví čas z `health` a po opakovaném selhání požádá uživatele o kontrolu konfigurace.
+4. odstraní jen pakety uvedené v `acceptedPacketUuids`; odložené pakety ponechá v pořadí pro další cyklus;
+5. velikost příští dávky adaptuje podle doporučení serveru, částečného přijetí, latence a počtu předchozích úspěšných cyklů;
+6. v příštím cyklu odešle `ack` pro zpracované doručené dávky;
+7. při síťové chybě, `429` nebo `503` ponechá dávku pro retry s exponenciálním backoffem a jitterem;
+8. při `401` obnoví čas z `health` a po opakovaném selhání požádá uživatele o kontrolu konfigurace.
 
 Klient nesmí předpokládat exactly-once doručení ani trvalou dostupnost hostingu. Musí umět přijmout duplicitní paket a bezpečně obnovit komunikaci po libovolném krátkém výpadku.
 
@@ -183,7 +196,7 @@ Testy musí běžet na PHP 8.2, 8.3, 8.4 a 8.5. Nevyžadují externí službu an
 2. **Autorizace:** platný HMAC, pozměněná akce/tělo/timestamp, neplatná IP, replay nonce a konstantní porovnání.
 3. **Dávky:** prázdný request, jeden paket, mnoho paketů, náhodné hranice chunků, neplatný NDJSON, velký řádek a spoofovaný zdroj.
 4. **Obousměrný cyklus:** klient A odešle pro B; následující prázdný `sync` klienta B jej dostane v odpovědi.
-5. **Kapacita:** velká odpověď se rozdělí do více krátkých cyklů; zaplněná fronta vrací řízenou chybu bez poškození starších dat.
+5. **Kapacita:** velký request se částečně přijme a přesně oznámí UUID přijatých a odložených paketů; velká odpověď se rozdělí do více krátkých cyklů; zaplněná fronta vrací řízenou chybu bez poškození starších dat.
 6. **Souběh:** paralelní zápisy do stejného cíle, dva souběžné `sync` téhož příjemce a ověření, že se batch úspěšně neodešle dvakrát.
 7. **Zotavení:** pád po `.writing`, po `.data` a po claimu `.sending`; GC vrátí nebo odstraní správný soubor.
 8. **Hostingová zátěž:** desítky klientů, 4 požadavky za sekundu na klienta, měření latence, paměti, počtu workerů, lock contention a dopadu limitů hostingu.
@@ -200,3 +213,4 @@ Návrh je připraven k implementaci, když lze prokázat následující:
 6. Paměť i disková fronta mají explicitní limity; data nad limitem nezpůsobí nekontrolovaný růst.
 7. Po přerušení odpovědi je možná duplicita, ne tiché zničení nevyzvednutého batchu; klient ji vyřeší přes `uuid`.
 8. Server lze provozovat na PHP 8.2+ bez databáze, Composeru, shellu, cronu a nepovinných PHP rozšíření.
+9. Server v každé úspěšné odpovědi přesně určí přijaté a odložené pakety a klient podle toho adaptuje velikost další dávky.
