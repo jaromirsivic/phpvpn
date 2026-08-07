@@ -8,7 +8,7 @@
 
 ## 1. Zásadní změna architektury
 
-Každý klient opakuje krátký požadavek `POST ?action=push-pull`, standardně každých 250 ms. V jednom cyklu:
+Každý klient opakuje krátký požadavek `POST ?action=sync`, standardně každých 250 ms. V jednom cyklu:
 
 1. virtuální síťová karta klienta shromáždí odchozí IP pakety do lokální dávky;
 2. klient otevře krátké HTTPS spojení a odešle tuto dávku;
@@ -54,7 +54,7 @@ const ACCESS_TOKENS = [
 
 `REQUEST_INTERVAL_MS` je doporučení pro klienta, nikoli serverový sleep interval. Klient jej může krátkodobě upravit podle provozu, ale nesmí vytvořit neomezený počet požadavků. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla; `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. Oba limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
 
-Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVER_SECRET`, rozsahy čísel, přesný rozsah klientských IP adres a 64hexový tvar tokenů. Neplatná konfigurace nesmí obsloužit `push-pull` a vrací `503`. Výchozí HTML stránka vždy zobrazí `Server is running`; při chybě secretu přidá požadované červené bezpečnostní varování.
+Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVER_SECRET`, rozsahy čísel, přesný rozsah klientských IP adres a 64hexový tvar tokenů. Neplatná konfigurace nesmí obsloužit `sync` a vrací `503`. Výchozí HTML stránka vždy zobrazí `Server is running`; při chybě secretu přidá požadované červené bezpečnostní varování.
 
 ## 4. Endpointy a HTTP pravidla
 
@@ -62,13 +62,13 @@ Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVE
 |---|---|---|
 | výchozí stránka bez `action` | `GET` | provozní HTML stránka |
 | `?action=health` | `GET`, `POST` | rychlý zdravotní stav a autoritativní čas serveru |
-| `?action=push-pull` | `POST` | krátký obousměrný přenos jedné dávky |
+| `?action=sync` | `POST` | krátký obousměrný přenos jedné dávky |
 
 `health` vrací `{"status":"OK","serverTime":"2026-08-08T14:20:00Z"}`. Čas je UTC v ISO 8601 se suffixem `Z`; klient jej používá pro autorizaci a koriguje jím vlastní čas. Endpoint nevrací konfiguraci, tokeny, obsah front ani detailní diagnostiku.
 
-Pro `push-pull` je vyžadován `Content-Type: application/x-ndjson` nebo `application/jsonl`. Odpověď má `Content-Type: application/x-ndjson; charset=utf-8`. Všechny API odpovědi posílají `Cache-Control: no-store` a `X-Content-Type-Options: nosniff`. Neznámá akce vrací `404`, nepovolená metoda `405` a hlavičku `Allow`.
+Pro `sync` je vyžadován `Content-Type: application/x-ndjson` nebo `application/jsonl`. Odpověď má `Content-Type: application/x-ndjson; charset=utf-8`. Všechny API odpovědi posílají `Cache-Control: no-store` a `X-Content-Type-Options: nosniff`. Neznámá akce vrací `404`, nepovolená metoda `405` a hlavičku `Allow`.
 
-Každý `push-pull` musí skončit rychle. Server v něm nikdy nečeká na nový paket a nepoužívá polling, `sleep` ani streaming. Pokud pro klienta nic není, odpověď je prázdné NDJSON tělo a ukončí se ihned.
+Každý `sync` musí skončit rychle. Server v něm nikdy nečeká na nový paket a nepoužívá polling, `sleep` ani streaming. Pokud pro klienta nic není, odpověď je prázdné NDJSON tělo a ukončí se ihned.
 
 ## 5. Autentizace odolná replay útoku
 
@@ -83,7 +83,7 @@ X-PHPVPN-Nonce: náhodná-hodnota-v-base64url
 Authorization: PHPVPN-HMAC <hex-podpis>
 ```
 
-Odvozený podpisový klíč je `hash_hmac('sha256', clientIp . "\n" . accessToken, SERVER_SECRET)`. Podpis je `hash_hmac('sha256', canonicalRequest, derivedSigningKey)`. `canonicalRequest` přesně obsahuje metodu, akci `push-pull`, klientskou IP, UTC timestamp, nonce a SHA-256 těla požadavku, každý údaj na vlastním řádku. Server:
+Odvozený podpisový klíč je `hash_hmac('sha256', clientIp . "\n" . accessToken, SERVER_SECRET)`. Podpis je `hash_hmac('sha256', canonicalRequest, derivedSigningKey)`. `canonicalRequest` přesně obsahuje metodu, akci `sync`, klientskou IP, UTC timestamp, nonce a SHA-256 těla požadavku, každý údaj na vlastním řádku. Server:
 
 1. ověří hlavičky a přípustnou časovou odchylku, například 60 sekund;
 2. najde access token pouze pro uvedenou a validní klientskou IP;
@@ -118,7 +118,7 @@ phpvpn/10_99_99_0/004/
 
 Cesta se sestaví pouze z validovaného posledního oktetu funkcí `queueDirectoryForOctet()`. Adresář se vytváří `mkdir(..., 0700, true)` a po případném souběžném vytvoření se znovu ověří. Nikdy se neskládá z neověřeného HTTP vstupu.
 
-V rámci jednoho `push-pull` server nejprve validuje všechny přijaté řádky a rozdělí je podle cíle. Každou cílovou dávku zapíše zvlášť:
+V rámci jednoho `sync` server nejprve validuje všechny přijaté řádky a rozdělí je podle cíle. Každou cílovou dávku zapíše zvlášť:
 
 1. pod krátkým výhradním `flock` na `queue.lock` spustí lokální údržbu a ověří kapacitu;
 2. vytvoří náhodně pojmenovaný soubor s příponou `.writing` výhradním režimem `x+b`;
@@ -132,13 +132,13 @@ V rámci jednoho `push-pull` server nejprve validuje všechny přijaté řádky 
 
 Po úspěšném uložení odchozí dávky server vyzvedne data z fronty autentizovaného klienta. Pod jeho `queue.lock` lexikograficky vybere nejstarší `.data` soubory, dokud jejich součet nepřekročí `MAX_RESPONSE_BYTES`. Každý vybraný soubor atomicky přejmenuje na `.sending.<náhodné-id>` a lock uvolní.
 
-Teprve potom server rozbalí obsah vybraných souborů do krátké HTTP odpovědi jako NDJSON. Každý vrácený paket obalí typem `delivery` a identifikátorem zdrojové dávky, například `{"type":"delivery","batchId":"…","packet":{…}}`. Soubor `.sending` se po odpovědi nemaže. Klient jej potvrdí řádkem `ack` v nejbližším dalším `push-pull`; až pak server pod lockem smaže odpovídající `.sending` soubor. Pokud se klient odpojí nebo přenos odpovědi selže, dávka zůstane pro opětovné odeslání. Doručení je proto **at-least-once**; klient musí deduplikovat podle `uuid`.
+Teprve potom server rozbalí obsah vybraných souborů do krátké HTTP odpovědi jako NDJSON. Každý vrácený paket obalí typem `delivery` a identifikátorem zdrojové dávky, například `{"type":"delivery","batchId":"…","packet":{…}}`. Soubor `.sending` se po odpovědi nemaže. Klient jej potvrdí řádkem `ack` v nejbližším dalším `sync`; až pak server pod lockem smaže odpovídající `.sending` soubor. Pokud se klient odpojí nebo přenos odpovědi selže, dávka zůstane pro opětovné odeslání. Doručení je proto **at-least-once**; klient musí deduplikovat podle `uuid`.
 
-Odpověď může obsahovat i pakety vložené do fronty jinými klienty těsně před tímto cyklem. Neexistuje však garance, že obsahuje úplně vše bez omezení. Pokud limit odpovědi zbývající data odloží, následující cyklus je vyzvedne. Klient může po odpovědi obsahující limitovanou dávku provést další `push-pull` bez čekání na běžný interval, avšak s vlastním stropem rychlosti, aby nezahltil hosting.
+Odpověď může obsahovat i pakety vložené do fronty jinými klienty těsně před tímto cyklem. Neexistuje však garance, že obsahuje úplně vše bez omezení. Pokud limit odpovědi zbývající data odloží, následující cyklus je vyzvedne. Klient může po odpovědi obsahující limitovanou dávku provést další `sync` bez čekání na běžný interval, avšak s vlastním stropem rychlosti, aby nezahltil hosting.
 
 ## 9. Životní cyklus klienta
 
-Klientská virtuální karta drží odchozí frontu v paměti. V pravidelném krátkém intervalu, výchozích 250 ms, z ní vezme omezenou dávku a spustí jeden `push-pull` požadavek. Při přetížení musí karta omezit vlastní paměť a stanovit politiku zahazování; server nemůže bezpečně absorbovat neomezený provoz.
+Klientská virtuální karta drží odchozí frontu v paměti. V pravidelném krátkém intervalu, výchozích 250 ms, z ní vezme omezenou dávku a spustí jeden `sync` požadavek. Při přetížení musí karta omezit vlastní paměť a stanovit politiku zahazování; server nemůže bezpečně absorbovat neomezený provoz.
 
 Klient po návratu odpovědi:
 
@@ -179,12 +179,12 @@ Server loguje pouze čas, akci, anonymizovanou/autorizovanou klientskou IP podle
 
 Testy musí běžet na PHP 8.2, 8.3, 8.4 a 8.5. Nevyžadují externí službu ani nepovinné rozšíření.
 
-1. **Kompatibilita a router:** výchozí HTML, `health`, `push-pull`, zakázané metody a hlavičky.
+1. **Kompatibilita a router:** výchozí HTML, `health`, `sync`, zakázané metody a hlavičky.
 2. **Autorizace:** platný HMAC, pozměněná akce/tělo/timestamp, neplatná IP, replay nonce a konstantní porovnání.
 3. **Dávky:** prázdný request, jeden paket, mnoho paketů, náhodné hranice chunků, neplatný NDJSON, velký řádek a spoofovaný zdroj.
-4. **Obousměrný cyklus:** klient A odešle pro B; následující prázdný `push-pull` klienta B jej dostane v odpovědi.
+4. **Obousměrný cyklus:** klient A odešle pro B; následující prázdný `sync` klienta B jej dostane v odpovědi.
 5. **Kapacita:** velká odpověď se rozdělí do více krátkých cyklů; zaplněná fronta vrací řízenou chybu bez poškození starších dat.
-6. **Souběh:** paralelní zápisy do stejného cíle, dva souběžné `push-pull` téhož příjemce a ověření, že se batch úspěšně neodešle dvakrát.
+6. **Souběh:** paralelní zápisy do stejného cíle, dva souběžné `sync` téhož příjemce a ověření, že se batch úspěšně neodešle dvakrát.
 7. **Zotavení:** pád po `.writing`, po `.data` a po claimu `.sending`; GC vrátí nebo odstraní správný soubor.
 8. **Hostingová zátěž:** desítky klientů, 4 požadavky za sekundu na klienta, měření latence, paměti, počtu workerů, lock contention a dopadu limitů hostingu.
 
@@ -193,7 +193,7 @@ Testy musí běžet na PHP 8.2, 8.3, 8.4 a 8.5. Nevyžadují externí službu an
 Návrh je připraven k implementaci, když lze prokázat následující:
 
 1. Žádný klient nedrží dlouhé `push` ani `pull` spojení; jeden cyklus vždy požadavek ukončí.
-2. Prázdný `push-pull` bezpečně vyzvedne dostupné pakety a odpověď může obsahovat více dávek od různých odesílatelů.
+2. Prázdný `sync` bezpečně vyzvedne dostupné pakety a odpověď může obsahovat více dávek od různých odesílatelů.
 3. Neautorizovaný nebo replayovaný požadavek nevloží ani nevyzvedne data.
 4. Odesílatel nemůže použít jinou `src`, než svou autorizovanou VPN IP.
 5. Žádný čtenář nikdy neuvidí částečně zapsaný batch a dva čtenáři úspěšně neodešlou stejný batch.
