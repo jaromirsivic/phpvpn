@@ -25,7 +25,7 @@ Server je navržený pro **typický hosting**, nikoli pro konkrétní vyladěné
 | Vlastnost | Požadavek |
 |---|---|
 | PHP | 8.2 nebo novější, libovolné SAPI |
-| HTTPS | Povinné. Zajišťuje hosting nebo reverzní proxy. |
+| Transport | HTTP i HTTPS, server mezi nimi nerozlišuje. Funguje i za proxy. |
 | Zapisovatelný adresář | Jeden, ideálně mimo document root |
 | `post_max_size` | Nad `MAX_REQUEST_BYTES`, tedy nad 1 MiB při výchozím nastavení |
 | `memory_limit` | Doporučeno alespoň 64 MiB |
@@ -33,6 +33,12 @@ Server je navržený pro **typický hosting**, nikoli pro konkrétní vyladěné
 | Souborový systém | Lokální disk se spolehlivým `flock`. Síťové FS nejsou podporovaný provozní model. |
 
 Nevyžaduje se OpenSSL, cURL, mbstring, sockets, FFI, APCu, OPcache ani konkrétní webserver. `fastcgi_finish_request()` se využije, pokud existuje, ale jeho absence nic nerozbije.
+
+### Transport
+
+Server transport vědomě ignoruje. Schéma, port, adresa protistrany a hlavičky typu `X-Forwarded-Proto` se nečtou, nevyhodnocují ani nelogují a neovlivňují autentizaci, HMAC, ochranu proti replay, fronty, odpověď ani HTTP status. Prostý HTTP i HTTPS, přímé spojení i provoz za proxy vedou ke stejnému chování, takže server nemá žádný přepínač, kterým by šlo provoz podle transportu omezit.
+
+Čisté HTTP je tedy vědomě podporovaný režim. Nezajišťuje důvěrnost, ověření serveru ani ochranu odpovědi na síti. Pokud tyto vlastnosti potřebujete, zajistěte je infrastrukturou před PHP VPN, typicky TLS na hostingu nebo na reverzní proxy. Užitečná zátěž paketů je end to end šifrovaná mezi klienty nezávisle na tom, server ji nikdy nedešifruje.
 
 ---
 
@@ -86,7 +92,7 @@ Před nasazením provozu ověřte prostředí přímo na cílovém hostingu. Pre
 3. Zkontrolujte, že žádná kontrola nemá výsledek `fail`.
 4. **Nastavte `SELFTEST_ENABLED` zpět na `false`.**
 
-Preflight ověří verzi PHP, dostupnost funkcí, atomické publikování dávky, `flock`, volné místo, `post_max_size`, `memory_limit`, `disable_functions`, umístění `QUEUE_ROOT` vůči document rootu a přítomnost HTTPS.
+Preflight ověří verzi PHP, dostupnost funkcí, atomické publikování dávky, `flock`, volné místo, `post_max_size`, `memory_limit`, `disable_functions` a umístění `QUEUE_ROOT` vůči document rootu.
 
 ---
 
@@ -129,8 +135,6 @@ Nejdřív změřte, pak měňte. Užitečná vodítka:
 | Časté `503 queue_busy` | Zvyšte `LOCK_TIMEOUT_MS`, ale nikdy ne nad zlomek `max_execution_time`. |
 | Hosting zvládne větší dávky | Zvyšte `MAX_REQUEST_BYTES` a `MAX_ACCEPTED_REQUEST_BYTES`, vždy s rezervou pod `post_max_size`. |
 | Vyžadujete tvrdou ochranu proti replay | `PERSIST_NONCES = true`. Počítejte s několika soubory navíc na klienta. |
-| Server běží za proxy, která HTTPS neterminuje | `TRUST_PROXY_HEADERS = false`. |
-
 ---
 
 ## Testy
@@ -162,7 +166,6 @@ Skupina `concurrency` startuje čtyři samostatné servery nad jedním `QUEUE_RO
 | Stránka ukazuje červené varování | `SERVER_SECRET` je kratší než 32 znaků. Vygenerujte jej přes `deploy/gen-credentials.php`. |
 | `sync` vrací `503 server_misconfigured` | Chybný secret, nebo si limity v konfiguraci odporují, například `MAX_ACCEPTED_REQUEST_PACKETS` nad `MAX_REQUEST_PACKETS`. |
 | `sync` vrací `503 queue_unavailable` | `QUEUE_ROOT` nelze vytvořit nebo do něj zapsat. Zkontrolujte práva, `open_basedir` a volné místo. |
-| `sync` vrací `403 https_required` | Požadavek nedorazil přes HTTPS. Za proxy nastavte předávání `X-Forwarded-Proto`. |
 | `sync` vrací `401` i se správným tokenem | Rozjeté hodiny klienta. Klient si má čas srovnat podle `?action=health`. |
 | Klient dostává pakety dvakrát | Očekávané chování. Doručení je at-least-once, klient musí deduplikovat podle `uuid`. |
 | Obsah fronty je dostupný z webu | `QUEUE_ROOT` je uvnitř document rootu a webserver nemá pravidlo. Přesuňte jej ven, nebo nasaďte `deploy/`. |

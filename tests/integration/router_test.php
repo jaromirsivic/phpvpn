@@ -104,11 +104,45 @@ return function (Suite $suite): void {
         Assert::contains('server_misconfigured', $response['body'], 'and say so generically');
     });
 
-    $suite->test('sync requires HTTPS when configured to', function () {
-        $strict = Harness::instance(['REQUIRE_HTTPS' => 'true']);
-        $response = Vpn::sync($strict, Harness::CLIENT_A);
+    $suite->test('the transport never changes the answer', function () use ($get) {
+        // One signed body replayed with different proxy headers. Nonces are off
+        // by default, so the only thing that may differ is the transport, and
+        // the transport must be invisible to the server. The success path and a
+        // failure path are both checked: neither may become reachable, or
+        // unreachable, because of how the request arrived.
+        $signed = SignRequest::body(
+            Harness::CLIENT_A,
+            Harness::tokenFor(Harness::CLIENT_A),
+            Harness::SECRET,
+            'sync'
+        );
+        $tampered = $signed . SignRequest::packet(Harness::CLIENT_A, Harness::CLIENT_B, 'injected') . "\n";
+        $bodies = [
+            'a valid sync' => [200, $signed],
+            'a tampered sync' => [401, $tampered],
+        ];
+        $transports = [
+            'plain HTTP' => [],
+            'a proxy reporting http' => ['X-Forwarded-Proto' => 'http'],
+            'a proxy reporting https' => ['X-Forwarded-Proto' => 'https'],
+            'a proxy reporting several hops' => [
+                'X-Forwarded-Proto' => 'https, http',
+                'X-Forwarded-For' => '203.0.113.7',
+                'X-Forwarded-Port' => '443',
+            ],
+        ];
+        $url = $get()->url() . '?action=sync';
 
-        Assert::same(403, $response['status'], 'plain HTTP must be refused');
+        foreach ($bodies as $what => [$expected, $body]) {
+            $reference = null;
+            foreach ($transports as $how => $extra) {
+                $answer = HttpClient::request($url, 'POST', ['Content-Type' => Vpn::NDJSON] + $extra, $body);
+                $reference ??= $answer;
+
+                Assert::same($expected, $answer['status'], $what . ' over ' . $how);
+                Assert::same($reference['body'], $answer['body'], $what . ' over ' . $how . ' must answer identically');
+            }
+        }
     });
 
     $suite->test('no PHP diagnostics leak into any response', function () use ($get) {

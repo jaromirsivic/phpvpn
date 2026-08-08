@@ -11,7 +11,7 @@ Server je pouze relay. Šifrovaný IPv4 paket nedešifruje, nemění a jeho obsa
 
 | Vlastnost | Hodnota |
 |---|---|
-| Protokol | HTTP/1.1 přes TLS. Server ve výchozí konfiguraci odmítá prostý HTTP kódem `403 https_required`. |
+| Protokol | HTTP/1.1. Server přijímá prostý HTTP i HTTPS naprosto stejně, transport nijak nevyhodnocuje a proxy hlavičky nečte. |
 | Metoda | `POST` pro `sync` a `selftest`, `GET` nebo `POST` pro `health`, `GET` pro výchozí stránku. |
 | Content-Type požadavku | `application/x-ndjson` nebo `application/jsonl`, volitelně s `; charset=utf-8`. |
 | Content-Type odpovědi | `application/x-ndjson; charset=utf-8` pro `sync`, `application/json; charset=utf-8` pro `health`, `selftest` a chyby. |
@@ -19,6 +19,8 @@ Server je pouze relay. Šifrovaný IPv4 paket nedešifruje, nemění a jeho obsa
 | Spojení | Krátké. Server nikdy nečeká na nová data, nepoužívá polling, `sleep` ani streaming. |
 
 URL obsahuje výhradně `?action=…`. **Nikdy do ní nepatří klientská adresa, timestamp, nonce, podpis ani token**, protože URL se běžně zapisuje do logů hostingu, reverzní proxy i WAF.
+
+Transport je pro protokol nevýznamný. Schéma, port, adresa protistrany ani hlavičky typu `X-Forwarded-Proto` neovlivňují autentizaci, HMAC, ochranu proti replay, fronty, obsah odpovědi ani HTTP status. Přímé spojení a spojení přes proxy jsou nerozlišitelné. Čisté HTTP je vědomě podporovaný režim: nezajišťuje důvěrnost, ověření serveru ani ochranu odpovědi na síti. Pokud jsou tyto vlastnosti potřeba, zajišťuje je infrastruktura před serverem. Užitečná zátěž paketů je end to end šifrovaná nezávisle na tom.
 
 ---
 
@@ -158,7 +160,6 @@ Tvar je vždy malý a obecný. Nikdy neprozradí cestu, konfiguraci ani existenc
 |---|---|---|---|
 | `400` | `bad_request` | Syntaktická chyba, chybějící nebo přebývající pole, chybějící `auth`, druhý `auth`, neznámý typ záznamu | Chyba klienta. Neopakovat beze změny. |
 | `401` | `unauthorized` | Neplatný podpis, neznámý klient, podvržené `src`, časová odchylka, replay | Obnovit čas z `health`, pak opakovaně selhává-li, upozornit uživatele. |
-| `403` | `https_required` | Požadavek nedorazil přes HTTPS | Přepnout na HTTPS. |
 | `404` | `not_found` | Neznámá akce nebo vypnutý `selftest` | Chyba konfigurace klienta. |
 | `405` | `method_not_allowed` | Špatná metoda. Odpověď obsahuje `Allow`. | Chyba klienta. |
 | `413` | `payload_too_large` | Tělo, řádek nebo počet paketů nad protokolovým stropem | Zmenšit dávku a zkusit znovu. |

@@ -6,10 +6,19 @@
  * The server never decrypts a packet. It authorises the caller, validates the
  * envelope and moves opaque payloads between per client on disk queues.
  *
- * Requirements: PHP 8.2+, one writable local directory, HTTPS in front of PHP.
- * No database, no Composer, no cron, no shell and no optional PHP extension.
- * Only the always enabled core extensions hash, json, pcre, random, date, SPL
- * and standard are used.
+ * Requirements: PHP 8.2+ and one writable local directory. No database, no
+ * Composer, no cron, no shell and no optional PHP extension. Only the always
+ * enabled core extensions hash, json, pcre, random, date, SPL and standard are
+ * used.
+ *
+ * The transport is deliberately ignored. HTTP and HTTPS, a direct connection
+ * and a connection through a proxy all behave identically: the scheme, the
+ * port, the peer address and every X-Forwarded header are never read, never
+ * logged and never influence authentication, replay protection, the queues,
+ * the response or the HTTP status. Plain HTTP is a knowingly supported mode.
+ * It provides no confidentiality, no server authentication and no protection
+ * of the response on the wire. Where those properties are needed they are
+ * supplied by infrastructure in front of this file, never by this file.
  *
  * Endpoints:
  *   GET  /phpvpn.php                 operational HTML page
@@ -104,8 +113,6 @@ const NONCE_BUCKET_SECONDS      = 60;
 const NONCE_WINDOW_BUCKETS      = 3;
 const MAX_NONCES_PER_BUCKET     = 4096;
 const FSYNC_ON_PUBLISH          = false;
-const REQUIRE_HTTPS             = true;
-const TRUST_PROXY_HEADERS       = true;
 const SEND_CONTENT_LENGTH       = true;
 const REQUEST_BUDGET_MS         = 250;
 const LOG_LEVEL                 = 'error';
@@ -330,28 +337,6 @@ final class Http
         $raw = $_SERVER['CONTENT_LENGTH'] ?? '';
 
         return is_string($raw) && $raw !== '' && ctype_digit($raw) ? (int) $raw : -1;
-    }
-
-    public static function isHttps(): bool
-    {
-        $https = $_SERVER['HTTPS'] ?? '';
-        if (is_string($https) && $https !== '' && strtolower($https) !== 'off') {
-            return true;
-        }
-        if ((int) ($_SERVER['SERVER_PORT'] ?? 0) === 443) {
-            return true;
-        }
-        if (TRUST_PROXY_HEADERS) {
-            $forwarded = (string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '');
-            if ($forwarded !== '') {
-                $first = trim(explode(',', $forwarded)[0]);
-                if (strcasecmp($first, 'https') === 0) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     /** Sends a small generic error document. Never reveals internal detail. */
@@ -1797,9 +1782,6 @@ final class SyncHandler
 
     private static function assertPreconditions(): void
     {
-        if (REQUIRE_HTTPS && !Http::isHttps()) {
-            throw new HttpError(403, 'https_required');
-        }
         $type = Http::contentType();
         if (!str_starts_with($type, 'application/x-ndjson') && !str_starts_with($type, 'application/jsonl')) {
             throw new HttpError(415, 'unsupported_media_type');
@@ -2321,11 +2303,6 @@ final class SelfTest
             $inside
                 ? 'QUEUE_ROOT is inside the document root, verify externally that it returns 403 or 404'
                 : 'QUEUE_ROOT is outside the document root'
-        );
-        $checks[] = self::check(
-            'https',
-            Http::isHttps() ? 'pass' : 'fail',
-            'the preflight request itself must arrive over HTTPS'
         );
 
         return $checks;

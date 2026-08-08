@@ -5,13 +5,9 @@
 # only defence in depth. The real protection is putting QUEUE_ROOT outside the
 # document root, which no .htaccess can be lost or overridden for.
 
-# --- Force HTTPS -------------------------------------------------------------
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    RewriteCond %{HTTPS} !=on
-    RewriteCond %{HTTP:X-Forwarded-Proto} !=https
-    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-</IfModule>
+# phpvpn.php serves plain HTTP and HTTPS identically, so these rules add no
+# redirect. Add TLS in front of PHP if you need it, but never make it a
+# precondition for reaching phpvpn.php.
 
 # --- Never serve the queue, even if QUEUE_ROOT ends up under the web root ----
 <IfModule mod_authz_core.c>

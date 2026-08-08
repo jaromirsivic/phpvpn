@@ -124,7 +124,6 @@ final class Harness
         $config = array_merge([
             'SERVER_SECRET' => var_export(self::SECRET, true),
             'QUEUE_ROOT' => var_export($queue, true),
-            'REQUIRE_HTTPS' => 'false',
             'ACCESS_TOKENS' => self::tokenLiteral(self::TOKENS),
         ], $overrides);
 

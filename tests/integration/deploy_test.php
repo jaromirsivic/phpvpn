@@ -94,7 +94,11 @@ return function (Suite $suite): void {
             Assert::contains($extension, $apache, 'the Apache rules must cover .' . $extension);
             Assert::contains($extension, $nginx, 'the nginx rules must cover .' . $extension);
         }
-        Assert::contains('X_FORWARDED_PROTO', $nginx, 'nginx must forward the scheme for the HTTPS check');
         Assert::contains('client_max_body_size', $nginx, 'nginx must allow a full sync body');
+        foreach (['apache.htaccess' => $apache, 'nginx.conf' => $nginx] as $name => $rules) {
+            Assert::notContains('X-Forwarded-Proto', $rules, $name . ' must not depend on a proxy header');
+            Assert::notContains('X_FORWARDED_PROTO', $rules, $name . ' must not depend on a proxy header');
+            Assert::notContains('301', $rules, $name . ' must not redirect plain HTTP away from phpvpn.php');
+        }
     });
 };

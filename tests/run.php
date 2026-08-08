@@ -49,7 +49,6 @@ function loadServerInProcess(): string
     file_put_contents($file, Harness::render([
         'SERVER_SECRET' => var_export(Harness::SECRET, true),
         'QUEUE_ROOT' => var_export($queueRoot, true),
-        'REQUIRE_HTTPS' => 'false',
         'ACCESS_TOKENS' => Harness::tokenLiteral(Harness::TOKENS),
     ]));
 

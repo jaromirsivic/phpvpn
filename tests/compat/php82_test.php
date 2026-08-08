@@ -87,7 +87,6 @@ return function (Suite $suite): void {
         foreach ([
             'PERSIST_NONCES' => 'false',
             'SELFTEST_ENABLED' => 'false',
-            'REQUIRE_HTTPS' => 'true',
             'FSYNC_ON_PUBLISH' => 'false',
         ] as $name => $value) {
             Assert::true(
@@ -98,6 +97,30 @@ return function (Suite $suite): void {
         Assert::false(
             preg_match('/const MAX_REQUEST_BYTES = (\d+);/', $source, $match) === 1 && (int) $match[1] >= 8388608,
             'MAX_REQUEST_BYTES must stay below the 8M post_max_size default'
+        );
+    });
+
+    $suite->test('source never inspects the transport', function () use ($source) {
+        $transport = [
+            "'HTTPS'",
+            '"HTTPS"',
+            'SERVER_PORT',
+            'REMOTE_ADDR',
+            'HTTP_X_FORWARDED',
+            'REQUIRE_HTTPS',
+            'TRUST_PROXY_HEADERS',
+        ];
+        foreach ($transport as $marker) {
+            Assert::notContains(
+                $marker,
+                $source,
+                $marker . ' must not appear, the scheme, port, peer and proxy headers are all ignored'
+            );
+        }
+        Assert::notContains(
+            'https_required',
+            $source,
+            'no request may ever be refused because of how it arrived'
         );
     });
 

@@ -93,14 +93,14 @@ return function (Suite $suite): void {
         );
     });
 
-    $suite->test('the preflight fails the run when HTTPS is missing', function () use ($get, $run, $checksOf) {
+    $suite->test('the preflight passes over plain HTTP and never judges the transport', function () use ($get, $run, $checksOf) {
         $response = $run($get());
         $checks = $checksOf($response);
         $decoded = json_decode($response['body'], true);
 
-        Assert::same('fail', $checks['https']['result'], 'plain HTTP must be reported as a failure');
-        Assert::same('FAILED', $decoded['status'], 'and one failed check fails the whole preflight');
-        Assert::greaterOrEqual(1, $decoded['failed'], 'the failure count is reported');
+        Assert::same('OK', $decoded['status'], 'a healthy environment must pass over plain HTTP');
+        Assert::same(0, $decoded['failed'], 'nothing may fail merely because there is no TLS');
+        Assert::false(isset($checks['https']), 'the transport must not be reported as a check at all');
     });
 
     $suite->test('the preflight notices a queue root inside the document root', function () {
