@@ -96,35 +96,164 @@ const PERSIST_NONCES = false;
 
 /** VPN IP of a client => its 64 lowercase hex access token. */
 const ACCESS_TOKENS = [
-    '10.99.99.2' => 'replace-with-64-lowercase-hex-characters',
+    '10.99.99.2' => '0202020202020202020202020202020202020202020202020202020202020202',
+    '10.99.99.3' => '0303030303030303030303030303030303030303030303030303030303030303',
+    '10.99.99.4' => '0404040404040404040404040404040404040404040404040404040404040404',
+    '10.99.99.5' => '0505050505050505050505050505050505050505050505050505050505050505',
+    '10.99.99.6' => '0606060606060606060606060606060606060606060606060606060606060606',
+    '10.99.99.7' => '0707070707070707070707070707070707070707070707070707070707070707',
+    '10.99.99.8' => '0808080808080808080808080808080808080808080808080808080808080808',
+    '10.99.99.9' => '0909090909090909090909090909090909090909090909090909090909090909',
+    '10.99.99.10' => '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a',
+    '10.99.99.11' => '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b',
+    '10.99.99.12' => '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+    '10.99.99.13' => '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d',
+    '10.99.99.14' => '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+    '10.99.99.15' => '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f'
 ];
 
 // =============================================================================
 // ADVANCED TUNING - change only after load testing the target hosting.
 // =============================================================================
 
+/**
+ * Allowed client clock skew in seconds. A higher value better tolerates
+ * inaccurate clocks, but extends the validity of a signed request.
+ */
 const CLOCK_SKEW_SECONDS        = 60;
+
+/**
+ * Maximum length of the initial authentication line in bytes. This limits
+ * memory usage and rejects an excessively long line as a malformed request.
+ */
 const MAX_AUTH_LINE_BYTES       = 4096;
+
+/**
+ * Maximum time to wait for a queue or nonce lock in milliseconds. A higher
+ * value reduces rejections under contention, but increases response time.
+ */
 const LOCK_TIMEOUT_MS           = 200;
+
+/**
+ * Maximum sleep between lock attempts in microseconds. A higher value saves
+ * CPU under contention, but delays acquisition of a released lock.
+ */
 const LOCK_RETRY_MAX_SLEEP_US   = 8000;
+
+/**
+ * Maximum interval between cleanups of a specific queue in seconds. A shorter
+ * interval removes stale files sooner at the cost of more frequent I/O.
+ */
 const GC_INTERVAL_SECONDS       = 5;
+
+/**
+ * Age in seconds after which a .sending file is returned for delivery. Too low
+ * a value risks duplicates, while a higher value slows recovery.
+ */
 const SENDING_RECLAIM_SECONDS   = 30;
+
+/**
+ * Age in seconds after which cleanup discards an incomplete .writing file.
+ * A higher value retains orphaned files and their disk usage for longer.
+ */
 const WRITING_STALE_SECONDS     = 60;
+
+/**
+ * Retention time for an undeletable .error file in seconds. A longer period
+ * aids diagnostics, but consumes more disk space and inodes.
+ */
 const ERROR_FILE_TTL_SECONDS    = 3600;
+
+/**
+ * Maximum number of acknowledgments (acks) in one request. A higher limit
+ * allows faster batch cleanup, but increases processing work and the request
+ * length.
+ */
 const MAX_ACKS_PER_REQUEST      = 256;
+
+/**
+ * Approximate total byte limit across all queues. This protects the disk;
+ * once the limit is reached, new batches are deferred.
+ */
 const MAX_TOTAL_QUEUE_BYTES     = 134217728;
+
+/**
+ * Approximate total file limit across all queues. This protects inodes and
+ * defers new batches once the limit is reached.
+ */
 const MAX_TOTAL_QUEUE_FILES     = 4096;
+
+/**
+ * Base validity period of the global statistics in seconds. A staler estimate
+ * reduces quota accuracy; after six times this period it no longer blocks
+ * traffic.
+ */
 const GLOBAL_STAT_TTL_SECONDS   = 10;
+
+/**
+ * Minimum interval between global sweeps in seconds. A shorter interval speeds
+ * cleanup and quota updates at the cost of increased I/O.
+ */
 const GLOBAL_SWEEP_INTERVAL_SEC = 60;
+
+/**
+ * Maximum number of queue directories processed by one global sweep. A higher
+ * value completes a full pass sooner, but lengthens the request.
+ */
 const GLOBAL_SWEEP_MAX_DIRS     = 8;
+
+/**
+ * Duration of one nonce time bucket in seconds. This determines the granularity
+ * of replay protection and the frequency of nonce files.
+ */
 const NONCE_BUCKET_SECONDS      = 60;
+
+/**
+ * Number of nonce buckets checked, including the current one. A higher value
+ * extends the protection window, but increases reads and retention time.
+ */
 const NONCE_WINDOW_BUCKETS      = 3;
+
+/**
+ * Maximum number of nonces for one client in one bucket. A higher limit handles
+ * more requests, but increases the file size and lookup cost.
+ */
 const MAX_NONCES_PER_BUCKET     = 4096;
+
+/**
+ * Forces a published batch to be synced to disk. true improves resilience
+ * to failures at the cost of latency; false only flushes the data.
+ */
 const FSYNC_ON_PUBLISH          = false;
+
+/**
+ * Controls the Content-Length header. true calculates the response length in
+ * advance; false lets the web server handle the transfer without it.
+ */
 const SEND_CONTENT_LENGTH       = true;
+
+/**
+ * Target processing time in milliseconds used to recommend the next batch.
+ * This is not a timeout; exceeding it only reduces the recommended size.
+ */
 const REQUEST_BUDGET_MS         = 250;
+
+/**
+ * Logging level. Valid values: 'off' logs nothing, 'error' logs only errors,
+ * and 'info' also logs operational events, which increases I/O.
+ */
 const LOG_LEVEL                 = 'error';
+
+/**
+ * Number of days to retain daily logs. A higher value preserves a longer
+ * history, but consumes more disk space.
+ */
 const LOG_RETENTION_DAYS        = 3;
+
+/**
+ * Exposes the signed diagnostic selftest endpoint. true enables it; false
+ * returns 404 and reduces the exposed surface in production.
+ */
 const SELFTEST_ENABLED          = false;
 
 // =============================================================================
