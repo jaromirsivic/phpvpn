@@ -48,12 +48,13 @@ const MAX_ACCEPTED_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_ACCEPTED_REQUEST_PACKETS = 5000;
 const MAX_BUFFERS = 128;
 const QUEUE_TTL_SECONDS = 60;
+const PERSIST_NONCES = false;
 const ACCESS_TOKENS = [
     '10.99.99.2' => 'replace-with-64-lowercase-hex-characters',
 ];
 ```
 
-Interval `sync` není součástí konfigurace serveru. Virtuální karta jej určuje a přizpůsobuje sama podle latence, výsledků předchozích cyklů, zaplnění vlastní fronty, údajů `sync-result` a případného backoffu. Server pouze vynucuje velikostní a kapacitní limity požadavku; nesmí v požadavku čekat ani předpokládat konkrétní interval klienta. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla. `MAX_ACCEPTED_REQUEST_BYTES` a `MAX_ACCEPTED_REQUEST_PACKETS` jsou nižší provozní stropy, které server skutečně zpracuje v jednom cyklu. `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. Všechny limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
+Interval `sync` není součástí konfigurace serveru. Virtuální karta jej určuje a přizpůsobuje sama podle latence, výsledků předchozích cyklů, zaplnění vlastní fronty, údajů `sync-result` a případného backoffu. Server pouze vynucuje velikostní a kapacitní limity požadavku; nesmí v požadavku čekat ani předpokládat konkrétní interval klienta. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla. `MAX_ACCEPTED_REQUEST_BYTES` a `MAX_ACCEPTED_REQUEST_PACKETS` jsou nižší provozní stropy, které server skutečně zpracuje v jednom cyklu. `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. `PERSIST_NONCES` je globální přepínač ochrany proti replay: výchozí `false` nezapisuje ani nekontroluje nonce a vědomě připouští replay uvnitř časového okna; `true` perzistuje hash nonce a opakovaný požadavek odmítne. Všechny limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
 
 Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVER_SECRET`, rozsahy čísel, přesný rozsah klientských IP adres a 64hexový tvar tokenů. Neplatná konfigurace nesmí obsloužit `sync` a vrací `503`. Výchozí HTML stránka vždy zobrazí `Server is running`; při chybě secretu přidá požadované červené bezpečnostní varování.
 
@@ -67,7 +68,7 @@ Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVE
 
 `health` vrací `{"status":"OK","serverTime":"2026-08-08T14:20:00Z"}`. Čas je UTC v ISO 8601 se suffixem `Z`; klient jej používá pro autorizaci a koriguje jím vlastní čas. Endpoint nevrací konfiguraci, tokeny, obsah front ani detailní diagnostiku.
 
-Pro `sync` je vyžadován `Content-Type: application/x-ndjson` nebo `application/jsonl`. Odpověď má `Content-Type: application/x-ndjson; charset=utf-8`. Všechny API odpovědi posílají `Cache-Control: no-store` a `X-Content-Type-Options: nosniff`. Neznámá akce vrací `404`, nepovolená metoda `405` a hlavičku `Allow`.
+Pro `sync` je vyžadován `Content-Type: application/x-ndjson` nebo `application/jsonl`. URL obsahuje pouze `?action=sync`; nesmí obsahovat klientskou adresu, timestamp, nonce, podpis ani token, protože URL se může zapisovat do logů hostingu, reverzní proxy nebo WAF. Odpověď má `Content-Type: application/x-ndjson; charset=utf-8`. Všechny API odpovědi posílají `Cache-Control: no-store` a `X-Content-Type-Options: nosniff`. Neznámá akce vrací `404`, nepovolená metoda `405` a hlavičku `Allow`.
 
 Každý `sync` musí skončit rychle. Server v něm nikdy nečeká na nový paket a nepoužívá polling, `sleep` ani streaming. Pokud pro klienta nic není, odpověď obsahuje pouze řídicí záznam `sync-result` a ukončí se ihned.
 
@@ -75,35 +76,32 @@ Každý `sync` musí skončit rychle. Server v něm nikdy nečeká na nový pake
 
 Minutový bearer token z původního návrhu není vhodný: lze jej opakovaně použít během celé minuty a neváže požadavek na obsah ani akci. Produkční režim použije HMAC podpis bez potřeby externího rozšíření.
 
-Klient posílá tyto hlavičky:
+Autentizace je v prvním řádku NDJSON těla, nikoli v URL ani ve vlastních HTTP hlavičkách. Tento řádek je povinný i pro prázdný `sync`; obsahuje pouze metadata a podpis:
 
-```text
-X-PHPVPN-Client: 10.99.99.4
-X-PHPVPN-Timestamp: 2026-08-08T14:20:00Z
-X-PHPVPN-Nonce: náhodná-hodnota-v-base64url
-Authorization: PHPVPN-HMAC <hex-podpis>
+```json
+{"type":"auth","client":"10.99.99.4","timestamp":"2026-08-08T14:20:00Z","nonce":"náhodná-hodnota-v-base64url","signature":"hex-HMAC-podpis"}
 ```
 
-Odvozený podpisový klíč je `hash_hmac('sha256', clientIp . "\n" . accessToken, SERVER_SECRET)`. Podpis je `hash_hmac('sha256', canonicalRequest, derivedSigningKey)`. `canonicalRequest` přesně obsahuje metodu, akci `sync`, klientskou IP, UTC timestamp, nonce a SHA-256 těla požadavku, každý údaj na vlastním řádku. Server:
+Access token se nepřenáší. Odvozený podpisový klíč je `hash_hmac('sha256', clientIp . "\n" . accessToken, SERVER_SECRET)`. Podpis je `hash_hmac('sha256', canonicalRequest, derivedSigningKey)`. `canonicalRequest` přesně obsahuje metodu, akci `sync`, klientskou IP, UTC timestamp, nonce a SHA-256 bajtů všech řádků **za** úvodním řádkem `auth`, každý údaj na vlastním řádku. Vyloučení řádku `auth` z hashované části odstraňuje kruhovou závislost, kdy by podpis podepisoval sám sebe. Server:
 
-1. ověří hlavičky a přípustnou časovou odchylku, například 60 sekund;
+1. načte a přesně validuje jediný první řádek `auth`, ověří jeho pole a přípustnou časovou odchylku, například 60 sekund;
 2. najde access token pouze pro uvedenou a validní klientskou IP;
 3. vypočítá očekávaný HMAC a porovná jej přes `hash_equals`;
-4. pod per-klientským lockem uloží hash nonce na disk na dvě minuty a odmítne již použitý nonce;
+4. pouze pokud je globální `PERSIST_NONCES` nastaveno na `true`, pod per-klientským lockem uloží hash nonce na disk na dvě minuty a odmítne již použitý nonce; při `false` nonce nezapisuje ani neporovnává s předchozími požadavky a replay v přípustném časovém okně je očekávaný provozní kompromis;
 5. teprve poté zpracuje tělo.
 
-Tím podpis současně vyžaduje `SERVER_SECRET` i access token konkrétního klienta. Do logů se nikdy nezapisuje access token, Authorization, nonce, secret ani data paketů.
+Tím podpis současně vyžaduje `SERVER_SECRET` i access token konkrétního klienta. Do logů se nikdy nezapisuje access token, podpis, nonce, secret ani data paketů.
 
 ## 6. Formát krátké dávky
 
-Tělo požadavku je NDJSON: jeden kompaktní JSON objekt na řádek, zakončený `\n`. Prázdné tělo je platné. Řádky mohou být buď potvrzením dříve doručené dávky, nebo šifrovaným IP paketem:
+Tělo požadavku je NDJSON: jeden kompaktní JSON objekt na řádek, zakončený `\n`. První řádek je vždy přesně jeden záznam `auth` popsaný v části 5; samotný tento řádek je platný prázdný `sync`. Další řádky mohou být buď potvrzením dříve doručené dávky, nebo šifrovaným IP paketem:
 
 ```json
 {"type":"ack","batchId":"20260808T142000.123456Z_random-id"}
 {"type":"data","uuid":"550e8400-e29b-41d4-a716-446655440000","src":"10.99.99.2","dst":"10.99.99.4","data":"BASE64_ENCRYPTED_IP_PACKET"}
 ```
 
-Server načítá tělo po částech a odmítne řádek delší než `MAX_PACKET_LINE_BYTES` ještě před `json_decode`. Řádek `ack` smí obsahovat pouze bezpečně validovaný identifikátor dávky, která patří tomuto klientovi. Řádek `data` vyžaduje objekt s přesně očekávanými poli, UUID ve formátu RFC 4122, `src` shodné s autentizovanou IP, `dst` v rozsahu `10.99.99.2` až `10.99.99.254` a neprázdná textová data. Neprovádí dešifrování ani hlubokou validaci obsahu šifrovaného paketu.
+Server načítá tělo po částech a odmítne řádek delší než `MAX_PACKET_LINE_BYTES` ještě před `json_decode`. Druhý záznam `auth`, chybějící první `auth` nebo `auth` na jiné pozici je chyba celého požadavku. Řádek `ack` smí obsahovat pouze bezpečně validovaný identifikátor dávky, která patří tomuto klientovi. Řádek `data` vyžaduje objekt s přesně očekávanými poli, UUID ve formátu RFC 4122, `src` shodné s autentizovanou IP, `dst` v rozsahu `10.99.99.2` až `10.99.99.254` a neprázdná textová data. Neprovádí dešifrování ani hlubokou validaci obsahu šifrovaného paketu.
 
 Server přijímá řádky `data` v pořadí jejich výskytu, pouze dokud nepřekročí `MAX_ACCEPTED_REQUEST_PACKETS` nebo `MAX_ACCEPTED_REQUEST_BYTES`. Platné řádky za tímto provozním limitem nejsou chybou protokolu: server je nezařadí do fronty a v odpovědi uvede jejich UUID v `deferredPacketUuids`. Klient je proto bezpečně ponechá v lokálním bufferu pro další cyklus. Chybný řádek je nadále chyba celého požadavku, protože klient nesmí pokračovat po neznámém nebo podvrženém vstupu.
 
@@ -173,7 +171,7 @@ Klient nesmí předpokládat exactly-once doručení ani trvalou dostupnost host
 | `.writing` | nedokončený zápis | po 60 sekundách smazat; při selhání označit `.error` |
 | `.data` | publikovaná, nevyzvednutá dávka | po `QUEUE_TTL_SECONDS` odstranit jako expirovanou |
 | `.sending.*` | dávka odeslaná do odpovědi, čekající na `ack` | po bezpečné rezervě vrátit atomicky na `.data` |
-| nonce soubor | ochrana proti replay | po dvou minutách odstranit |
+| nonce soubor | ochrana proti replay; existuje jen při `PERSIST_NONCES = true` | po dvou minutách odstranit |
 
 Stáří se určuje přes `filemtime`, ne podle názvu. Pád před publikací zanechá `.writing`, pád po publikaci zachová celé `.data` a pád v průběhu odpovědi zanechá `.sending`, který se znovu zařadí. Starý paket se může zahodit po TTL; jde o explicitní a omezenou vlastnost relay služby.
 
@@ -192,7 +190,7 @@ Server loguje pouze čas, akci, anonymizovanou/autorizovanou klientskou IP podle
 Testy musí běžet na PHP 8.2, 8.3, 8.4 a 8.5. Nevyžadují externí službu ani nepovinné rozšíření.
 
 1. **Kompatibilita a router:** výchozí HTML, `health`, `sync`, zakázané metody a hlavičky.
-2. **Autorizace:** platný HMAC, pozměněná akce/tělo/timestamp, neplatná IP, replay nonce a konstantní porovnání.
+2. **Autorizace:** platný HMAC, pozměněná akce/tělo/timestamp, neplatná IP a konstantní porovnání; s `PERSIST_NONCES = true` replay nonce odmítnout, s `false` ověřit, že se nonce nezapisuje a stejný požadavek je v přípustném časovém okně akceptován.
 3. **Dávky:** prázdný request, jeden paket, mnoho paketů, náhodné hranice chunků, neplatný NDJSON, velký řádek a spoofovaný zdroj.
 4. **Obousměrný cyklus:** klient A odešle pro B; následující prázdný `sync` klienta B jej dostane v odpovědi.
 5. **Kapacita:** velký request se částečně přijme a přesně oznámí UUID přijatých a odložených paketů; velká odpověď se rozdělí do více krátkých cyklů; zaplněná fronta vrací řízenou chybu bez poškození starších dat.
