@@ -27,11 +27,37 @@ Každá odchylka je vědomá, zapíše se do hlavičky `phpvpn.php` a do `PROTOC
 | Částečné uložení dávky | §7: jedna neúspěšná cílová fronta znamená chybu celého požadavku | Uložené pakety se vrátí v `acceptedPacketUuids`, neuložené v `deferredPacketUuids` a odpověď je `200`. `429` nebo `503` jen když neuspěje **žádný** cíl. | Splňuje pravidlo „server nesmí tvrdit, že přijal dávku, kterou neuložil“ a navíc odstraňuje zbytečné duplicity při retry. Je to přirozené rozšíření mechanismu `deferredPacketUuids` z §6. |
 | Název claimnutého souboru | §8: `.sending.<náhodné-id>` | `{batchId}.sending` bez náhodné přípony | Claim je vždy serializovaný per-frontovým zámkem a `batchId` je globálně unikátní, takže náhodná přípona nic nepřidává. Zpracování `ack` se tím mění z `glob()` na jediný `unlink()`, což je v horké cestě měřitelný rozdíl. |
 | Obsah souboru fronty | §8: server obalí paket typem `delivery` až při odpovědi | Soubor se ukládá **rovnou** ve tvaru `delivery` řádků | Čtecí cesta se zredukuje na kopii bajtů (`fpassthru`) bez `json_decode` a `json_encode`. Toto je největší jednotlivá výkonová optimalizace celé odpovědi. |
-| Velikost v názvu souboru | §7 neurčuje | `{batchId}.{bytes}.data` | Výběr dávek do `MAX_RESPONSE_BYTES` nepotřebuje ani jeden `stat` na soubor. Stáří se i nadále určuje výhradně přes `filemtime` podle §10. |
+| Velikost v `batchId` | §8: `…_random-id` | `batchId` je `{čas}_{náhoda}.{velikost}` s pevnou délkou 50 znaků, soubor je `{batchId}.data` | Výběr dávek do `MAX_RESPONSE_BYTES` nepotřebuje ani jeden `stat` na soubor. Pevná délka identifikátoru navíc umožní spočítat velikost dávky ještě před jeho vygenerováním, takže odpadá kruhová závislost mezi obsahem řádku `delivery` a názvem souboru. Stáří se i nadále určuje přes `filemtime` podle §10, čas v názvu slouží jen jako horní mez, která životnost nikdy neprodlouží. |
 | Umístění fronty | §2: adresář vedle `phpvpn.php` | Konfigurovatelný `QUEUE_ROOT`, doporučeně mimo document root, s `__DIR__ . '/phpvpn'` jako fallbackem | `problems.md` bloker č. 2. Práva 0700 nezabrání webserveru vydat statický soubor. |
 | Nonce úložiště | §5 a §10: soubor na nonce | Fixní záznamy v rotovaných minutových bucketech na klienta | `problems.md`, sekce Inode. Jeden soubor na nonce znamená asi 480 inode na aktivního klienta. |
 | Výchozí limity | §3: 8 MiB | 1 MiB request i response, viz sekce 5 | Výchozí `post_max_size` je 8M, takže 8 MiB není „pod“ tímto limitem. |
-| Ověření konfigurace | §3: `validateConfiguration()` při každém požadavku | Rychlá O(1) kontrola při každém požadavku, plná kontrola tabulky tokenů cachovaná přes otisk konfigurace | Validace 253 tokenů regexem v každém z desítek požadavků za sekundu je zbytečná zátěž. |
+| Ověření konfigurace | §3: `validateConfiguration()` při každém požadavku | `Cfg::assertRuntime()` je O(1) kontrola secretu a vzájemné konzistence limitů při každém požadavku. Formát tokenu se ověřuje jen u toho jediného, který se skutečně použije. Plná diagnostika celé tabulky běží na výchozí stránce a v preflightu. | Validace 253 tokenů regexem v každém z desítek požadavků za sekundu je zbytečná zátěž a pro bezpečnost nepřináší nic, protože se stejně použije jediný token. Řešení nepotřebuje žádný cache soubor, takže v horké cestě nepřidává ani jednu diskovou operaci. |
+| Význam `acceptedBytes` | §8 neurčuje jednotku | Počet **bajtů požadavku**, které byly zařazené, nikoli počet uložených bajtů | Klient podle `recommendedRequestBytes` škáluje velikost příští dávky, takže `acceptedBytes` musí být měřené stejnou jednotkou. Uložená dávka je vždy větší o obálku `delivery`, což by klientskou heuristiku systematicky mátlo. |
+| Časování reklamace | §10: „po bezpečné rezervě vrátit atomicky na `.data`“ | Claim navíc provede `touch()`, takže `SENDING_RECLAIM_SECONDS` běží od předání dávky, ne od jejího vzniku | `rename()` zachovává `filemtime`. Bez `touch()` by dávka vyzvednutá těsně před vypršením rezervy byla okamžitě reklamovatelná, což by generovalo zbytečné duplicity. |
+
+### 1.3 Portabilita má přednost před lokálním prostředím
+
+**Závazné pravidlo: `phpvpn.php` se navrhuje pro typický hosting, nikoli pro konkrétní testovací stroj.** Lokální nginx s PHP 8.5.9 v `d:\nginx` slouží výhradně k ověření, že server funguje. Z jeho `php.ini` se nesmí odvodit ani jedna výchozí hodnota a nesmí se na jeho vlastnosti spoléhat.
+
+Implementace proto vychází z tohoto konzervativního profilu typického hostingu.
+
+| Vlastnost | Předpoklad pro typický hosting | Důsledek pro implementaci |
+|---|---|---|
+| Verze PHP | 8.2 jako jazykový základ | Žádná syntaxe ani funkce z 8.3, 8.4 nebo 8.5, i když lokálně běží 8.5.9 |
+| `post_max_size` | výchozích `8M` | `MAX_REQUEST_BYTES` je 1 MiB, tedy s velkou rezervou |
+| `memory_limit` | `128M`, ale může být i `64M` | Špičková paměť požadavku pod 2 MiB, žádné načtení těla ani dávky celé do paměti |
+| `max_execution_time` | `30`, nikdy neomezené | Žádné čekání, `LOCK_TIMEOUT_MS` v řádu stovek milisekund, `set_time_limit()` jen jako pokus |
+| `output_buffering` | může být zapnuté, například `4096` | Na startu se defenzivně uzavřou všechny zděděné buffery |
+| OPcache | **může být vypnutá** | Konstantní pole `ACCESS_TOKENS` je jen výkonová optimalizace, nikdy podmínka správnosti |
+| `fastcgi_finish_request()` | **existuje jen v PHP-FPM** | Sweeper se volá přes `function_exists()` a při absenci se buď přeskočí, nebo běží s ještě menším rozpočtem |
+| `disable_functions` | může zakazovat libovolnou funkci | Každá volitelná funkce se ověřuje přes `function_exists()`, preflight ji hlásí |
+| `open_basedir` | může být nastaven | `QUEUE_ROOT` se ověřuje zápisem, ne domněnkou. Selhání je srozumitelná chyba, ne fatální |
+| `ini_set()` | může být zakázaný | Volá se jen jako best effort a návratová hodnota se nikdy nevyžaduje |
+| Webserver | Apache s `.htaccess` i nginx bez uživatelské konfigurace | Dodají se vzory pro obojí, ale funkčnost serveru na nich nezávisí |
+| Filesystem | lokální disk, POSIX i Windows | Selhání `unlink()` a `rename()` se ošetřuje jako běžný stav, ne jako výjimka |
+| Rozšíření | pouze `hash`, `json`, `pcre`, `random`, `standard`, `SPL`, `date` | Nic dalšího se nesmí použít |
+
+Když se profil hostingu od tohoto předpokladu liší k lepšímu, může jej administrátor využít v pokročilém bloku konfigurace. Výchozí hodnoty v repozitáři ale musí být bezpečné na tom nejskromnějším prostředí.
 
 ---
 
@@ -39,24 +65,29 @@ Každá odchylka je vědomá, zapíše se do hlavičky `phpvpn.php` a do `PROTOC
 
 ```text
 c:\git\phpvpn\
-    phpvpn.php              jediný distribuovatelný soubor serveru
-    PROTOCOL.md             závazná specifikace drátového protokolu pro klienta
-    README.md               instalace, preflight, ladění limitů, provoz
+    phpvpn.php                  jediný distribuovatelný soubor serveru
+    PROTOCOL.md                 závazná specifikace drátového protokolu pro klienta
+    README.md                   instalace, preflight, ladění limitů, provoz
     deploy\
-        htaccess-queue.txt  vzorové deny pravidlo pro Apache
-        nginx-queue.conf    vzorové deny pravidlo pro nginx
+        gen-credentials.php     generátor SERVER_SECRET a tabulky tokenů
+        apache.htaccess         vzorová konfigurace pro Apache
+        nginx.conf              vzorový server blok pro nginx
     tests\
-        run.php             test runner (PHP CLI, bez Composeru a PHPUnit)
-        lib\Assert.php      minimalistické aserce a reportér
-        lib\HttpClient.php  HTTP klient nad stream_socket_client
-        lib\SignRequest.php referenční podepisovač požadavků
-        lib\Harness.php     start a stop vestavěných PHP serverů, izolace QUEUE_ROOT
-        unit\*.php          jednotkové testy vnitřních tříd
-        integration\*.php   testy přes HTTP
-        concurrency\*.php   souběžné testy nad více procesy
-        fault\*.php         injektované pády a zotavení
-        load.php            zátěžový simulátor desítek klientů
+        run.php                 test runner (PHP CLI, bez Composeru a PHPUnit)
+        lib\Assert.php          aserce, přeskočení testu a reportér
+        lib\Suite.php           registr testů jednoho souboru
+        lib\HttpClient.php      HTTP klient nad stream_socket_client, včetně paralelních requestů
+        lib\SignRequest.php     referenční podepisovač požadavků, psaný podle PROTOCOL.md
+        lib\Harness.php         renderování instancí a start vestavěných PHP serverů
+        lib\Vpn.php             zkratky pro řeč protokolu přes HTTP
+        compat\*_test.php       statické kontroly jazykového základu a sady rozšíření
+        unit\*_test.php         jednotkové testy vnitřních tříd
+        integration\*_test.php  router, autorizace, cyklus, kapacita a preflight přes HTTP
+        concurrency\*_test.php  souběh nad více procesy a zátěž sítě dvaceti klientů
+        fault\*_test.php        injektované pády, poškozený stav a zotavení
 ```
+
+Testovací instance vzniká přepsáním konfiguračního bloku ve zdroji, nikoli hookem v `phpvpn.php`. Dodávaný soubor tak neobsahuje jedinou konstrukci, která by existovala kvůli testům, a zároveň se průběžně ověřuje, že konfigurační blok zůstává snadno strojově i ručně editovatelný.
 
 `design2.md` a `problems.md` zůstávají beze změny. `plan.md` je tento dokument.
 
@@ -651,9 +682,53 @@ Integrační a souběžné testy používají vestavěný PHP server. Na Windows
 5. Špičková paměť požadavku nepřekročí `MAX_ACCEPTED_REQUEST_BYTES` plus `MAX_PACKET_LINE_BYTES` plus fixní režie.
 6. Po skončení testu nezůstane v `QUEUE_ROOT` žádný `.writing` ani `.error`.
 
-### 15.3 Prostředí
+### 15.3 Testovací prostředí
 
-PHP na tomto stroji zatím není v `PATH`. Testování vyžaduje instalaci PHP 8.2 nebo novějšího, ideálně 8.2, 8.3, 8.4 i 8.5 vedle sebe kvůli §12. **Instalace PHP je zásah mimo adresář projektu, proto si ji vyžádám samostatným potvrzením předtím, než ji provedu.**
+K dispozici je lokální nginx s PHP v `d:\nginx`. Slouží **výhradně k ověření funkčnosti**, nikoli k odvození výchozích hodnot, viz pravidlo 1.3.
+
+| Položka | Zjištěný stav |
+|---|---|
+| PHP | 8.5.9 NTS x64, `D:\nginx\php8.5.9\php.exe` a `php-cgi.exe` |
+| nginx | 1.30.4, `worker_processes 1`, root `D:/nginx/html`, `fastcgi_pass 127.0.0.1:9000` |
+| Načtená rozšíření | bcmath, calendar, ctype, date, dom, filter, hash, iconv, json, lexbor, libxml, mysqlnd, pcre, PDO, Phar, random, readline, Reflection, session, SimpleXML, SPL, standard, tokenizer, uri, xml, OPcache, zlib |
+| Nenačtená rozšíření | **openssl, curl, mbstring, sockets, FFI, APCu, sqlite3** a další, DLL jsou jen v `ext/` |
+| Klíčové ini | `post_max_size = 8M`, `memory_limit = 128M`, `output_buffering = 0`, `disable_functions` prázdné, `open_basedir` prázdné, OPcache zapnutá |
+| SSL | nginx je sestavený s OpenSSL 3.5.7, HTTPS server blok lze doplnit |
+
+Sada rozšíření je pro tento projekt mimořádně užitečná, protože **chybí právě ta rozšíření, která `design2.md` §2 zakazuje vyžadovat**. Prostředí tak samo o sobě dokazuje splnění akceptačního kritéria §13.8. Rozšíření se proto záměrně nezapínají.
+
+Zjištěné `post_max_size = 8M` navíc přímo potvrzuje výhradu z `problems.md`, tedy že výchozích 8 MiB z `design2.md` §3 není pod tímto limitem.
+
+#### Dva testovací profily
+
+1. **Rychlý profil, výchozí pro `tests/run.php`.** N nezávislých vestavěných serverů `php.exe -S 127.0.0.1:81xx phpvpn.php` nad jedním sdíleným `QUEUE_ROOT`. Je self-contained, nevyžaduje nginx a dává skutečný víceprocesový souběh i na Windows, kde `PHP_FCGI_CHILDREN` a `PHP_CLI_SERVER_WORKERS` nefungují, protože jsou postavené na `fork`.
+2. **Věrný profil, spouštěný explicitně přes `tests/run.php --nginx`.** Skutečný nginx s FastCGI, deny pravidly a volitelně HTTPS. Ověřuje to, co vestavěný server ověřit neumí, tedy chování za reverzní proxy, doručení `Content-Type` a NDJSON těla, hlavičku `X-Forwarded-Proto`, HTTP nedostupnost `QUEUE_ROOT` a `Content-Length` versus chunked kódování.
+
+#### Co je pro věrný profil potřeba doplnit
+
+Tyto úpravy se týkají **jen testovacího stroje**, nikoli dodávaného souboru. Změny v `d:\nginx` si vyžádám samostatným potvrzením, protože jde o zásah mimo adresář projektu.
+
+- **Více php-cgi procesů.** Nyní běží jediný `php-cgi.exe`, takže nginx požadavky serializuje a souběh podle §12.6 nelze prokázat. Je nutné spustit čtyři instance na portech 9000 až 9003 a doplnit nginx blok `upstream`.
+- **`PHP_FCGI_MAX_REQUESTS=0`.** Výchozí hodnota 500 znamená, že `php-cgi.exe` se po 500 požadavcích ukončí a zátěžový test podle §12.8 začne dostávat `502`.
+- **Samostatný server blok pro phpvpn** s vlastním rootem mimo `D:/nginx/html`, aby se testovaly obě varianty umístění `QUEUE_ROOT`, tedy mimo document root i uvnitř s deny pravidlem.
+- **Volitelně HTTPS** se self-signed certifikátem, který lze vygenerovat jednorázově přes `php.exe -d extension=openssl`, aniž by se měnil trvalý `php.ini`.
+
+#### Windows specifika, která musí kód snést
+
+Produkční cíl je běžný Linux hosting, ale testy poběží na Windows a odhalí tam chování, které je nutné ošetřit i kvůli robustnosti na Linuxu.
+
+1. **`unlink()` a `rename()` selhávají nad souborem otevřeným jiným procesem.** Na Windows to platí prakticky vždy, na Linuxu jen v jiných situacích. Kód proto nesmí považovat neúspěšné smazání za fatální chybu. Použije se pořadí operací, kdy se soubor nejprve pod zámkem přejmenuje a teprve pak otevře ke čtení, a při selhání se operace odloží na příští GC nebo se soubor označí `.error`.
+2. **PHP cachuje výsledky `stat`.** `filemtime()` a `filesize()` v rámci jednoho požadavku vracejí zastaralé hodnoty poté, co soubor sami přejmenujeme. GC proto volá `clearstatcache(true, $path)` cíleně nad dotčenými cestami, nikdy globálně v cyklu.
+3. **Práva `0700` jsou na Windows fakticky ignorována.** Test práv adresářů je smysluplný jen na POSIX, na Windows se přeskočí s výsledkem `skip`, nikoli `pass`.
+4. **`flock()` s `LOCK_NB` funguje mezi procesy** přes `LockFileEx`, takže testy vzájemného vyloučení jsou platné.
+
+#### Pokrytí verzí PHP
+
+`design2.md` §12 požaduje testy na 8.2, 8.3, 8.4 i 8.5. Lokálně je k dispozici pouze 8.5.9. Řešení:
+
+- kód se píše proti jazykovému základu **PHP 8.2** podle pravidla 1.3, žádná novější syntaxe ani funkce,
+- do `tests/run.php` se přidá statická kontrola, která projde zdroj a ohlásí použití funkcí zavedených až po 8.2,
+- doplnění dalších verzí PHP je zásah mimo adresář projektu, takže si jej vyžádám samostatným potvrzením, až bude implementace hotová.
 
 ---
 
@@ -661,17 +736,23 @@ PHP na tomto stroji zatím není v `PATH`. Testování vyžaduje instalaci PHP 8
 
 | Fáze | Obsah | Hotovo, když |
 |---|---|---|
-| F0 | Instalace PHP toolchainu, kostra `tests/run.php`, `Assert`, `Harness` | `php tests/run.php` proběhne a nahlásí nula testů |
+| F0 | Kostra `tests/run.php`, `Assert`, `Harness` nad `D:\nginx\php8.5.9\php.exe`, statická kontrola jazykového základu 8.2 | `php tests/run.php` proběhne a nahlásí nula testů |
 | F1 | Kostra `phpvpn.php`, oba konfigurační bloky, `Cfg`, `Http`, `Log`, `Router`, HTML stránka, `health` | testy 12.1 procházejí |
 | F2 | `Wire`, `BodyReader`, `Auth`, `NonceStore` | testy 12.2 a 12.3 procházejí, `sync` zatím vrací prázdný `sync-result` |
 | F3 | `QueuePath`, `QueueLock`, `QueueStat`, `Queue::enqueue` | dávky se atomicky publikují, testy zápisu a kapacity procházejí |
 | F4 | `Queue::claim`, `Queue::ack`, streamování odpovědi, `sync-result` a doporučení | testy 12.4 a 12.5 procházejí |
 | F5 | Lokální GC, reclaim, `Sweeper`, globální kvóta | testy 12.7 procházejí |
 | F6 | `SelfTest`, doladění logování, bezpečnostní hardening podle sekce 11 | preflight vrací kompletní report |
-| F7 | Souběžné a zátěžové testy, profilace, doladění konstant | testy 12.6 a 12.8 procházejí, splněn rozpočet ze sekce 12 |
+| F7 | Souběžné a zátěžové testy, věrný nginx profil s více `php-cgi` procesy, profilace, doladění konstant | testy 12.6 a 12.8 procházejí, splněn rozpočet ze sekce 12 |
 | F8 | `PROTOCOL.md`, `README.md`, `deploy/` | dokumentace umožní implementovat klienta bez čtení PHP kódu |
 
 Pořadí je zvolené tak, aby každá fáze byla samostatně testovatelná a aby se korektnost souběhu ověřovala od chvíle, kdy vznikne první zápis na disk.
+
+### 16.1 Stav
+
+Fáze F0 až F8 jsou hotové. `php tests/run.php` spouští 110 testů ve skupinách `compat`, `unit`, `integration`, `concurrency` a `fault` a všechny procházejí, opakovaně a bez nestability. Zbývá jediná položka z F7, totiž věrný profil nad skutečným nginx s více `php-cgi` procesy. Ten vyžaduje zásah do `d:\nginx`, tedy mimo adresář projektu, takže si jej vyžádám samostatným potvrzením. Rychlý profil nad čtyřmi vestavěnými servery souběh prokazuje už teď.
+
+Fragmentace TCP se testuje jen na těle požadavku. Rozebrání hlavičky je věcí webserveru, ne `phpvpn.php`, a vestavěný vývojový server hlavičku rozloženou do sedmibajtových zápisů odmítne jako `Malformed HTTP request`. Apache, nginx ani PHP-FPM tímto omezením netrpí.
 
 ---
 

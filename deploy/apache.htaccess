@@ -1,0 +1,42 @@
+# Apache configuration for the directory that contains phpvpn.php.
+# Copy this file next to phpvpn.php and rename it to .htaccess.
+#
+# phpvpn.php writes an equivalent deny rule into QUEUE_ROOT itself, but that is
+# only defence in depth. The real protection is putting QUEUE_ROOT outside the
+# document root, which no .htaccess can be lost or overridden for.
+
+# --- Force HTTPS -------------------------------------------------------------
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</IfModule>
+
+# --- Never serve the queue, even if QUEUE_ROOT ends up under the web root ----
+<IfModule mod_authz_core.c>
+    <DirectoryMatch "phpvpn(/|$)">
+        Require all denied
+    </DirectoryMatch>
+</IfModule>
+
+# --- Never serve queue artefacts, whatever directory they end up in ----------
+<FilesMatch "\.(data|sending|writing|error|stat|lock|bin|log)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# --- No directory listing ----------------------------------------------------
+Options -Indexes
+
+# --- Do not advertise more than necessary ------------------------------------
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "no-referrer"
+    Header unset X-Powered-By
+</IfModule>
