@@ -8,7 +8,7 @@
 
 ## 1. Zásadní změna architektury
 
-Každý klient opakuje krátký požadavek `POST ?action=sync`, standardně každých 250 ms. V jednom cyklu:
+Každý klient opakuje krátký požadavek `POST ?action=sync` ve vlastním adaptivním intervalu. Interval je výhradně rozhodnutím virtuální karty; server neurčuje pevnou periodu. V jednom cyklu:
 
 1. virtuální síťová karta klienta shromáždí odchozí IP pakety do lokální dávky;
 2. klient otevře krátké HTTPS spojení a odešle tuto dávku;
@@ -40,7 +40,6 @@ Na začátku souboru bude jediný administrátorem upravovaný blok:
 
 ```php
 const SERVER_SECRET = '';
-const REQUEST_INTERVAL_MS = 250;
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_PACKET_LINE_BYTES = 1024 * 1024;
@@ -54,7 +53,7 @@ const ACCESS_TOKENS = [
 ];
 ```
 
-`REQUEST_INTERVAL_MS` je doporučení pro klienta, nikoli serverový sleep interval. Klient jej může krátkodobě upravit podle provozu, ale nesmí vytvořit neomezený počet požadavků. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla. `MAX_ACCEPTED_REQUEST_BYTES` a `MAX_ACCEPTED_REQUEST_PACKETS` jsou nižší provozní stropy, které server skutečně zpracuje v jednom cyklu. `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. Všechny limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
+Interval `sync` není součástí konfigurace serveru. Virtuální karta jej určuje a přizpůsobuje sama podle latence, výsledků předchozích cyklů, zaplnění vlastní fronty, údajů `sync-result` a případného backoffu. Server pouze vynucuje velikostní a kapacitní limity požadavku; nesmí v požadavku čekat ani předpokládat konkrétní interval klienta. `MAX_REQUEST_BYTES` je nejvyšší přijatelná velikost celého těla. `MAX_ACCEPTED_REQUEST_BYTES` a `MAX_ACCEPTED_REQUEST_PACKETS` jsou nižší provozní stropy, které server skutečně zpracuje v jednom cyklu. `MAX_RESPONSE_BYTES` je strop pro vyzvednutí jedním cyklem. Všechny limity musí zůstat pod limity `post_max_size`, `upload_max_filesize`, `memory_limit` a limitem reverzní proxy daného hostingu.
 
 Při startu každého požadavku `validateConfiguration()` ověří sílu `SERVER_SECRET`, rozsahy čísel, přesný rozsah klientských IP adres a 64hexový tvar tokenů. Neplatná konfigurace nesmí obsloužit `sync` a vrací `503`. Výchozí HTML stránka vždy zobrazí `Server is running`; při chybě secretu přidá požadované červené bezpečnostní varování.
 
@@ -150,7 +149,7 @@ Posledním řádkem každé úspěšné odpovědi je řídicí objekt, napříkl
 
 ## 9. Životní cyklus klienta
 
-Klientská virtuální karta drží odchozí frontu v paměti. V pravidelném krátkém intervalu, výchozích 250 ms, z ní vezme omezenou dávku a spustí jeden `sync` požadavek. Při přetížení musí karta omezit vlastní paměť a stanovit politiku zahazování; server nemůže bezpečně absorbovat neomezený provoz.
+Klientská virtuální karta drží odchozí frontu v paměti. Sama určuje, kdy spustí další `sync` požadavek, a z ní vezme omezenou dávku. Může jej poslat ihned při nových datech, zpomalit při přetížení nebo dočasně zrychlit, když odpověď označí další čekající data. Při přetížení musí karta omezit vlastní paměť a stanovit politiku zahazování; server nemůže bezpečně absorbovat neomezený provoz.
 
 Klient po návratu odpovědi:
 
@@ -199,7 +198,7 @@ Testy musí běžet na PHP 8.2, 8.3, 8.4 a 8.5. Nevyžadují externí službu an
 5. **Kapacita:** velký request se částečně přijme a přesně oznámí UUID přijatých a odložených paketů; velká odpověď se rozdělí do více krátkých cyklů; zaplněná fronta vrací řízenou chybu bez poškození starších dat.
 6. **Souběh:** paralelní zápisy do stejného cíle, dva souběžné `sync` téhož příjemce a ověření, že se batch úspěšně neodešle dvakrát.
 7. **Zotavení:** pád po `.writing`, po `.data` a po claimu `.sending`; GC vrátí nebo odstraní správný soubor.
-8. **Hostingová zátěž:** desítky klientů, 4 požadavky za sekundu na klienta, měření latence, paměti, počtu workerů, lock contention a dopadu limitů hostingu.
+8. **Hostingová zátěž:** desítky klientů s různými adaptivními intervaly, měření latence, paměti, počtu workerů, lock contention a dopadu limitů hostingu.
 
 ## 13. Akceptační kritéria
 
