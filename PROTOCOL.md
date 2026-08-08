@@ -29,17 +29,23 @@ Transport je pro protokol nevýznamný. Schéma, port, adresa protistrany ani hl
 | URL | Metoda | Účel |
 |---|---|---|
 | `/phpvpn.php` | `GET`, `HEAD` | Provozní HTML stránka. Nevyžaduje autorizaci. |
-| `/phpvpn.php?action=health` | `GET`, `POST`, `HEAD` | Stav a autoritativní čas serveru. Nevyžaduje autorizaci. |
+| `/phpvpn.php?action=health` | `GET`, `POST`, `HEAD` | Verze, stav a autoritativní čas serveru. Nevyžaduje autorizaci. |
 | `/phpvpn.php?action=sync` | `POST` | Jeden krátký obousměrný cyklus. Vyžaduje podpis. |
 | `/phpvpn.php?action=selftest` | `POST` | Preflight prostředí. Vyžaduje podpis a je ve výchozím stavu vypnutý. |
 
 ### health
 
 ```json
-{"status":"OK","serverTime":"2026-08-08T14:20:00Z"}
+{"version":"1.0.0","status":"OK","serverTime":"2026-08-08T14:20:00Z"}
 ```
 
-Klient tímto endpointem koriguje vlastní hodiny. Volá jej při startu a po opakovaném `401`. Odpověď nikdy neobsahuje konfiguraci, tokeny, obsah front ani diagnostiku.
+| Pole | Typ | Význam |
+|---|---|---|
+| `version` | řetězec | Verze serveru PHP VPN. V úspěšné odpovědi je vždy a je **prvním klíčem** serializovaného objektu. |
+| `status` | řetězec | Vždy `OK`. Úspěšná odpověď znamená, že server běží a odpovídá. |
+| `serverTime` | řetězec | Autoritativní čas serveru v UTC podle kapitoly 3. |
+
+Klient tímto endpointem koriguje vlastní hodiny. Volá jej při startu a po opakovaném `401`. Zároveň si z něj může přečíst verzi serveru, aniž by se musel autorizovat. Odpověď nikdy neobsahuje konfiguraci, tokeny, obsah front ani diagnostiku.
 
 ---
 

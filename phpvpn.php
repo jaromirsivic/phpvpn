@@ -22,7 +22,7 @@
  *
  * Endpoints:
  *   GET  /phpvpn.php                 operational HTML page
- *   *    /phpvpn.php?action=health   status and authoritative UTC server time
+ *   *    /phpvpn.php?action=health   version, status and authoritative UTC time
  *   POST /phpvpn.php?action=sync     one short bidirectional batch exchange
  *   POST /phpvpn.php?action=selftest environment preflight, disabled by default
  *
@@ -45,6 +45,13 @@
 declare(strict_types=1);
 
 // =============================================================================
+// Identity - not a setting, an administrator never changes this.
+// =============================================================================
+
+/** Server version, reported as the first key of every health response. */
+const PHPVPN_VERSION = '1.0.0';
+
+// =============================================================================
 // CONFIGURATION - this is the only part an administrator edits.
 // =============================================================================
 
@@ -56,6 +63,7 @@ const SERVER_SECRET = '';
  * for example '/home/account/private/phpvpn-queue'. An empty value falls back
  * to a "phpvpn" directory next to this file, which then relies on a working
  * webserver deny rule. Use forward slashes on every platform.
+ * RECOMMENDATION: USE RAMDISK IF POSSIBLE
  */
 const QUEUE_ROOT = '';
 
@@ -2370,7 +2378,8 @@ final class Router
             http_response_code(200);
             Http::baseHeaders();
             header('Content-Type: application/json; charset=utf-8');
-            echo '{"status":"OK","serverTime":"', Wire::isoTime(Ctx::$now), '"}';
+            echo '{"version":"', PHPVPN_VERSION,
+                '","status":"OK","serverTime":"', Wire::isoTime(Ctx::$now), '"}';
 
             return;
         }

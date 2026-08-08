@@ -40,6 +40,24 @@ return function (Suite $suite): void {
         Assert::lessOrEqual(5, abs(time() - (int) strtotime((string) $decoded['serverTime'])), 'clock agreement');
     });
 
+    $suite->test('health reports the server version first', function () use ($get) {
+        foreach (['GET', 'POST'] as $method) {
+            $response = HttpClient::request($get()->url() . '?action=health', $method);
+            $decoded = json_decode($response['body'], true);
+
+            Assert::same('1.0.0', $decoded['version'] ?? '', $method . ': the version must always be reported');
+            Assert::same(
+                'version',
+                array_key_first((array) $decoded),
+                $method . ': version must be the first key of the serialised object'
+            );
+            Assert::true(
+                str_starts_with($response['body'], '{"version":"1.0.0","status":"OK"'),
+                $method . ': the wire order must be version, status, serverTime'
+            );
+        }
+    });
+
     $suite->test('health does not leak configuration', function () use ($get) {
         $response = HttpClient::request($get()->url() . '?action=health', 'POST');
 

@@ -80,7 +80,7 @@ Otevřete `https://vas-server/phpvpn.php` v prohlížeči. Musí se zobrazit **S
 
 ```bash
 curl https://vas-server/phpvpn.php?action=health
-# {"status":"OK","serverTime":"2026-08-08T14:20:00Z"}
+# {"version":"1.0.0","status":"OK","serverTime":"2026-08-08T14:20:00Z"}
 ```
 
 ### 5. Spusťte preflight
