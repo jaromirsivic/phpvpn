@@ -9,7 +9,7 @@ phpvpn je krátce připojovaný store-and-forward relay pro přenos end-to-end �
 - autentizuje požadavky a oprávnění odesílatele;
 - kontroluje syntaxi, směrovací metadata, limity a kapacitu front;
 - ukládá neprůhledné šifrované záznamy do front cílových klientů;
-- vydává čekající záznamy a zpracovává potvrzení jejich převzetí;
+- při sestavení odpovědi atomicky načítá a odstraňuje všechny čekající záznamy cílového klienta;
 - eviduje čas poslední úspěšné komunikace klientů.
 
 Server nezná klíče užitečného zatížení, obsah IPv4 paketů nedešifruje a neinterpretuje. Distribuce payload klíčů, konfigurace virtuální síťové karty, přidělování VPN adres a zpracování dešifrovaného IP provozu jsou odpovědností klientské vrstvy mimo tento protokol.
@@ -31,7 +31,7 @@ php implementace serveru by v základu neměla vyžadovat žádné rozšíření
 
 ### 1.2 Vědomě neposkytované vlastnosti
 
-Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once ani garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Úspěšná odpověď `data` není jako celek autentizovaná: AES-GCM chrání jednotlivé payloady a jejich směrovací AAD, nikoli úplnost odpovědi, pořadí řádků ani `data-result` a `receiptId`. Protokol nezajišťuje ani dostupnost při zaplnění úložiště nebo vyčerpání PHP workerů.
+Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once ani garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Úspěšná odpověď `data` není jako celek autentizovaná: AES-GCM chrání jednotlivé payloady a jejich směrovací AAD, nikoli úplnost odpovědi, pořadí řádků ani `data-result`. Server používá vědomě zvolený optimistický at-most-once model: data odstraní z bufferu před odesláním odpovědi a při ztrátě nebo nezpracování odpovědi je znovu nenabídne. Tato vlastnost je přijatelná pro šifrované IP pakety, protože ztrátu podle potřeby řeší vyšší síťové nebo aplikační vrstvy. Protokol nezajišťuje ani dostupnost při zaplnění úložiště nebo vyčerpání PHP workerů.
 
 ## 2. Normativní rozhodnutí
 
@@ -39,7 +39,7 @@ Protokol pomocí autentizačního timestampu odmítá požadavky starší než p
 |---|---|
 | Architektura | Bezstavové, krátké HTTP požadavky; žádná serverová session. |
 | Wire format | JSON pro řídicí akce, NDJSON pro datovou akci. |
-| Doručení | At-least-once s explicitním potvrzením celého vráceného snapshotu. Duplicita je možný a akceptovaný výsledek. |
+| Doručení | Optimistické at-most-once na úrovni serverového bufferu, bez potvrzení. Po atomickém načtení jsou data ze serveru odstraněna ještě před přenosem odpovědi. |
 | Replay | Timestamp omezuje platnost autentizovaného požadavku na ±60 s vůči času serveru. Uvnitř okna není replay detekován; bez deduplikace a bez perzistence timestampu nebo nonce. |
 | Payload klíče | Klientské per-peer nebo skupinové klíče distribuované mimo relay; server je nezná. |
 | Více cílů | Částečné přijetí je dovoleno a výsledek se vrací pro každý záznam. |
@@ -92,7 +92,7 @@ V URL je pouze `?action=<akce>`. Identita klienta, tokeny, podpisy a šifrovaný
 
 Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.
 
-Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit, měnit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC požadavku ani GCM tag jednotlivého payloadu. Odpověď `data` však nemá vlastní MAC: útočník může odstranit nebo přeskupit platné datové řádky a změnit, odstranit či podvrhnout `data-result` včetně `receiptId`. Klient tak v režimu HTTP nemůže kryptograficky ověřit úplnost vráceného bufferu ani správnost výsledku přijetí; podvržený výsledek nebo potvrzení neúplné odpovědi může způsobit ztrátu dat. Autentizovaný požadavek lze úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
+Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit, měnit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC požadavku ani GCM tag jednotlivého payloadu. Odpověď `data` však nemá vlastní MAC: útočník může odstranit nebo přeskupit platné datové řádky a změnit, odstranit či podvrhnout `data-result`. Klient tak v režimu HTTP nemůže kryptograficky ověřit úplnost vráceného bufferu ani správnost výsledku přijetí. Protože server záznamy před odesláním odstraní, zahození či poškození odpovědi znamená jejich nevratnou ztrátu na úrovni relay. Autentizovaný požadavek lze úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
 
 HTTPS navíc poskytuje ochranu transportních metadat v těle a hlavičkách, autentizaci TLS protistrany a ochranu spojení proti změně. Zda jej administrátor použije, je provozní rozhodnutí mimo povinné požadavky protokolu.
 
@@ -135,7 +135,7 @@ Pořadí členů JSON objektu není sémantické. Klient musí před prvním aut
 - Kódování je UTF-8 bez BOM.
 - Protokolová pole používají pouze ASCII.
 - JSON objekt NESMÍ obsahovat duplicitní názvy členů.
-- Neznámé pole v autentizačním, datovém, potvrzovacím nebo výsledkovém záznamu je chyba `400 bad_request`.
+- Neznámé pole v autentizačním, datovém nebo výsledkovém záznamu je chyba `400 bad_request`.
 - Číselná pole jsou nezáporná celá čísla v bezpečném rozsahu PHP integeru.
 - Base64 hodnoty používají base64url abecedu `A-Z a-z 0-9 _ -` bez `=` paddingu.
 - Binární porovnání HMAC a tagů se provádí konstantním časem.
@@ -148,9 +148,9 @@ NDJSON je posloupnost kompaktních JSON objektů. Každý záznam včetně posle
 
 ### 6.3 Identifikátory
 
-`requestId`, `messageId` a `receiptId` jsou UUID verze 4 v malých hexadecimálních znacích ve tvaru `8-4-4-4-12`. Generují se CSPRNG.
+`requestId` a `messageId` jsou UUID verze 4 v malých hexadecimálních znacích ve tvaru `8-4-4-4-12`. Generují se CSPRNG.
 
-Identifikátory slouží ke korelaci a potvrzení. Server ani klient je NESMÍ používat jako replay cache nebo deduplikační klíč napříč požadavky. `messageId` musí být unikátní pouze uvnitř jednoho těla `data`, aby byla odpověď jednoznačná; opakování celého požadavku se stejnými identifikátory je znovu zpracováno.
+Identifikátory slouží ke korelaci. Server ani klient je NESMÍ používat jako replay cache nebo deduplikační klíč napříč požadavky. `messageId` musí být unikátní pouze uvnitř jednoho těla `data`, aby byla odpověď jednoznačná; opakování celého požadavku se stejnými identifikátory je znovu zpracováno.
 
 ## 7. Kryptografické primitivy a kanonizace
 
@@ -197,7 +197,7 @@ signature = HMAC-SHA-256(semiKey, canonical)
 Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 
 ```json
-{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxAckRecordsPerRequest":64,"maxRequestBodyBytes":4214784,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60}}
 ```
 
 `clients` obsahuje pouze VPN adresu a poslední úspěšnou komunikaci. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nekomunikoval, může být vynechán. `lastSeen` je UTC RFC 3339.
@@ -240,10 +240,9 @@ Salt ani IV nejsou anti-replay mechanismus. Opakovanou dříve platnou odpověď
 Content-Type je `application/x-ndjson; charset=utf-8`. Požadavek má přesně toto pořadí:
 
 1. právě jeden záznam `auth-full`;
-2. nula až `MAX_ACK_RECORDS_PER_REQUEST` záznamů `ack`;
-3. nula až `MAX_DATA_RECORDS_PER_REQUEST` záznamů `data`.
+2. nula až `MAX_DATA_RECORDS_PER_REQUEST` záznamů `data`.
 
-Po prvním `data` již nesmí následovat `ack`. Samotný `auth-full` je platný polling bez potvrzení a bez odesílaných dat.
+Samotný `auth-full` je platný polling bez odesílaných dat.
 
 ### 9.2 Záznam `auth-full`
 
@@ -267,19 +266,11 @@ canonical = "PHPVPN-AUTH-FULL" LF
 signature = HMAC-SHA-256(ACCESS_KEY, canonical)
 ```
 
-Server nejprve syntakticky ověří `src`, podle něj v konstantě `ACCESS_KEYS` vyhledá právě jeden `ACCESS_KEY` a tím přímo ověří HMAC. Musí dočíst a hashovat celé tělo. Před úspěšným ověřením HMAC NESMÍ zpracovat `ack`, změnit frontu ani publikovat data. Při neznámém klientovi nebo klíči musí provést srovnatelnou práci s náhodně vypadajícím 32bajtovým dummy klíčem a vrátit obecné `401 unauthorized`.
+Server nejprve syntakticky ověří `src`, podle něj v konstantě `ACCESS_KEYS` vyhledá právě jeden `ACCESS_KEY` a tím přímo ověří HMAC. Musí dočíst a hashovat celé tělo. Před úspěšným ověřením HMAC NESMÍ změnit buffer ani publikovat data. Při neznámém klientovi nebo klíči musí provést srovnatelnou práci s náhodně vypadajícím 32bajtovým dummy klíčem a vrátit obecné `401 unauthorized`.
 
 Pro `timestamp` platí stejný formát a kontrola `abs(serverUnixTime - timestamp) <= 60` jako u `auth-semi`. Timestamp je součástí HMAC, takže jej nelze změnit bez zneplatnění podpisu. Zajišťuje omezenou čerstvost vůči starým replayům; stejný autentizovaný požadavek lze uvnitř platného 60sekundového okna přehrát a server jej zpracuje znovu. Server timestamp nepersistuje.
 
-### 9.3 Záznam `ack`
-
-```json
-{"type":"ack","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08"}
-```
-
-Klient posílá `ack` až po přijetí celé odpovědi, ověření všech vrácených payloadů a jejich předání vyšší vrstvě. Jediný `receiptId` potvrzuje všechny datové řádky vrácené v odpovědi, ve které jej server vydal. Neznámý, expirovaný nebo již potvrzený `receiptId` je úspěšný no-op. Tato idempotence mazání není replay deduplikací payloadu a nevyžaduje historii potvrzení.
-
-### 9.4 Záznam `data`
+### 9.3 Záznam `data`
 
 ```json
 {"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
@@ -295,7 +286,7 @@ Pravidla:
 - `ciphertext` nesmí být prázdný;
 - celý NDJSON řádek včetně LF nesmí překročit `MAX_SERIALIZED_DATA_RECORD_BYTES`.
 
-### 9.5 End-to-end šifrování payloadu
+### 9.4 End-to-end šifrování payloadu
 
 Odesílatel vyhledá jediný 32bajtový `PAYLOAD_KEY` v lokální mapě `PAYLOAD_KEYS[src][dst]`. Protokol neprovádí další odvození klíče a nepřenáší jeho identifikátor. AAD je:
 
@@ -323,14 +314,14 @@ Pro každý konkrétní `PAYLOAD_KEY` MUSÍ odesílatel zabránit opakovanému p
 
 Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole. Jedinečnost IV je povinnost odesílatele pro korektnost AES-GCM, nikoli mechanismus detekce replay. Opakované doručení stejné trojice IV/ciphertext/tag je přijato jako další platná zpráva.
 
-### 9.6 Odpověď `data`
+### 9.5 Odpověď `data`
 
 Úspěšná odpověď má Content-Type `application/x-ndjson; charset=utf-8` a pořadí:
 
 1. nula nebo více přímo uložených záznamů `data`;
 2. právě jeden závěrečný záznam `data-result`.
 
-Server do odpovědi zahrne všechny neexpirované datové záznamy, které jsou v okamžiku atomického načtení připravené ve frontě klienta. Počet vrácených záznamů se neomezuje samostatným protokolovým ani konfiguračním limitem a odpověď se nestránkuje. Jedinou horní mezí objemu snapshotu je kapacita fronty. Každý záznam se vrací přímo ve stejném schématu `data`, bez další obálky:
+Po úspěšném ověření požadavku a zpracování jeho odesílaných záznamů server atomickou operací načte všechny neexpirované datové záznamy aktuálně uložené v bufferu klienta a současně je z persistentního bufferu odstraní. Nově publikovaný záznam se `dst` shodným s autentizovaným `src` proto patří již do této odpovědi. Teprve z takto získaného lokálního seznamu server sestaví odpověď. Počet vrácených záznamů se neomezuje samostatným protokolovým ani konfiguračním limitem a odpověď se nestránkuje. Jedinou horní mezí objemu je kapacita bufferu. Každý záznam se vrací přímo ve stejném schématu `data`, bez další obálky:
 
 ```json
 {"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
@@ -339,34 +330,33 @@ Server do odpovědi zahrne všechny neexpirované datové záznamy, které jsou 
 Záznam `data-result`:
 
 ```json
-{"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":["d5b543a9-9fc3-4c98-916c-ea0198f67a79"],"deferredMessageIds":[],"acceptedRecords":1,"acceptedBytes":2048,"receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08"}
+{"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":["d5b543a9-9fc3-4c98-916c-ea0198f67a79"],"deferredMessageIds":[],"acceptedRecords":1,"acceptedBytes":2048}
 ```
 
 - `acceptedMessageIds` jsou jediné položky, které smí odesílatel odstranit ze své odchozí fronty;
 - `deferredMessageIds` zůstávají klientovi pro pozdější pokus;
 - obě pole bez průniku přesně pokrývají všechny `messageId` v požadavku;
-- `acceptedBytes` je součet přijatých serializovaných datových řádků včetně LF;
-- `receiptId` je poslední člen objektu. Je-li v odpovědi alespoň jeden datový řádek, obsahuje čerstvé UUID a potvrzuje celý vrácený snapshot; nebyl-li vrácen žádný datový řádek, má hodnotu `null` a klient žádný `ack` neposílá.
+- `acceptedBytes` je součet přijatých serializovaných datových řádků včetně LF.
 
 Příklad výsledku pollingu bez odeslaných i bez vrácených dat:
 
 ```json
-{"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":[],"deferredMessageIds":[],"acceptedRecords":0,"acceptedBytes":0,"receiptId":null}
+{"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":[],"deferredMessageIds":[],"acceptedRecords":0,"acceptedBytes":0}
 ```
 
-Klient MUSÍ přijmout úplné NDJSON tělo s právě jedním závěrečným `data-result`, jehož `requestId` odpovídá aktuálnímu požadavku. Každý datový řádek musí samostatně ověřit podle AES-GCM pravidel v kapitole 9.5. Nenulové `receiptId` smí potvrdit až po úspěšném ověření a předání všech vrácených payloadů; pokud je odpověď neúplná, syntakticky neplatná nebo některý tag selže, `ack` neposílá a server může celý snapshot nabídnout znovu.
+Klient MUSÍ přijmout úplné NDJSON tělo s právě jedním závěrečným `data-result`, jehož `requestId` odpovídá aktuálnímu požadavku. Každý datový řádek ověří samostatně podle AES-GCM pravidel v kapitole 9.4; řádek s neplatným tagem zahodí a ostatní platné payloady může zpracovat. Protokol neposílá žádné následné potvrzení.
 
-Odpověď jako celek nemá HMAC ani jinou ochranu úplnosti. `requestId`, výsledková pole a `receiptId` nejsou v režimu HTTP kryptograficky chráněné; bezpečnostní důsledky stanoví kapitola 4.2. Klient nevede replay cache a opakovaně doručené platné payloady znovu zpracuje.
+Jakmile atomické načtení a odstranění skončí, server data znovu nenabídne, a to ani když PHP worker selže před odesláním, HTTP/HTTPS odpověď nedorazí, je neúplná nebo ji klient nezpracuje. Jde o vědomě přijaté optimistické at-most-once chování serverového bufferu. Odpověď jako celek nemá HMAC ani jinou ochranu úplnosti a `requestId` ani výsledková pole nejsou v režimu HTTP kryptograficky chráněné; bezpečnostní důsledky stanoví kapitola 4.2. Síťová vrstva může dříve platnou odpověď zopakovat, takže at-most-once vlastnost serverového výdeje sama o sobě nezajišťuje deduplikaci u klienta. Klient nevede replay cache a opakovaně doručené platné payloady znovu zpracuje.
 
 ## 10. Fronty a doručovací sémantika
 
 ### 10.1 Model
 
-Každý cílový klient má logickou perzistentní frontu. Do její velikosti se započítávají připravené i právě vydané, ale dosud nepotvrzené záznamy. Výchozí limit je 16 MiB logických serializovaných bajtů na klienta bez interní režie backendu.
+Každý cílový klient má logický perzistentní buffer. Do jeho velikosti se započítávají všechny dosud nevydané záznamy. Výchozí limit je 16 MiB logických serializovaných bajtů na klienta bez interní režie backendu.
 
 Server může z jednoho requestu vytvořit samostatné dávky podle cíle. Publikace jedné dávky musí být atomická: po pádu je viditelná celá, nebo vůbec. Úspěch jednoho cíle nezávisí na selhání jiného cíle.
 
-Při sestavení odpovědi server atomicky načte všechny neexpirované záznamy, které jsou právě připravené pro autentizovaného klienta, a spojí je do jediného potvrzovaného snapshotu. Snapshot může obsahovat více dříve publikovaných dávek. Server jej nesmí stránkovat ani omezit počtem záznamů.
+Při sestavení odpovědi server atomicky vyprázdní všechny neexpirované záznamy z bufferu autentizovaného klienta. Vrácený seznam může obsahovat více dříve publikovaných dávek. Server jej nesmí stránkovat ani omezit počtem záznamů.
 
 ### 10.2 Částečné přijetí
 
@@ -374,23 +364,22 @@ Server zpracovává cílové skupiny deterministicky. Přijaté položky uvede v
 
 Chybová odpověď nikdy neopravňuje klienta odstranit položku z odchozí fronty. Při úspěchu klient vyhodnotí pouze jediný syntakticky platný závěrečný `data-result` se shodným `requestId`; v režimu HTTP však jeho správnost není kryptograficky zaručena.
 
-### 10.3 Vydání, potvrzení a opakování
+### 10.3 Vydání, ztráta a opakování
 
-Server všechny záznamy právě vráceného snapshotu atomicky přesune do stavu `inflight` a přidělí jim jediné `receiptId`. Po platném `ack` celý snapshot odstraní. Pokud odpověď neobsahuje žádná data, nevytváří stav `inflight`, do `data-result.receiptId` zapíše `null` a klient nic nepotvrzuje. Při přerušení spojení, neplatné odpovědi nebo chybějícím potvrzení může server nepotvrzený snapshot znovu nabídnout. Opakované doručení je normální.
+Operace vyprázdnění bufferu musí být atomická: po souběžném zápisu nebo pádu jsou konkrétní záznamy buď stále v bufferu, nebo přesně jednou vráceny handleru a ze storage odstraněny. Server nečeká na reakci klienta a odstraněné záznamy neobnovuje. Pád workeru, přerušení spojení, zahození odpovědi nebo chyba klienta po vyprázdnění proto znamenají jejich ztrátu. Vyšší vrstvy přenášeného IP provozu mohou podle svých vlastních pravidel provést nové odeslání.
 
-Klient ani server neporovnávají `messageId`, IV, request body nebo podpis s historií. Replay autentizovaného odesílacího requestu uvnitř platného 60sekundového okna založí další kopii dat; po uzavření okna server request odmítne. Replay doručovací odpovědi předá payload znovu. To může zaplnit frontu, zvýšit náklady nebo opakovat účinek UDP/aplikačních dat; jde o výslovně přijaté omezení.
+Klient ani server neporovnávají `messageId`, IV, request body nebo podpis s historií. Replay autentizovaného odesílacího requestu uvnitř platného 60sekundového okna založí další kopii dat; po uzavření okna server request odmítne. Replay datové odpovědi může payload předat znovu, přestože server tentýž záznam z bufferu vydal jen jednou. Duplicita na trase i ztráta po vyprázdnění bufferu jsou výslovně přijatá omezení.
 
 ### 10.4 Expirace
 
-Výchozí `QUEUE_TTL_SECONDS` je 60 s. Čas běží od prvního úspěšného publikování a vydání do `inflight` jej neobnovuje. Po expiraci smí backend dávku smazat bez doručení. Údržba může být oportunistická, takže fyzické odstranění může nastat později; expirovaná dávka však již nesmí být nově vydána.
+Výchozí `QUEUE_TTL_SECONDS` je 60 s. Čas běží od prvního úspěšného publikování. Po expiraci smí backend dávku smazat bez doručení. Údržba může být oportunistická, takže fyzické odstranění může nastat později; expirovaná dávka však již nesmí být zahrnuta do odpovědi.
 
 ### 10.5 Storage driver
 
 Wire protokol nesmí záviset na názvech souborů, adresářích ani databázové technologii. Implementace používá rozhraní s operacemi odpovídajícími alespoň:
 
 - `enqueue(destination, records, expiresAt)`;
-- `claimAll(client)`;
-- `ack(client, receiptId)`;
+- `drainAll(client, now)`;
 - `usage(client)`;
 - `lastSeen()` a `recordLastSeen(client)`;
 - `sweep(now)`.
@@ -405,10 +394,8 @@ Povinný driver `disk` používá per-client adresáře, zámek s omezeným ček
 |---|---:|---|
 | `MAX_SERIALIZED_DATA_RECORD_BYTES` | 262144 B | Celý datový NDJSON řádek včetně LF. |
 | `MAX_DATA_RECORDS_PER_REQUEST` | 16 | Počet záznamů `data` v jednom requestu. |
-| `MAX_ACK_RECORDS_PER_REQUEST` | 64 | Počet záznamů `ack`. |
 | `MAX_AUTH_RECORD_BYTES` | 4096 B | První řádek včetně LF. |
-| `MAX_ACK_RECORD_BYTES` | 256 B | Jeden `ack` včetně LF. |
-| `MAX_REQUEST_BODY_BYTES` | 4214784 B | `4096 + 64×256 + 16×262144`. |
+| `MAX_REQUEST_BODY_BYTES` | 4198400 B | `4096 + 16×262144`. |
 | `MAX_INFO_PLAINTEXT_BYTES` | 262144 B | Plaintext šifrované odpovědi `info`. |
 | `MAX_QUEUE_BYTES_PER_CLIENT` | 16777216 B | 16 MiB logické persistentní fronty. |
 | `AUTH_TIMESTAMP_SKEW_SECONDS` | 60 s | Nejvyšší absolutní odchylka autentizačního timestampu od času serveru. |
@@ -421,7 +408,7 @@ Překročení syntaktického limitu vrací `413 payload_too_large`. Zaplnění p
 
 ### 11.2 Časové chování
 
-Server odpovídá okamžitým snapshotem fronty. Nikdy nečeká na příchod nových dat, nepoužívá `sleep`, long-polling ani streaming neurčité délky.
+Server odpovídá okamžitým vyprázdněním aktuálního bufferu. Nikdy nečeká na příchod nových dat, nepoužívá `sleep`, long-polling ani streaming neurčité délky.
 
 Doporučené výchozí hodnoty klienta:
 
@@ -445,17 +432,17 @@ Protokol nemá kryptografickou session ani přihlašovací handshake. Logický b
 
 Neexistuje login, session ID, keepalive ani logout. Každý request lze zpracovat jiným PHP workerem nebo uzlem se sdíleným storage a stejnou konfigurací klíčů.
 
-### 12.2 Stav dávky
+### 12.2 Stav uložené dávky
 
 ```text
-neexistuje --enqueue--> ready --claimAll--> inflight --ack--> smazána
-                              |                 |
-                              | TTL             | TTL / reclaim
-                              v                 v
-                           smazána          ready nebo smazána
+neexistuje --enqueue--> buffered --drainAll--> smazána
+                              |
+                              | TTL
+                              v
+                           smazána
 ```
 
-`claimAll` přesune do jednoho snapshotu všechny právě připravené záznamy a nesmí změnit jejich původní časy expirace. Pád během `enqueue` nesmí publikovat částečnou dávku. Pád po `claimAll` a před `ack` může vést k opakovanému doručení celého snapshotu.
+Server nevede žádný mezistav čekající na klienta. `drainAll` atomicky vrátí handleru všechny neexpirované záznamy a odstraní je ze storage. Pád během `enqueue` nesmí publikovat částečnou dávku. Pád po `drainAll` může způsobit ztrátu již odstraněných dat, nikdy jejich automatické opětovné vydání serverem.
 
 ## 13. Chyby
 
@@ -504,7 +491,7 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 
 Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` AES-256-GCM. Doporučená realizace používá `hash_hkdf()` a `openssl_encrypt(..., 'aes-256-gcm', ...)`. Chybí-li bezpečná AES-GCM implementace, `info` vrací `503 server_misconfigured`; datový relay může zůstat funkční, protože payload nedešifruje. Vlastní neauditovaná implementace AES se nedoporučuje.
 
-Tělo požadavku `data` může mít přibližně 4,02 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celou frontu klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result`. Bezpečnou volbou je validované záznamy dočasně držet v omezené paměti; `memory_limit` musí mít dostatečnou rezervu pro request, celý snapshot odpovědi a JSON struktury.
+Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result`. Bezpečnou volbou je validované záznamy dočasně držet v omezené paměti; `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
 
 Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění front přes webserver. Nemá používat neomezený globální zámek. Údržba po odpovědi musí mít časový a početní rozpočet.
 
@@ -526,7 +513,7 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 2. Chybějící poslední LF, CRLF, prázdný řádek, duplicitní klíč a neznámé pole jsou odmítnuty.
 3. Přesně 262144bajtový datový řádek projde, o bajt delší vrátí `413`.
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
-5. Hrany pro ack, celé tělo a frontu jsou testovány na `limit-1`, `limit` a `limit+1`.
+5. Hrany pro celé tělo a buffer jsou testovány na `limit-1`, `limit` a `limit+1`.
 6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a neznámé nebo nadbytečné pole jsou odmítnuty.
 7. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data` a právě jeden poslední `data-result`; další řádek za výsledkem je neplatný.
 
@@ -540,20 +527,21 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 6. Změna `messageId`, směrovacího pole `src` nebo `dst`, IV, ciphertextu či tagu zneplatní GCM ověření, protože routingová pole zůstávají součástí AAD.
 7. `info` salt má 32 bajtů, IV 12 bajtů a tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
 8. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením tagu.
-9. Každý přímý datový řádek odpovědi se samostatně ověří pomocí AES-GCM; neplatný tag zabrání potvrzení celého snapshotu.
+9. Každý přímý datový řádek odpovědi se samostatně ověří pomocí AES-GCM; řádek s neplatným tagem se zahodí bez ovlivnění ostatních platných řádků.
 
 ### 16.4 Fronty, souběh a pády
 
 1. Atomická publikace odolá pádu před a po `rename()` bez částečné dávky.
 2. Dva workery posílající stejnému cíli neztratí ani nespojí dávku.
-3. Odpověď vrátí všechny právě připravené záznamy jako přímé řádky `data`, bez stránkování a bez obálky; jejich počet může překročit 16.
-4. Neprázdná odpověď má v posledním poli `data-result` jediné nenulové `receiptId`, které potvrzuje celý snapshot; prázdná odpověď má `receiptId:null` a klient neposílá `ack`.
-5. Potvrzený snapshot zmizí; neznámý a opakovaný `ack` je no-op. Přerušení po doručení a před `ack` vede k možnému opakovanému doručení celého snapshotu.
-6. Jedna plná cílová fronta nezruší již přijaté položky pro jiný cíl a výsledek je přesný.
-7. 16MiB limit započítává `ready` i `inflight`; po zaplnění se vrací `429`.
-8. Dávka starší než 60 s není vydána; `claimAll` její expiraci neprodlouží.
-9. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
-10. Stejná sada kontraktních testů běží nad každým storage driverem.
+3. Odpověď atomicky vyprázdní všechny aktuálně buffered záznamy a vrátí je jako přímé řádky `data`, bez stránkování a bez obálky; jejich počet může překročit 16.
+4. Za datovými řádky následuje právě jeden `data-result` s přesnou uzavřenou sadou výsledkových polí; prázdný buffer vrátí pouze tento řádek.
+5. Pád workeru nebo přerušení spojení po `drainAll` vede ke ztrátě odstraněných dat a následující poll je znovu nevrátí.
+6. Záznamy zapsané souběžně až po atomickém `drainAll` zůstanou v bufferu pro další poll a nesmí se ztratit.
+7. Jedna plná cílová fronta nezruší již přijaté položky pro jiný cíl a výsledek je přesný.
+8. 16MiB limit započítává pouze dosud nevydané buffered záznamy; po zaplnění se vrací `429`.
+9. Dávka starší než 60 s není vydána operací `drainAll`.
+10. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
+11. Stejná sada kontraktních testů běží nad každým storage driverem.
 
 ### 16.5 Omezená ochrana proti replay
 
@@ -572,8 +560,8 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
 - ověřuje autentizaci před jakoukoli změnou storage;
 - vyžaduje podepsaný Unix timestamp v `auth-semi` i `auth-full` a odmítá absolutní odchylku větší než 60 s bez jeho perzistence;
-- vrací všechny právě připravené záznamy přímo jako `data` bez obálky a bez stránkování, zakončené jediným `data-result`;
-- zachovává at-least-once frontu, jedno potvrzení celého neprázdného snapshotu, TTL a přesné částečné výsledky;
+- vrací všechny aktuálně buffered záznamy přímo jako `data` bez obálky a bez stránkování, zakončené jediným `data-result`;
+- používá atomické at-most-once vyprázdnění celého bufferu bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
 - mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
 - udržuje jediný pevný payload klíč pro každou uspořádanou dvojici `src` a `dst` mimo relay server;
