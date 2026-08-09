@@ -62,11 +62,11 @@ Výchozí adresní prostor je `10.99.99.0/24`. Platné klientské adresy jsou `1
 
 Server a klienti používají tři oddělené třídy klíčů:
 
-1. `SERVER_SECRET`: 32 náhodných bajtů, které znají server a oprávnění klienti. Slouží pro `auth-semi`, šifrování `info` a jako jedna ze složek `auth-full`.
+1. `SERVER_SECRET`: konfigurační řetězec, který znají server a oprávnění klienti. Slouží pro `auth-semi`, šifrování `info` a jako jedna ze složek `auth-full`. Pro zabezpečený provoz se doporučuje alespoň 32 náhodných bajtů; protokol však dovoluje i prázdnou hodnotu nebo hodnotu tvořenou pouze nulami.
 2. `ACCESS_TOKEN`: 32 náhodných bajtů unikátních pro jednoho klienta. Zná jej pouze server a daný klient. Samotný token se nikdy nepřenáší.
 3. `PAYLOAD_KEY`: 32 náhodných bajtů sdílených jen mezi klienty, kteří mají číst daný payload. Relay server jej NESMÍ mít. Distribuce je mimo protokol.
 
-V konfiguračních souborech se `SERVER_SECRET` a `ACCESS_TOKEN` zapisují jako přesně 64 malých hexadecimálních znaků. Hodnota tvořená pouze nulami je neplatná. UPRAVIT. `PAYLOAD_KEY` a jeho reprezentace jsou záležitostí klienta; pro AES-256-GCM musí po dekódování mít 32 bajtů.
+Kryptografické operace používají přesné bajty nakonfigurovaného řetězce `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný řetězec i řetězec tvořený pouze nulami jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. `ACCESS_TOKEN` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. `PAYLOAD_KEY` a jeho reprezentace jsou záležitostí klienta; pro AES-256-GCM musí po dekódování mít 32 bajtů.
 
 Každý klíč má veřejný identifikátor `keyId`, 1 až 32 znaků z `[A-Za-z0-9._-]`. `keyId` není tajemství.
 
@@ -112,17 +112,17 @@ Jiné metody vrací `405 method_not_allowed` s hlavičkou `Allow`. Neznámá akc
 
 `GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Je-li aktivní `SERVER_SECRET` prázdný nebo je tvořen pouze znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
 
-Tato veřejná stránka provádí pouze uvedenou bezpečnou kontrolu a neprozrazuje konfiguraci. Přísná validace délky a formátu tajemství se provádí při obsluze autentizovaných akcí; chybná konfigurace vede k `503 server_misconfigured`.
+Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: prázdný nebo nulový `SERVER_SECRET` neblokuje `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`.
 
 ### 5.2 `health`
 
 `health` nevyžaduje autentizaci a vrací právě tato pole:
 
 ```json
-{"version":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30Z"}
+{"serverVersion":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30Z"}
 ```
 
-- `version` je verze serverové aplikace;
+- `serverVersion` je verze serverové aplikace;
 - `status` je při úspěchu `running`;
 - `description` je při úspěchu `OK`;
 - `timestamp` je aktuální UTC čas ve formátu RFC 3339 s přesností na sekundy.
@@ -185,7 +185,7 @@ Odvození závisí na obou tajemstvích. Znalost samotného `SERVER_SECRET` nest
 Content-Type je `application/json; charset=utf-8`. Tělo obsahuje právě jeden JSON objekt a žádné další bajty:
 
 ```json
-{"v":1,"type":"auth-semi","serverKeyId":"2026-08","requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","signature":"BASE64URL"}
+{"type":"auth-semi","serverKeyId":"2026-08","requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","signature":"BASE64URL"}
 ```
 
 Podpis se vypočte:
@@ -207,7 +207,7 @@ signature = HMAC-SHA-256(semiKey, canonical)
 Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 
 ```json
-{"protocolVersion":1,"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxAckRecordsPerRequest":64,"maxRequestBodyBytes":4214784,"maxResponseBodyBytes":5242880,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60},"storage":{"driver":"disk"}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxAckRecordsPerRequest":64,"maxRequestBodyBytes":4214784,"maxResponseBodyBytes":5242880,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60},"storage":{"driver":"disk"}}
 ```
 
 `clients` obsahuje pouze VPN adresu a poslední úspěšnou komunikaci. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nekomunikoval, může být vynechán. `lastSeen` je UTC RFC 3339.
@@ -227,7 +227,6 @@ info = "phpvpn/v1/info-response/" || serverKeyId || "/" || requestId
 key  = HKDF-SHA-256(SERVER_SECRET, salt, info, 32)
 
 aad = "PHPVPN-INFO-V1" LF
-      "1" LF
       "info" LF
       serverKeyId LF
       requestId LF
@@ -238,7 +237,7 @@ aad = "PHPVPN-INFO-V1" LF
 Server šifruje přesné UTF-8 bajty plaintext JSON pomocí AES-256-GCM s uvedeným `key`, `iv` a `aad`. Vrací jeden JSON objekt:
 
 ```json
-{"v":1,"type":"info","serverKeyId":"2026-08","requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","salt":"BASE64URL","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
+{"type":"info","serverKeyId":"2026-08","requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","salt":"BASE64URL","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
 ```
 
 Klient MUSÍ nejprve ověřit délky, odvodit klíč a ověřit GCM tag nad celým ciphertextem a AAD. Plaintext smí parsovat až po úspěšném ověření tagu.
@@ -260,7 +259,7 @@ Po prvním `data` již nesmí následovat `ack`. Samotný `auth-full` je platný
 ### 9.2 Záznam `auth-full`
 
 ```json
-{"v":1,"type":"auth-full","client":"10.99.99.2","serverKeyId":"2026-08","accessKeyId":"main","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","signature":"BASE64URL"}
+{"type":"auth-full","client":"10.99.99.2","serverKeyId":"2026-08","accessKeyId":"main","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","signature":"BASE64URL"}
 ```
 
 `signature` pokrývá všechny bajty za ukončovacím LF prvního řádku:
@@ -271,7 +270,6 @@ body = exact bytes after the LF terminating auth-full
 canonical = "PHPVPN-AUTH-FULL-V1" LF
             "POST" LF
             "data" LF
-            "1" LF
             client LF
             serverKeyId LF
             accessKeyId LF
@@ -288,7 +286,7 @@ Podpis zajišťuje autenticitu a integritu, nikoli čerstvost. Stejný autentizo
 ### 9.3 Záznam `ack`
 
 ```json
-{"v":1,"type":"ack","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08"}
+{"type":"ack","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08"}
 ```
 
 Klient posílá `ack` až po přijetí celé dávky, ověření její odpovědi a předání všech platných payloadů vyšší vrstvě. Neznámý, expirovaný nebo již potvrzený `receiptId` je úspěšný no-op. Tato idempotence mazání není replay deduplikací payloadu a nevyžaduje historii potvrzení.
@@ -296,7 +294,7 @@ Klient posílá `ack` až po přijetí celé dávky, ověření její odpovědi 
 ### 9.4 Záznam `data`
 
 ```json
-{"v":1,"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","payloadKeyId":"peer-2-4-v3","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
+{"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","payloadKeyId":"peer-2-4-v3","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
 ```
 
 Pravidla:
@@ -316,7 +314,6 @@ Odesílatel vybere 32bajtový `PAYLOAD_KEY` podle `payloadKeyId`. AAD je:
 
 ```text
 aad = "PHPVPN-DATA-V1" LF
-      "1" LF
       "data" LF
       messageId LF
       src LF
@@ -351,7 +348,7 @@ Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole.
 Záznam `delivery`:
 
 ```json
-{"v":1,"type":"delivery","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08","packet":{"v":1,"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","payloadKeyId":"peer-2-4-v3","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}}
+{"type":"delivery","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08","packet":{"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","payloadKeyId":"peer-2-4-v3","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}}
 ```
 
 Více řádků může sdílet `receiptId`; tvoří jednu atomicky potvrzovanou dávku. Server nesmí vydat jen část dávky. Klient odešle jeden `ack` po zpracování všech jejích řádků.
@@ -359,7 +356,7 @@ Více řádků může sdílet `receiptId`; tvoří jednu atomicky potvrzovanou d
 Záznam `data-result`:
 
 ```json
-{"v":1,"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":["d5b543a9-9fc3-4c98-916c-ea0198f67a79"],"deferredMessageIds":[],"acceptedRecords":1,"acceptedBytes":2048,"morePending":false}
+{"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":["d5b543a9-9fc3-4c98-916c-ea0198f67a79"],"deferredMessageIds":[],"acceptedRecords":1,"acceptedBytes":2048,"morePending":false}
 ```
 
 - `acceptedMessageIds` jsou jediné položky, které smí odesílatel odstranit ze své odchozí fronty;
@@ -371,7 +368,7 @@ Záznam `data-result`:
 Závěrečný záznam:
 
 ```json
-{"v":1,"type":"response-auth","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","mac":"BASE64URL"}
+{"type":"response-auth","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","mac":"BASE64URL"}
 ```
 
 ```text
@@ -492,13 +489,12 @@ neexistuje --enqueue--> ready --claim--> inflight --ack--> smazána
 Chybové tělo je malý obecný JSON objekt:
 
 ```json
-{"v":1,"type":"error","code":"unauthorized"}
+{"type":"error","code":"unauthorized"}
 ```
 
 | HTTP | `code` | Význam | Reakce klienta |
 |---:|---|---|---|
 | 400 | `bad_request` | Neplatný JSON/NDJSON, pořadí, pole, hodnota nebo duplicitní klíč. | Opravit request; neopakovat beze změny. |
-| 400 | `unsupported_version` | Neznámá major verze `v`. | Použít podporovanou verzi. |
 | 401 | `unauthorized` | Neplatný podpis, klient, klíč nebo podvržené `src`. | Ověřit konfiguraci; nemaž data. |
 | 404 | `not_found` | Neznámá akce. | Opravit URL. |
 | 405 | `method_not_allowed` | Nepovolená metoda. | Řídit se `Allow`. |
@@ -507,7 +503,7 @@ Chybové tělo je malý obecný JSON objekt:
 | 429 | `queue_full` | Cílová fronta nemá kapacitu. | Ponechat data, backoff s jitterem. |
 | 503 | `queue_busy` | Vyčerpán limit čekání na storage zámek. | Krátký backoff. |
 | 503 | `queue_unavailable` | Backend nelze bezpečně použít. | Backoff; administrátorská kontrola. |
-| 503 | `server_misconfigured` | Chybné klíče, limity nebo chybějící kryptografie. | Neopakovat rychle; opravit server. |
+| 503 | `server_misconfigured` | Nekonzistentní limity nebo chybějící povinná kryptografická funkce. | Neopakovat rychle; opravit server. |
 | 500 | `internal_error` | Neočekávaná interní chyba. | Ponechat data, backoff. |
 
 Chybová odpověď může vzniknout před autentizací, proto není obecně MACovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
@@ -534,11 +530,11 @@ Protokol klíče nikdy neposílá in-band. Nezajišťuje forward secrecy. Kompro
 
 ## 15. Kompatibilita a rozšiřování
 
-Pole `v` je major verze wire protokolu a v tomto dokumentu je vždy celé číslo `1`. Neznámá major verze se odmítá. Serverová verze `1.0.0` v `health` je informativní SemVer a není wire negotiation.
+Protokolové zprávy nenesou samostatné pole verze. Jejich schéma určuje hodnota `type`. Serverová hodnota `serverVersion` v `health` a `info` je informativní SemVer verze aplikace a není wire negotiation.
 
-Normativní v1 záznamy mají uzavřenou sadu polí. Nové volitelné informace se přidávají především do šifrovaného plaintextu `info`, kde klient musí ignorovat neznámá pole. Změna povinných polí, kanonizace nebo kryptografických algoritmů vyžaduje novou major wire verzi a nové doménové řetězce.
+Normativní typy zpráv mají uzavřenou sadu polí. Nové volitelné informace se přidávají především do šifrovaného plaintextu `info`, kde klient musí ignorovat neznámá pole. Nekompatibilní změna povinných polí, kanonizace nebo kryptografických algoritmů vyžaduje nový název typu zprávy a nové kryptografické doménové řetězce.
 
-Neexistuje automatický downgrade. Klient nesmí po chybě v1 zkusit historickou akci nebo slabší autentizaci. Akce `data` a `info` nenabízejí aliasy starých názvů.
+Neexistuje automatický downgrade. Klient nesmí po chybě podporovaného typu zkusit historickou akci nebo slabší autentizaci. Akce `data` a `info` nenabízejí aliasy starých názvů.
 
 ## 16. Dopad na implementaci v PHP
 
@@ -568,17 +564,18 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 1. Stejný request přes HTTP, HTTPS, přímé spojení a proxy vede ke stejnému aplikačnímu výsledku.
 2. Podvržené `X-Forwarded-*` hlavičky neovlivní autentizaci, `src`, frontu ani odpověď.
 3. URL s neznámou akcí a nepovolená metoda vrátí správné obecné chyby.
-4. Root stránka zobrazí H1; pro prázdný a nulový secret navíc červený H2.
-5. `health` má čtyři povinná pole, status `running`, description `OK` a UTC timestamp.
+4. Root stránka zobrazí H1; pro prázdný a nulový secret navíc červený H2, přičemž oba secrets zůstávají funkční pro `info` a `data`.
+5. `health` má čtyři povinná pole včetně `serverVersion`, status `running`, description `OK` a UTC timestamp.
 
 ### 17.2 JSON, NDJSON a limity
 
 1. Validní prázdný poll obsahuje pouze `auth-full` s LF.
 2. Chybějící poslední LF, CRLF, prázdný řádek, duplicitní klíč a neznámé pole jsou odmítnuty.
-3. Přesně 262144bajtový datový řádek projde, o bajt delší vrátí `413`.
-4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
-5. Hrany pro ack, celé tělo, response a frontu jsou testovány na `limit-1`, `limit` a `limit+1`.
-6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a `keyId` jsou odmítnuty.
+3. Záznamy nenesou pole `v`, `protocolVersion` ani jiné samostatné označení verze protokolu; přidané historické version pole je odmítnuto jako neznámé a schéma se vybírá výhradně podle `type`.
+4. Přesně 262144bajtový datový řádek projde, o bajt delší vrátí `413`.
+5. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
+6. Hrany pro ack, celé tělo, response a frontu jsou testovány na `limit-1`, `limit` a `limit+1`.
+7. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a `keyId` jsou odmítnuty.
 
 ### 17.3 Kryptografie
 
