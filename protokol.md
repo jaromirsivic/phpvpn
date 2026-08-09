@@ -32,7 +32,7 @@ php implementace serveru by v základu neměla vyžadovat žádné rozšíření
 
 ### 1.2 Vědomě neposkytované vlastnosti
 
-Protokol neposkytuje ochranu proti replay, exactly-once doručení, garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Nezajišťuje ani dostupnost při zaplnění úložiště nebo vyčerpání PHP workerů.
+Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once doručení, garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Nezajišťuje ani dostupnost při zaplnění úložiště nebo vyčerpání PHP workerů.
 
 ## 2. Normativní rozhodnutí
 
@@ -41,7 +41,7 @@ Protokol neposkytuje ochranu proti replay, exactly-once doručení, garantované
 | Architektura | Bezstavové, krátké HTTP požadavky; žádná serverová session. |
 | Wire format | JSON pro řídicí akce, NDJSON pro datovou akci. |
 | Doručení | At-least-once s explicitním potvrzením dávky. Duplicita je možný a akceptovaný výsledek. |
-| Replay | Bez detekce, bez deduplikace a bez perzistence nonce na serveru i klientovi. |
+| Replay | Timestamp omezuje platnost autentizovaného požadavku na ±60 s vůči času serveru. Uvnitř okna není replay detekován; bez deduplikace a bez perzistence timestampu nebo nonce. |
 | Payload klíče | Klientské per-peer nebo skupinové klíče distribuované mimo relay; server je nezná. |
 | Více cílů | Částečné přijetí je dovoleno a výsledek se vrací pro každý záznam. |
 | Transport | HTTP i HTTPS jsou rovnocenně podporované; server funguje přímo i za proxy. HTTPS není podmínkou protokolu. |
@@ -63,12 +63,12 @@ Výchozí adresní prostor je `10.99.99.0/24`. Platné klientské adresy jsou `1
 Server a klienti používají tři oddělené třídy klíčů:
 
 1. `SERVER_SECRET`: právě jedna konstanta v konfigurační hlavičce PHP souboru, kterou znají server a oprávnění klienti. Výchozí hodnota je 32 nulových bajtů a správce ji má nahradit bezpečnou náhodnou hodnotou. Slouží pro `auth-semi`, šifrování `info` a jako jedna ze složek `auth-full`.
-2. `ACCESS_TOKEN`: 32 náhodných bajtů unikátních pro jednoho klienta. Zná jej pouze server a daný klient. Samotný token se nikdy nepřenáší.
+2. `ACCESS_KEY`: právě jeden 32bajtový náhodný klíč unikátní pro jednoho klienta. Zná jej pouze server a daný klient. Server jej vyhledá v mapě `ACCESS_KEYS` podle VPN adresy `src`; samotný klíč ani jeho identifikátor se nikdy nepřenáší.
 3. `PAYLOAD_KEY`: 32 náhodných bajtů sdílených jen mezi klienty, kteří mají číst daný payload. Relay server jej NESMÍ mít. Distribuce je mimo protokol.
 
-Kryptografické operace používají přesné bajty konstanty `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. `ACCESS_TOKEN` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. `PAYLOAD_KEY` a jeho reprezentace jsou záležitostí klienta; pro AES-256-GCM musí po dekódování mít 32 bajtů.
+Kryptografické operace používají přesné bajty konstanty `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. Každý `ACCESS_KEY` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. `PAYLOAD_KEY` a jeho reprezentace jsou záležitostí klienta; pro AES-256-GCM musí po dekódování mít 32 bajtů.
 
-Každý `ACCESS_TOKEN` a `PAYLOAD_KEY` má veřejný identifikátor `keyId`, 1 až 32 znaků z `[A-Za-z0-9._-]`. `keyId` není tajemství. `SERVER_SECRET` žádný identifikátor nemá.
+Každý `PAYLOAD_KEY` má veřejný identifikátor `payloadKeyId`, 1 až 32 znaků z `[A-Za-z0-9._-]`. `payloadKeyId` není tajemství. `SERVER_SECRET` ani `ACCESS_KEY` žádný identifikátor nemají.
 
 ## 4. Transport HTTP, HTTPS a proxy
 
@@ -93,7 +93,7 @@ V URL je pouze `?action=<akce>`. Identita klienta, tokeny, podpisy a šifrovaný
 
 Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory klíčů, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.
 
-Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC nebo GCM tag, ale může neomezeně opakovat dříve zachycené platné zprávy. Protokol takový replay nerozpoznává.
+Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC nebo GCM tag. Autentizovaný požadavek může úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
 
 HTTPS navíc poskytuje ochranu transportních metadat v těle a hlavičkách, autentizaci TLS protistrany a ochranu spojení proti změně. Zda jej administrátor použije, je provozní rozhodnutí mimo povinné požadavky protokolu.
 
@@ -125,9 +125,9 @@ Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfigu
 - `serverVersion` je verze serverové aplikace;
 - `status` je při úspěchu `running`;
 - `description` je při úspěchu `OK`;
-- `timestamp` je aktuální UTC čas ve formátu RFC 3339 s přesností na sekundy.
+- `timestamp` je aktuální UTC čas ve formátu RFC 3339 s přesností na sekundy. Klient jej před autentizací převede na Unix čas a použije pro korekci vlastního časového offsetu.
 
-Pořadí členů JSON objektu není sémantické. Odpověď není autoritativním časem pro anti-replay kontrolu; protokol takovou kontrolu nemá.
+Pořadí členů JSON objektu není sémantické. Klient musí před prvním autentizovaným požadavkem získat čas serveru přes `health`; stejné srovnání zopakuje po `401`, pokud může být příčinou odchylka hodin.
 
 ## 6. Společný wire formát
 
@@ -170,13 +170,13 @@ semiKey = HKDF-SHA-256(SERVER_SECRET, salt, info, 32)
 ### 7.2 Klíč `auth-full`
 
 ```text
-saltMaterial = "phpvpn/auth-full-salt" || NUL || client || NUL || accessKeyId
+saltMaterial = "phpvpn/auth-full-salt" || NUL || src
 salt         = HMAC-SHA-256(SERVER_SECRET, saltMaterial)       // 32 raw bytes
-info         = "phpvpn/auth-full/" || accessKeyId
-fullKey      = HKDF-SHA-256(ACCESS_TOKEN, salt, info, 32)
+info         = "phpvpn/auth-full/" || src
+fullKey      = HKDF-SHA-256(ACCESS_KEY, salt, info, 32)
 ```
 
-Odvození závisí na obou tajemstvích. Znalost samotného `SERVER_SECRET` nestačí k vydávání se za jiného klienta.
+Server nejprve syntakticky ověří `src`, podle něj v konstantě `ACCESS_KEYS` vyhledá právě jeden `ACCESS_KEY` a odvodí `fullKey`. Pro neznámé `src` použije při výpočtu dummy klíč, aby čas odpovědi neprozrazoval existenci klienta. Odvození závisí na obou tajemstvích; znalost samotného `SERVER_SECRET` nestačí k vydávání se za jiného klienta.
 
 ## 8. Akce `info`
 
@@ -185,7 +185,7 @@ Odvození závisí na obou tajemstvích. Znalost samotného `SERVER_SECRET` nest
 Content-Type je `application/json; charset=utf-8`. Tělo obsahuje právě jeden JSON objekt a žádné další bajty:
 
 ```json
-{"type":"auth-semi","requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","signature":"BASE64URL"}
+{"type":"auth-semi","timestamp":1786306530,"requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","signature":"BASE64URL"}
 ```
 
 Podpis se vypočte:
@@ -194,12 +194,15 @@ Podpis se vypočte:
 canonical = "PHPVPN-AUTH-SEMI" LF
             "POST" LF
             "info" LF
+            DECIMAL(timestamp) LF
             requestId
 
 signature = HMAC-SHA-256(semiKey, canonical)
 ```
 
-`requestId` je korelační hodnota. Server jej nikde nepersistuje a opakovaný platný požadavek přijme znovu.
+`timestamp` je Unix čas v celých sekundách jako nezáporné JSON integer číslo bez zlomku a exponentu. V kanonickém vstupu se zapíše jeho minimální desítková reprezentace bez znaménka a vodicích nul. Server přijme požadavek pouze tehdy, když `abs(serverUnixTime - timestamp) <= 60`; jinak vrátí obecné `401 unauthorized`.
+
+`requestId` je korelační hodnota. Server nepersistuje `timestamp` ani `requestId`. Timestamp omezuje replay starého požadavku, ale identický platný požadavek lze uvnitř otevřeného 60sekundového okna zopakovat a server jej přijme znovu.
 
 ### 8.2 Plaintext odpovědi
 
@@ -257,7 +260,7 @@ Po prvním `data` již nesmí následovat `ack`. Samotný `auth-full` je platný
 ### 9.2 Záznam `auth-full`
 
 ```json
-{"type":"auth-full","client":"10.99.99.2","accessKeyId":"main","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","signature":"BASE64URL"}
+{"type":"auth-full","src":"10.99.99.2","timestamp":1786306530,"requestId":"69e82c2a-2732-466f-b9b1-f891084df639","signature":"BASE64URL"}
 ```
 
 `signature` pokrývá všechny bajty za ukončovacím LF prvního řádku:
@@ -268,8 +271,8 @@ body = exact bytes after the LF terminating auth-full
 canonical = "PHPVPN-AUTH-FULL" LF
             "POST" LF
             "data" LF
-            client LF
-            accessKeyId LF
+            src LF
+            DECIMAL(timestamp) LF
             requestId LF
             SHA256HEX(body)
 
@@ -278,7 +281,7 @@ signature = HMAC-SHA-256(fullKey, canonical)
 
 Server musí dočíst a hashovat celé tělo. Před úspěšným ověřením HMAC NESMÍ zpracovat `ack`, změnit frontu ani publikovat data. Při neznámém klientovi nebo klíči musí provést srovnatelnou práci s dummy klíčem a vrátit obecné `401 unauthorized`.
 
-Podpis zajišťuje autenticitu a integritu, nikoli čerstvost. Stejný autentizovaný požadavek lze přehrát a server jej zpracuje znovu.
+Pro `timestamp` platí stejný formát a kontrola `abs(serverUnixTime - timestamp) <= 60` jako u `auth-semi`. Timestamp je součástí HMAC, takže jej nelze změnit bez zneplatnění podpisu. Zajišťuje omezenou čerstvost vůči starým replayům; stejný autentizovaný požadavek lze uvnitř platného 60sekundového okna přehrát a server jej zpracuje znovu. Server timestamp nepersistuje.
 
 ### 9.3 Záznam `ack`
 
@@ -296,7 +299,7 @@ Klient posílá `ack` až po přijetí celé dávky, ověření její odpovědi 
 
 Pravidla:
 
-- `src` se musí přesně shodovat s `client` v `auth-full`; jinak `401 unauthorized`;
+- `src` se musí přesně shodovat se `src` v `auth-full`; jinak `401 unauthorized`;
 - `dst` musí být platná VPN adresa;
 - `messageId` musí být unikátní v rámci právě jednoho requestu, ale server jej neporovnává s minulostí;
 - `payloadKeyId` označuje klientský payload klíč a server jej pouze syntakticky validuje;
@@ -330,7 +333,7 @@ Relay tag neověřuje, protože nemá `PAYLOAD_KEY`. Změna `src`, `dst`, `messa
 
 #### Jedinečnost IV
 
-Pro každý konkrétní `PAYLOAD_KEY` MUSÍ odesílatel zabránit opakovanému použití stejného 12bajtového IV pro šifrování dvou různých plaintextů. Odesílatel používá 12 náhodných bajtů z CSPRNG a jeden payload klíč se NESMÍ použít pro více než `2^32` zašifrovaných zpráv; praktická rotace musí nastat výrazně dříve.
+Pro každý konkrétní `PAYLOAD_KEY` MUSÍ odesílatel zabránit opakovanému použití stejného 12bajtového IV pro šifrování dvou různých plaintextů. Odesílatel používá 12 náhodných bajtů z CSPRNG a jeden payload klíč se NESMÍ použít pro více než `2^32` zašifrovaných zpráv; po dosažení limitu se klíč již nesmí použít k šifrování.
 
 Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole. Jedinečnost IV je povinnost odesílatele pro korektnost AES-GCM, nikoli mechanismus detekce replay. Opakované doručení stejné trojice IV/ciphertext/tag je přijato jako další platná zpráva.
 
@@ -401,7 +404,7 @@ Chybová odpověď nikdy neopravňuje klienta odstranit položku z odchozí fron
 
 Server při vydání dávku atomicky přesune do stavu `inflight`. Po platném `ack` ji odstraní. Při přerušení spojení nebo chybějícím potvrzení ji může znovu nabídnout. Opakované doručení je normální.
 
-Klient ani server neporovnávají `messageId`, IV, request body nebo podpis s historií. Replay autentizovaného odesílacího requestu založí další kopii dat. Replay doručovací odpovědi předá payload znovu. To může zaplnit frontu, zvýšit náklady nebo opakovat účinek UDP/aplikačních dat; jde o výslovně přijaté omezení.
+Klient ani server neporovnávají `messageId`, IV, request body nebo podpis s historií. Replay autentizovaného odesílacího requestu uvnitř platného 60sekundového okna založí další kopii dat; po uzavření okna server request odmítne. Replay doručovací odpovědi předá payload znovu. To může zaplnit frontu, zvýšit náklady nebo opakovat účinek UDP/aplikačních dat; jde o výslovně přijaté omezení.
 
 ### 10.4 Expirace
 
@@ -436,6 +439,7 @@ Povinný driver `disk` používá per-client adresáře, zámek s omezeným ček
 | `MAX_DELIVERY_RECORDS_PER_RESPONSE` | 16 | Počet vydaných datových řádků. |
 | `MAX_INFO_PLAINTEXT_BYTES` | 262144 B | Plaintext šifrované odpovědi `info`. |
 | `MAX_QUEUE_BYTES_PER_CLIENT` | 16777216 B | 16 MiB logické persistentní fronty. |
+| `AUTH_TIMESTAMP_SKEW_SECONDS` | 60 s | Nejvyšší absolutní odchylka autentizačního timestampu od času serveru. |
 | `QUEUE_TTL_SECONDS` | 60 s | Nejvyšší věk čekající dávky. |
 | `LOCK_TIMEOUT_MS` | 200 ms | Nejvyšší čekání PHP workeru na storage zámek. |
 
@@ -462,7 +466,7 @@ Server může u `429` a `503` poslat `Retry-After`. Klient jej respektuje jako d
 
 Protokol nemá kryptografickou session ani přihlašovací handshake. Logický bootstrap je:
 
-1. volitelný `health` pro dostupnost a verzi;
+1. povinný `health` před prvním autentizovaným požadavkem pro dostupnost, verzi a korekci časového offsetu;
 2. volitelný autentizovaný `info` pro aktuální limity a přehled;
 3. libovolný počet samostatně autentizovaných `data` cyklů;
 4. ukončení prostým zastavením požadavků.
@@ -492,7 +496,7 @@ Chybové tělo je malý obecný JSON objekt:
 | HTTP | `code` | Význam | Reakce klienta |
 |---:|---|---|---|
 | 400 | `bad_request` | Neplatný JSON/NDJSON, pořadí, pole, hodnota nebo duplicitní klíč. | Opravit request; neopakovat beze změny. |
-| 401 | `unauthorized` | Neplatný podpis, klient, klíč nebo podvržené `src`. | Ověřit konfiguraci; nemaž data. |
+| 401 | `unauthorized` | Neplatný podpis, `src`, `ACCESS_KEY`, podvržené `src` v datovém záznamu nebo timestamp mimo povolené okno. | Obnovit čas přes `health`, ověřit konfiguraci; nemaž data. |
 | 404 | `not_found` | Neznámá akce. | Opravit URL. |
 | 405 | `method_not_allowed` | Nepovolená metoda. | Řídit se `Allow`. |
 | 413 | `payload_too_large` | Překročen limit těla, řádku nebo počtu záznamů. | Zmenšit request. |
@@ -505,27 +509,7 @@ Chybové tělo je malý obecný JSON objekt:
 
 Chybová odpověď může vzniknout před autentizací, proto není obecně MACovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
 
-## 14. Rotace klientských klíčů
-
-### 14.1 Přístupové tokeny
-
-Server smí pro jednoho klienta současně přijímat více přístupových tokenů podle `accessKeyId`. Rotace probíhá mimo protokol:
-
-1. administrátor vytvoří pro klienta nový náhodný token a nové `accessKeyId`;
-2. bezpečně jej distribuuje danému klientovi;
-3. server po omezenou překryvnou dobu přijímá starý i nový token;
-4. klient začne podepisovat novým `accessKeyId`;
-5. po potvrzené migraci administrátor starý token odstraní.
-
-Server vybere token podle veřejného `accessKeyId` a při chybě vrátí obecné `401`. Odstranění tokenu okamžitě znemožní nové požadavky s tímto ID, ale nemaže již uložené neprůhledné payloady.
-
-### 14.2 Payload klíče
-
-Odesílatelé začnou šifrovat novým `payloadKeyId`; příjemci během překryvu drží starý i nový klíč. Starý klíč mohou odstranit až po uplynutí nejméně `QUEUE_TTL_SECONDS` od posledního použití plus provozní rezervy pro lokální odchozí fronty.
-
-Protokol klíče nikdy neposílá in-band. Nezajišťuje forward secrecy. Kompromitovaný dlouhodobý klíč umožní zpracovat zachycená data chráněná tímto klíčem.
-
-## 15. Kompatibilita a rozšiřování
+## 14. Kompatibilita a rozšiřování
 
 Hodnota `type` určuje schéma zprávy. Serverová hodnota `serverVersion` v `health` a `info` je informativní SemVer verze aplikace a není wire negotiation.
 
@@ -533,7 +517,7 @@ Normativní typy zpráv mají uzavřenou sadu polí. Nové volitelné informace 
 
 Neexistuje automatický downgrade. Klient nesmí po chybě podporovaného typu zkusit historickou akci nebo slabší autentizaci. Akce `data` a `info` nenabízejí aliasy starých názvů.
 
-## 16. Dopad na implementaci v PHP
+## 15. Dopad na implementaci v PHP
 
 Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 
@@ -554,36 +538,37 @@ Diskový driver musí používat cesty odvozené pouze z již validované VPN ad
 
 Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` requestu s úspěšnou odpovědí. Selhání statistiky nesmí změnit úspěšné doručení.
 
-## 17. Povinné testovací scénáře
+## 16. Povinné testovací scénáře
 
-### 17.1 Transport a směrování
+### 16.1 Transport a směrování
 
 1. Stejný request přes HTTP, HTTPS, přímé spojení a proxy vede ke stejnému aplikačnímu výsledku.
 2. Podvržené `X-Forwarded-*` hlavičky neovlivní autentizaci, `src`, frontu ani odpověď.
 3. URL s neznámou akcí a nepovolená metoda vrátí správné obecné chyby.
 4. Root stránka zobrazí H1; při výchozích 32 nulových bajtech i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `info` a `data` zůstávají funkční.
-5. `health` má čtyři povinná pole včetně `serverVersion`, status `running`, description `OK` a UTC timestamp.
+5. `health` má čtyři povinná pole včetně `serverVersion`, status `running`, description `OK` a UTC timestamp; klient z něj před autentizací správně odvodí offset vůči Unix času serveru.
 
-### 17.2 JSON, NDJSON a limity
+### 16.2 JSON, NDJSON a limity
 
 1. Validní prázdný poll obsahuje pouze `auth-full` s LF.
 2. Chybějící poslední LF, CRLF, prázdný řádek, duplicitní klíč a neznámé pole jsou odmítnuty.
 3. Přesně 262144bajtový datový řádek projde, o bajt delší vrátí `413`.
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
 5. Hrany pro ack, celé tělo, response a frontu jsou testovány na `limit-1`, `limit` a `limit+1`.
-6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a `keyId` jsou odmítnuty.
+6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a `payloadKeyId` jsou odmítnuty.
 
-### 17.3 Kryptografie
+### 16.3 Kryptografie
 
 1. Known-answer testy pro HKDF-SHA-256, HMAC-SHA-256 a AES-256-GCM.
-2. Změna každého členu kanonického requestu nebo jediného bajtu body zneplatní HMAC.
-3. Změna každého AAD pole, IV, ciphertextu nebo tagu zneplatní GCM ověření.
-4. `info` salt má 32 bajtů, IV 12 bajtů a tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
-5. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením tagu.
-6. `response-auth` pokrývá přesné bajty všech předchozích řádků; změna pořadí nebo odebrání řádku selže.
-7. Testy pro staré a nové `accessKeyId` a `payloadKeyId` ověří překryv i revokaci klientských klíčů.
+2. `auth-semi` i `auth-full` nesou celočíselný Unix `timestamp`; změna timestampu nebo kteréhokoli dalšího členu kanonického requestu či jediného bajtu body zneplatní HMAC.
+3. Server přijme odchylky přesně `-60`, `0` a `+60` s a odmítne `-61` a `+61` s; po zpracování nevytvoří timestamp ani nonce záznam.
+4. `auth-full.src` vybere právě jeden `ACCESS_KEY`; neznámé `src` skončí obecným `401` s výpočtem nad dummy klíčem a každý datový záznam musí mít stejné `src`.
+5. Změna každého AAD pole, IV, ciphertextu nebo tagu zneplatní GCM ověření.
+6. `info` salt má 32 bajtů, IV 12 bajtů a tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
+7. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením tagu.
+8. `response-auth` pokrývá přesné bajty všech předchozích řádků; změna pořadí nebo odebrání řádku selže.
 
-### 17.4 Fronty, souběh a pády
+### 16.4 Fronty, souběh a pády
 
 1. Atomická publikace odolá pádu před a po `rename()` bez částečné dávky.
 2. Dva workery posílající stejnému cíli neztratí ani nespojí dávku.
@@ -595,25 +580,27 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 8. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
 9. Stejná sada kontraktních testů běží nad každým storage driverem.
 
-### 17.5 Replay jako přijaté omezení
+### 16.5 Omezená ochrana proti replay
 
-1. Dvojí odeslání identického platného requestu vytvoří dvě zpracování; nikde nevznikne nonce ani replay databáze.
-2. Dvojí doručení stejné platné odpovědi projde kryptografickým ověřením a payload je předán dvakrát.
-3. Opakované `messageId`, IV a podpis v pozdějším requestu nejsou porovnávány s historií.
-4. Replay může zaplnit frontu, ale nemůže bez klíče změnit chráněný obsah nebo vytvořit nový platný tag.
-5. Zdrojový strom a runtime storage po testech neobsahují adresář, tabulku ani soubor určený pro nonce/replay cache.
+1. Dvojí odeslání identického platného requestu uvnitř 60sekundového okna vytvoří dvě zpracování.
+2. Tentýž request se stářím 61 s server odmítne obecným `401`; timestamp se nepersistuje a nevznikne nonce ani replay databáze.
+3. Dvojí doručení stejné platné odpovědi projde kryptografickým ověřením a payload je předán dvakrát.
+4. Opakované `messageId`, IV a podpis nejsou porovnávány s historií.
+5. Replay uvnitř okna může zaplnit frontu, ale nemůže bez klíče změnit chráněný obsah nebo vytvořit nový platný tag.
+6. Zdrojový strom a runtime storage po testech neobsahují adresář, tabulku ani soubor určený pro nonce/replay cache.
 
-## 18. Kontrolní seznam shody
+## 17. Kontrolní seznam shody
 
 Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 
 - podporuje všechny čtyři endpointy a přesné typy zpráv;
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
 - ověřuje autentizaci před jakoukoli změnou storage;
+- vyžaduje podepsaný Unix timestamp v `auth-semi` i `auth-full` a odmítá absolutní odchylku větší než 60 s bez jeho perzistence;
 - chrání úspěšnou `data` odpověď závěrečným HMAC;
 - zachovává at-least-once frontu, potvrzení, TTL a přesné částečné výsledky;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
-- neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje nonce;
+- mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
 - udržuje payload klíče mimo relay server;
 - respektuje zveřejněné aktivní limity bez ohledu na použitý storage driver;
 - neprozrazuje tajemství ani interní cesty v odpovědích a logu.
