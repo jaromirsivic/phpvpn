@@ -64,11 +64,11 @@ Server a klienti používají tři oddělené třídy klíčů:
 
 1. `SERVER_SECRET`: právě jedna konstanta v konfigurační hlavičce PHP souboru, kterou znají server a oprávnění klienti. Výchozí hodnota je 32 nulových bajtů a správce ji má nahradit bezpečnou náhodnou hodnotou. Slouží pro `auth-semi`, šifrování `info` a jako jedna ze složek `auth-full`.
 2. `ACCESS_KEY`: právě jeden 32bajtový náhodný klíč unikátní pro jednoho klienta. Zná jej pouze server a daný klient. Server jej vyhledá v mapě `ACCESS_KEYS` podle VPN adresy `src`; samotný klíč ani jeho identifikátor se nikdy nepřenáší.
-3. `PAYLOAD_KEY`: 32 náhodných bajtů sdílených jen mezi klienty, kteří mají číst daný payload. Relay server jej NESMÍ mít. Distribuce je mimo protokol.
+3. `PAYLOAD_KEY`: právě jeden pevný 32bajtový end-to-end klíč pro každou uspořádanou dvojici VPN adres (`src`, `dst`). Znají jej pouze klienti daného směru komunikace; relay server jej NESMÍ mít. Distribuce je mimo protokol.
 
-Kryptografické operace používají přesné bajty konstanty `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. Každý `ACCESS_KEY` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. `PAYLOAD_KEY` a jeho reprezentace jsou záležitostí klienta; pro AES-256-GCM musí po dekódování mít 32 bajtů.
+Kryptografické operace používají přesné bajty konstanty `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. Každý `ACCESS_KEY` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. Klienti vedou lokální mapu `PAYLOAD_KEYS[src][dst]`; každá její hodnota se pro AES-256-GCM dekóduje na přesně 32 bajtů.
 
-Každý `PAYLOAD_KEY` má veřejný identifikátor `payloadKeyId`, 1 až 32 znaků z `[A-Za-z0-9._-]`. `payloadKeyId` není tajemství. `SERVER_SECRET` ani `ACCESS_KEY` žádný identifikátor nemají.
+`SERVER_SECRET`, `ACCESS_KEY` ani `PAYLOAD_KEY` nemají identifikátor přenášený v protokolu. Klient zvolí jediný `PAYLOAD_KEY` výhradně podle přesné uspořádané dvojice `src` a `dst`.
 
 ## 4. Transport HTTP, HTTPS a proxy
 
@@ -91,7 +91,7 @@ V URL je pouze `?action=<akce>`. Identita klienta, tokeny, podpisy a šifrovaný
 
 Čisté HTTP je platný a podporovaný režim. Aplikační kryptografie v něm chrání tajné hodnoty a autenticitu v rozsahu popsaném tímto dokumentem, nenahrazuje však zabezpečený transport.
 
-Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory klíčů, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.
+Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.
 
 Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC nebo GCM tag. Autentizovaný požadavek může úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
 
@@ -294,7 +294,7 @@ Klient posílá `ack` až po přijetí celé dávky, ověření její odpovědi 
 ### 9.4 Záznam `data`
 
 ```json
-{"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","payloadKeyId":"peer-2-4-v3","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
+{"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
 ```
 
 Pravidla:
@@ -302,7 +302,6 @@ Pravidla:
 - `src` se musí přesně shodovat se `src` v `auth-full`; jinak `401 unauthorized`;
 - `dst` musí být platná VPN adresa;
 - `messageId` musí být unikátní v rámci právě jednoho requestu, ale server jej neporovnává s minulostí;
-- `payloadKeyId` označuje klientský payload klíč a server jej pouze syntakticky validuje;
 - `iv` po dekódování musí mít 12 bajtů;
 - `tag` po dekódování musí mít 16 bajtů;
 - `ciphertext` nesmí být prázdný;
@@ -310,7 +309,7 @@ Pravidla:
 
 ### 9.5 End-to-end šifrování payloadu
 
-Odesílatel vybere 32bajtový `PAYLOAD_KEY` podle `payloadKeyId`. AAD je:
+Odesílatel vyhledá jediný 32bajtový `PAYLOAD_KEY` v lokální mapě `PAYLOAD_KEYS[src][dst]`. Protokol neprovádí další odvození klíče a nepřenáší jeho identifikátor. AAD je:
 
 ```text
 aad = "PHPVPN-DATA" LF
@@ -318,18 +317,17 @@ aad = "PHPVPN-DATA" LF
       messageId LF
       src LF
       dst LF
-      payloadKeyId LF
       BASE64URL(iv)
 ```
 
 Plaintext je přesný binární IPv4 paket. Odesílatel jej zašifruje AES-256-GCM a přenese ciphertext a 16bajtový tag. Příjemce musí před předáním paketu virtuální kartě:
 
-1. vybrat klíč podle `payloadKeyId`;
+1. vyhledat jediný klíč podle přesných směrovacích adres `src` a `dst`;
 2. sestavit přesné AAD;
 3. ověřit GCM tag a teprve poté získat plaintext;
 4. zkontrolovat syntaxi IPv4, celkovou délku a shodu vnitřních zdrojových a cílových adres s `src` a `dst`.
 
-Relay tag neověřuje, protože nemá `PAYLOAD_KEY`. Změna `src`, `dst`, `messageId`, `payloadKeyId`, IV nebo ciphertextu způsobí u příjemce neplatný tag.
+Relay tag neověřuje, protože nemá `PAYLOAD_KEY`. Změna `src`, `dst`, `messageId`, IV nebo ciphertextu způsobí u příjemce neplatný tag.
 
 #### Jedinečnost IV
 
@@ -348,7 +346,7 @@ Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole.
 Záznam `delivery`:
 
 ```json
-{"type":"delivery","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08","packet":{"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","payloadKeyId":"peer-2-4-v3","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}}
+{"type":"delivery","receiptId":"4036dcf4-d800-44a9-8676-b4d730a5ca08","packet":{"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}}
 ```
 
 Více řádků může sdílet `receiptId`; tvoří jednu atomicky potvrzovanou dávku. Server nesmí vydat jen část dávky. Klient odešle jeden `ack` po zpracování všech jejích řádků.
@@ -555,7 +553,7 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 3. Přesně 262144bajtový datový řádek projde, o bajt delší vrátí `413`.
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
 5. Hrany pro ack, celé tělo, response a frontu jsou testovány na `limit-1`, `limit` a `limit+1`.
-6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a `payloadKeyId` jsou odmítnuty.
+6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a neznámé nebo nadbytečné pole jsou odmítnuty.
 
 ### 16.3 Kryptografie
 
@@ -563,10 +561,11 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 2. `auth-semi` i `auth-full` nesou celočíselný Unix `timestamp`; změna timestampu nebo kteréhokoli dalšího členu kanonického requestu či jediného bajtu body zneplatní HMAC.
 3. Server přijme odchylky přesně `-60`, `0` a `+60` s a odmítne `-61` a `+61` s; po zpracování nevytvoří timestamp ani nonce záznam.
 4. `auth-full.src` vybere právě jeden `ACCESS_KEY`; neznámé `src` skončí obecným `401` s výpočtem nad dummy klíčem a každý datový záznam musí mít stejné `src`.
-5. Změna každého AAD pole, IV, ciphertextu nebo tagu zneplatní GCM ověření.
-6. `info` salt má 32 bajtů, IV 12 bajtů a tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
-7. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením tagu.
-8. `response-auth` pokrývá přesné bajty všech předchozích řádků; změna pořadí nebo odebrání řádku selže.
+5. Příjemce pro každou uspořádanou dvojici `src` a `dst` jednoznačně vybere právě jeden pevný `PAYLOAD_KEY`; relay tuto mapu nemá.
+6. Změna `messageId`, směrovacího pole `src` nebo `dst`, IV, ciphertextu či tagu zneplatní GCM ověření, protože routingová pole zůstávají součástí AAD.
+7. `info` salt má 32 bajtů, IV 12 bajtů a tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
+8. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením tagu.
+9. `response-auth` pokrývá přesné bajty všech předchozích řádků; změna pořadí nebo odebrání řádku selže.
 
 ### 16.4 Fronty, souběh a pády
 
@@ -601,6 +600,6 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - zachovává at-least-once frontu, potvrzení, TTL a přesné částečné výsledky;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
 - mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
-- udržuje payload klíče mimo relay server;
+- udržuje jediný pevný payload klíč pro každou uspořádanou dvojici `src` a `dst` mimo relay server;
 - respektuje zveřejněné aktivní limity bez ohledu na použitý storage driver;
 - neprozrazuje tajemství ani interní cesty v odpovědích a logu.
