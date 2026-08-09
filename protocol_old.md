@@ -356,22 +356,24 @@ Klíč je tak svázaný s konkrétním požadavkem: žádné dvě volání neši
 ### 13.5 Odpověď
 
 ```json
-{"alg":"AES-256-GCM","iv":"base64-iv","ciphertext":"base64-ciphertext","tag":"base64-tag"}
+{"type":"stats","iv":"base64-iv","ciphertext":"base64-ciphertext","tag":"base64-tag"}
 ```
 
 | Pole | Význam |
 |---|---|
-| `alg` | Vždy `AES-256-GCM`. Klient jinou hodnotu nesmí zpracovat. |
+| `type` | Vždy `stats`. Jinou hodnotu klient nesmí zpracovat. |
 | `iv` | 12 bajtů z generátoru kryptografické náhody, nový pro každou odpověď. |
 | `ciphertext` | Šifrovaný obsah `stats.json`. Prázdné statistiky jsou `{}`. |
 | `tag` | 16bajtový autentizační tag. |
+
+Šifra se v odpovědi neoznamuje. AES-256-GCM je součást protokolu a klient, který ji nezná, by stejně neuměl odvodit klíč.
 
 AAD tvoří kanonický autorizační request v nešifrované podobě, takže odpověď nelze připojit k jinému požadavku.
 
 ### 13.6 Postup klienta
 
 1. Sestavit `timestamp`, náhodný `nonce` a podpis, odeslat jediný řádek.
-2. Ověřit, že `alg` je `AES-256-GCM`.
+2. Ověřit, že `type` je `stats`.
 3. Odvodit stejný klíč z vlastní znalosti `SERVER_SECRET` a z kanonického requestu, který klient sám sestavil.
 4. Ověřit autentizační tag nad AAD.
 5. **Až po úspěšném ověření tagu** dešifrovat a zpracovat JSON. Při neplatném tagu se celá odpověď zahodí, žádná částečně dešifrovaná data se nepoužijí.

@@ -2820,8 +2820,10 @@ final class StatsHandler
             StatsCrypto::deriveKey(SERVER_SECRET, $canonical),
             $canonical
         );
+        // The cipher is not announced. It is part of the protocol, a client that
+        // does not already know it could not derive the key either.
         $body = json_encode([
-            'alg' => 'AES-256-GCM',
+            'type' => 'stats',
             'iv' => base64_encode($sealed['iv']),
             'ciphertext' => base64_encode($sealed['ciphertext']),
             'tag' => base64_encode($sealed['tag']),
