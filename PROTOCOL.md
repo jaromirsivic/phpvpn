@@ -12,9 +12,9 @@ Server je pouze relay. Šifrovaný IPv4 paket nedešifruje, nemění a jeho obsa
 | Vlastnost | Hodnota |
 |---|---|
 | Protokol | HTTP/1.1. Server přijímá prostý HTTP i HTTPS naprosto stejně, transport nijak nevyhodnocuje a proxy hlavičky nečte. |
-| Metoda | `POST` pro `sync` a `selftest`, `GET` nebo `POST` pro `health`, `GET` pro výchozí stránku. |
+| Metoda | `POST` pro `sync`, `stats` a `selftest`, `GET` nebo `POST` pro `health`, `GET` pro výchozí stránku. |
 | Content-Type požadavku | `application/x-ndjson` nebo `application/jsonl`, volitelně s `; charset=utf-8`. |
-| Content-Type odpovědi | `application/x-ndjson; charset=utf-8` pro `sync`, `application/json; charset=utf-8` pro `health`, `selftest` a chyby. |
+| Content-Type odpovědi | `application/x-ndjson; charset=utf-8` pro `sync`, `application/json; charset=utf-8` pro `health`, `stats`, `selftest` a chyby. |
 | Kódování | UTF-8. Všechny řetězcové hodnoty protokolu jsou navíc omezené na ASCII znakové třídy. |
 | Spojení | Krátké. Server nikdy nečeká na nová data, nepoužívá polling, `sleep` ani streaming. |
 
@@ -31,6 +31,7 @@ Transport je pro protokol nevýznamný. Schéma, port, adresa protistrany ani hl
 | `/phpvpn.php` | `GET`, `HEAD` | Provozní HTML stránka. Nevyžaduje autorizaci. |
 | `/phpvpn.php?action=health` | `GET`, `POST`, `HEAD` | Verze, stav a autoritativní čas serveru. Nevyžaduje autorizaci. |
 | `/phpvpn.php?action=sync` | `POST` | Jeden krátký obousměrný cyklus. Vyžaduje podpis. |
+| `/phpvpn.php?action=stats` | `POST` | Šifrovaný výpis časů posledního `sync` každého klienta. Vyžaduje znalost `SERVER_SECRET`, viz kapitola 13. |
 | `/phpvpn.php?action=selftest` | `POST` | Preflight prostředí. Vyžaduje podpis a je ve výchozím stavu vypnutý. |
 
 ### health
@@ -281,3 +282,115 @@ V dalším cyklu klient odešle `ack` pro `20260808T142000.891233Z_c40f81be2a97d
 | Uložení nonce | Soubor na nonce | Rotované minutové buckety s osmibajtovými záznamy | Soubor na nonce vyčerpá inode kvótu sdíleného hostingu. |
 
 Odchylky nemění nic, co by klient poznal jinak než přes hodnoty `acceptedPacketUuids` a `deferredPacketUuids`, jejichž význam zůstává přesně podle návrhu.
+
+---
+
+## 13. Akce `stats`
+
+Provozní přehled, kdy server naposledy viděl kterého klienta. Volajícím je správce, nikoli klientská karta: neposílá se VPN adresa ani access token, volající prokazuje znalost `SERVER_SECRET`. Odpověď je vždy šifrovaná, i na čistém HTTP.
+
+Server ke statistikám nepotřebuje OpenSSL ani žádné jiné nepovinné rozšíření. AES-256-GCM i HKDF-SHA-256 jsou implementované přímo v PHP, proto akce vyžaduje 64bitové PHP. Na 32bitovém buildu vrací `503 server_misconfigured` a zbytek serveru funguje dál.
+
+### 13.1 Obsah statistik
+
+`QUEUE_ROOT/stats.json` mapuje VPN adresu na UTC čas posledního úspěšného `sync`.
+
+```json
+{"10.99.99.2":"2026-08-08T14:20:00Z","10.99.99.4":"2026-08-08T14:19:31Z"}
+```
+
+| Vlastnost | Chování |
+|---|---|
+| Kdy se zapisuje | Po `sync`, který skončil stavem `200`, a to až po odeslání odpovědi, takže klienta nezdržuje. |
+| Jak často | Pro jednu adresu nejvýše jednou za `STATS_MIN_UPDATE_SECONDS`, výchozí 30 s. Mladší záznam se nepřepisuje. |
+| Mazání | Staré záznamy se nemažou nikdy. |
+| Souběh | Bez zámku. Zápis se publikuje přejmenováním a poslední zápis vyhrává. |
+| Selhání | Nikdy nezneplatní už úspěšný `sync`. |
+| `health` a `stats` | Soubor nemění. |
+
+### 13.2 Požadavek
+
+Tělo je NDJSON s jediným řádkem, zakončeným `\n`. Podpis nepokrývá tělo, takže druhý řádek je chyba protokolu.
+
+```http
+POST /phpvpn.php?action=stats HTTP/1.1
+Content-Type: application/x-ndjson
+
+{"type":"stats-auth","timestamp":"2026-08-08T14:20:00Z","nonce":"o5TqZ0nS1w7bK3xR9dLp","signature":"9f2c…"}
+```
+
+Záznam musí obsahovat přesně čtyři pole.
+
+| Pole | Pravidlo |
+|---|---|
+| `type` | `"stats-auth"` |
+| `timestamp` | `YYYY-MM-DDTHH:MM:SSZ`, UTC, odchylka nejvýše `CLOCK_SKEW_SECONDS` |
+| `nonce` | 16 až 64 znaků z `A-Z a-z 0-9 _ -`, kryptograficky náhodný pro každý požadavek |
+| `signature` | 64 malých hexadecimálních znaků |
+
+Autorizační údaje nikdy nepatří do URL, ze stejného důvodu jako u `sync`, viz kapitola 1.
+
+### 13.3 Podpis
+
+```
+canonical = "POST" + "\n" + "stats" + "\n" + timestamp + "\n" + nonce
+signature = hash_hmac('sha256', canonical, SERVER_SECRET)      // hex
+```
+
+Kanonický řetězec nekončí novým řádkem. Server porovnává podpis přes `hash_equals`. `SERVER_SECRET` se nikdy neposílá ani neloguje.
+
+Při `PERSIST_NONCES = true` platí ochrana proti replay stejně jako u `sync`, jen ve vlastním bucketu.
+
+### 13.4 Odvození klíče
+
+Klíč pro AES se nesmí rovnat `SERVER_SECRET` ani vzniknout zřetězením hodnot, proto se odvozuje přes HKDF-SHA-256.
+
+```
+salt = sha256(canonical)                        // 32 syrových bajtů
+info = "phpvpn/stats-response/v1"
+key  = HKDF-SHA-256(ikm = SERVER_SECRET, salt, info, L = 32)
+```
+
+Klíč je tak svázaný s konkrétním požadavkem: žádné dvě volání nešifrují stejným klíčem.
+
+### 13.5 Odpověď
+
+```json
+{"alg":"AES-256-GCM","iv":"base64-iv","ciphertext":"base64-ciphertext","tag":"base64-tag"}
+```
+
+| Pole | Význam |
+|---|---|
+| `alg` | Vždy `AES-256-GCM`. Klient jinou hodnotu nesmí zpracovat. |
+| `iv` | 12 bajtů z generátoru kryptografické náhody, nový pro každou odpověď. |
+| `ciphertext` | Šifrovaný obsah `stats.json`. Prázdné statistiky jsou `{}`. |
+| `tag` | 16bajtový autentizační tag. |
+
+AAD tvoří kanonický autorizační request v nešifrované podobě, takže odpověď nelze připojit k jinému požadavku.
+
+### 13.6 Postup klienta
+
+1. Sestavit `timestamp`, náhodný `nonce` a podpis, odeslat jediný řádek.
+2. Ověřit, že `alg` je `AES-256-GCM`.
+3. Odvodit stejný klíč z vlastní znalosti `SERVER_SECRET` a z kanonického requestu, který klient sám sestavil.
+4. Ověřit autentizační tag nad AAD.
+5. **Až po úspěšném ověření tagu** dešifrovat a zpracovat JSON. Při neplatném tagu se celá odpověď zahodí, žádná částečně dešifrovaná data se nepoužijí.
+
+Referenční implementace klienta je v [tests/lib/StatsClient.php](tests/lib/StatsClient.php).
+
+### 13.7 Chyby
+
+| HTTP | `error` | Příčina |
+|---|---|---|
+| `400` | `bad_request` | Nečitelný JSON, jiný počet polí, jiný `type`, druhý řádek v těle |
+| `401` | `unauthorized` | Neplatný podpis, chybný formát `timestamp`, `nonce` nebo `signature`, časová odchylka, replay |
+| `405` | `method_not_allowed` | Jiná metoda než `POST` |
+| `413` | `payload_too_large` | Tělo nebo řádek nad protokolovým stropem |
+| `415` | `unsupported_media_type` | Chybný `Content-Type` |
+| `503` | `server_misconfigured` | Krátký `SERVER_SECRET` nebo 32bitové PHP |
+
+Chybová odpověď je vždy jen malý obecný dokument z kapitoly 6 a nikdy neobsahuje statistiky ani jejich část.
+
+### 13.8 Co šifrování řeší a co ne
+
+Šifrování chrání **obsah** odpovědi a váže ji na konkrétní požadavek. Nenahrazuje transportní zabezpečení: nechrání proti zdržení, zahození ani opakovanému doručení odpovědi na síti. Čistý HTTP zůstává podporovaný, ale pokud jsou tyto vlastnosti potřeba, zajišťuje je infrastruktura před serverem.

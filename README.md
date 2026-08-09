@@ -24,7 +24,7 @@ Server je navržený pro **typický hosting**, nikoli pro konkrétní vyladěné
 
 | Vlastnost | Požadavek |
 |---|---|
-| PHP | 8.2 nebo novější, libovolné SAPI |
+| PHP | 8.2 nebo novější, libovolné SAPI. 64bitový build je potřeba jen pro `?action=stats`. |
 | Transport | HTTP i HTTPS, server mezi nimi nerozlišuje. Funguje i za proxy. |
 | Zapisovatelný adresář | Jeden, ideálně mimo document root |
 | `post_max_size` | Nad `MAX_REQUEST_BYTES`, tedy nad 1 MiB při výchozím nastavení |
@@ -92,7 +92,7 @@ Před nasazením provozu ověřte prostředí přímo na cílovém hostingu. Pre
 3. Zkontrolujte, že žádná kontrola nemá výsledek `fail`.
 4. **Nastavte `SELFTEST_ENABLED` zpět na `false`.**
 
-Preflight ověří verzi PHP, dostupnost funkcí, atomické publikování dávky, `flock`, volné místo, `post_max_size`, `memory_limit`, `disable_functions` a umístění `QUEUE_ROOT` vůči document rootu.
+Preflight ověří verzi PHP, dostupnost funkcí, šířku celých čísel, známé testovací vektory AES-256-GCM a HKDF-SHA-256, atomické publikování dávky, `flock`, volné místo, `post_max_size`, `memory_limit`, `disable_functions` a umístění `QUEUE_ROOT` vůči document rootu.
 
 ---
 
@@ -104,6 +104,7 @@ Preflight ověří verzi PHP, dostupnost funkcí, atomické publikování dávky
 QUEUE_ROOT/
     .htaccess                              obranné pravidlo navíc
     index.html                             prázdný, blokuje výpis adresáře
+    stats.json                             čas posledního sync každého klienta
     10_99_99_0/004/                        fronta klienta 10.99.99.4
         queue.lock                         zámek fronty
         queue.stat                         počet souborů, bajtů a čas poslední údržby
@@ -119,6 +120,14 @@ QUEUE_ROOT/
 Bez cronu se údržba dělá výhradně při běžném provozu. Každý požadavek uklidí frontu, se kterou pracuje, a po odeslání odpovědi navíc provede malý, časově omezený díl globálního úklidu. Nic se nespouští ručně.
 
 Nevyzvednutá dávka se po `QUEUE_TTL_SECONDS` zahodí. Jde o vědomou a omezenou vlastnost relay služby, nikoli o chybu.
+
+### Statistiky
+
+Server si u každého úspěšného `sync` poznamenává do `QUEUE_ROOT/stats.json` UTC čas, kdy klienta naposledy viděl. Záznam se pro jednu adresu obnovuje nejvýše jednou za `STATS_MIN_UPDATE_SECONDS`, výchozí 30 sekund, staré záznamy se nemažou a selhání zápisu nikdy nezneplatní už odbavený `sync`. Zapisuje se až po odeslání odpovědi, takže to klienta nezdržuje.
+
+Přehled si vyzvednete podepsaným `POST` na `?action=stats`. Podpis se sestavuje ze `SERVER_SECRET`, nikoli z tokenu klienta, takže tuto akci může volat jen správce. Odpověď je vždy zašifrovaná pomocí AES-256-GCM klíčem odvozeným z konkrétního požadavku, i na čistém HTTP. Tvar požadavku, odvození klíče a povinné ověření autentizačního tagu popisuje [PROTOCOL.md](PROTOCOL.md) kapitola 13, referenční klient je v [tests/lib/StatsClient.php](tests/lib/StatsClient.php).
+
+Šifrování je napsané přímo v PHP, aby nezáviselo na OpenSSL. Vyžaduje proto 64bitové PHP. Na 32bitovém buildu vrací `?action=stats` `503 server_misconfigured` a nic dalšího to neovlivní.
 
 ### Logy
 

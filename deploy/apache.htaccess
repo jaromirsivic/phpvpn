@@ -17,7 +17,9 @@
 </IfModule>
 
 # --- Never serve queue artefacts, whatever directory they end up in ----------
-<FilesMatch "\.(data|sending|writing|error|stat|lock|bin|log)$">
+# json is on the list because of QUEUE_ROOT/stats.json. Only phpvpn.php is meant
+# to be served from this directory, so nothing legitimate is lost.
+<FilesMatch "\.(data|sending|writing|error|stat|lock|bin|log|json)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>

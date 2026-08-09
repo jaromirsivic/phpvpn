@@ -21,6 +21,7 @@ require __DIR__ . '/lib/Assert.php';
 require __DIR__ . '/lib/Suite.php';
 require __DIR__ . '/lib/HttpClient.php';
 require __DIR__ . '/lib/SignRequest.php';
+require __DIR__ . '/lib/StatsClient.php';
 require __DIR__ . '/lib/Harness.php';
 require __DIR__ . '/lib/Vpn.php';
 

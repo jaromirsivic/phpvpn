@@ -65,6 +65,18 @@ return function (Suite $suite): void {
         }
     });
 
+    $suite->test('the preflight verifies the statistics crypto on the host itself', function () use ($get, $run, $checksOf) {
+        $checks = $checksOf($run($get()));
+
+        Assert::same('pass', $checks['integer_width']['result'], 'the stats action needs 64 bit integers');
+        Assert::contains('64', $checks['integer_width']['detail'], 'and the width is reported');
+        Assert::same(
+            'pass',
+            $checks['stats_crypto']['result'],
+            'AES-256-GCM and HKDF must reproduce the published vectors here'
+        );
+    });
+
     $suite->test('the preflight proves the storage primitives really work', function () use ($get, $run, $checksOf) {
         $checks = $checksOf($run($get()));
 

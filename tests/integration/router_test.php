@@ -75,9 +75,11 @@ return function (Suite $suite): void {
     });
 
     $suite->test('a wrong method is a 405 with an Allow header', function () use ($get) {
-        $sync = HttpClient::request($get()->url() . '?action=sync', 'GET');
-        Assert::same(405, $sync['status'], 'sync is POST only');
-        Assert::same('POST', $sync['headers']['allow'] ?? '', 'Allow header');
+        foreach (['sync', 'stats'] as $action) {
+            $response = HttpClient::request($get()->url() . '?action=' . $action, 'GET');
+            Assert::same(405, $response['status'], $action . ' is POST only');
+            Assert::same('POST', $response['headers']['allow'] ?? '', $action . ': Allow header');
+        }
 
         $page = HttpClient::request($get()->url(), 'POST');
         Assert::same(405, $page['status'], 'the status page is GET only');

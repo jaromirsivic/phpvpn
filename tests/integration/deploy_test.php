@@ -90,7 +90,7 @@ return function (Suite $suite): void {
         $apache = (string) file_get_contents(Harness::projectRoot() . '/deploy/apache.htaccess');
         $nginx = (string) file_get_contents(Harness::projectRoot() . '/deploy/nginx.conf');
 
-        foreach (['data', 'sending', 'writing', 'error', 'stat', 'lock', 'bin', 'log'] as $extension) {
+        foreach (['data', 'sending', 'writing', 'error', 'stat', 'lock', 'bin', 'log', 'json'] as $extension) {
             Assert::contains($extension, $apache, 'the Apache rules must cover .' . $extension);
             Assert::contains($extension, $nginx, 'the nginx rules must cover .' . $extension);
         }

@@ -24,6 +24,7 @@
  *   GET  /phpvpn.php                 operational HTML page
  *   *    /phpvpn.php?action=health   version, status and authoritative UTC time
  *   POST /phpvpn.php?action=sync     one short bidirectional batch exchange
+ *   POST /phpvpn.php?action=stats    encrypted last seen time of every client
  *   POST /phpvpn.php?action=selftest environment preflight, disabled by default
  *
  * Deliberate deviations from design2.md, all documented in PROTOCOL.md:
@@ -251,6 +252,12 @@ const LOG_LEVEL                 = 'error';
 const LOG_RETENTION_DAYS        = 3;
 
 /**
+ * Shortest interval between two statistics updates for one client in seconds.
+ * A lower value keeps stats.json more accurate at the price of more writes.
+ */
+const STATS_MIN_UPDATE_SECONDS  = 30;
+
+/**
  * Exposes the signed diagnostic selftest endpoint. true enables it; false
  * returns 404 and reduces the exposed surface in production.
  */
@@ -289,6 +296,9 @@ final class Ctx
     public static ?string $writingPath = null;
     public static string $client = '';
     public static string $action = '';
+
+    /** Set only by a sync that answered 200, read after the response is flushed. */
+    public static string $syncedClient = '';
 
     private static string $pool = '';
     private static int $poolOffset = 0;
@@ -1754,6 +1764,7 @@ final class Sweeper
             @touch($lockPath);
             self::sweepQueues($stateDir);
             self::sweepNonces();
+            self::sweepStatsTemp();
             self::rotateLogs();
         } catch (Throwable $error) {
             Log::error('sweep_failed', ['type' => get_class($error)]);
@@ -1855,6 +1866,28 @@ final class Sweeper
         closedir($handle);
     }
 
+    /** Discards a statistics file that a crash left half written. */
+    private static function sweepStatsTemp(): void
+    {
+        $root = QueuePath::root();
+        $handle = @opendir($root);
+        if ($handle === false) {
+            return;
+        }
+        while (($entry = readdir($handle)) !== false) {
+            if (!str_starts_with($entry, 'stats.json.') || !str_ends_with($entry, '.writing')) {
+                continue;
+            }
+            $path = $root . '/' . $entry;
+            clearstatcache(true, $path);
+            $modified = @filemtime($path);
+            if ($modified === false || Ctx::$now - $modified > WRITING_STALE_SECONDS) {
+                @unlink($path);
+            }
+        }
+        closedir($handle);
+    }
+
     private static function rotateLogs(): void
     {
         $dir = QueuePath::logDir();
@@ -1872,6 +1905,507 @@ final class Sweeper
             }
         }
         closedir($handle);
+    }
+}
+
+// =============================================================================
+// Statistics
+// =============================================================================
+
+/**
+ * QUEUE_ROOT/stats.json maps a VPN address to the UTC time of its last
+ * successful sync.
+ *
+ * The file is deliberately unlocked. A write happens at most once per client per
+ * STATS_MIN_UPDATE_SECONDS, it is published by a rename and two writers that
+ * race differ by a single timestamp, so the last rename simply wins. Paying for
+ * a lock on the sync path to protect a statistic would be the wrong trade.
+ *
+ * Nothing here may ever turn a delivered sync into an error, so record() cannot
+ * throw and reports a problem only to the log.
+ */
+final class StatsFile
+{
+    /** Returned whenever the file is missing, empty or unusable. */
+    public const EMPTY_STATS = '{}';
+
+    /** A well formed file holds at most 253 entries, so this is pure defence. */
+    private const MAX_BYTES = 65536;
+
+    public static function path(): string
+    {
+        return QueuePath::root() . '/stats.json';
+    }
+
+    /** Raw bytes as they will be encrypted, or "{}" when there is nothing to serve. */
+    public static function read(): string
+    {
+        $raw = @file_get_contents(self::path(), false, null, 0, self::MAX_BYTES + 1);
+        if (!is_string($raw) || $raw === '' || strlen($raw) > self::MAX_BYTES) {
+            return self::EMPTY_STATS;
+        }
+
+        return $raw;
+    }
+
+    /** Stamps the current time for one client, skipping a recent enough record. */
+    public static function record(string $client): void
+    {
+        try {
+            $entries = self::load();
+            $previous = $entries[$client] ?? null;
+            if ($previous !== null) {
+                $age = Ctx::$now - (int) Wire::parseTimestamp($previous);
+                if ($age >= 0 && $age <= STATS_MIN_UPDATE_SECONDS) {
+                    return;
+                }
+            }
+            $entries[$client] = Wire::isoTime(Ctx::$now);
+            self::store($entries);
+        } catch (Throwable $error) {
+            Log::error('stats_update_failed', ['type' => get_class($error)]);
+        }
+    }
+
+    /**
+     * Existing records, with anything malformed left behind.
+     *
+     * Old records are never removed, but an entry that is not a client address
+     * mapped to a UTC timestamp was never a record in the first place and would
+     * only let a damaged file grow without bound.
+     *
+     * @return array<string,string>
+     */
+    private static function load(): array
+    {
+        $decoded = json_decode(self::read(), true, 3);
+        if (!is_array($decoded)) {
+            return [];
+        }
+
+        $entries = [];
+        foreach ($decoded as $address => $seenAt) {
+            if (is_string($address)
+                && is_string($seenAt)
+                && Wire::octetOf($address) !== 0
+                && Wire::parseTimestamp($seenAt) !== null
+            ) {
+                $entries[$address] = $seenAt;
+            }
+        }
+
+        return $entries;
+    }
+
+    /** @param array<string,string> $entries */
+    private static function store(array $entries): void
+    {
+        $encoded = json_encode($entries, JSON_UNESCAPED_SLASHES | JSON_FORCE_OBJECT);
+        if ($encoded === false) {
+            return;
+        }
+
+        // The suffix is .writing so the shipped webserver rules already deny it
+        // and Sweeper already knows how to clean it up after a crash.
+        $temp = self::path() . '.' . Ctx::hex(4) . '.writing';
+        if (@file_put_contents($temp, $encoded) !== strlen($encoded)) {
+            @unlink($temp);
+
+            return;
+        }
+        if (!@rename($temp, self::path())) {
+            @unlink($temp);
+        }
+    }
+}
+
+// =============================================================================
+// Software AES-256-GCM
+// =============================================================================
+
+/**
+ * Authenticated encryption of the statistics response, written entirely in PHP.
+ *
+ * This file promises to need no optional extension, so OpenSSL and Sodium are
+ * both out of reach. AES-256 therefore runs on four T tables built at runtime,
+ * counter mode supplies confidentiality and GHASH supplies the authentication
+ * tag. A pure PHP block cipher is only practical because the plaintext is a few
+ * kilobytes of statistics; nothing on the packet path may ever use it.
+ *
+ * Every 128 bit value is held as four 32 bit words rather than two 64 bit ones,
+ * so no shift ever meets the sign bit of a PHP integer.
+ */
+final class StatsCrypto
+{
+    public const IV_BYTES = 12;
+    public const TAG_BYTES = 16;
+    public const KEY_BYTES = 32;
+
+    /** HKDF context. Changing it invalidates every client that reads stats. */
+    public const INFO = 'phpvpn/stats-response/v1';
+
+    private const ROUNDS = 14;
+
+    /** The AES substitution box, stored as hex because a const cannot call hex2bin(). */
+    private const SBOX_HEX =
+        '637c777bf26b6fc53001672bfed7ab76'
+        . 'ca82c97dfa5947f0add4a2af9ca472c0'
+        . 'b7fd9326363ff7cc34a5e5f171d83115'
+        . '04c723c31896059a071280e2eb27b275'
+        . '09832c1a1b6e5aa0523bd6b329e32f84'
+        . '53d100ed20fcb15b6acbbe394a4c58cf'
+        . 'd0efaafb434d338545f9027f503c9fa8'
+        . '51a3408f929d38f5bcb6da2110fff3d2'
+        . 'cd0c13ec5f974417c4a77e3d645d1973'
+        . '60814fdc222a908846eeb814de5e0bdb'
+        . 'e0323a0a4906245cc2d3ac629195e479'
+        . 'e7c8376d8dd54ea96c56f4ea657aae08'
+        . 'ba78252e1ca6b4c6e8dd741f4bbd8b8a'
+        . '703eb5664803f60e613557b986c11d9e'
+        . 'e1f8981169d98e949b1e87e9ce5528df'
+        . '8ca1890dbfe6426841992d0fb054bb16';
+
+    /** False on a 32 bit build, where the 32 bit word arithmetic would overflow. */
+    public static function supported(): bool
+    {
+        return PHP_INT_SIZE >= 8;
+    }
+
+    /**
+     * The response key. It is never SERVER_SECRET and never a concatenation of
+     * request values: the secret is the input keying material, the canonical
+     * request only contributes the salt.
+     */
+    public static function deriveKey(string $secret, string $canonical): string
+    {
+        return self::hkdfSha256($secret, hash('sha256', $canonical, true), self::INFO, self::KEY_BYTES);
+    }
+
+    /** HKDF-SHA-256 extract and expand, RFC 5869, built only from hash_hmac(). */
+    public static function hkdfSha256(string $ikm, string $salt, string $info, int $length): string
+    {
+        if ($length < 1 || $length > 8160) {
+            throw new HttpError(500, 'internal_error');
+        }
+        $prk = hash_hmac('sha256', $ikm, $salt === '' ? str_repeat("\0", 32) : $salt, true);
+
+        $okm = '';
+        $block = '';
+        for ($counter = 1; strlen($okm) < $length; $counter++) {
+            $block = hash_hmac('sha256', $block . $info . chr($counter), $prk, true);
+            $okm .= $block;
+        }
+
+        return substr($okm, 0, $length);
+    }
+
+    /**
+     * AES-256-GCM with a fresh random IV, the only entry point production code
+     * may use.
+     *
+     * @return array{iv:string,ciphertext:string,tag:string} raw bytes
+     */
+    public static function encrypt(string $plaintext, string $key, string $aad): array
+    {
+        return self::seal($plaintext, $key, $aad, random_bytes(self::IV_BYTES));
+    }
+
+    /**
+     * AES-256-GCM with a caller supplied IV.
+     *
+     * SECURITY: reusing one key with one IV destroys the confidentiality and the
+     * authenticity of both messages. Only encrypt() may be used in production;
+     * this method exists for known answer vectors.
+     *
+     * @return array{iv:string,ciphertext:string,tag:string} raw bytes
+     */
+    public static function seal(string $plaintext, string $key, string $aad, string $iv): array
+    {
+        if (!self::supported() || strlen($key) !== self::KEY_BYTES || strlen($iv) !== self::IV_BYTES) {
+            throw new HttpError(500, 'internal_error');
+        }
+
+        $schedule = self::expandKey($key);
+        $table = self::ghashTable(self::encryptBlock(str_repeat("\0", 16), $schedule));
+
+        // A 96 bit IV is used as is, which is the only case this file needs.
+        $preCounter = $iv . "\0\0\0\1";
+
+        $counter = $preCounter;
+        $ciphertext = '';
+        $length = strlen($plaintext);
+        for ($offset = 0; $offset < $length; $offset += 16) {
+            $counter = self::inc32($counter);
+            $keystream = self::encryptBlock($counter, $schedule);
+            $chunk = substr($plaintext, $offset, 16);
+            $ciphertext .= $chunk ^ substr($keystream, 0, strlen($chunk));
+        }
+
+        $checksum = self::ghash(
+            $table,
+            self::pad($aad) . self::pad($ciphertext) . self::lengthBlock(strlen($aad), $length)
+        );
+
+        return [
+            'iv' => $iv,
+            'ciphertext' => $ciphertext,
+            'tag' => $checksum ^ self::encryptBlock($preCounter, $schedule),
+        ];
+    }
+
+    /**
+     * Known answer check for the preflight.
+     *
+     * The vectors are AES-256 test case 14 of the GCM specification and test
+     * case 3 of RFC 5869, so a host that miscomputes either one is caught
+     * before it serves a single response.
+     */
+    public static function selfCheck(): bool
+    {
+        if (!self::supported()) {
+            return false;
+        }
+        try {
+            $sealed = self::seal(str_repeat("\0", 16), str_repeat("\0", 32), '', str_repeat("\0", 12));
+            $derived = self::hkdfSha256(str_repeat("\x0b", 22), '', '', 42);
+        } catch (Throwable) {
+            return false;
+        }
+
+        return bin2hex($sealed['ciphertext']) === 'cea7403d4d606b6e074ec5d3baf39d18'
+            && bin2hex($sealed['tag']) === 'd0d1c8a799996bf0265b98b5d48ab919'
+            && bin2hex($derived) === '8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8';
+    }
+
+    /**
+     * S box plus the four T tables of the classic table driven AES.
+     *
+     * te0 holds [2s, s, s, 3s] for every input byte and te1 to te3 are its byte
+     * rotations, which turns one round into sixteen lookups and fifteen xors.
+     *
+     * @return array{0:string,1:array<int,int>,2:array<int,int>,3:array<int,int>,4:array<int,int>}
+     */
+    private static function tables(): array
+    {
+        static $tables = null;
+        if ($tables !== null) {
+            return $tables;
+        }
+
+        $sbox = (string) hex2bin(self::SBOX_HEX);
+        $te0 = [];
+        $te1 = [];
+        $te2 = [];
+        $te3 = [];
+        for ($i = 0; $i < 256; $i++) {
+            $s = ord($sbox[$i]);
+            $double = ($s << 1) ^ (($s & 0x80) !== 0 ? 0x11b : 0);
+            $word = ($double << 24) | ($s << 16) | ($s << 8) | ($double ^ $s);
+            $te0[$i] = $word;
+            $te1[$i] = (($word >> 8) | ($word << 24)) & 0xFFFFFFFF;
+            $te2[$i] = (($word >> 16) | ($word << 16)) & 0xFFFFFFFF;
+            $te3[$i] = (($word >> 24) | ($word << 8)) & 0xFFFFFFFF;
+        }
+
+        return $tables = [$sbox, $te0, $te1, $te2, $te3];
+    }
+
+    /**
+     * The 60 word key schedule of AES-256, fifteen round keys of four words.
+     *
+     * @return array<int,int>
+     */
+    private static function expandKey(string $key): array
+    {
+        $sbox = self::tables()[0];
+        $schedule = array_values((array) unpack('N8', $key));
+        $rcon = 1;
+
+        for ($i = 8; $i < 60; $i++) {
+            $word = $schedule[$i - 1];
+            if ($i % 8 === 0) {
+                $word = self::subWord($sbox, (($word << 8) | ($word >> 24)) & 0xFFFFFFFF) ^ ($rcon << 24);
+                $rcon = ($rcon << 1) ^ (($rcon & 0x80) !== 0 ? 0x11b : 0);
+            } elseif ($i % 8 === 4) {
+                $word = self::subWord($sbox, $word);
+            }
+            $schedule[$i] = $schedule[$i - 8] ^ $word;
+        }
+
+        return $schedule;
+    }
+
+    private static function subWord(string $sbox, int $word): int
+    {
+        return (ord($sbox[$word >> 24]) << 24)
+            | (ord($sbox[($word >> 16) & 0xff]) << 16)
+            | (ord($sbox[($word >> 8) & 0xff]) << 8)
+            | ord($sbox[$word & 0xff]);
+    }
+
+    /** @param array<int,int> $schedule */
+    private static function encryptBlock(string $block, array $schedule): string
+    {
+        [$sbox, $te0, $te1, $te2, $te3] = self::tables();
+
+        $words = (array) unpack('N4', $block);
+        $s0 = $words[1] ^ $schedule[0];
+        $s1 = $words[2] ^ $schedule[1];
+        $s2 = $words[3] ^ $schedule[2];
+        $s3 = $words[4] ^ $schedule[3];
+
+        for ($round = 1; $round < self::ROUNDS; $round++) {
+            $key = $round << 2;
+            $t0 = $te0[$s0 >> 24] ^ $te1[($s1 >> 16) & 0xff] ^ $te2[($s2 >> 8) & 0xff] ^ $te3[$s3 & 0xff]
+                ^ $schedule[$key];
+            $t1 = $te0[$s1 >> 24] ^ $te1[($s2 >> 16) & 0xff] ^ $te2[($s3 >> 8) & 0xff] ^ $te3[$s0 & 0xff]
+                ^ $schedule[$key + 1];
+            $t2 = $te0[$s2 >> 24] ^ $te1[($s3 >> 16) & 0xff] ^ $te2[($s0 >> 8) & 0xff] ^ $te3[$s1 & 0xff]
+                ^ $schedule[$key + 2];
+            $t3 = $te0[$s3 >> 24] ^ $te1[($s0 >> 16) & 0xff] ^ $te2[($s1 >> 8) & 0xff] ^ $te3[$s2 & 0xff]
+                ^ $schedule[$key + 3];
+            $s0 = $t0;
+            $s1 = $t1;
+            $s2 = $t2;
+            $s3 = $t3;
+        }
+
+        // The last round substitutes and shifts but does not mix, so it reads
+        // the S box directly instead of a T table.
+        $key = self::ROUNDS << 2;
+
+        return pack(
+            'N4',
+            self::lastRound($sbox, $s0, $s1, $s2, $s3) ^ $schedule[$key],
+            self::lastRound($sbox, $s1, $s2, $s3, $s0) ^ $schedule[$key + 1],
+            self::lastRound($sbox, $s2, $s3, $s0, $s1) ^ $schedule[$key + 2],
+            self::lastRound($sbox, $s3, $s0, $s1, $s2) ^ $schedule[$key + 3]
+        );
+    }
+
+    private static function lastRound(string $sbox, int $a, int $b, int $c, int $d): int
+    {
+        return (ord($sbox[$a >> 24]) << 24)
+            | (ord($sbox[($b >> 16) & 0xff]) << 16)
+            | (ord($sbox[($c >> 8) & 0xff]) << 8)
+            | ord($sbox[$d & 0xff]);
+    }
+
+    /**
+     * Sixteen multiples of H, which lets GHASH consume the hash subkey four
+     * bits at a time. Multiplying bit by bit would cost 128 PHP iterations per
+     * block instead of 31.
+     *
+     * @return array<int,array<int,int>>
+     */
+    private static function ghashTable(string $h): array
+    {
+        $words = array_values((array) unpack('N4', $h));
+        $table = array_fill(0, 16, [0, 0, 0, 0]);
+        $table[8] = $words;
+
+        [$v0, $v1, $v2, $v3] = $words;
+        for ($i = 4; $i > 0; $i >>= 1) {
+            // A right shift out of the low bit folds the reduction polynomial
+            // back into the top word.
+            $carry = ($v3 & 1) !== 0 ? 0xe1000000 : 0;
+            $v3 = (($v3 >> 1) | (($v2 & 1) << 31)) & 0xFFFFFFFF;
+            $v2 = (($v2 >> 1) | (($v1 & 1) << 31)) & 0xFFFFFFFF;
+            $v1 = (($v1 >> 1) | (($v0 & 1) << 31)) & 0xFFFFFFFF;
+            $v0 = ($v0 >> 1) ^ $carry;
+            $table[$i] = [$v0, $v1, $v2, $v3];
+        }
+        for ($i = 2; $i <= 8; $i <<= 1) {
+            $base = $table[$i];
+            for ($j = 1; $j < $i; $j++) {
+                $other = $table[$j];
+                $table[$i + $j] = [
+                    $base[0] ^ $other[0],
+                    $base[1] ^ $other[1],
+                    $base[2] ^ $other[2],
+                    $base[3] ^ $other[3],
+                ];
+            }
+        }
+
+        return $table;
+    }
+
+    /** @param array<int,array<int,int>> $table */
+    private static function ghash(array $table, string $data): string
+    {
+        $checksum = str_repeat("\0", 16);
+        for ($offset = 0, $length = strlen($data); $offset < $length; $offset += 16) {
+            $checksum = self::multiply($table, $checksum ^ substr($data, $offset, 16));
+        }
+
+        return $checksum;
+    }
+
+    /**
+     * One multiplication in GF(2^128) as GCM defines it, four bits per step
+     * from the least significant byte upwards.
+     *
+     * @param array<int,array<int,int>> $table
+     */
+    private static function multiply(array $table, string $x): string
+    {
+        static $reduction = [
+            0x0000, 0x1c20, 0x3840, 0x2460, 0x7080, 0x6ca0, 0x48c0, 0x54e0,
+            0xe100, 0xfd20, 0xd940, 0xc560, 0x9180, 0x8da0, 0xa9c0, 0xb5e0,
+        ];
+
+        $byte = ord($x[15]);
+        [$z0, $z1, $z2, $z3] = $table[$byte & 0x0f];
+
+        $nibbles = [$byte >> 4];
+        for ($i = 14; $i >= 0; $i--) {
+            $byte = ord($x[$i]);
+            $nibbles[] = $byte & 0x0f;
+            $nibbles[] = $byte >> 4;
+        }
+
+        foreach ($nibbles as $nibble) {
+            $remainder = $z3 & 0x0f;
+            $z3 = (($z3 >> 4) | (($z2 & 0x0f) << 28)) & 0xFFFFFFFF;
+            $z2 = (($z2 >> 4) | (($z1 & 0x0f) << 28)) & 0xFFFFFFFF;
+            $z1 = (($z1 >> 4) | (($z0 & 0x0f) << 28)) & 0xFFFFFFFF;
+            $z0 = ($z0 >> 4) ^ ($reduction[$remainder] << 16);
+
+            $entry = $table[$nibble];
+            $z0 ^= $entry[0];
+            $z1 ^= $entry[1];
+            $z2 ^= $entry[2];
+            $z3 ^= $entry[3];
+        }
+
+        return pack('N4', $z0, $z1, $z2, $z3);
+    }
+
+    /** Big endian bit counts of the additional data and of the ciphertext. */
+    private static function lengthBlock(int $aadBytes, int $textBytes): string
+    {
+        return pack(
+            'N4',
+            intdiv($aadBytes, 536870912),
+            ($aadBytes << 3) & 0xFFFFFFFF,
+            intdiv($textBytes, 536870912),
+            ($textBytes << 3) & 0xFFFFFFFF
+        );
+    }
+
+    private static function pad(string $value): string
+    {
+        $remainder = strlen($value) % 16;
+
+        return $remainder === 0 ? $value : $value . str_repeat("\0", 16 - $remainder);
+    }
+
+    private static function inc32(string $block): string
+    {
+        $counter = (int) ((array) unpack('N', substr($block, 12, 4)))[1];
+
+        return substr($block, 0, 12) . pack('N', ($counter + 1) & 0xFFFFFFFF);
     }
 }
 
@@ -2167,6 +2701,10 @@ final class SyncHandler
         }
         echo $result;
 
+        // The statistics record the time of a successful sync, so it is claimed
+        // here and written only after the response has left, in Router::finish().
+        Ctx::$syncedClient = Ctx::$client;
+
         Log::info('sync', [
             'inPackets' => $outcome['packets'],
             'inBytes' => $outcome['bytes'],
@@ -2213,6 +2751,146 @@ final class SyncHandler
             max(16384, (int) (MAX_ACCEPTED_REQUEST_BYTES * $factor)),
             max(8, (int) (MAX_ACCEPTED_REQUEST_PACKETS * $factor)),
         ];
+    }
+}
+
+// =============================================================================
+// Statistics endpoint
+// =============================================================================
+
+/**
+ * Serves QUEUE_ROOT/stats.json encrypted with AES-256-GCM.
+ *
+ * The caller is an administrator, not a client: no VPN address and no access
+ * token are involved, only knowledge of SERVER_SECRET. The secret itself never
+ * travels and never encrypts anything, it authenticates the request and seeds
+ * the key derivation.
+ *
+ * The response key is bound to the exact request that asked for it, and that
+ * same request is the additional authenticated data, so a captured response
+ * cannot be replayed as the answer to a different request.
+ */
+final class StatsHandler
+{
+    /** 0 is never a valid client octet, so this nonce bucket cannot collide. */
+    private const NONCE_OCTET = 0;
+
+    public static function handle(): void
+    {
+        $type = Http::contentType();
+        if (!str_starts_with($type, 'application/x-ndjson') && !str_starts_with($type, 'application/jsonl')) {
+            throw new HttpError(415, 'unsupported_media_type');
+        }
+        if (Http::contentLength() > MAX_REQUEST_BYTES) {
+            throw new HttpError(413, 'payload_too_large');
+        }
+        Cfg::assertRuntime();
+        if (!StatsCrypto::supported()) {
+            Log::error('stats_unsupported', ['intSize' => PHP_INT_SIZE]);
+
+            throw new HttpError(503, 'server_misconfigured');
+        }
+
+        $reader = new BodyReader();
+        $authLine = $reader->readLine(MAX_AUTH_LINE_BYTES);
+        if ($authLine === null) {
+            throw new HttpError(400, 'bad_request');
+        }
+
+        // The signature covers no body, so the authorisation line must be the
+        // whole body. A trailing line is a protocol error, but reporting it
+        // before the caller is proven would answer an unauthenticated request
+        // with something other than 401.
+        $trailing = self::checkForTrailingLine($reader);
+
+        $auth = self::parseLine($authLine);
+        $canonical = "POST\nstats\n" . $auth['timestamp'] . "\n" . $auth['nonce'];
+        if (!hash_equals(hash_hmac('sha256', $canonical, SERVER_SECRET), $auth['signature'])) {
+            throw new HttpError(401, 'unauthorized');
+        }
+        if ($trailing !== null) {
+            throw $trailing;
+        }
+        if (PERSIST_NONCES && !NonceStore::claim(self::NONCE_OCTET, $auth['nonce'], Ctx::$now)) {
+            throw new HttpError(401, 'unauthorized');
+        }
+
+        $sealed = StatsCrypto::encrypt(
+            StatsFile::read(),
+            StatsCrypto::deriveKey(SERVER_SECRET, $canonical),
+            $canonical
+        );
+        $body = json_encode([
+            'alg' => 'AES-256-GCM',
+            'iv' => base64_encode($sealed['iv']),
+            'ciphertext' => base64_encode($sealed['ciphertext']),
+            'tag' => base64_encode($sealed['tag']),
+        ], JSON_UNESCAPED_SLASHES);
+        if ($body === false) {
+            throw new HttpError(500, 'internal_error');
+        }
+
+        http_response_code(200);
+        Http::baseHeaders();
+        header('Content-Type: application/json; charset=utf-8');
+        if (SEND_CONTENT_LENGTH) {
+            header('Content-Length: ' . strlen($body));
+        }
+        echo $body;
+
+        // Neither the secret, the derived key, the IV, the nonce, the signature
+        // nor any part of the payload may be logged.
+        Log::info('stats', ['bytes' => strlen($body)]);
+    }
+
+    private static function checkForTrailingLine(BodyReader $reader): ?HttpError
+    {
+        $error = null;
+        try {
+            if ($reader->readLine(MAX_AUTH_LINE_BYTES) !== null) {
+                $error = new HttpError(400, 'bad_request');
+            }
+        } catch (HttpError $failure) {
+            $error = $failure;
+        }
+        $reader->drain();
+
+        return $error;
+    }
+
+    /**
+     * Validates the authorisation record. Structural problems are a 400, while
+     * anything a forged request would get wrong is a 401.
+     *
+     * @return array{timestamp:string,nonce:string,signature:string}
+     */
+    private static function parseLine(string $line): array
+    {
+        $record = Wire::decodeLine($line);
+        if (count($record) !== 4
+            || ($record['type'] ?? null) !== 'stats-auth'
+            || !isset($record['timestamp'], $record['nonce'], $record['signature'])
+        ) {
+            throw new HttpError(400, 'bad_request');
+        }
+
+        $timestamp = $record['timestamp'];
+        $nonce = $record['nonce'];
+        $signature = $record['signature'];
+        if (!is_string($timestamp) || !is_string($nonce) || !is_string($signature)) {
+            throw new HttpError(400, 'bad_request');
+        }
+        if (preg_match(Wire::RE_NONCE, $nonce) !== 1
+            || preg_match(Wire::RE_SIGNATURE, $signature) !== 1
+        ) {
+            throw new HttpError(401, 'unauthorized');
+        }
+        $epoch = Wire::parseTimestamp($timestamp);
+        if ($epoch === null || abs(Ctx::$now - $epoch) > CLOCK_SKEW_SECONDS) {
+            throw new HttpError(401, 'unauthorized');
+        }
+
+        return ['timestamp' => $timestamp, 'nonce' => $nonce, 'signature' => $signature];
     }
 }
 
@@ -2297,6 +2975,16 @@ final class SelfTest
         } catch (Throwable) {
             $checks[] = self::check('csprng', 'fail', 'random_bytes is unavailable');
         }
+        $checks[] = self::check(
+            'integer_width',
+            StatsCrypto::supported() ? 'pass' : 'fail',
+            PHP_INT_SIZE * 8 . ' bit integers, the stats action needs 64'
+        );
+        $checks[] = self::check(
+            'stats_crypto',
+            StatsCrypto::selfCheck() ? 'pass' : 'fail',
+            'AES-256-GCM and HKDF-SHA-256 known answer vectors'
+        );
 
         $problems = Cfg::diagnose();
         $checks[] = self::check(
@@ -2314,6 +3002,7 @@ final class SelfTest
             'hash_hmac', 'hash_equals', 'hash_init', 'random_bytes', 'flock', 'fopen',
             'fwrite', 'fflush', 'rename', 'unlink', 'filemtime', 'filesize', 'mkdir',
             'opendir', 'readdir', 'readfile', 'clearstatcache', 'json_decode',
+            'pack', 'unpack', 'hex2bin', 'base64_encode',
         ];
         $missing = [];
         foreach ($required as $function) {
@@ -2524,6 +3213,17 @@ final class Router
             return;
         }
 
+        if ($action === 'stats') {
+            if ($method !== 'POST') {
+                Http::sendMethodNotAllowed('POST');
+
+                return;
+            }
+            StatsHandler::handle();
+
+            return;
+        }
+
         if ($action === 'selftest') {
             if ($method !== 'POST') {
                 Http::sendMethodNotAllowed('POST');
@@ -2573,9 +3273,13 @@ final class Router
         } else {
             flush();
         }
-        if (QueuePath::ensureRoot()) {
-            Sweeper::maybeRun();
+        if (!QueuePath::ensureRoot()) {
+            return;
         }
+        if (Ctx::$syncedClient !== '') {
+            StatsFile::record(Ctx::$syncedClient);
+        }
+        Sweeper::maybeRun();
     }
 
     public static function onUncaught(Throwable $error): void

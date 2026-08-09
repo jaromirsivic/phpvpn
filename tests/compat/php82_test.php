@@ -81,6 +81,24 @@ return function (Suite $suite): void {
         }
     });
 
+    $suite->test('source encrypts without reaching for a crypto extension', function () use ($source) {
+        // Mentioning OpenSSL in a comment is fine and in fact necessary. Calling
+        // it is not, because a typical hosting cannot be relied on to have it.
+        foreach (['openssl_', 'sodium_', 'mcrypt_'] as $prefix) {
+            Assert::false(
+                preg_match('/(?<![\$>:\w])' . $prefix . '[a-z0-9_]*\s*\(/i', $source) === 1,
+                $prefix . '*() belongs to an optional extension'
+            );
+        }
+        // hash_hkdf() ships with ext/hash, but the design asks for a derivation
+        // built from hash_hmac() so the whole construction stays visible.
+        Assert::false(
+            preg_match('/(?<![\$>:\w])hash_hkdf\s*\(/', $source) === 1,
+            'the key derivation must be spelled out over hash_hmac()'
+        );
+        Assert::contains('AES-256-GCM', $source, 'the software cipher must still be there');
+    });
+
     $suite->test('configuration block keeps its documented defaults', function () use ($source) {
         Assert::contains("const SERVER_SECRET = '';", $source, 'the shipped secret must stay empty');
         Assert::contains("const QUEUE_ROOT = '';", $source, 'the shipped queue root must stay empty');
@@ -88,6 +106,7 @@ return function (Suite $suite): void {
             'PERSIST_NONCES' => 'false',
             'SELFTEST_ENABLED' => 'false',
             'FSYNC_ON_PUBLISH' => 'false',
+            'STATS_MIN_UPDATE_SECONDS' => '30',
         ] as $name => $value) {
             Assert::true(
                 preg_match('/^const ' . $name . '\s*=\s*' . $value . ';$/m', $source) === 1,
