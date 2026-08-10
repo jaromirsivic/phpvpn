@@ -165,13 +165,13 @@ Všechny textové kanonické řetězce jsou ASCII/UTF-8, hodnoty jsou oddělené
 Klient i server odvodí jediný 32bajtový klíč pro HMAC tag požadavku `auth-semi`:
 
 ```text
-authSemiSaltDomain = "phpvpn/auth-semi"
-authSemiKeyDomain  = "phpvpn/auth-semi"
+authSemiSaltDomain = "phpvpn/auth-semi/salt"
+authSemiKeyDomain  = "phpvpn/auth-semi/key"
 authSemiSalt       = SHA-256(authSemiSaltDomain)   // 32 raw bytes
 semiKey            = HKDF-SHA-256(SERVER_SECRET, authSemiSalt, authSemiKeyDomain, 32)
 ```
 
-`authSemiSaltDomain` a `authSemiKeyDomain` jsou veřejné konstantní doménové řetězce pro oddělení kontextu: první určuje hashovaný HKDF salt a druhý hodnotu HKDF `info`. Nejsou tajemstvím ani položkou požadavku; `auth-semi` nepřenáší salt ani IV. Jediným vstupním tajemstvím odvození je `SERVER_SECRET`. `semiKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
+`authSemiSaltDomain` s příponou `/salt` a `authSemiKeyDomain` s příponou `/key` jsou veřejné konstantní doménové řetězce pro oddělení kontextu: první určuje hashovaný HKDF salt a druhý přímo tvoří hodnotu HKDF `info`. Nejsou tajemstvím ani položkou požadavku; `auth-semi` nepřenáší salt ani IV. Jediným vstupním tajemstvím odvození je `SERVER_SECRET`. `semiKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
 
 ### 7.2 Klíč `auth-full`
 
