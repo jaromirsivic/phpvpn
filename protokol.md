@@ -2,6 +2,8 @@
 
 Tento dokument je normativní specifikací protokolu phpvpn v1. Klíčová slova **MUSÍ**, **NESMÍ**, **MĚL BY**, **NEMĚL BY** a **SMÍ** se vykládají ve významu RFC 2119.
 
+Protokol je veřejně známý. Softwarová implementace phpvpn je open source a je zveřejněna pod licencí MIT.
+
 ## 1. Účel a rozsah
 
 phpvpn je krátce připojovaný store-and-forward relay pro přenos end-to-end šifrovaných IPv4 paketů mezi klienty. Server:
@@ -160,24 +162,31 @@ Všechny textové kanonické řetězce jsou ASCII/UTF-8, hodnoty jsou oddělené
 
 ### 7.1 Klíč `auth-semi`
 
+Klient i server odvodí jediný 32bajtový klíč pro HMAC tag požadavku `auth-semi`:
+
 ```text
-salt    = SHA-256("phpvpn/auth-semi")               // 32 raw bytes
-info    = "phpvpn/auth-semi"
-semiKey = HKDF-SHA-256(SERVER_SECRET, salt, info, 32)
+authSemiSaltDomain = "phpvpn/auth-semi"
+authSemiKeyDomain  = "phpvpn/auth-semi"
+authSemiSalt       = SHA-256(authSemiSaltDomain)   // 32 raw bytes
+semiKey            = HKDF-SHA-256(SERVER_SECRET, authSemiSalt, authSemiKeyDomain, 32)
 ```
+
+`authSemiSaltDomain` a `authSemiKeyDomain` jsou veřejné konstantní doménové řetězce pro oddělení kontextu: první určuje hashovaný HKDF salt a druhý hodnotu HKDF `info`. Nejsou tajemstvím ani položkou požadavku; `auth-semi` nepřenáší salt ani IV. Jediným vstupním tajemstvím odvození je `SERVER_SECRET`. `semiKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
 
 ### 7.2 Klíč `auth-full`
 
 Po syntaktické validaci `src` klient i server odvodí jediný 32bajtový klíč pro HMAC tag požadavku `auth-full`:
 
 ```text
-saltMaterial = "phpvpn/auth-full/salt" || NUL || src
-authFullSalt = HMAC-SHA-256(SERVER_SECRET, saltMaterial)   // 32 raw bytes
-info         = "phpvpn/auth-full/key" || NUL || src
-fullAuthKey  = HKDF-SHA-256(ACCESS_KEY, authFullSalt, info, 32)
+authFullSaltDomain   = "phpvpn/auth-full/salt"
+authFullKeyDomain    = "phpvpn/auth-full/key"
+authFullSaltMaterial = authFullSaltDomain || NUL || src
+authFullSalt         = HMAC-SHA-256(SERVER_SECRET, authFullSaltMaterial)   // 32 raw bytes
+authFullInfo         = authFullKeyDomain || NUL || src
+fullAuthKey          = HKDF-SHA-256(ACCESS_KEY, authFullSalt, authFullInfo, 32)
 ```
 
-`NUL` je jediný bajt `0x00` a `src` jsou přesné ASCII bajty validované VPN adresy bez vodicích nul. Doménové řetězce, oddělovač, pořadí argumentů i výstupní délka jsou normativní. `SERVER_SECRET` určuje `authFullSalt` a klientův jediný `ACCESS_KEY` je vstupním tajemstvím HKDF; bez obou hodnot nelze vypočítat správný `fullAuthKey` ani HMAC tag. `fullAuthKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
+`authFullSaltDomain` a `authFullKeyDomain` jsou veřejné konstantní doménové řetězce pro oddělení kontextu: první označuje vstup odvození saltu a druhý hodnotu HKDF `info`. `NUL` je jediný bajt `0x00` a `src` jsou přesné ASCII bajty validované VPN adresy bez vodicích nul. Doménové řetězce, oddělovač, pořadí argumentů i výstupní délka jsou normativní. Na rozdíl od veřejně konstantního `authSemiSalt` je `authFullSalt` klientsky specifický a odvozuje se ze `SERVER_SECRET` a `src`; klientův jediný `ACCESS_KEY` je poté vstupním tajemstvím HKDF. Bez obou tajemství nelze vypočítat správný `fullAuthKey` ani HMAC tag. `fullAuthKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
 
 Prázdný nebo nulový `SERVER_SECRET` zůstává podle kapitoly 3.2 platnou konfigurací, ale jako veřejně předvídatelný vstup neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
 
@@ -565,7 +574,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 1. Known-answer testy pro HKDF-SHA-256, HMAC-SHA-256 a AES-256-GCM.
 2. `auth-semi` i `auth-full` nesou `timestamp` jako JSON string přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`; číselná hodnota, neplatné kalendářní datum, malá písmena, offset, zlomkové sekundy, chybějící `Z` a sekunda `60` jsou odmítnuty.
 3. Known-answer test `auth-semi` sestaví `canonical` v pořadí doménový řetězec, `POST`, `info`, přesný timestamp a `requestId`; změna jediného znaku timestampu změní 32bajtový HMAC `tag`. Změna `ACCESS_KEY` nesmí změnit `semiKey` ani tag, protože `auth-semi` nadále závisí pouze na `SERVER_SECRET`.
-4. Known-answer test odvození `auth-full` pro pevné `SERVER_SECRET`, `ACCESS_KEY` a `src` ověří přesné `saltMaterial`, 32bajtový `authFullSalt`, `info` a 32bajtový `fullAuthKey` podle kapitoly 7.2.
+4. Known-answer test odvození `auth-full` pro pevné `SERVER_SECRET`, `ACCESS_KEY` a `src` ověří přesné `authFullSaltMaterial`, 32bajtový `authFullSalt`, `authFullInfo` a 32bajtový `fullAuthKey` podle kapitoly 7.2.
 5. Změna jediného bajtu `SERVER_SECRET` nebo `ACCESS_KEY` musí změnit `fullAuthKey` i výsledný tag při jinak stejném requestu. Tag vypočtený se znalostí pouze jednoho z obou tajemství nesmí projít ověřením.
 6. Known-answer test `auth-full` sestaví `canonical` v pořadí doménový řetězec, `POST`, `data`, `src`, přesný timestamp, `requestId` a `SHA256HEX(body)` a tag vypočte výhradně jako `HMAC-SHA-256(fullAuthKey, canonical)`; změna timestampu nebo jediného bajtu body tag zneplatní.
 7. Server přijme UTC časy s odchylkou přesně `-60`, `0` a `+60` s a odmítne `-61` a `+61` s; po zpracování nevytvoří timestamp ani nonce záznam.

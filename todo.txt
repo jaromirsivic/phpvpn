@@ -1,3 +1,4 @@
 garbage collector
 parametry memcached
 tabulka v pameti
+nepouzivat utf-8
