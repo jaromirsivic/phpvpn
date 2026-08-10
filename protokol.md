@@ -200,7 +200,7 @@ Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 {"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60}}
 ```
 
-`clients` obsahuje pouze VPN adresu a poslední úspěšnou komunikaci. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nekomunikoval, může být vynechán. `lastSeen` je UTC RFC 3339.
+`clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 s přesností na sekundy. Kvůli 30sekundovému omezení zápisů a záměrně neřešeným souběhům jde pouze o best-effort provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
 
 `limits` popisuje skutečné aktivní hodnoty serveru. Klient nesmí spoléhat pouze na výchozí hodnoty této specifikace. Odpověď `info` nesmí obsahovat název, konfiguraci ani jinou informaci o interním úložišti serveru.
 
@@ -381,10 +381,33 @@ Wire protokol nesmí záviset na názvech souborů, adresářích ani databázov
 - `enqueue(destination, records, expiresAt)`;
 - `drainAll(client, now)`;
 - `usage(client)`;
-- `lastSeen()` a `recordLastSeen(client)`;
+- `readClientStats()` a `touchLastSeenBestEffort(client, now)`;
 - `sweep(now)`.
 
 Povinný driver `disk` používá per-client adresáře, zámek s omezeným čekáním, zápis do dočasného souboru a atomické `rename()` ve stejném filesystému. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické a kapacitní chování.
+
+### 10.6 Statistiky klientů ovladače `disk`
+
+Ovladač `disk` ukládá statistiky všech klientů do jediného centrálního souboru `STORAGE_ROOT/clients.json`. Soubor leží přímo v kořeni diskového úložiště, nikdy v per-client adresáři. Jeho normativní obsah je kompaktní UTF-8 JSON bez BOM:
+
+```json
+{"clients":{"10.99.99.2":{"lastSeen":"2026-08-09T20:14:52Z"},"10.99.99.4":{"lastSeen":"2026-08-09T20:15:11Z"}}}
+```
+
+Top-level objekt obsahuje právě člen `clients`. Ten je objektem, jehož názvy členů jsou platné nakonfigurované VPN adresy a hodnoty jsou objekty s jediným členem `lastSeen` ve formátu UTC RFC 3339 s přesností na sekundy. Statistiky NESMÍ obsahovat přístupové klíče, serverové tajemství, fyzické adresy, payloady ani interní cesty.
+
+Po úspěšném ověření a normálním zpracování každého požadavku `data` server:
+
+1. načte celý centrální soubor statistik;
+2. vyhledá záznam autentizovaného `src`;
+3. pouze pokud záznam chybí, jeho `lastSeen` je neplatný nebo platný čas je vůči aktuálnímu času serveru starší než 30 sekund, nastaví `lastSeen` na aktuální UTC čas a jedním pokusem zapíše celý JSON soubor;
+4. při stáří přesně 30 sekund ani při čase v budoucnosti zápis neprovádí.
+
+Neexistující soubor se interpretuje jako `{"clients":{}}` a způsobilá aktualizace se jej pokusí vytvořit. Syntakticky poškozený JSON nebo neplatné top-level schéma se interpretuje jako prázdná mapa; způsobilá aktualizace se jej jedním pokusem nahradí minimálním validním dokumentem obsahujícím právě aktualizovaného klienta. Neznámé nebo neplatné položky klientů v jinak platné mapě se při čtení ignorují; při zápisu se zachovají pouze platné položky. Jiná chyba otevření nebo čtení než neexistence souboru ukončí statistickou aktualizaci bez pokusu o zápis.
+
+Statistiky jsou striktně best effort. Selhání otevření, čtení, dekódování, kódování nebo zápisu NESMÍ změnit HTTP status, `data-result`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžní PHP workeři mohou navzájem přepsat své změny a poslední dokončený zápis vyhrává; tato race condition a případný dočasný regres hodnoty `lastSeen` jsou vědomě přijaty.
+
+Soubor `clients.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORAGE_ROOT` má být mimo document root; pokud není, webserver MUSÍ přímý přístup k celému storage rootu explicitně zakázat. Endpoint `info` načítá platné položky z tohoto souboru, ale neprozrazuje jeho jméno, umístění ani chyby čtení. Při chybějícím, nečitelném nebo poškozeném souboru smí `info.clients` vrátit prázdné pole.
 
 ## 11. Limity a timeouty
 
@@ -468,6 +491,8 @@ Chybové tělo je malý obecný JSON objekt:
 
 Chybová odpověď není autentizovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
 
+Chyba centrálního souboru klientských statistik nikdy není protokolovou chybou a NESMÍ vyvolat `500`, `503` ani změnit jinak zvolený status odpovědi. Nesmí být uvedena v chybovém těle ani odlišitelná časováním záměrného čekání nebo retry.
+
 ## 14. Kompatibilita a rozšiřování
 
 Hodnota `type` určuje schéma zprávy. Serverová hodnota `serverVersion` v `health` a `info` je informativní SemVer verze aplikace a není wire negotiation.
@@ -486,16 +511,17 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 - `KeyDerivation` a `Authenticator`: HKDF, HMAC, kanonizace a konstantní porovnání;
 - `InfoCrypto`: pouze šifrování odpovědi `info` přes AES-256-GCM;
 - `Storage` interface a `DiskStorage`;
+- `ClientStats`: best-effort čtení a nejvýše jeden pokus o zápis centrálního `clients.json`;
 - `InfoHandler` a `DataHandler`;
-- `Maintenance`: omezený oportunistický sweep expirací a statistik.
+- `Maintenance`: omezený oportunistický sweep expirací.
 
 Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` AES-256-GCM. Doporučená realizace používá `hash_hkdf()` a `openssl_encrypt(..., 'aes-256-gcm', ...)`. Chybí-li bezpečná AES-GCM implementace, `info` vrací `503 server_misconfigured`; datový relay může zůstat funkční, protože payload nedešifruje. Vlastní neauditovaná implementace AES se nedoporučuje.
 
 Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result`. Bezpečnou volbou je validované záznamy dočasně držet v omezené paměti; `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
 
-Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění front přes webserver. Nemá používat neomezený globální zámek. Údržba po odpovědi musí mít časový a početní rozpočet.
+Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění bufferů i centrálních statistik přes webserver. Nemá používat neomezený globální zámek. Zákaz zámků pro `clients.json` nemění zámková pravidla datového bufferu. Údržba po odpovědi musí mít časový a početní rozpočet.
 
-Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` requestu s úspěšnou odpovědí. Selhání statistiky nesmí změnit úspěšné doručení.
+Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně zpracovaném požadavku `data`. Její 30sekundové omezení, jediný pokus o zápis a veškerá selhání jsou oddělené od výsledku datového zpracování podle kapitoly 10.6.
 
 ## 16. Povinné testovací scénáře
 
@@ -543,7 +569,17 @@ Statistika `lastSeen` se aktualizuje pouze po platně autentizovaném `data` req
 10. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
 11. Stejná sada kontraktních testů běží nad každým storage driverem.
 
-### 16.5 Omezená ochrana proti replay
+### 16.5 Statistiky klientů
+
+1. Ovladač `disk` čte jediný `STORAGE_ROOT/clients.json`; v per-client adresářích žádný statistický soubor nevytváří.
+2. Neexistující soubor se při způsobilé aktualizaci vytvoří ve správném JSON schématu s jediným aktuálním klientem.
+3. Platný `lastSeen` starý přesně 30 sekund ani čas v budoucnosti zápis nevyvolá; hodnota stará 31 sekund se aktualizuje na aktuální UTC čas.
+4. Chybějící nebo neplatný `lastSeen` vyvolá jediný pokus o aktualizaci. Poškozený JSON se nahradí minimálním validním dokumentem; nečitelný soubor se přeskočí bez zápisu.
+5. Selhání čtení, JSON dekódování nebo zápisu nezmění HTTP status, `data-result`, publikování ani `drainAll`; zejména nevyvolá `500` ani `503`.
+6. Dva souběžné workery nepoužijí zámek ani retry; výsledek last-writer-wins a případná ztráta jedné statistické aktualizace jsou povolené.
+7. Přímý HTTP i HTTPS požadavek na `clients.json` a jiné soubory storage rootu je znemožněn. `info` při nečitelných statistikách vrátí prázdné `clients` bez interní cesty nebo diagnostiky.
+
+### 16.6 Omezená ochrana proti replay
 
 1. Dvojí odeslání identického platného requestu uvnitř 60sekundového okna vytvoří dvě zpracování.
 2. Tentýž request se stářím 61 s server odmítne obecným `401`; timestamp se nepersistuje a nevznikne nonce ani replay databáze.
@@ -562,6 +598,8 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - vyžaduje podepsaný Unix timestamp v `auth-semi` i `auth-full` a odmítá absolutní odchylku větší než 60 s bez jeho perzistence;
 - vrací všechny aktuálně buffered záznamy přímo jako `data` bez obálky a bez stránkování, zakončené jediným `data-result`;
 - používá atomické at-most-once vyprázdnění celého bufferu bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
+- vede centrální best-effort `clients.json` v kořeni diskového storage, omezuje zápis `lastSeen` na hodnoty starší než 30 sekund a nikdy kvůli statistice nemění datový výsledek;
+- znemožňuje přímý webový přístup k bufferům, statistikám a ostatním souborům storage rootu;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
 - mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
 - udržuje jediný pevný payload klíč pro každou uspořádanou dvojici `src` a `dst` mimo relay server;
