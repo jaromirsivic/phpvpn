@@ -1,0 +1,3 @@
+garbage collector
+parametry memcached
+tabulka v pameti
