@@ -29,7 +29,7 @@ Protokol poskytuje:
 - důvěrnost a integritu obsahu odpovědi `info` pomocí AES-256-GCM;
 - oddělení klíčů podle účelu pomocí HKDF-SHA-256.
 
-PHP implementace serveru ani PHP implementace klienta NESMÍ pro shodu s protokolem vyžadovat OpenSSL ani jiné volitelné kryptografické rozšíření. Je-li vhodný nativní backend dostupný, implementace jej smí použít jako akceleraci. Vždy však musí obsahovat také softwarovou implementaci AES-256-GCM v čistém PHP a automaticky ji použít, když žádný vhodný nativní backend dostupný není.
+PHP implementace serveru i PHP implementace klienta musí všechny operace AES-256-GCM vždy provádět přibalenou softwarovou implementací v čistém PHP. Pro AES-256-GCM NESMÍ použít OpenSSL, Sodium ani jiné kryptografické rozšíření, a to ani tehdy, když je dostupné. Dostupnost volitelných rozšíření proto nemění funkce ani chování implementace.
 
 ### 1.2 Vědomě neposkytované vlastnosti
 
@@ -192,13 +192,13 @@ fullAuthKey          = HKDF-SHA-256(ACCESS_KEY, authFullSalt, authFullInfo, 32)
 
 Prázdný nakonfigurovaný `SERVER_SECRET` se podle kapitoly 3.2 před tímto odvozením normalizuje na 32 ASCII znaků `0`. Prázdný nebo nulový vstup tak zůstává platnou konfigurací, ale jako veřejně předvídatelná hodnota neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
 
-### 7.3 Dostupnost AES-256-GCM
+### 7.3 Softwarová implementace AES-256-GCM
 
-AES-256-GCM je povinné kryptografické primitivum a v PHP implementaci jeho dostupnost nesmí záviset na volitelném rozšíření. PHP implementace smí přednostně použít nativní backend, například `openssl_encrypt()` a `openssl_decrypt()` s metodou `aes-256-gcm`, pouze pokud za běhu ověří jeho dostupnost. Není-li takový backend dostupný, musí automaticky použít přibalenou softwarovou implementaci v čistém PHP. Chybějící OpenSSL, Sodium nebo jiné volitelné rozšíření NESMÍ samo o sobě způsobit odmítnutí `info` či `data`, omezení funkcí ani `503 server_misconfigured`.
+AES-256-GCM je povinné kryptografické primitivum. Každá PHP implementace musí pro všechny jeho operace bez výjimky používat jedinou přibalenou softwarovou implementaci v čistém PHP. Operace NESMÍ delegovat na `openssl_encrypt()`, `openssl_decrypt()`, Sodium ani jiné kryptografické rozšíření. Toto pravidlo platí pro šifrování odpovědi `info` i pro šifrování, autentizované dešifrování a ověřování end-to-end payloadu `data`.
 
-Softwarový backend musí implementovat úplné operace AES-256-GCM potřebné pro šifrování, autentizované dešifrování a ověření tagu. Zahrnuje přinejmenším dopřednou blokovou transformaci AES-256, čítačovou část GCTR a autentizační funkci GHASH. Protože GCM používá v obou směrech pouze dopřednou transformaci AES, samostatná inverzní bloková transformace AES není vyžadována. Backend musí podporovat normativní 32bajtový klíč, 12bajtové IV, libovolné AAD předepsané tímto protokolem a 16bajtový tag. Dešifrovaný plaintext NESMÍ zpřístupnit volajícímu před úspěšným ověřením celého GCM tagu.
+Softwarová implementace musí poskytovat úplné operace AES-256-GCM potřebné pro šifrování, autentizované dešifrování a ověření tagu. Zahrnuje přinejmenším dopřednou blokovou transformaci AES-256, čítačovou část GCTR a autentizační funkci GHASH. Protože GCM používá v obou směrech pouze dopřednou transformaci AES, samostatná inverzní bloková transformace AES není vyžadována. Implementace musí podporovat normativní 32bajtový klíč, 12bajtové IV, libovolné AAD předepsané tímto protokolem a 16bajtový tag. Dešifrovaný plaintext NESMÍ zpřístupnit volajícímu před úspěšným ověřením celého GCM tagu.
 
-Volba kryptografického backendu je pouze implementační detail. Pro stejné bajty klíče, IV, AAD a plaintextu musí všechny backendy vytvořit totožný ciphertext a tag a při dešifrování přijmout či odmítnout stejné vstupy. Přepnutí backendu nemění wire formát, odvození klíčů, chybové kódy ani žádné jiné protokolové chování.
+Pro stejné bajty klíče, IV, AAD a plaintextu musí softwarová implementace vytvořit ciphertext a tag odpovídající normativnímu AES-256-GCM. Přítomnost nebo absence OpenSSL, Sodium či jiného rozšíření NESMÍ změnit wire formát, výstup kryptografické operace, odvození klíčů, chybové kódy ani žádné jiné protokolové chování.
 
 ## 8. Akce `info`
 
@@ -522,7 +522,7 @@ Chybové tělo je malý obecný JSON objekt:
 | 429 | `queue_full` | Cílová fronta nemá kapacitu. | Ponechat data, backoff s jitterem. |
 | 503 | `queue_busy` | Vyčerpán limit čekání na storage zámek. | Krátký backoff. |
 | 503 | `queue_unavailable` | Backend nelze bezpečně použít. | Backoff; administrátorská kontrola. |
-| 503 | `server_misconfigured` | Nekonzistentní limity nebo jiná neplatná serverová konfigurace. Chybějící volitelné kryptografické rozšíření sem nepatří. | Neopakovat rychle; opravit server. |
+| 503 | `server_misconfigured` | Nekonzistentní limity nebo jiná neplatná serverová konfigurace. | Neopakovat rychle; opravit server. |
 | 500 | `internal_error` | Neočekávaná interní chyba. | Ponechat data, backoff. |
 
 Chybová odpověď není autentizovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
@@ -545,15 +545,15 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 - `Router` a `Http`: metoda, akce, hlavičky a obecné chyby;
 - `JsonWire` a `NdjsonReader`: limitované čtení, duplicitní klíče, striktní pole a base64url;
 - `KeyDerivation` a `Authenticator`: HKDF, HMAC, kanonizace a konstantní porovnání;
-- `InfoCrypto`: výběr dostupného backendu a šifrování odpovědi `info` přes AES-256-GCM včetně pure-PHP fallbacku;
+- `InfoCrypto`: jediná softwarová implementace AES-256-GCM v čistém PHP a šifrování odpovědi `info`;
 - `Storage` interface a `DiskStorage`;
 - `ClientStats`: best-effort čtení a nejvýše jeden pokus o zápis centrálního `clients.json`;
 - `InfoHandler` a `DataHandler`;
 - `Maintenance`: omezený oportunistický sweep expirací.
 
-Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` AES-256-GCM. Pro HKDF může použít `hash_hkdf()`. Pro AES-256-GCM smí použít `openssl_encrypt(..., 'aes-256-gcm', ...)` a odpovídající dešifrovací funkci, jsou-li skutečně dostupné, ale nesmí na nich záviset. PHP server i PHP klient musí obsahovat interoperabilní pure-PHP backend podle kapitoly 7.3 a zvolit jej automaticky, když vhodný nativní backend chybí. Absence OpenSSL nebo jiného volitelného kryptografického rozšíření není chybná konfigurace a nesmí vést k `503 server_misconfigured`.
+Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` vlastní softwarovou implementaci AES-256-GCM v čistém PHP. Pro HKDF může použít `hash_hkdf()`. PHP server i PHP klient musí všechny operace AES-256-GCM provádět výhradně touto softwarovou implementací podle kapitoly 7.3. Nesmí obsahovat výběr kryptografického backendu ani větev používající pro AES-256-GCM OpenSSL, Sodium či jiné rozšíření.
 
-Pure-PHP backend má implementovat pouze rozsah potřebný pro tento protokol: AES-256 v dopředném směru, GCTR, GHASH, 96bitové IV a 128bitový tag. Při inicializaci musí každý dostupný backend projít known-answer testem AES-256-GCM se stejnými pevnými vstupy. Automatický výběr smí použít pouze backend, který tímto testem projde. Výsledek testu se v rámci běhu procesu zapamatuje, aby se test neopakoval pro každý požadavek. Software nesmí obsahovat větev, která absenci nativního backendu řeší vypnutím šifrování, změnou algoritmu nebo odesláním plaintextu.
+Softwarová implementace má implementovat pouze rozsah potřebný pro tento protokol: AES-256 v dopředném směru, GCTR, GHASH, 96bitové IV a 128bitový tag. Při inicializaci musí projít known-answer testem AES-256-GCM s pevnými vstupy a očekávanými výstupy. Výsledek testu se v rámci běhu procesu zapamatuje, aby se test neopakoval pro každý požadavek. Software nesmí obsahovat větev, která chybu softwarové implementace řeší vypnutím šifrování, změnou algoritmu nebo odesláním plaintextu.
 
 Normalizace z kapitoly 3.2 musí proběhnout při startu ještě před předáním konfigurace do `KeyDerivation`. V PHP se testuje přesně nulová délka řetězce, nikoli obecná nepravdivost hodnoty:
 
@@ -609,8 +609,8 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 13. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením GCM tagu.
 14. Každý přímý datový řádek odpovědi se samostatně ověří pomocí AES-GCM; řádek s neplatným GCM tagem se zahodí bez ovlivnění ostatních platných řádků.
 15. Nakonfigurovaný `SERVER_SECRET` o délce nula bajtů se při startu serveru i klienta normalizuje na přesně 32 ASCII znaků `0`. Known-answer test pro prázdnou a explicitně zadanou hodnotu `"00000000000000000000000000000000"` musí dát shodný `semiKey`, klíč odpovědi `info`, `authFullSalt`, `fullAuthKey` i výsledné tagy a nesmí vyvolat `ValueError`. Neprázdný řetězec `"0"` a 32 nulových bajtů `0x00` se nenormalizují a musí dát výsledky odpovídající jejich vlastním přesným bajtům.
-16. PHP server i PHP klient spuštěný bez OpenSSL, Sodium a jiného volitelného kryptografického rozšíření automaticky použije pure-PHP AES-256-GCM. `info` i end-to-end payload zůstanou plně funkční, shodují se s known-answer vektory a absence rozšíření nevyvolá `503 server_misconfigured`.
-17. Pro pevný klíč, IV, AAD a plaintext vytvoří nativní a pure-PHP backend přesně stejný ciphertext a 16bajtový tag. Oba backendy správně dešifrují platný vektor, odmítnou změnu jediného bitu klíče, IV, AAD, ciphertextu či tagu a před úspěšným ověřením tagu nezpřístupní žádný plaintext.
+16. PHP server i PHP klient používá softwarovou implementaci AES-256-GCM v čistém PHP bez ohledu na to, zda jsou OpenSSL, Sodium nebo jiná kryptografická rozšíření dostupná. Test s dostupnými i nedostupnými rozšířeními musí projít stejnou softwarovou cestou a vytvořit přesně stejné výstupy pro `info` i end-to-end payload.
+17. Pro pevný klíč, IV, AAD a plaintext vytvoří softwarová implementace přesně očekávaný ciphertext a 16bajtový tag podle known-answer vektoru AES-256-GCM. Správně dešifruje platný vektor, odmítne změnu jediného bitu klíče, IV, AAD, ciphertextu či tagu a před úspěšným ověřením tagu nezpřístupní žádný plaintext.
 
 ### 16.4 Fronty, souběh a pády
 
@@ -651,7 +651,7 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 
 - podporuje všechny čtyři endpointy a přesné typy zpráv;
 - při startu serveru i klienta normalizuje pouze přesně prázdný nakonfigurovaný `SERVER_SECRET` na 32 ASCII znaků `0` a pro všechny kryptografické operace používá tuto efektivní hodnotu;
-- je-li napsána v PHP, poskytuje AES-256-GCM i bez OpenSSL nebo jiného volitelného rozšíření prostřednictvím povinného pure-PHP fallbacku a nikdy absenci rozšíření neřeší omezením funkcí nebo `503`;
+- je-li napsána v PHP, provádí všechny operace AES-256-GCM vždy jedinou přibalenou softwarovou implementací v čistém PHP a nepoužívá pro ně OpenSSL, Sodium ani jiné kryptografické rozšíření;
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
 - ověřuje autentizaci před jakoukoli změnou storage;
 - vyžaduje v `auth-semi` i `auth-full` přesný UTC string `YYYY-MM-DDTHH:MM:SSZ`, zahrnuje jej v normativním pořadí do HMAC `tag` a odmítá absolutní odchylku větší než 60 s bez perzistence timestampu;
