@@ -29,7 +29,7 @@ Protokol poskytuje:
 - důvěrnost a integritu obsahu odpovědi `info` pomocí AES-256-GCM;
 - oddělení klíčů podle účelu pomocí HKDF-SHA-256.
 
-php implementace serveru by v základu neměla vyžadovat žádné rozšíření základního instalačního balíčku PHP. Tedy ani OpenSSL. Algoritmus AES-256-GCM je implementovaný softwarově.
+PHP implementace serveru ani PHP implementace klienta NESMÍ pro shodu s protokolem vyžadovat OpenSSL ani jiné volitelné kryptografické rozšíření. Je-li vhodný nativní backend dostupný, implementace jej smí použít jako akceleraci. Vždy však musí obsahovat také softwarovou implementaci AES-256-GCM v čistém PHP a automaticky ji použít, když žádný vhodný nativní backend dostupný není.
 
 ### 1.2 Vědomě neposkytované vlastnosti
 
@@ -63,11 +63,13 @@ Výchozí adresní prostor je `10.99.99.0/24`. Platné klientské adresy jsou `1
 
 Server a klienti používají tři oddělené třídy klíčů:
 
-1. `SERVER_SECRET`: právě jedna konstanta v konfigurační hlavičce PHP souboru, kterou znají server a oprávnění klienti. Výchozí hodnota je 32 nulových bajtů a správce ji má nahradit bezpečnou náhodnou hodnotou. Slouží pro `auth-semi`, šifrování `info` a odvození autentizačního klíče `auth-full`.
+1. `SERVER_SECRET`: právě jedna konstanta v konfigurační hlavičce PHP souboru, kterou znají server a oprávnění klienti. Výchozí hodnota je řetězec `"00000000000000000000000000000000"`, tedy přesně 32 ASCII znaků `0`, a správce ji má nahradit bezpečnou náhodnou hodnotou. Slouží pro `auth-semi`, šifrování `info` a odvození autentizačního klíče `auth-full`.
 2. `ACCESS_KEY`: právě jeden 32bajtový náhodný klíč unikátní pro jednoho klienta. Zná jej pouze server a daný klient a používá se jako vstupní tajemství při odvození autentizačního klíče `auth-full`. Server jej vyhledá v mapě `ACCESS_KEYS` podle VPN adresy `src`; samotný klíč ani jeho identifikátor se nikdy nepřenáší.
 3. `PAYLOAD_KEY`: právě jeden pevný 32bajtový end-to-end klíč pro každou uspořádanou dvojici VPN adres (`src`, `dst`). Znají jej pouze klienti daného směru komunikace; relay server jej NESMÍ mít. Distribuce je mimo protokol.
 
-Kryptografické operace používají přesné bajty konstanty `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. Každý `ACCESS_KEY` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. Klienti vedou lokální mapu `PAYLOAD_KEYS[src][dst]`; každá její hodnota se pro AES-256-GCM dekóduje na přesně 32 bajtů.
+Každá implementace serveru i klienta při startu normalizuje `SERVER_SECRET` ještě před validací konfigurace a před první kryptografickou operací. Je-li nakonfigurovaná hodnota přesně prázdný řetězec o délce nula bajtů, implementace ji za běhu nahradí řetězcem `"00000000000000000000000000000000"`, tedy 32 bajty `0x30`. Všude dále v tomto dokumentu označuje `SERVER_SECRET` tuto efektivní normalizovanou hodnotu. Jakákoli neprázdná hodnota se ponechá beze změny; zejména řetězec `"0"` ani hodnota tvořená nulovými bajty `0x00` se nenormalizují.
+
+Kryptografické operace používají přesné bajty efektivního `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný nakonfigurovaný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. Každý `ACCESS_KEY` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. Klienti vedou lokální mapu `PAYLOAD_KEYS[src][dst]`; každá její hodnota se pro AES-256-GCM dekóduje na přesně 32 bajtů.
 
 `SERVER_SECRET`, `ACCESS_KEY` ani `PAYLOAD_KEY` nemají identifikátor přenášený v protokolu. Klient zvolí jediný `PAYLOAD_KEY` výhradně podle přesné uspořádané dvojice `src` a `dst`.
 
@@ -111,7 +113,7 @@ Jiné metody vrací `405 method_not_allowed` s hlavičkou `Allow`. Neznámá akc
 
 ### 5.1 Provozní stránka
 
-`GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Je-li `SERVER_SECRET` prázdný, tvořený pouze nulovými bajty `0x00` nebo pouze ASCII znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
+`GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Byla-li nakonfigurovaná hodnota `SERVER_SECRET` prázdná nebo je-li jeho efektivní hodnota tvořena pouze nulovými bajty `0x00` či pouze ASCII znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
 
 Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: prázdný nebo nulový `SERVER_SECRET` neblokuje `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`.
 
@@ -188,7 +190,15 @@ fullAuthKey          = HKDF-SHA-256(ACCESS_KEY, authFullSalt, authFullInfo, 32)
 
 `authFullSaltDomain` a `authFullKeyDomain` jsou veřejné konstantní doménové řetězce pro oddělení kontextu: první označuje vstup odvození saltu a druhý hodnotu HKDF `info`. `NUL` je jediný bajt `0x00` a `src` jsou přesné ASCII bajty validované VPN adresy bez vodicích nul. Doménové řetězce, oddělovač, pořadí argumentů i výstupní délka jsou normativní. Na rozdíl od veřejně konstantního `authSemiSalt` je `authFullSalt` klientsky specifický a odvozuje se ze `SERVER_SECRET` a `src`; klientův jediný `ACCESS_KEY` je poté vstupním tajemstvím HKDF. Bez obou tajemství nelze vypočítat správný `fullAuthKey` ani HMAC tag. `fullAuthKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
 
-Prázdný nebo nulový `SERVER_SECRET` zůstává podle kapitoly 3.2 platnou konfigurací, ale jako veřejně předvídatelný vstup neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
+Prázdný nakonfigurovaný `SERVER_SECRET` se podle kapitoly 3.2 před tímto odvozením normalizuje na 32 ASCII znaků `0`. Prázdný nebo nulový vstup tak zůstává platnou konfigurací, ale jako veřejně předvídatelná hodnota neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
+
+### 7.3 Dostupnost AES-256-GCM
+
+AES-256-GCM je povinné kryptografické primitivum a v PHP implementaci jeho dostupnost nesmí záviset na volitelném rozšíření. PHP implementace smí přednostně použít nativní backend, například `openssl_encrypt()` a `openssl_decrypt()` s metodou `aes-256-gcm`, pouze pokud za běhu ověří jeho dostupnost. Není-li takový backend dostupný, musí automaticky použít přibalenou softwarovou implementaci v čistém PHP. Chybějící OpenSSL, Sodium nebo jiné volitelné rozšíření NESMÍ samo o sobě způsobit odmítnutí `info` či `data`, omezení funkcí ani `503 server_misconfigured`.
+
+Softwarový backend musí implementovat úplné operace AES-256-GCM potřebné pro šifrování, autentizované dešifrování a ověření tagu. Zahrnuje přinejmenším dopřednou blokovou transformaci AES-256, čítačovou část GCTR a autentizační funkci GHASH. Protože GCM používá v obou směrech pouze dopřednou transformaci AES, samostatná inverzní bloková transformace AES není vyžadována. Backend musí podporovat normativní 32bajtový klíč, 12bajtové IV, libovolné AAD předepsané tímto protokolem a 16bajtový tag. Dešifrovaný plaintext NESMÍ zpřístupnit volajícímu před úspěšným ověřením celého GCM tagu.
+
+Volba kryptografického backendu je pouze implementační detail. Pro stejné bajty klíče, IV, AAD a plaintextu musí všechny backendy vytvořit totožný ciphertext a tag a při dešifrování přijmout či odmítnout stejné vstupy. Přepnutí backendu nemění wire formát, odvození klíčů, chybové kódy ani žádné jiné protokolové chování.
 
 ## 8. Akce `info`
 
@@ -512,7 +522,7 @@ Chybové tělo je malý obecný JSON objekt:
 | 429 | `queue_full` | Cílová fronta nemá kapacitu. | Ponechat data, backoff s jitterem. |
 | 503 | `queue_busy` | Vyčerpán limit čekání na storage zámek. | Krátký backoff. |
 | 503 | `queue_unavailable` | Backend nelze bezpečně použít. | Backoff; administrátorská kontrola. |
-| 503 | `server_misconfigured` | Nekonzistentní limity nebo chybějící povinná kryptografická funkce. | Neopakovat rychle; opravit server. |
+| 503 | `server_misconfigured` | Nekonzistentní limity nebo jiná neplatná serverová konfigurace. Chybějící volitelné kryptografické rozšíření sem nepatří. | Neopakovat rychle; opravit server. |
 | 500 | `internal_error` | Neočekávaná interní chyba. | Ponechat data, backoff. |
 
 Chybová odpověď není autentizovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
@@ -535,13 +545,26 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 - `Router` a `Http`: metoda, akce, hlavičky a obecné chyby;
 - `JsonWire` a `NdjsonReader`: limitované čtení, duplicitní klíče, striktní pole a base64url;
 - `KeyDerivation` a `Authenticator`: HKDF, HMAC, kanonizace a konstantní porovnání;
-- `InfoCrypto`: pouze šifrování odpovědi `info` přes AES-256-GCM;
+- `InfoCrypto`: výběr dostupného backendu a šifrování odpovědi `info` přes AES-256-GCM včetně pure-PHP fallbacku;
 - `Storage` interface a `DiskStorage`;
 - `ClientStats`: best-effort čtení a nejvýše jeden pokus o zápis centrálního `clients.json`;
 - `InfoHandler` a `DataHandler`;
 - `Maintenance`: omezený oportunistický sweep expirací.
 
-Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` AES-256-GCM. Doporučená realizace používá `hash_hkdf()` a `openssl_encrypt(..., 'aes-256-gcm', ...)`. Chybí-li bezpečná AES-GCM implementace, `info` vrací `503 server_misconfigured`; datový relay může zůstat funkční, protože payload nedešifruje. Vlastní neauditovaná implementace AES se nedoporučuje.
+Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` AES-256-GCM. Pro HKDF může použít `hash_hkdf()`. Pro AES-256-GCM smí použít `openssl_encrypt(..., 'aes-256-gcm', ...)` a odpovídající dešifrovací funkci, jsou-li skutečně dostupné, ale nesmí na nich záviset. PHP server i PHP klient musí obsahovat interoperabilní pure-PHP backend podle kapitoly 7.3 a zvolit jej automaticky, když vhodný nativní backend chybí. Absence OpenSSL nebo jiného volitelného kryptografického rozšíření není chybná konfigurace a nesmí vést k `503 server_misconfigured`.
+
+Pure-PHP backend má implementovat pouze rozsah potřebný pro tento protokol: AES-256 v dopředném směru, GCTR, GHASH, 96bitové IV a 128bitový tag. Při inicializaci musí každý dostupný backend projít known-answer testem AES-256-GCM se stejnými pevnými vstupy. Automatický výběr smí použít pouze backend, který tímto testem projde. Výsledek testu se v rámci běhu procesu zapamatuje, aby se test neopakoval pro každý požadavek. Software nesmí obsahovat větev, která absenci nativního backendu řeší vypnutím šifrování, změnou algoritmu nebo odesláním plaintextu.
+
+Normalizace z kapitoly 3.2 musí proběhnout při startu ještě před předáním konfigurace do `KeyDerivation`. V PHP se testuje přesně nulová délka řetězce, nikoli obecná nepravdivost hodnoty:
+
+```php
+$serverSecret = SERVER_SECRET;
+if ($serverSecret === '') {
+    $serverSecret = str_repeat('0', 32);
+}
+```
+
+Všechny následné kryptografické operace používají výhradně `$serverSecret`. Funkce `empty()` se pro tuto normalizaci NESMÍ použít, protože by chybně považovala platný neprázdný řetězec `"0"` za prázdný. Po normalizaci není vstupní klíč žádného zde předepsaného volání `hash_hkdf()` prázdný: původně prázdný `SERVER_SECRET` má 32 ASCII znaků `0`, každá jiná hodnota `SERVER_SECRET` je z definice neprázdná a odvození `auth-full` dostane validovaný 32bajtový `ACCESS_KEY`. Prázdný nakonfigurovaný `SERVER_SECRET` proto nesmí vyvolat `ValueError`, `500 internal_error` ani `503 server_misconfigured`.
 
 Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result`. Bezpečnou volbou je validované záznamy dočasně držet v omezené paměti; `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
 
@@ -556,7 +579,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 1. Stejný request přes HTTP, HTTPS, přímé spojení a proxy vede ke stejnému aplikačnímu výsledku.
 2. Podvržené `X-Forwarded-*` hlavičky neovlivní autentizaci, `src`, frontu ani odpověď.
 3. URL s neznámou akcí a nepovolená metoda vrátí správné obecné chyby.
-4. Root stránka zobrazí H1; při výchozích 32 nulových bajtech i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `info` a `data` zůstávají funkční.
+4. Root stránka zobrazí H1; při výchozích 32 ASCII znacích `0` i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `info` a `data` zůstávají funkční.
 5. `health` má čtyři povinná pole včetně `serverVersion`, status `running`, description `OK` a UTC timestamp v přesném tvaru `YYYY-MM-DDTHH:MM:SSZ`; klient z něj před autentizací správně odvodí svůj časový offset vůči serveru.
 
 ### 16.2 JSON, NDJSON a limity
@@ -585,6 +608,9 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 12. `info` salt má 32 bajtů, IV 12 bajtů a GCM tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
 13. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením GCM tagu.
 14. Každý přímý datový řádek odpovědi se samostatně ověří pomocí AES-GCM; řádek s neplatným GCM tagem se zahodí bez ovlivnění ostatních platných řádků.
+15. Nakonfigurovaný `SERVER_SECRET` o délce nula bajtů se při startu serveru i klienta normalizuje na přesně 32 ASCII znaků `0`. Known-answer test pro prázdnou a explicitně zadanou hodnotu `"00000000000000000000000000000000"` musí dát shodný `semiKey`, klíč odpovědi `info`, `authFullSalt`, `fullAuthKey` i výsledné tagy a nesmí vyvolat `ValueError`. Neprázdný řetězec `"0"` a 32 nulových bajtů `0x00` se nenormalizují a musí dát výsledky odpovídající jejich vlastním přesným bajtům.
+16. PHP server i PHP klient spuštěný bez OpenSSL, Sodium a jiného volitelného kryptografického rozšíření automaticky použije pure-PHP AES-256-GCM. `info` i end-to-end payload zůstanou plně funkční, shodují se s known-answer vektory a absence rozšíření nevyvolá `503 server_misconfigured`.
+17. Pro pevný klíč, IV, AAD a plaintext vytvoří nativní a pure-PHP backend přesně stejný ciphertext a 16bajtový tag. Oba backendy správně dešifrují platný vektor, odmítnou změnu jediného bitu klíče, IV, AAD, ciphertextu či tagu a před úspěšným ověřením tagu nezpřístupní žádný plaintext.
 
 ### 16.4 Fronty, souběh a pády
 
@@ -624,6 +650,8 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 
 - podporuje všechny čtyři endpointy a přesné typy zpráv;
+- při startu serveru i klienta normalizuje pouze přesně prázdný nakonfigurovaný `SERVER_SECRET` na 32 ASCII znaků `0` a pro všechny kryptografické operace používá tuto efektivní hodnotu;
+- je-li napsána v PHP, poskytuje AES-256-GCM i bez OpenSSL nebo jiného volitelného rozšíření prostřednictvím povinného pure-PHP fallbacku a nikdy absenci rozšíření neřeší omezením funkcí nebo `503`;
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
 - ověřuje autentizaci před jakoukoli změnou storage;
 - vyžaduje v `auth-semi` i `auth-full` přesný UTC string `YYYY-MM-DDTHH:MM:SSZ`, zahrnuje jej v normativním pořadí do HMAC `tag` a odmítá absolutní odchylku větší než 60 s bez perzistence timestampu;
