@@ -292,12 +292,12 @@ Do `canonical` vstupují přesné ASCII bajty validovaného `timestamp` beze zm�
 Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 
 ```json
-{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}}
 ```
 
 `generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 s přesností na sekundy. Kvůli 30sekundovému omezení aktualizací a best-effort povaze statistik jde pouze o přibližný provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
 
-`limits` popisuje skutečné aktivní hodnoty serveru. Klient nesmí spoléhat pouze na výchozí hodnoty této specifikace. Odpověď `info` nesmí obsahovat název, konfiguraci ani jinou informaci o interním úložišti serveru.
+`limits` popisuje skutečné aktivní hodnoty serveru. Klient nesmí spoléhat pouze na výchozí hodnoty této specifikace. `minDataPollIntervalMs` a `maxDataPollIntervalMs` jsou doporučené dolní a horní hranice intervalu mezi voláními `data`; klient se jimi smí řídit, ale nejsou pro něj závazné. Odpověď `info` nesmí obsahovat název, konfiguraci ani jinou informaci o interním úložišti serveru.
 
 ### 8.3 Šifrovaná odpověď
 
@@ -396,10 +396,11 @@ aad = "PHPVPN-DATA" LF
 
 Plaintext je přesný binární IPv4 paket. Odesílatel jej zašifruje AES-256-GCM a přenese ciphertext a 16bajtový tag. Příjemce musí před předáním paketu virtuální kartě:
 
-1. vyhledat jediný klíč podle přesných směrovacích adres `src` a `dst`;
-2. sestavit přesné AAD;
-3. ověřit GCM tag a teprve poté získat plaintext;
-4. zkontrolovat syntaxi IPv4, celkovou délku a shodu vnitřních zdrojových a cílových adres s `src` a `dst`.
+1. zahodit řádek, pokud se `dst` nerovná jeho jediné nakonfigurované VPN adrese;
+2. vyhledat jediný klíč podle přesných směrovacích adres `src` a `dst`;
+3. sestavit přesné AAD;
+4. ověřit GCM tag a teprve poté získat plaintext;
+5. zkontrolovat syntaxi IPv4, celkovou délku a shodu vnitřních zdrojových a cílových adres s `src` a `dst`.
 
 Relay tag neověřuje, protože nemá `PAYLOAD_KEY`. Změna `src`, `dst`, `messageId`, IV nebo ciphertextu způsobí u příjemce neplatný tag.
 
@@ -558,8 +559,10 @@ Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORAGE_
 | `AUTH_TIMESTAMP_SKEW_SECONDS` | 60 s | Nejvyšší absolutní odchylka autentizačního timestampu od času serveru. |
 | `QUEUE_TTL_SECONDS` | 60 s | Nejvyšší věk čekající dávky. |
 | `LOCK_TIMEOUT_MS` | 200 ms | Nejvyšší čekání PHP workeru na storage zámek. |
+| `MIN_DATA_POLL_INTERVAL_MS` | 80 ms | Doporučený nejkratší interval mezi voláními `data`. |
+| `MAX_DATA_POLL_INTERVAL_MS` | 1000 ms | Doporučený nejdelší interval mezi voláními `data`. |
 
-Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a závěrečný `data-mac`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
+Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů a že `MIN_DATA_POLL_INTERVAL_MS` je kladné a není větší než `MAX_DATA_POLL_INTERVAL_MS`. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a závěrečný `data-mac`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
 
 Překročení syntaktického limitu vrací `413 payload_too_large`. Nedostatek kapacity persistentní cílové fronty není syntaktická ani protokolová chyba. Po jednom cíleném sweepu a jednom opakovaném pokusu server vrátí nepřijaté položky v `deferredMessageIds` úspěšné odpovědi `200`.
 
@@ -572,7 +575,7 @@ Doporučené výchozí hodnoty klienta:
 - connect timeout 5 s;
 - celkový timeout requestu 15 s;
 - exponenciální backoff po síťové chybě nebo `503`, počínaje 250 ms, nejvýše 30 s, vždy s jitterem;
-- klient musí mít lokální limit rychlosti pollingu.
+- interval mezi voláními `data` může klient omezit podle aktivních hodnot `minDataPollIntervalMs` a `maxDataPollIntervalMs` z odpovědi `info`; výchozí doporučené rozmezí je 80 až 1 000 ms.
 
 Server může u `503` poslat `Retry-After`. Klient jej respektuje jako dolní hranici čekání. Položky uvedené v `deferredMessageIds` klient ponechá ve své odchozí frontě pro pozdější pokus, ale nadále pokračuje v pollingu, aby nedostupný cíl neblokoval jeho příchozí provoz.
 
@@ -700,7 +703,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 7. Server přijme UTC časy s odchylkou přesně `-60`, `0` a `+60` s a odmítne `-61` a `+61` s; po zpracování nevytvoří timestamp ani nonce záznam.
 8. Autentizační pole `tag` v typech `auth-semi` a `auth-full` musí být base64url bez paddingu a dekódovat se na přesně 32 bajtů; porovnání probíhá konstantním časem. Typ `auth-none` pole `tag` NESMÍ obsahovat.
 9. `auth-full.src` vybere právě jeden `ACCESS_KEY` a je vstupem odvození i kanonizace; jeho změna změní `fullAuthKey` i tag. Neznámé `src` skončí obecným `401` po odvození s dummy klíčem a každý datový záznam musí mít stejné `src`.
-10. Příjemce pro každou uspořádanou dvojici `src` a `dst` jednoznačně vybere právě jeden pevný `PAYLOAD_KEY`; relay tuto mapu nemá.
+10. Příjemce zahodí řádek, jehož `dst` není jeho vlastní nakonfigurovaná VPN adresa, ještě před výběrem `PAYLOAD_KEY`; pro každou zbývající uspořádanou dvojici `src` a `dst` jednoznačně vybere právě jeden pevný `PAYLOAD_KEY`. Relay tuto mapu nemá.
 11. Změna `messageId`, směrovacího pole `src` nebo `dst`, IV, ciphertextu či tagu zneplatní GCM ověření, protože routingová pole zůstávají součástí AAD.
 12. `health` IV má 12 bajtů a GCM tag 16 bajtů. `info` salt má 32 bajtů, IV 12 bajtů a GCM tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
 13. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením GCM tagu.
