@@ -1,0 +1,6 @@
+garbage collector
+parametry memcached
+tabulka v pameti
+nepouzivat utf-8
+neukladat a neporovnavat iv, ani nonce
+dat ciphertext az na konec, aby jsme mohli substringem vykopirovat hlavicku zpravy

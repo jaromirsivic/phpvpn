@@ -22,6 +22,7 @@ Protokol je navržen pro PHP 8.2+, více souběžných PHP workerů a úložišt
 
 Protokol poskytuje:
 
+- autenticitu času a provozních polí odpovědi `health` vůči klientovi znalému `SERVER_SECRET`;
 - autentizaci požadavků `info` znalostí serverového tajemství;
 - autentizaci požadavků `data` současnou znalostí jediného serverového tajemství a přístupového klíče konkrétního klienta;
 - integritu autentizovaného požadavku včetně přesných bajtů jeho těla;
@@ -47,6 +48,7 @@ Přijetí rizika vychází z předpokladu, že klientská, transportní nebo apl
 | Architektura | Bezstavové, krátké HTTP požadavky; žádná serverová session. |
 | Wire format | JSON pro řídicí akce, NDJSON pro datovou akci. |
 | Doručení | Optimistické at-most-once na úrovni serverového bufferu, bez potvrzení. Po atomickém načtení jsou data ze serveru odstraněna ještě před přenosem odpovědi. |
+| Čas serveru | Klient posílá neautentizovaný `auth-none` s čerstvým `requestId`; server vrací veřejný `health` autentizovaný GCM tagem odvozeným ze `SERVER_SECRET`. |
 | Replay | Timestamp omezuje platnost autentizovaného požadavku na ±60 s vůči času serveru. Uvnitř okna není replay detekován; bez deduplikace a bez perzistence timestampu nebo nonce. Replay odposlechnutého HTTP pollingu může vyprázdnit a nenávratně zničit příchozí frontu oběti; v1 toto riziko vědomě přijímá. |
 | Payload klíče | Klientské per-peer nebo skupinové klíče distribuované mimo relay; server je nezná. |
 | Více cílů | Částečné přijetí je dovoleno a výsledek se vrací pro každý záznam. |
@@ -103,6 +105,8 @@ Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VP
 
 Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit, měnit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC požadavku, HMAC odpovědi `data` ani GCM tag jednotlivého payloadu. Závěrečný `data-mac` proto odhalí odstranění, přidání nebo přeuspořádání datových řádků i jakoukoli změnu `data-result`; změnu obsahu jednotlivého datového záznamu se zachovaným GCM tagem odhalí jeho následné AES-GCM ověření. Útočník stále může zahodit celou odpověď, přerušit spojení nebo zopakovat celou dříve platnou odpověď se shodným aktuálním `requestId`. Protože server záznamy před odesláním odstraní, nedoručení odpovědi znamená jejich nevratnou ztrátu na úrovni relay. Autentizovaný požadavek lze úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
 
+Požadavek `auth-none` sám není autentizovaný a útočník jej může číst, měnit nebo opakovat. Odpověď `health` však váže serverový UTC čas a všechna ostatní provozní pole k čerstvému klientskému `requestId` pomocí GCM tagu odvozeného ze `SERVER_SECRET`. Útočník bez tohoto tajemství nemůže podstrčit budoucí timestamp ani změnit legitimní odpověď tak, aby ji klient přijal. Starou odpověď pro jiný `requestId` klient odmítne. Útočník může požadavek či odpověď zdržet nebo zahodit, což může způsobit zastaralý čas nebo nedostupnost, nikoli však nepozorovaný posun klientových podpisů do budoucnosti.
+
 Pro útok na pollingovou frontu útočník nemusí změnit provoz na trase ani znát klíč. Stačí mu pasivně zachytit platný HTTP požadavek `data`, získanou kopii během otevřeného okna sám odeslat serveru a tento postup opakovat s novými požadavky oběti. Každá úspěšná kopie provede běžné at-most-once vyprázdnění fronty ve prospěch spojení útočníka. Tím lze dlouhodobě odebírat všechny nově čekající záznamy a legitimnímu klientovi ponechávat prázdnou frontu. Jde o výslovně přijaté riziko čistého HTTP podle kapitoly 1.2, nikoli o vlastnost, kterou by v1 detekovala nebo napravovala.
 
 HTTPS navíc poskytuje ochranu transportních metadat v těle a hlavičkách, autentizaci TLS protistrany a ochranu spojení proti změně. Zda jej administrátor použije, je provozní rozhodnutí mimo povinné požadavky protokolu.
@@ -112,7 +116,7 @@ HTTPS navíc poskytuje ochranu transportních metadat v těle a hlavičkách, au
 | URL | Metoda | Požadavek | Úspěšná odpověď |
 |---|---|---|---|
 | `/phpvpn.php` | `GET`, `HEAD` | bez těla | HTML provozní stránka |
-| `/phpvpn.php?action=health` | `GET`, `HEAD` | bez těla | `application/json` |
+| `/phpvpn.php?action=health` | `POST` | jeden JSON objekt `auth-none` | jeden autentizovaný JSON objekt `health` |
 | `/phpvpn.php?action=info` | `POST` | jeden JSON objekt `auth-semi` | jeden JSON objekt `info` |
 | `/phpvpn.php?action=data` | `POST` | NDJSON začínající `auth-full` | NDJSON s datovými záznamy a výsledkem |
 
@@ -122,22 +126,38 @@ Jiné metody vrací `405 method_not_allowed` s hlavičkou `Allow`. Neznámá akc
 
 `GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Byla-li nakonfigurovaná hodnota `SERVER_SECRET` prázdná nebo je-li jeho efektivní hodnota tvořena pouze nulovými bajty `0x00` či pouze ASCII znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
 
-Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: prázdný nebo nulový `SERVER_SECRET` neblokuje `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`.
+Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: prázdný nebo nulový `SERVER_SECRET` neblokuje `health`, `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`. Protože je však taková hodnota veřejně předvídatelná, neposkytuje tag odpovědi `health` praktický důkaz identity serveru.
 
 ### 5.2 `health`
 
-`health` nevyžaduje autentizaci a vrací právě tato pole:
+`health` používá metodu `POST` a Content-Type `application/json; charset=utf-8`. Požadavek obsahuje právě jeden JSON objekt `auth-none` a žádné další bajty:
 
 ```json
-{"serverVersion":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30Z"}
+{"type":"auth-none","requestId":"c22cd6e8-14a9-4d83-97b7-54c26a72d1f0"}
+```
+
+- `auth-none` je záměrně neautentizovaný typ požadavku;
+- neobsahuje `timestamp`, `src`, `tag`, secret ani jiné pole a nedokládá znalost žádného tajemství;
+- klient pro každý pokus generuje nový UUIDv4 `requestId` a nesmí přijmout odpověď náležející jinému požadavku;
+- server po syntaktické validaci odpoví každému žadateli, nevede pro `auth-none` session ani persistentní stav a replay požadavku zpracuje jako nový samostatný požadavek.
+
+Úspěšná odpověď má Content-Type `application/json; charset=utf-8` a právě tato pole:
+
+```json
+{"serverVersion":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30Z","requestId":"c22cd6e8-14a9-4d83-97b7-54c26a72d1f0","iv":"BASE64URL","tag":"BASE64URL"}
 ```
 
 - `serverVersion` je verze serverové aplikace;
 - `status` je při úspěchu `running`;
 - `description` je při úspěchu `OK`;
-- `timestamp` je aktuální UTC čas přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`. Klient jej před autentizací parsuje jako UTC a použije pro korekci vlastního časového offsetu.
+- `timestamp` je aktuální UTC čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`;
+- `requestId` je přesná hodnota z odpovídajícího požadavku `auth-none`;
+- `iv` je 12 nových náhodných bajtů z CSPRNG, zapsaných jako base64url bez paddingu;
+- `tag` je 16bajtový AES-256-GCM autentizační tag zapsaný jako base64url bez paddingu a vypočtený podle kapitoly 7.3.
 
-Pořadí členů JSON objektu není sémantické. Klient musí před prvním autentizovaným požadavkem získat čas serveru přes `health`; stejné srovnání zopakuje po `401`, pokud může být příčinou odchylka hodin.
+Pořadí členů JSON objektu není sémantické. Klient znalý `SERVER_SECRET` MUSÍ před použitím `timestamp` ověřit `requestId`, délku IV, odvodit klíč a ověřit GCM tag. Do úspěšného ověření nesmí změnit svůj časový offset ani vytvořit autentizovaný požadavek založený na přijatém čase. Při chybějícím nebo neplatném tagu, neshodném `requestId` či jiném neplatném poli celou odpověď zahodí.
+
+Klient musí před prvním autentizovaným požadavkem získat a ověřit čas serveru přes `health`; stejný postup zopakuje po `401`, pokud může být příčinou odchylka hodin. Server neověřuje znalost `SERVER_SECRET` u požadavku, ale platná odpověď dokazuje tuto znalost klientovi, který umí tag nezávisle ověřit.
 
 ## 6. Společný wire formát
 
@@ -167,7 +187,7 @@ Identifikátory slouží ke korelaci. Server ani klient je NESMÍ používat jak
 
 Povinné algoritmy v1 jsou SHA-256, HMAC-SHA-256, HKDF-SHA-256 podle RFC 5869 a AES-256-GCM s 16bajtovým tagem.
 
-Všechny textové kanonické řetězce jsou ASCII/UTF-8, hodnoty jsou oddělené jedním LF a řetězec nekončí LF, není-li uvedeno jinak. `SHA256HEX(x)` je SHA-256 nad přesnými bajty `x`, zapsaný 64 malými hexadecimálními znaky. Výstup `HMAC-SHA-256(key, x)` má 32 bajtů a do HMAC pole `tag` se zapisuje base64url bez paddingu. HMAC `tag` ve zprávách `auth-semi`, `auth-full` a `data-mac` se podle typu zprávy jednoznačně odlišuje od 16bajtového AES-GCM pole `tag` ve zprávách `info` a `data`.
+Všechny textové kanonické řetězce jsou ASCII/UTF-8, hodnoty jsou oddělené jedním LF a řetězec nekončí LF, není-li uvedeno jinak. `SHA256HEX(x)` je SHA-256 nad přesnými bajty `x`, zapsaný 64 malými hexadecimálními znaky. Výstup `HMAC-SHA-256(key, x)` má 32 bajtů a do HMAC pole `tag` se zapisuje base64url bez paddingu. HMAC `tag` ve zprávách `auth-semi`, `auth-full` a `data-mac` se podle typu zprávy jednoznačně odlišuje od 16bajtového AES-GCM pole `tag` ve zprávách `health`, `info` a `data`.
 
 ### 7.1 Klíč `auth-semi`
 
@@ -199,11 +219,43 @@ fullAuthKey          = HKDF-SHA-256(ACCESS_KEY, authFullSalt, authFullInfo, 32)
 
 Prázdný nakonfigurovaný `SERVER_SECRET` se podle kapitoly 3.2 před tímto odvozením normalizuje na 32 ASCII znaků `0`. Prázdný nebo nulový vstup tak zůstává platnou konfigurací, ale jako veřejně předvídatelná hodnota neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
 
-### 7.3 Softwarová implementace AES-256-GCM
+### 7.3 Autentizace odpovědi `health`
 
-AES-256-GCM je povinné kryptografické primitivum. Každá PHP implementace musí pro všechny jeho operace bez výjimky používat jedinou přibalenou softwarovou implementaci v čistém PHP. Operace NESMÍ delegovat na `openssl_encrypt()`, `openssl_decrypt()`, Sodium ani jiné kryptografické rozšíření. Toto pravidlo platí pro šifrování odpovědi `info` i pro šifrování, autentizované dešifrování a ověřování end-to-end payloadu `data`.
+Klient i server odvodí pro každý `requestId` samostatný 32bajtový klíč odpovědi `health` z efektivního `SERVER_SECRET`:
 
-Softwarová implementace musí poskytovat úplné operace AES-256-GCM potřebné pro šifrování, autentizované dešifrování a ověření tagu. Zahrnuje přinejmenším dopřednou blokovou transformaci AES-256, čítačovou část GCTR a autentizační funkci GHASH. Protože GCM používá v obou směrech pouze dopřednou transformaci AES, samostatná inverzní bloková transformace AES není vyžadována. Implementace musí podporovat normativní 32bajtový klíč, 12bajtové IV, libovolné AAD předepsané tímto protokolem a 16bajtový tag. Dešifrovaný plaintext NESMÍ zpřístupnit volajícímu před úspěšným ověřením celého GCM tagu.
+```text
+healthSaltDomain   = "phpvpn/health-response/salt"
+healthKeyDomain    = "phpvpn/health-response/key"
+healthSaltMaterial = healthSaltDomain || NUL || requestId
+healthSalt         = SHA-256(healthSaltMaterial)   // 32 raw bytes
+healthInfo         = healthKeyDomain || NUL || requestId
+healthKey          = HKDF-SHA-256(SERVER_SECRET, healthSalt, healthInfo, 32)
+```
+
+Doménové řetězce, jediný oddělovač `NUL`, přesné ASCII bajty UUID `requestId` a výstupní délka jsou normativní. `requestId` odděluje klíč každého pokusu a současně váže odpověď k čerstvé klientské výzvě. Jediným tajným vstupem je efektivní `SERVER_SECRET`; samotný `auth-none` žádné tajemství neposílá.
+
+Server sestaví AAD z přesných validovaných hodnot odpovědi:
+
+```text
+aad = "PHPVPN-HEALTH-RESPONSE" LF
+      "health" LF
+      requestId LF
+      serverVersion LF
+      status LF
+      description LF
+      timestamp LF
+      BASE64URL(iv)
+```
+
+Server provede AES-256-GCM s `healthKey`, 12bajtovým `iv`, uvedeným `aad` a prázdným plaintextem o délce nula bajtů. Ciphertext je proto také prázdný a do odpovědi se nepřenáší. Výsledný 16bajtový GCM tag autentizuje IV i všechna veřejná pole odpovědi. Tato autentizační aplikace AES-GCM s prázdným plaintextem odpovídá konstrukci GMAC; `SERVER_SECRET` se nepřipojuje jako veřejná data, ale prostřednictvím `healthKey` tvoří tajný klíčový materiál tagu.
+
+Klient sestaví stejné AAD z přesných přijatých hodnot a tag ověří softwarovou implementací AES-256-GCM. Teprve potom smí použít `timestamp`. Změna `serverVersion`, `status`, `description`, `timestamp`, `requestId`, IV nebo tagu ověření zneplatní. Odpověď s platným tagem, ale jiným než aktuálně očekávaným `requestId` je rovněž neplatná. Server ani klient `requestId` nebo IV nepersistují a nevytvářejí replay databázi.
+
+### 7.4 Softwarová implementace AES-256-GCM
+
+AES-256-GCM je povinné kryptografické primitivum. Každá PHP implementace musí pro všechny jeho operace bez výjimky používat jedinou přibalenou softwarovou implementaci v čistém PHP. Operace NESMÍ delegovat na `openssl_encrypt()`, `openssl_decrypt()`, Sodium ani jiné kryptografické rozšíření. Toto pravidlo platí pro autentizaci odpovědi `health`, šifrování odpovědi `info` i pro šifrování, autentizované dešifrování a ověřování end-to-end payloadu `data`.
+
+Softwarová implementace musí poskytovat úplné operace AES-256-GCM potřebné pro šifrování, autentizované dešifrování a ověření tagu. Zahrnuje přinejmenším dopřednou blokovou transformaci AES-256, čítačovou část GCTR a autentizační funkci GHASH. Protože GCM používá v obou směrech pouze dopřednou transformaci AES, samostatná inverzní bloková transformace AES není vyžadována. Implementace musí podporovat normativní 32bajtový klíč, 12bajtové IV, libovolné AAD předepsané tímto protokolem, prázdný plaintext pro GMAC odpovědi `health` a 16bajtový tag. Dešifrovaný plaintext NESMÍ zpřístupnit volajícímu před úspěšným ověřením celého GCM tagu.
 
 Pro stejné bajty klíče, IV, AAD a plaintextu musí softwarová implementace vytvořit ciphertext a tag odpovídající normativnímu AES-256-GCM. Přítomnost nebo absence OpenSSL, Sodium či jiného rozšíření NESMÍ změnit wire formát, výstup kryptografické operace, odvození klíčů, chybové kódy ani žádné jiné protokolové chování.
 
@@ -520,9 +572,9 @@ Server může u `429` a `503` poslat `Retry-After`. Klient jej respektuje jako d
 
 ### 12.1 Klientská komunikace
 
-Protokol nemá kryptografickou session ani přihlašovací handshake. Logický bootstrap je:
+Protokol nemá kryptografickou session ani přihlašovací handshake. Neautentizovaný požadavek `auth-none` nezakládá session a autentizovaný `health` pouze jednorázově váže odpověď k `requestId`. Logický bootstrap je:
 
-1. povinný `health` před prvním autentizovaným požadavkem pro dostupnost, verzi a korekci časového offsetu;
+1. povinný `POST health` s čerstvým `auth-none` před prvním autentizovaným požadavkem; klient ověří GCM tag odpovědi a teprve poté použije verzi a čas pro korekci offsetu;
 2. volitelný autentizovaný `info` pro aktuální limity a přehled;
 3. libovolný počet samostatně autentizovaných `data` cyklů;
 4. ukončení prostým zastavením požadavků.
@@ -552,7 +604,7 @@ Chybové tělo je malý obecný JSON objekt:
 | HTTP | `code` | Význam | Reakce klienta |
 |---:|---|---|---|
 | 400 | `bad_request` | Neplatný JSON/NDJSON, pořadí, pole, hodnota, formát UTC timestampu, kódování či délka HMAC tagu nebo duplicitní klíč. | Opravit request; neopakovat beze změny. |
-| 401 | `unauthorized` | Neplatný autentizační HMAC tag, `src`, konfigurace `SERVER_SECRET` nebo `ACCESS_KEY`, podvržené `src` v datovém záznamu nebo timestamp mimo povolené okno. | Obnovit čas přes `health`, ověřit obě tajemství; nemaž data. |
+| 401 | `unauthorized` | Neplatný autentizační HMAC tag, `src`, konfigurace `SERVER_SECRET` nebo `ACCESS_KEY`, podvržené `src` v datovém záznamu nebo timestamp mimo povolené okno. | Obnovit čas pouze přes platně ověřený `health`, ověřit obě tajemství; nemaž data. |
 | 404 | `not_found` | Neznámá akce. | Opravit URL. |
 | 405 | `method_not_allowed` | Nepovolená metoda. | Řídit se `Allow`. |
 | 413 | `payload_too_large` | Překročen limit těla, řádku nebo počtu záznamů. | Zmenšit request. |
@@ -583,15 +635,15 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 - `Router` a `Http`: metoda, akce, hlavičky a obecné chyby;
 - `JsonWire` a `NdjsonReader`: limitované čtení, duplicitní klíče, striktní pole a base64url;
 - `KeyDerivation` a `Authenticator`: HKDF, HMAC, kanonizace a konstantní porovnání;
-- `InfoCrypto`: jediná softwarová implementace AES-256-GCM v čistém PHP a šifrování odpovědi `info`;
+- `AesGcm`: jediná softwarová implementace AES-256-GCM v čistém PHP pro GMAC odpovědi `health`, šifrování `info` a end-to-end payload;
 - `Storage` interface a `DiskStorage`;
 - `ClientStats`: best-effort čtení a nejvýše jeden pokus o zápis centrálního `clients.json`;
-- `InfoHandler` a `DataHandler`;
+- `HealthHandler`, `InfoHandler` a `DataHandler`;
 - `Maintenance`: omezený oportunistický sweep expirací.
 
-Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `info` vlastní softwarovou implementaci AES-256-GCM v čistém PHP. Pro HKDF může použít `hash_hkdf()`. PHP server i PHP klient musí všechny operace AES-256-GCM provádět výhradně touto softwarovou implementací podle kapitoly 7.3. Nesmí obsahovat výběr kryptografického backendu ani větev používající pro AES-256-GCM OpenSSL, Sodium či jiné rozšíření.
+Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `health` i `info` vlastní softwarovou implementaci AES-256-GCM v čistém PHP. Pro HKDF může použít `hash_hkdf()`. PHP server i PHP klient musí všechny operace AES-256-GCM provádět výhradně touto softwarovou implementací podle kapitoly 7.4. Nesmí obsahovat výběr kryptografického backendu ani větev používající pro AES-256-GCM OpenSSL, Sodium či jiné rozšíření.
 
-Softwarová implementace má implementovat pouze rozsah potřebný pro tento protokol: AES-256 v dopředném směru, GCTR, GHASH, 96bitové IV a 128bitový tag. Při inicializaci musí projít known-answer testem AES-256-GCM s pevnými vstupy a očekávanými výstupy. Výsledek testu se v rámci běhu procesu zapamatuje, aby se test neopakoval pro každý požadavek. Software nesmí obsahovat větev, která chybu softwarové implementace řeší vypnutím šifrování, změnou algoritmu nebo odesláním plaintextu.
+Softwarová implementace má implementovat pouze rozsah potřebný pro tento protokol: AES-256 v dopředném směru, GCTR, GHASH, 96bitové IV, 128bitový tag a prázdný plaintext s neprázdným AAD pro GMAC. Při inicializaci musí projít known-answer testem AES-256-GCM s pevnými vstupy a očekávanými výstupy. Výsledek testu se v rámci běhu procesu zapamatuje, aby se test neopakoval pro každý požadavek. Software nesmí obsahovat větev, která chybu softwarové implementace řeší vypnutím šifrování, změnou algoritmu nebo odesláním plaintextu.
 
 Normalizace z kapitoly 3.2 musí proběhnout při startu ještě před předáním konfigurace do `KeyDerivation`. V PHP se testuje přesně nulová délka řetězce, nikoli obecná nepravdivost hodnoty:
 
@@ -617,8 +669,10 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 1. Stejný request přes HTTP, HTTPS, přímé spojení a proxy vede ke stejnému aplikačnímu výsledku.
 2. Podvržené `X-Forwarded-*` hlavičky neovlivní autentizaci, `src`, frontu ani odpověď.
 3. URL s neznámou akcí a nepovolená metoda vrátí správné obecné chyby.
-4. Root stránka zobrazí H1; při výchozích 32 ASCII znacích `0` i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `info` a `data` zůstávají funkční.
-5. `health` má čtyři povinná pole včetně `serverVersion`, status `running`, description `OK` a UTC timestamp v přesném tvaru `YYYY-MM-DDTHH:MM:SSZ`; klient z něj před autentizací správně odvodí svůj časový offset vůči serveru.
+4. Root stránka zobrazí H1; při výchozích 32 ASCII znacích `0` i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `health`, `info` a `data` zůstávají funkční.
+5. `GET` a `HEAD` na akci `health` vrátí `405` s `Allow: POST`. Validní `POST` obsahuje právě `auth-none` s čerstvým UUIDv4 `requestId`, bez timestampu, tagu nebo jiného důkazu znalosti tajemství.
+6. Úspěšný `health` má přesně sedm povinných polí `serverVersion`, `status`, `description`, `timestamp`, původní `requestId`, 12bajtové `iv` a 16bajtový `tag`; status je `running`, description `OK` a timestamp má přesný UTC tvar `YYYY-MM-DDTHH:MM:SSZ`.
+7. Klient před ověřením GCM tagu nezmění časový offset. Po úspěšném ověření pomocí efektivního `SERVER_SECRET` odvodí offset vůči serveru; změněná nebo podvržená odpověď offset neovlivní.
 
 ### 16.2 JSON, NDJSON a limity
 
@@ -629,6 +683,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 5. Hrany pro celé tělo a buffer jsou testovány na `limit-1`, `limit` a `limit+1`.
 6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a neznámé nebo nadbytečné pole jsou odmítnuty.
 7. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data`, právě jeden `data-result` a právě jeden poslední `data-mac`; další řádek za `data-mac` je neplatný.
+8. `auth-none` má přesně pole `type` a `requestId`; chybějící, neznámé nebo nadbytečné pole včetně `timestamp`, `src` či `tag` vrátí `400 bad_request`.
 
 ### 16.3 Kryptografie
 
@@ -639,18 +694,21 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 5. Změna jediného bajtu `SERVER_SECRET` nebo `ACCESS_KEY` musí změnit `fullAuthKey` i výsledný tag při jinak stejném requestu. Tag vypočtený se znalostí pouze jednoho z obou tajemství nesmí projít ověřením.
 6. Known-answer test `auth-full` sestaví `canonical` v pořadí doménový řetězec, `POST`, `data`, `src`, přesný timestamp, `requestId` a `SHA256HEX(body)` a tag vypočte výhradně jako `HMAC-SHA-256(fullAuthKey, canonical)`; změna timestampu nebo jediného bajtu body tag zneplatní.
 7. Server přijme UTC časy s odchylkou přesně `-60`, `0` a `+60` s a odmítne `-61` a `+61` s; po zpracování nevytvoří timestamp ani nonce záznam.
-8. Autentizační pole `tag` v obou auth typech musí být base64url bez paddingu a dekódovat se na přesně 32 bajtů; porovnání probíhá konstantním časem.
+8. Autentizační pole `tag` v typech `auth-semi` a `auth-full` musí být base64url bez paddingu a dekódovat se na přesně 32 bajtů; porovnání probíhá konstantním časem. Typ `auth-none` pole `tag` NESMÍ obsahovat.
 9. `auth-full.src` vybere právě jeden `ACCESS_KEY` a je vstupem odvození i kanonizace; jeho změna změní `fullAuthKey` i tag. Neznámé `src` skončí obecným `401` po odvození s dummy klíčem a každý datový záznam musí mít stejné `src`.
 10. Příjemce pro každou uspořádanou dvojici `src` a `dst` jednoznačně vybere právě jeden pevný `PAYLOAD_KEY`; relay tuto mapu nemá.
 11. Změna `messageId`, směrovacího pole `src` nebo `dst`, IV, ciphertextu či tagu zneplatní GCM ověření, protože routingová pole zůstávají součástí AAD.
-12. `info` salt má 32 bajtů, IV 12 bajtů a GCM tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
+12. `health` IV má 12 bajtů a GCM tag 16 bajtů. `info` salt má 32 bajtů, IV 12 bajtů a GCM tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
 13. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením GCM tagu.
 14. Každý přímý datový řádek odpovědi se samostatně ověří pomocí AES-GCM; řádek s neplatným GCM tagem se zahodí bez ovlivnění ostatních platných řádků.
 15. Nakonfigurovaný `SERVER_SECRET` o délce nula bajtů se při startu serveru i klienta normalizuje na přesně 32 ASCII znaků `0`. Known-answer test pro prázdnou a explicitně zadanou hodnotu `"00000000000000000000000000000000"` musí dát shodný `semiKey`, klíč odpovědi `info`, `authFullSalt`, `fullAuthKey` i výsledné tagy a nesmí vyvolat `ValueError`. Neprázdný řetězec `"0"` a 32 nulových bajtů `0x00` se nenormalizují a musí dát výsledky odpovídající jejich vlastním přesným bajtům.
-16. PHP server i PHP klient používá softwarovou implementaci AES-256-GCM v čistém PHP bez ohledu na to, zda jsou OpenSSL, Sodium nebo jiná kryptografická rozšíření dostupná. Test s dostupnými i nedostupnými rozšířeními musí projít stejnou softwarovou cestou a vytvořit přesně stejné výstupy pro `info` i end-to-end payload.
+16. PHP server i PHP klient používá softwarovou implementaci AES-256-GCM v čistém PHP bez ohledu na to, zda jsou OpenSSL, Sodium nebo jiná kryptografická rozšíření dostupná. Test s dostupnými i nedostupnými rozšířeními musí projít stejnou softwarovou cestou a vytvořit přesně stejné výstupy pro `health`, `info` i end-to-end payload.
 17. Pro pevný klíč, IV, AAD a plaintext vytvoří softwarová implementace přesně očekávaný ciphertext a 16bajtový tag podle known-answer vektoru AES-256-GCM. Správně dešifruje platný vektor, odmítne změnu jediného bitu klíče, IV, AAD, ciphertextu či tagu a před úspěšným ověřením tagu nezpřístupní žádný plaintext.
 18. Known-answer test `data-mac` sestaví `canonical` z doménového řetězce, akce, `requestId`, desítkového počtu záznamů, uspořádaných dvojic `messageId` a přesného base64url GCM tagu a `SHA256HEX` přesných bajtů `data-result` bez LF. Výsledkem je přesně 32bajtový `HMAC-SHA-256(fullAuthKey, canonical)`, jehož pole `tag` je base64url bez paddingu a dekóduje se na přesně 32 bajtů.
 19. Přidání, odstranění nebo přeuspořádání datového řádku, změna jeho `messageId` či GCM tagu, změna počtu záznamů nebo jediného bajtu `data-result` zneplatní `data-mac`. Změnu jiného pole datového řádku při zachovaném GCM tagu odhalí následné AES-GCM ověření. Chybějící, změněný nebo neplatný `data-mac` nesmí způsobit odstranění žádné položky z odchozí fronty ani předání payloadu.
+20. Known-answer test `health` pro pevný efektivní `SERVER_SECRET`, `requestId`, IV a veřejná pole ověří přesné `healthSaltMaterial`, `healthSalt`, `healthInfo`, `healthKey`, AAD a 16bajtový GMAC tag nad prázdným plaintextem podle kapitoly 7.3.
+21. Změna jediného znaku `serverVersion`, `status`, `description`, `timestamp`, `requestId` nebo base64url IV zneplatní tag `health`. Prázdný, zkrácený nebo prodloužený tag a tag vypočtený s jiným `SERVER_SECRET` jsou odmítnuty a nesmí změnit klientský časový offset.
+22. Odpověď s platným tagem pro starý nebo jiný `requestId` je odmítnuta. Replay stejného požadavku `auth-none` může vytvořit více platných serverových odpovědí se stejným `requestId`, ale klient přijme nejvýše odpověď k právě probíhajícímu pokusu a server kvůli tomu nevytvoří persistentní stav.
 
 ### 16.4 Fronty, souběh a pády
 
@@ -686,12 +744,14 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 6. Zdrojový strom a runtime storage po testech neobsahují adresář, tabulku ani soubor určený pro nonce/replay cache.
 7. Kopie platného prázdného HTTP pollingu odeslaná útočníkem uvnitř 60sekundového okna úspěšně provede `drainAll` fronty oběti a získá její šifrované záznamy; následný legitimní poll je již nedostane. Opakování scénáře s nově zachycenými pollingy může frontu soustavně vyprazdňovat. Server útok nedetekuje, záznamy neobnoví a nevytvoří replay stav.
 8. Vyšší vrstva může po ztrátě vytvořit nové pakety a pokus opakovat, ale test nesmí předpokládat retransmisi pro každý typ provozu ani garantovat, že opakovaný pokus při pokračujícím útoku dorazí.
+9. Replay dřívější odpovědi `health` proti novému `auth-none` selže na neshodě `requestId`. Zdržení aktuální platné odpovědi může způsobit pouze starší ověřený čas nebo nedostupnost; bez znalosti `SERVER_SECRET` nelze vytvořit platný tag s budoucím timestampem.
 
 ## 17. Kontrolní seznam shody
 
 Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 
 - podporuje všechny čtyři endpointy a přesné typy zpráv;
+- přijímá `health` pouze metodou `POST` s neautentizovaným `auth-none`, vrací původní `requestId`, IV a GCM tag nad všemi provozními poli a klient použije serverový čas teprve po ověření tagu pomocí efektivního `SERVER_SECRET`;
 - při startu serveru i klienta normalizuje pouze přesně prázdný nakonfigurovaný `SERVER_SECRET` na 32 ASCII znaků `0` a pro všechny kryptografické operace používá tuto efektivní hodnotu;
 - je-li napsána v PHP, provádí všechny operace AES-256-GCM vždy jedinou přibalenou softwarovou implementací v čistém PHP a nepoužívá pro ně OpenSSL, Sodium ani jiné kryptografické rozšíření;
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
