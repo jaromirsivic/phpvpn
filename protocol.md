@@ -33,7 +33,11 @@ PHP implementace serveru i PHP implementace klienta musí všechny operace AES-2
 
 ### 1.2 Vědomě neposkytované vlastnosti
 
-Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once ani garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Úspěšná odpověď `data` není jako celek autentizovaná: AES-GCM chrání jednotlivé payloady a jejich směrovací AAD, nikoli úplnost odpovědi, pořadí řádků ani `data-result`. Server používá vědomě zvolený optimistický at-most-once model: data odstraní z bufferu před odesláním odpovědi a při ztrátě nebo nezpracování odpovědi je znovu nenabídne. Tato vlastnost je přijatelná pro šifrované IP pakety, protože ztrátu podle potřeby řeší vyšší síťové nebo aplikační vrstvy. Protokol nezajišťuje ani dostupnost při zaplnění úložiště nebo vyčerpání PHP workerů.
+Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once ani garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Úspěšná odpověď `data` není jako celek autentizovaná: AES-GCM chrání jednotlivé payloady a jejich směrovací AAD, nikoli úplnost odpovědi, pořadí řádků ani `data-result`. Server používá vědomě zvolený optimistický at-most-once model: data odstraní z bufferu před odesláním odpovědi a při ztrátě nebo nezpracování odpovědi je znovu nenabídne.
+
+V režimu čistého HTTP může útočník odposlechnout platný pollingový požadavek `data` a uvnitř jeho 60sekundového okna jej beze změny přehrát. Server takový replay znovu autentizuje, atomicky vyprázdní příchozí frontu oběti a vrátí její záznamy útočníkovi. Útočník bez `PAYLOAD_KEY` jejich plaintext nepřečte, ale záznamy z relay nenávratně odstraní dříve, než je získá legitimní klient. Opakovaným odposlechem nových pollingových požadavků může tímto způsobem trvale krást ciphertexty a ničit příchozí frontu oběti. Tento důsledek je známý, protokol v1 s ním výslovně počítá a riziko vědomě přijímá.
+
+Přijetí rizika vychází z předpokladu, že klientská, transportní nebo aplikační vrstva si chybějící komunikaci typicky vyžádá znovu nebo vyvolá nové odeslání, takže vzniknou nové IP pakety a pokus o doručení se opakuje. Nejde však o záruku protokolu: například UDP nebo jednorázový provoz bez vlastní obnovy může být ztracen definitivně a soustavný replay může bránit doručení i opakovaných pokusů. V1 kvůli tomuto riziku nezavádí nonce, replay cache, potvrzované vydání ani obnovu vyprázdněné fronty. Protokol nezajišťuje ani dostupnost při tomto útoku, zaplnění úložiště nebo vyčerpání PHP workerů.
 
 ## 2. Normativní rozhodnutí
 
@@ -42,7 +46,7 @@ Protokol pomocí autentizačního timestampu odmítá požadavky starší než p
 | Architektura | Bezstavové, krátké HTTP požadavky; žádná serverová session. |
 | Wire format | JSON pro řídicí akce, NDJSON pro datovou akci. |
 | Doručení | Optimistické at-most-once na úrovni serverového bufferu, bez potvrzení. Po atomickém načtení jsou data ze serveru odstraněna ještě před přenosem odpovědi. |
-| Replay | Timestamp omezuje platnost autentizovaného požadavku na ±60 s vůči času serveru. Uvnitř okna není replay detekován; bez deduplikace a bez perzistence timestampu nebo nonce. |
+| Replay | Timestamp omezuje platnost autentizovaného požadavku na ±60 s vůči času serveru. Uvnitř okna není replay detekován; bez deduplikace a bez perzistence timestampu nebo nonce. Replay odposlechnutého HTTP pollingu může vyprázdnit a nenávratně zničit příchozí frontu oběti; v1 toto riziko vědomě přijímá. |
 | Payload klíče | Klientské per-peer nebo skupinové klíče distribuované mimo relay; server je nezná. |
 | Více cílů | Částečné přijetí je dovoleno a výsledek se vrací pro každý záznam. |
 | Transport | HTTP i HTTPS jsou rovnocenně podporované; server funguje přímo i za proxy. HTTPS není podmínkou protokolu. |
@@ -97,6 +101,8 @@ V URL je pouze `?action=<akce>`. Identita klienta, tokeny, autentizační HMAC t
 Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.
 
 Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit, měnit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC požadavku ani GCM tag jednotlivého payloadu. Odpověď `data` však nemá vlastní MAC: útočník může odstranit nebo přeskupit platné datové řádky a změnit, odstranit či podvrhnout `data-result`. Klient tak v režimu HTTP nemůže kryptograficky ověřit úplnost vráceného bufferu ani správnost výsledku přijetí. Protože server záznamy před odesláním odstraní, zahození či poškození odpovědi znamená jejich nevratnou ztrátu na úrovni relay. Autentizovaný požadavek lze úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
+
+Pro útok na pollingovou frontu útočník nemusí změnit provoz na trase ani znát klíč. Stačí mu pasivně zachytit platný HTTP požadavek `data`, získanou kopii během otevřeného okna sám odeslat serveru a tento postup opakovat s novými požadavky oběti. Každá úspěšná kopie provede běžné at-most-once vyprázdnění fronty ve prospěch spojení útočníka. Tím lze dlouhodobě odebírat všechny nově čekající záznamy a legitimnímu klientovi ponechávat prázdnou frontu. Jde o výslovně přijaté riziko čistého HTTP podle kapitoly 1.2, nikoli o vlastnost, kterou by v1 detekovala nebo napravovala.
 
 HTTPS navíc poskytuje ochranu transportních metadat v těle a hlavičkách, autentizaci TLS protistrany a ochranu spojení proti změně. Zda jej administrátor použije, je provozní rozhodnutí mimo povinné požadavky protokolu.
 
@@ -406,6 +412,8 @@ Operace vyprázdnění bufferu musí být atomická: po souběžném zápisu neb
 
 Klient ani server neporovnávají `messageId`, IV, request body nebo autentizační HMAC tag s historií. Replay autentizovaného odesílacího requestu uvnitř platného 60sekundového okna založí další kopii dat; po uzavření okna server request odmítne. Replay datové odpovědi může payload předat znovu, přestože server tentýž záznam z bufferu vydal jen jednou. Duplicita na trase i ztráta po vyprázdnění bufferu jsou výslovně přijatá omezení.
 
+Stejná pravidla platí pro replay pollingového požadavku bez odesílaných dat. Jeho úspěšné ověření opravňuje každou přehrávající kopii k operaci `drainAll`; první kopie, která zastihne neprázdnou frontu, záznamy odstraní a obdrží je ve své odpovědi. Server je nesmí rezervovat pro původní spojení, vrátit do fronty ani rozlišovat legitimní a přehrávající kopii. Obnovu komunikace lze očekávat pouze tehdy, když klient nebo vyšší vrstva vytvoří nové pakety; tato provozní kompenzace nemění přijetí možnosti trvalého útoku.
+
 ### 10.4 Expirace
 
 Výchozí `QUEUE_TTL_SECONDS` je 60 s. Čas běží od prvního úspěšného publikování. Po expiraci smí backend dávku smazat bez doručení. Údržba může být oportunistická, takže fyzické odstranění může nastat později; expirovaná dávka však již nesmí být zahrnuta do odpovědi.
@@ -644,6 +652,8 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 4. Opakované `messageId`, IV a autentizační HMAC tag nejsou porovnávány s historií.
 5. Replay uvnitř okna může zaplnit frontu, ale nemůže bez klíče změnit chráněný obsah nebo vytvořit nový platný tag.
 6. Zdrojový strom a runtime storage po testech neobsahují adresář, tabulku ani soubor určený pro nonce/replay cache.
+7. Kopie platného prázdného HTTP pollingu odeslaná útočníkem uvnitř 60sekundového okna úspěšně provede `drainAll` fronty oběti a získá její šifrované záznamy; následný legitimní poll je již nedostane. Opakování scénáře s nově zachycenými pollingy může frontu soustavně vyprazdňovat. Server útok nedetekuje, záznamy neobnoví a nevytvoří replay stav.
+8. Vyšší vrstva může po ztrátě vytvořit nové pakety a pokus opakovat, ale test nesmí předpokládat retransmisi pro každý typ provozu ani garantovat, že opakovaný pokus při pokračujícím útoku dorazí.
 
 ## 17. Kontrolní seznam shody
 
@@ -662,6 +672,7 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - znemožňuje přímý webový přístup k bufferům, statistikám a ostatním souborům storage rootu;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
 - mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
+- výslovně zachovává přijaté riziko, že replay odposlechnutého HTTP pollingu uvnitř platného okna může opakovaně vyprázdnit a nenávratně zničit příchozí frontu oběti;
 - udržuje jediný pevný payload klíč pro každou uspořádanou dvojici `src` a `dst` mimo relay server;
 - respektuje zveřejněné aktivní limity bez ohledu na použitý storage driver;
 - neprozrazuje tajemství ani interní cesty v odpovědích a logu.
