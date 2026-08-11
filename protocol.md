@@ -470,7 +470,7 @@ Klient MUSÍ přijmout úplné NDJSON tělo s uvedeným pořadím a přesně jed
 
 Teprve po úspěšném ověření `data-mac` klient použije `acceptedMessageIds` a každý datový řádek samostatně ověří podle AES-GCM pravidel v kapitole 9.4. Řádek s neplatným GCM tagem zahodí a ostatní platné payloady může zpracovat. GCM ověření chrání pole a ciphertext jednotlivého záznamu; HMAC nad uspořádanými dvojicemi chrání jeho přítomnost a pozici v odpovědi. Protokol neposílá žádné následné potvrzení.
 
-Jakmile atomické načtení a odstranění skončí, server data znovu nenabídne, a to ani když PHP worker selže před odesláním, HTTP/HTTPS odpověď nedorazí, je neúplná, má neplatný `data-mac` nebo ji klient nezpracuje. Jde o vědomě přijaté optimistické at-most-once chování serverového bufferu. `data-mac` zajišťuje autenticitu výsledku a detekci změny počtu či pořadí datových řádků, ale nezajišťuje doručení. Síťová vrstva může celou dříve platnou odpověď zopakovat, takže at-most-once vlastnost serverového výdeje sama o sobě nezajišťuje deduplikaci u klienta. Klient nevede replay cache a opakovaně doručené platné payloady znovu zpracuje.
+Jakmile worker atomicky převezme konkrétní soubor dávky k odeslání, nesmí jej žádný jiný worker vydat. Pokud worker selže před odesláním odpovědi, odpověď nedorazí, je neúplná, má neplatný `data-mac` nebo ji klient nezpracuje, již převzaté dávky se neobnovují. Jde o vědomě přijaté optimistické at-most-once chování na úrovni jednotlivé dávky. `data-mac` zajišťuje autenticitu výsledku a detekci změny počtu či pořadí datových řádků, ale nezajišťuje doručení.
 
 ## 10. Fronty a doručovací sémantika
 
@@ -480,7 +480,7 @@ Každý cílový klient má logický perzistentní buffer. Do jeho velikosti se 
 
 Server může z jednoho requestu vytvořit samostatné dávky podle cíle. Publikace jedné dávky musí být atomická: po pádu je viditelná celá, nebo vůbec. Úspěch jednoho cíle nezávisí na selhání jiného cíle.
 
-Při sestavení odpovědi server atomicky vyprázdní všechny neexpirované záznamy z bufferu autentizovaného klienta. Vrácený seznam může obsahovat více dříve publikovaných dávek. Server jej nesmí stránkovat ani omezit počtem záznamů.
+Při sestavení odpovědi server vyhledá všechny neexpirované publikované dávky v bufferu autentizovaného klienta. Každou dávku před odesláním atomicky převezme; dávku, kterou již převzal jiný worker, přeskočí. Vrácený seznam může obsahovat více dříve publikovaných dávek. Server jej nesmí stránkovat ani omezit počtem záznamů.
 
 ### 10.2 Částečné přijetí
 
@@ -499,7 +499,7 @@ Chybová odpověď nikdy neopravňuje klienta odstranit položku z odchozí fron
 
 ### 10.3 Vydání, ztráta a opakování
 
-Operace vyprázdnění bufferu musí být atomická: po souběžném zápisu nebo pádu jsou konkrétní záznamy buď stále v bufferu, nebo přesně jednou vráceny handleru a ze storage odstraněny. Server nečeká na reakci klienta a odstraněné záznamy neobnovuje. Pád workeru, přerušení spojení, zahození odpovědi nebo chyba klienta po vyprázdnění proto znamenají jejich ztrátu. Vyšší vrstvy přenášeného IP provozu mohou podle svých vlastních pravidel provést nové odeslání.
+Vyprázdnění celé fronty není atomická operace. Server soubory dávek postupně přebírá, vydává a maže. Převzetí každé jednotlivé dávky však musí být atomické: po souběžném zpracování ji smí vydat nejvýše jeden worker. Souběžně publikovaná dávka, kterou worker při počátečním průchodu frontou ještě nenalezl, zůstane pro další poll. Server nečeká na reakci klienta a již převzaté nebo odstraněné dávky neobnovuje. Pád workeru, přerušení spojení, zahození odpovědi nebo chyba klienta po převzetí dávky proto může znamenat její ztrátu. Vyšší vrstvy přenášeného IP provozu mohou podle svých vlastních pravidel provést nové odeslání.
 
 Klient ani server neporovnávají `messageId`, IV, request body nebo autentizační HMAC tag s historií. Replay autentizovaného odesílacího requestu uvnitř platného 60sekundového okna založí další kopii dat; po uzavření okna server request odmítne. Replay datové odpovědi může payload předat znovu, přestože server tentýž záznam z bufferu vydal jen jednou. Duplicita na trase i ztráta po vyprázdnění bufferu jsou výslovně přijatá omezení.
 
@@ -509,7 +509,7 @@ Stejná pravidla platí pro replay pollingového požadavku bez odesílaných da
 
 Výchozí `QUEUE_TTL_SECONDS` je 60 s. Čas běží od prvního úspěšného publikování. Po expiraci smí backend dávku smazat bez doručení. Údržba může být oportunistická, takže fyzické odstranění může nastat později; expirovaná dávka však již nesmí být zahrnuta do odpovědi ani započítána do využité kapacity fronty.
 
-Vedle oportunistické údržby musí backend podporovat cílený sweep jedné konkrétní fronty podle kapitoly 10.2. Kapacitně vyvolaný sweep odstraní všechny záznamy této fronty expirované k času zpracování požadavku. Jeho účelem je uvolnit skutečně dostupnou kapacitu před jediným opakovaným pokusem o publikaci; nesmí procházet jiné klientské fronty.
+Vedle oportunistické údržby musí backend podporovat cílený sweep jedné konkrétní fronty podle kapitoly 10.2. Kapacitně vyvolaný sweep odstraní všechny soubory dávek této fronty expirované k času zpracování požadavku, bez ohledu na jejich stav `.receiving`, `.data` nebo `.sending`. Jeho účelem je uvolnit skutečně dostupnou kapacitu před jediným opakovaným pokusem o publikaci; nesmí procházet jiné klientské fronty.
 
 ### 10.5 Storage driver
 
@@ -522,7 +522,7 @@ Wire protokol nesmí záviset na názvech souborů, adresářích ani databázov
 - `sweepQueue(destination, now)` pro cílené odstranění expirací z jedné fronty;
 - `sweep(now)` pro omezenou oportunistickou údržbu.
 
-Povinný driver `disk` používá per-client adresáře, zámek s omezeným čekáním, zápis do dočasného souboru a atomické `rename()` ve stejném filesystému. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické a kapacitní chování.
+Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SSZ_<bytes>_<src>_<uuid>`, kde první pole je čas expirace v UTC, `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
 
 ### 10.6 Statistiky klientů ovladače `disk`
 
@@ -596,14 +596,11 @@ Neexistuje login, session ID, keepalive ani logout. Každý request lze zpracova
 ### 12.2 Stav uložené dávky
 
 ```text
-neexistuje --enqueue--> buffered --drainAll--> smazána
-                              |
-                              | TTL
-                              v
-                           smazána
+neexistuje --zápis--> receiving --publish--> data --převzetí--> sending --odeslání--> smazána
+                    \___________________________ TTL _______________________________/
 ```
 
-Server nevede žádný mezistav čekající na klienta. `drainAll` atomicky vrátí handleru všechny neexpirované záznamy a odstraní je ze storage. Pád během `enqueue` nesmí publikovat částečnou dávku. Pád po `drainAll` může způsobit ztrátu již odstraněných dat, nikdy jejich automatické opětovné vydání serverem.
+Soubor ve stavu `.receiving` není publikovanou dávkou. Atomické přejmenování na `.data` jej publikuje a atomické přejmenování na `.sending` jej přidělí právě jednomu odesílajícímu workeru. Pád během `enqueue` nesmí publikovat částečnou dávku. Pád po převzetí do `.sending` může způsobit ztrátu této dávky, nikdy její automatické opětovné vydání serverem. Sweep smí smazat expirovaný soubor v kterémkoli z těchto stavů.
 
 ## 13. Chyby
 
@@ -723,19 +720,19 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 
 ### 16.4 Fronty, souběh a pády
 
-1. Atomická publikace odolá pádu před a po `rename()` bez částečné dávky.
+1. Atomická publikace odolá pádu před a po přejmenování `.receiving` na `.data` bez částečné dávky.
 2. Dva workery posílající stejnému cíli neztratí ani nespojí dávku.
-3. Odpověď atomicky vyprázdní všechny aktuálně buffered záznamy a vrátí je jako přímé řádky `data`, bez stránkování a bez obálky; jejich počet může překročit 16.
+3. Odpověď postupně převezme nalezené soubory `.data`, vrátí je jako přímé řádky `data` bez stránkování a bez obálky a po vydání je smaže; jejich počet může překročit 16.
 4. Za datovými řádky následuje právě jeden `data-result` s přesnou uzavřenou sadou výsledkových polí a právě jeden závěrečný `data-mac`; prázdný buffer vrátí tyto dva řádky.
-5. Pád workeru nebo přerušení spojení po `drainAll` vede ke ztrátě odstraněných dat a následující poll je znovu nevrátí.
-6. Záznamy zapsané souběžně až po atomickém `drainAll` zůstanou v bufferu pro další poll a nesmí se ztratit.
+5. Pád workeru nebo přerušení spojení po převzetí souboru `.data` do `.sending` může vést ke ztrátě této dávky a následující poll ji znovu nevydá.
+6. Dávky zapsané souběžně po počátečním průchodu souborů `.data` zůstanou ve frontě pro další poll a nesmí se ztratit.
 7. Jedna plná cílová fronta nezruší již přijaté položky pro jiný cíl a výsledek je přesný.
 8. Při prvním nedostatku kapacity daného cíle server právě jednou spustí `sweepQueue(dst, now)` a publikaci celé cílové skupiny právě jednou zopakuje.
 9. Pokud se cílová skupina nevejde ani po sweepu, není z ní publikována žádná položka, všechna její `messageId` jsou v `deferredMessageIds` a odpověď má status `200`.
-10. Požadavek, jehož všechny odesílané skupiny byly odloženy, přesto atomicky vyprázdní příchozí buffer volajícího a vrátí jeho záznamy, `data-result` a `data-mac`; nevrací `429`.
+10. Požadavek, jehož všechny odesílané skupiny byly odloženy, přesto postupně vydá nalezené dávky z příchozího bufferu volajícího a vrátí je spolu s `data-result` a `data-mac`; nevrací `429`.
 11. V rámci jednoho požadavku proběhne pro každé unikátní `dst` nejvýše jeden kapacitně vyvolaný sweep a nejvýše dva pokusy o publikaci.
 12. 16MiB limit započítává pouze neexpirované dosud nevydané buffered záznamy; fyzicky přítomné expirované záznamy kapacitu nesnižují.
-13. Dávka starší než 60 s není vydána operací `drainAll`.
+13. Expirovaná dávka není vydána; sweep ji maže ve stavu `.receiving`, `.data` i `.sending`.
 14. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
 15. Stejná sada kontraktních testů běží nad každým storage driverem.
 
@@ -773,8 +770,8 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - ověřuje autentizaci před jakoukoli změnou storage;
 - vyžaduje v `auth-semi` i `auth-full` přesný UTC string `YYYY-MM-DDTHH:MM:SSZ`, zahrnuje jej v normativním pořadí do HMAC `tag` a odmítá absolutní odchylku větší než 60 s bez perzistence timestampu;
 - odvozuje klíč HMAC tagu `auth-full` normativním spojením jediného `SERVER_SECRET`, jediného `ACCESS_KEY` vybraného podle `src` a samotného `src`, takže správný tag vyžaduje znalost obou tajemství;
-- vrací všechny aktuálně buffered záznamy přímo jako `data` bez obálky a bez stránkování, následované jediným `data-result` a jediným závěrečným `data-mac`, který autentizuje uspořádaný seznam `messageId` a GCM tagů i přesný `data-result`;
-- používá atomické at-most-once vyprázdnění celého bufferu bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
+- vrací nalezené publikované dávky přímo jako `data` bez obálky a bez stránkování, následované jediným `data-result` a jediným závěrečným `data-mac`, který autentizuje uspořádaný seznam `messageId` a GCM tagů i přesný `data-result`;
+- používá atomické at-most-once převzetí jednotlivých dávek bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
 - při nedostatku kapacity provede nejvýše jeden cílený sweep pro každé `dst`, publikaci celé cílové skupiny jednou zopakuje a trvající nedostatek kapacity vyjádří pouze pomocí `deferredMessageIds` v odpovědi `200`, nikdy pomocí `429`;
 - vede centrální best-effort `clients.json` v kořeni diskového storage, omezuje zápis `lastSeen` na hodnoty starší než 30 sekund a nikdy kvůli statistice nemění datový výsledek;
 - znemožňuje přímý webový přístup k bufferům, statistikám a ostatním souborům storage rootu;
