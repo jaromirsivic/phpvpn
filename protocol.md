@@ -417,7 +417,7 @@ Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole.
 2. právě jeden záznam `data-result`;
 3. právě jeden závěrečný záznam `data-mac`.
 
-Po úspěšném ověření požadavku a zpracování jeho odesílaných záznamů server atomickou operací načte všechny neexpirované datové záznamy aktuálně uložené v bufferu klienta a současně je z persistentního bufferu odstraní. Nově publikovaný záznam se `dst` shodným s autentizovaným `src` proto patří již do této odpovědi. Teprve z takto získaného lokálního seznamu server sestaví odpověď. Počet vrácených záznamů se neomezuje samostatným protokolovým ani konfiguračním limitem a odpověď se nestránkuje. Jedinou horní mezí objemu je kapacita bufferu. Každý záznam se vrací přímo ve stejném schématu `data`, bez další obálky:
+Po úspěšném ověření požadavku a zpracování jeho odesílaných záznamů server atomickou operací načte všechny neexpirované datové záznamy aktuálně uložené v bufferu klienta a současně je z persistentního bufferu odstraní. Vyprázdnění příchozího bufferu volajícího NESMÍ záviset na tom, zda se podařilo publikovat některý nebo všechny jeho odesílané záznamy. Server je proto provede i tehdy, když kvůli nedostatku kapacity nepřijal žádný odesílaný záznam. Nově publikovaný záznam se `dst` shodným s autentizovaným `src` proto patří již do této odpovědi. Teprve z takto získaného lokálního seznamu server sestaví odpověď. Počet vrácených záznamů se neomezuje samostatným protokolovým ani konfiguračním limitem a odpověď se nestránkuje. Jedinou horní mezí objemu je kapacita bufferu. Každý záznam se vrací přímo ve stejném schématu `data`, bez další obálky:
 
 ```json
 {"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
@@ -484,7 +484,16 @@ Při sestavení odpovědi server atomicky vyprázdní všechny neexpirované zá
 
 ### 10.2 Částečné přijetí
 
-Server zpracovává cílové skupiny deterministicky. Přijaté položky uvede v `acceptedMessageIds`, nepřijaté v `deferredMessageIds`. Pokud přijme alespoň jednu položku nebo požadavek žádnou neodesílá, vrací `200`, `data-result` a závěrečný `data-mac`. Pokud nelze přijmout žádnou odesílanou položku kvůli kapacitě, vrací `429 queue_full`; při nedostupnosti backendu `503 queue_unavailable`.
+Server rozdělí odesílané záznamy do cílových skupin podle `dst` a skupiny zpracovává deterministicky. Publikace jedné cílové skupiny je atomická: server publikuje všechny její záznamy, nebo žádný. Přijaté položky uvede v `acceptedMessageIds`, nepřijaté v `deferredMessageIds`.
+
+Pro každou cílovou frontu, do které aktuální požadavek zapisuje, server postupuje takto:
+
+1. pokusí se atomicky publikovat celou cílovou skupinu;
+2. pokud se skupina nevejde kvůli nedostatku kapacity, provede právě jeden cílený sweep této fronty, který odstraní všechny její expirované záznamy;
+3. po sweepu zopakuje pokus o atomické publikování celé cílové skupiny právě jednou;
+4. pokud se skupina nevejde ani při druhém pokusu, server z této skupiny do dané fronty nezapíše nic a všechna její `messageId` uvede v `deferredMessageIds`.
+
+V rámci jednoho požadavku `data` smí server pro každou konkrétní cílovou frontu provést nejvýše jeden kapacitně vyvolaný sweep a nejvýše dva pokusy o publikaci. Nedostatek kapacity není chybou celého požadavku. Autentizovaný a syntakticky platný požadavek kvůli němu vždy pokračuje vyprázdněním příchozího bufferu volajícího a vrací `200`, `data-result` a závěrečný `data-mac`, i když jsou všechny odesílané položky uvedeny v `deferredMessageIds`. Server kvůli nedostatku kapacity cílové fronty NESMÍ vrátit HTTP `429`. Při nedostupnosti backendu vrací `503 queue_unavailable`.
 
 Chybová odpověď nikdy neopravňuje klienta odstranit položku z odchozí fronty. Při úspěchu klient vyhodnotí jediný syntakticky platný `data-result` se shodným `requestId` pouze po úspěšném ověření bezprostředně následujícího závěrečného `data-mac` podle kapitoly 9.5.
 
@@ -498,7 +507,9 @@ Stejná pravidla platí pro replay pollingového požadavku bez odesílaných da
 
 ### 10.4 Expirace
 
-Výchozí `QUEUE_TTL_SECONDS` je 60 s. Čas běží od prvního úspěšného publikování. Po expiraci smí backend dávku smazat bez doručení. Údržba může být oportunistická, takže fyzické odstranění může nastat později; expirovaná dávka však již nesmí být zahrnuta do odpovědi.
+Výchozí `QUEUE_TTL_SECONDS` je 60 s. Čas běží od prvního úspěšného publikování. Po expiraci smí backend dávku smazat bez doručení. Údržba může být oportunistická, takže fyzické odstranění může nastat později; expirovaná dávka však již nesmí být zahrnuta do odpovědi ani započítána do využité kapacity fronty.
+
+Vedle oportunistické údržby musí backend podporovat cílený sweep jedné konkrétní fronty podle kapitoly 10.2. Kapacitně vyvolaný sweep odstraní všechny záznamy této fronty expirované k času zpracování požadavku. Jeho účelem je uvolnit skutečně dostupnou kapacitu před jediným opakovaným pokusem o publikaci; nesmí procházet jiné klientské fronty.
 
 ### 10.5 Storage driver
 
@@ -508,7 +519,8 @@ Wire protokol nesmí záviset na názvech souborů, adresářích ani databázov
 - `drainAll(client, now)`;
 - `usage(client)`;
 - `readClientStats()` a `touchLastSeenBestEffort(client, now)`;
-- `sweep(now)`.
+- `sweepQueue(destination, now)` pro cílené odstranění expirací z jedné fronty;
+- `sweep(now)` pro omezenou oportunistickou údržbu.
 
 Povinný driver `disk` používá per-client adresáře, zámek s omezeným čekáním, zápis do dočasného souboru a atomické `rename()` ve stejném filesystému. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické a kapacitní chování.
 
@@ -553,7 +565,7 @@ Soubor `clients.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORA
 
 Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a závěrečný `data-mac`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
 
-Překročení syntaktického limitu vrací `413 payload_too_large`. Zaplnění persistentní fronty vrací `429 queue_full` a nesmí být zaměněno za syntaktickou chybu.
+Překročení syntaktického limitu vrací `413 payload_too_large`. Nedostatek kapacity persistentní cílové fronty není syntaktická ani protokolová chyba. Po jednom cíleném sweepu a jednom opakovaném pokusu server vrátí nepřijaté položky v `deferredMessageIds` úspěšné odpovědi `200`.
 
 ### 11.2 Časové chování
 
@@ -563,10 +575,10 @@ Doporučené výchozí hodnoty klienta:
 
 - connect timeout 5 s;
 - celkový timeout requestu 15 s;
-- exponenciální backoff po síťové chybě, `429` nebo `503`, počínaje 250 ms, nejvýše 30 s, vždy s jitterem;
+- exponenciální backoff po síťové chybě nebo `503`, počínaje 250 ms, nejvýše 30 s, vždy s jitterem;
 - klient musí mít lokální limit rychlosti pollingu.
 
-Server může u `429` a `503` poslat `Retry-After`. Klient jej respektuje jako dolní hranici čekání.
+Server může u `503` poslat `Retry-After`. Klient jej respektuje jako dolní hranici čekání. Položky uvedené v `deferredMessageIds` klient ponechá ve své odchozí frontě pro pozdější pokus, ale nadále pokračuje v pollingu, aby nedostupný cíl neblokoval jeho příchozí provoz.
 
 ## 12. Stavy a přechody
 
@@ -609,7 +621,6 @@ Chybové tělo je malý obecný JSON objekt:
 | 405 | `method_not_allowed` | Nepovolená metoda. | Řídit se `Allow`. |
 | 413 | `payload_too_large` | Překročen limit těla, řádku nebo počtu záznamů. | Zmenšit request. |
 | 415 | `unsupported_media_type` | Chybný Content-Type. | Opravit Content-Type. |
-| 429 | `queue_full` | Cílová fronta nemá kapacitu. | Ponechat data, backoff s jitterem. |
 | 503 | `queue_busy` | Vyčerpán limit čekání na storage zámek. | Krátký backoff. |
 | 503 | `queue_unavailable` | Backend nelze bezpečně použít. | Backoff; administrátorská kontrola. |
 | 503 | `server_misconfigured` | Nekonzistentní limity nebo jiná neplatná serverová konfigurace. | Neopakovat rychle; opravit server. |
@@ -639,7 +650,7 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 - `Storage` interface a `DiskStorage`;
 - `ClientStats`: best-effort čtení a nejvýše jeden pokus o zápis centrálního `clients.json`;
 - `HealthHandler`, `InfoHandler` a `DataHandler`;
-- `Maintenance`: omezený oportunistický sweep expirací.
+- `Maintenance`: cílený sweep expirací jedné fronty při nedostatku kapacity a omezený oportunistický sweep.
 
 Serverová implementace potřebuje `hash_hmac`, SHA-256, `random_bytes`, striktní JSON a pro `health` i `info` vlastní softwarovou implementaci AES-256-GCM v čistém PHP. Pro HKDF může použít `hash_hkdf()`. PHP server i PHP klient musí všechny operace AES-256-GCM provádět výhradně touto softwarovou implementací podle kapitoly 7.4. Nesmí obsahovat výběr kryptografického backendu ani větev používající pro AES-256-GCM OpenSSL, Sodium či jiné rozšíření.
 
@@ -719,10 +730,14 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 5. Pád workeru nebo přerušení spojení po `drainAll` vede ke ztrátě odstraněných dat a následující poll je znovu nevrátí.
 6. Záznamy zapsané souběžně až po atomickém `drainAll` zůstanou v bufferu pro další poll a nesmí se ztratit.
 7. Jedna plná cílová fronta nezruší již přijaté položky pro jiný cíl a výsledek je přesný.
-8. 16MiB limit započítává pouze dosud nevydané buffered záznamy; po zaplnění se vrací `429`.
-9. Dávka starší než 60 s není vydána operací `drainAll`.
-10. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
-11. Stejná sada kontraktních testů běží nad každým storage driverem.
+8. Při prvním nedostatku kapacity daného cíle server právě jednou spustí `sweepQueue(dst, now)` a publikaci celé cílové skupiny právě jednou zopakuje.
+9. Pokud se cílová skupina nevejde ani po sweepu, není z ní publikována žádná položka, všechna její `messageId` jsou v `deferredMessageIds` a odpověď má status `200`.
+10. Požadavek, jehož všechny odesílané skupiny byly odloženy, přesto atomicky vyprázdní příchozí buffer volajícího a vrátí jeho záznamy, `data-result` a `data-mac`; nevrací `429`.
+11. V rámci jednoho požadavku proběhne pro každé unikátní `dst` nejvýše jeden kapacitně vyvolaný sweep a nejvýše dva pokusy o publikaci.
+12. 16MiB limit započítává pouze neexpirované dosud nevydané buffered záznamy; fyzicky přítomné expirované záznamy kapacitu nesnižují.
+13. Dávka starší než 60 s není vydána operací `drainAll`.
+14. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
+15. Stejná sada kontraktních testů běží nad každým storage driverem.
 
 ### 16.5 Statistiky klientů
 
@@ -760,6 +775,7 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - odvozuje klíč HMAC tagu `auth-full` normativním spojením jediného `SERVER_SECRET`, jediného `ACCESS_KEY` vybraného podle `src` a samotného `src`, takže správný tag vyžaduje znalost obou tajemství;
 - vrací všechny aktuálně buffered záznamy přímo jako `data` bez obálky a bez stránkování, následované jediným `data-result` a jediným závěrečným `data-mac`, který autentizuje uspořádaný seznam `messageId` a GCM tagů i přesný `data-result`;
 - používá atomické at-most-once vyprázdnění celého bufferu bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
+- při nedostatku kapacity provede nejvýše jeden cílený sweep pro každé `dst`, publikaci celé cílové skupiny jednou zopakuje a trvající nedostatek kapacity vyjádří pouze pomocí `deferredMessageIds` v odpovědi `200`, nikdy pomocí `429`;
 - vede centrální best-effort `clients.json` v kořeni diskového storage, omezuje zápis `lastSeen` na hodnoty starší než 30 sekund a nikdy kvůli statistice nemění datový výsledek;
 - znemožňuje přímý webový přístup k bufferům, statistikám a ostatním souborům storage rootu;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
