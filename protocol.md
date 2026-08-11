@@ -295,7 +295,7 @@ Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 {"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60}}
 ```
 
-`generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 s přesností na sekundy. Kvůli 30sekundovému omezení zápisů a záměrně neřešeným souběhům jde pouze o best-effort provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
+`generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 s přesností na sekundy. Kvůli 30sekundovému omezení aktualizací a best-effort povaze statistik jde pouze o přibližný provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
 
 `limits` popisuje skutečné aktivní hodnoty serveru. Klient nesmí spoléhat pouze na výchozí hodnoty této specifikace. Odpověď `info` nesmí obsahovat název, konfiguraci ani jinou informaci o interním úložišti serveru.
 
@@ -522,30 +522,26 @@ Wire protokol nesmí záviset na názvech souborů, adresářích ani databázov
 - `sweepQueue(destination, now)` pro cílené odstranění expirací z jedné fronty;
 - `sweep(now)` pro omezenou oportunistickou údržbu.
 
-Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SSZ_<bytes>_<src>_<uuid>`, kde první pole je čas expirace v UTC, `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
+Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SSZ_<bytes>_<src>_<uuid>`, kde první pole je čas expirace v UTC, `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Každý per-client adresář navíc smí obsahovat statistický marker `info.json` podle kapitoly 10.6; tento soubor není dávkou a operace fronty jej musí ignorovat. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
 
 ### 10.6 Statistiky klientů ovladače `disk`
 
-Ovladač `disk` ukládá statistiky všech klientů do jediného centrálního souboru `STORAGE_ROOT/clients.json`. Soubor leží přímo v kořeni diskového úložiště, nikdy v per-client adresáři. Jeho normativní obsah je kompaktní UTF-8 JSON bez BOM:
+Ovladač `disk` ukládá statistiku každého klienta samostatně do souboru `info.json` v jeho per-client adresáři. Neexistuje žádný centrální soubor statistik. Soubor `info.json` je marker: jeho čas poslední změny (`mtime`) představuje `lastSeen` daného klienta s přesností poskytovanou filesystémem.
 
-```json
-{"clients":{"10.99.99.2":{"lastSeen":"2026-08-09T20:14:52Z"},"10.99.99.4":{"lastSeen":"2026-08-09T20:15:11Z"}}}
-```
-
-Top-level objekt obsahuje právě člen `clients`. Ten je objektem, jehož názvy členů jsou platné nakonfigurované VPN adresy a hodnoty jsou objekty s jediným členem `lastSeen` ve formátu UTC RFC 3339 s přesností na sekundy. Statistiky NESMÍ obsahovat přístupové klíče, serverové tajemství, fyzické adresy, payloady ani interní cesty.
+Výchozí a implementací vytvářený obsah `info.json` je prázdný soubor o délce nula bajtů. Navzdory příponě `.json` jeho obsah netvoří JSON dokument, nenese žádná protokolová data a implementace jej NESMÍ číst, parsovat ani do něj zapisovat. Název je pouze konvenční. Aktualizace statistiky mění výhradně `mtime`; soubor nesmí obsahovat přístupový klíč, serverové tajemství, fyzickou adresu, payload ani interní cestu.
 
 Po úspěšném ověření a normálním zpracování každého požadavku `data` server:
 
-1. načte celý centrální soubor statistik;
-2. vyhledá záznam autentizovaného `src`;
-3. pouze pokud záznam chybí, jeho `lastSeen` je neplatný nebo platný čas je vůči aktuálnímu času serveru starší než 30 sekund, nastaví `lastSeen` na aktuální UTC čas a jedním pokusem zapíše celý JSON soubor;
-4. při stáří přesně 30 sekund ani při čase v budoucnosti zápis neprovádí.
+1. jediným načtením metadat zjistí `mtime` souboru `info.json` v per-client adresáři autentizovaného `src`;
+2. pouze pokud soubor chybí, jeho `mtime` nelze získat nebo je platný čas vůči aktuálnímu času serveru starší než 30 sekund, provede jediný pokus o `touch()` markeru s aktuálním časem;
+3. chybějící marker při tomto pokusu vytvoří jako prázdný soubor; existujícímu markeru změní pouze `mtime`;
+4. při stáří přesně 30 sekund ani při `mtime` v budoucnosti aktualizaci neprovádí.
 
-Neexistující soubor se interpretuje jako `{"clients":{}}` a způsobilá aktualizace se jej pokusí vytvořit. Syntakticky poškozený JSON nebo neplatné top-level schéma se interpretuje jako prázdná mapa; způsobilá aktualizace se jej jedním pokusem nahradí minimálním validním dokumentem obsahujícím právě aktualizovaného klienta. Neznámé nebo neplatné položky klientů v jinak platné mapě se při čtení ignorují; při zápisu se zachovají pouze platné položky. Jiná chyba otevření nebo čtení než neexistence souboru ukončí statistickou aktualizaci bez pokusu o zápis.
+Endpoint `info` projde nakonfigurované klienty a pro každý z nich se pokusí načíst pouze `mtime` jeho markeru. Úspěšně načtený a reprezentovatelný čas převede na UTC RFC 3339 s přesností na sekundy a použije jako `lastSeen`. Klienta s chybějícím nebo nečitelným markerem, neplatným `mtime` nebo chybějícím per-client adresářem z pole `clients` vynechá. Obsah markeru se ani při akci `info` nečte.
 
-Statistiky jsou striktně best effort. Selhání otevření, čtení, dekódování, kódování nebo zápisu NESMÍ změnit HTTP status, `data-result`, odpovídající `data-mac`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžní PHP workeři mohou navzájem přepsat své změny a poslední dokončený zápis vyhrává; tato race condition a případný dočasný regres hodnoty `lastSeen` jsou vědomě přijaty.
+Statistiky jsou striktně best effort. Selhání načtení metadat, vytvoření markeru nebo změny jeho `mtime` NESMÍ změnit HTTP status, `data-result`, odpovídající `data-mac`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžné aktualizace stejného markeru jsou povoleny a poslední dokončená metadata operace vyhrává; různí klienti používají různé markery a navzájem si statistiku nepřepisují.
 
-Soubor `clients.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORAGE_ROOT` má být mimo document root; pokud není, webserver MUSÍ přímý přístup k celému storage rootu explicitně zakázat. Endpoint `info` načítá platné položky z tohoto souboru, ale neprozrazuje jeho jméno, umístění ani chyby čtení. Při chybějícím, nečitelném nebo poškozeném souboru smí `info.clients` vrátit prázdné pole.
+Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORAGE_ROOT` má být mimo document root; pokud není, webserver MUSÍ přímý přístup k celému storage rootu explicitně zakázat. Endpoint `info` neprozrazuje jméno, umístění ani chyby markeru. Marker se NESMÍ započítávat do využité kapacity fronty, vydávat v odpovědi `data`, přejmenovávat mezi stavy dávky ani odstraňovat při TTL nebo oportunistickém sweepu.
 
 ## 11. Limity a timeouty
 
@@ -625,7 +621,7 @@ Chybové tělo je malý obecný JSON objekt:
 
 Chybová odpověď není autentizovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
 
-Chyba centrálního souboru klientských statistik nikdy není protokolovou chybou a NESMÍ vyvolat `500`, `503` ani změnit jinak zvolený status odpovědi. Nesmí být uvedena v chybovém těle ani odlišitelná časováním záměrného čekání nebo retry.
+Chyba per-client statistického markeru `info.json` nikdy není protokolovou chybou a NESMÍ vyvolat `500`, `503` ani změnit jinak zvolený status odpovědi. Nesmí být uvedena v chybovém těle ani odlišitelná časováním záměrného čekání nebo retry.
 
 ## 14. Kompatibilita a rozšiřování
 
@@ -645,7 +641,7 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 - `KeyDerivation` a `Authenticator`: HKDF, HMAC, kanonizace a konstantní porovnání;
 - `AesGcm`: jediná softwarová implementace AES-256-GCM v čistém PHP pro GMAC odpovědi `health`, šifrování `info` a end-to-end payload;
 - `Storage` interface a `DiskStorage`;
-- `ClientStats`: best-effort čtení a nejvýše jeden pokus o zápis centrálního `clients.json`;
+- `ClientStats`: best-effort čtení `mtime` a nejvýše jeden pokus o aktualizaci per-client markeru `info.json`;
 - `HealthHandler`, `InfoHandler` a `DataHandler`;
 - `Maintenance`: cílený sweep expirací jedné fronty při nedostatku kapacity a omezený oportunistický sweep.
 
@@ -666,9 +662,9 @@ Všechny následné kryptografické operace používají výhradně `$serverSecr
 
 Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a `data-mac`. Server pro HMAC odpovědi zpracovává pouze uspořádaný seznam `messageId` a GCM tagů a malý hash `data-result`, nikoli celý ciphertext; výpočet lze provádět průběžně s konstantní dodatečnou pamětí. `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
 
-Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění bufferů i centrálních statistik přes webserver. Nemá používat neomezený globální zámek. Zákaz zámků pro `clients.json` nemění zámková pravidla datového bufferu. Údržba po odpovědi musí mít časový a početní rozpočet.
+Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění bufferů i statistických markerů přes webserver. Nemá používat neomezený globální zámek. Zákaz zámků pro `info.json` nemění zámková pravidla datového bufferu. Údržba po odpovědi musí mít časový a početní rozpočet.
 
-Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně zpracovaném požadavku `data`. Její 30sekundové omezení, jediný pokus o zápis a veškerá selhání jsou oddělené od výsledku datového zpracování podle kapitoly 10.6.
+Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně zpracovaném požadavku `data`. Její 30sekundové omezení, jediný pokus o aktualizaci metadat a veškerá selhání jsou oddělené od výsledku datového zpracování podle kapitoly 10.6.
 
 ## 16. Povinné testovací scénáře
 
@@ -738,13 +734,14 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 
 ### 16.5 Statistiky klientů
 
-1. Ovladač `disk` čte jediný `STORAGE_ROOT/clients.json`; v per-client adresářích žádný statistický soubor nevytváří.
-2. Neexistující soubor se při způsobilé aktualizaci vytvoří ve správném JSON schématu s jediným aktuálním klientem.
-3. Platný `lastSeen` starý přesně 30 sekund ani čas v budoucnosti zápis nevyvolá; hodnota stará 31 sekund se aktualizuje na aktuální UTC čas.
-4. Chybějící nebo neplatný `lastSeen` vyvolá jediný pokus o aktualizaci. Poškozený JSON se nahradí minimálním validním dokumentem; nečitelný soubor se přeskočí bez zápisu.
-5. Selhání čtení, JSON dekódování nebo zápisu nezmění HTTP status, `data-result`, odpovídající `data-mac`, publikování ani `drainAll`; zejména nevyvolá `500` ani `503`.
-6. Dva souběžné workery nepoužijí zámek ani retry; výsledek last-writer-wins a případná ztráta jedné statistické aktualizace jsou povolené.
-7. Přímý HTTP i HTTPS požadavek na `clients.json` a jiné soubory storage rootu je znemožněn. `info` při nečitelných statistikách vrátí prázdné `clients` bez interní cesty nebo diagnostiky.
+1. Ovladač `disk` nepoužívá centrální soubor statistik; každý per-client adresář smí obsahovat právě jeden marker `info.json`.
+2. Marker vytvořený implementací je prázdný soubor o délce nula bajtů. Jeho obsah se nečte ani neparsuje jako JSON a `lastSeen` se odvozuje výhradně z jeho `mtime`.
+3. Chybějící marker se při způsobilé aktualizaci jediným pokusem vytvoří jako prázdný soubor. Existujícímu markeru se jediným pokusem změní pouze `mtime`.
+4. `mtime` starý přesně 30 sekund ani čas v budoucnosti aktualizaci nevyvolá; čas starý 31 sekund se aktualizuje na aktuální čas.
+5. Selhání načtení `mtime`, vytvoření markeru nebo jeho aktualizace nezmění HTTP status, `data-result`, odpovídající `data-mac`, publikování ani `drainAll`; zejména nevyvolá `500` ani `503`.
+6. Dva souběžné workery nepoužijí zámek ani retry; souběžné aktualizace téhož markeru jsou povolené a markery různých klientů se navzájem neovlivní.
+7. `info` načte pouze `mtime` markerů nakonfigurovaných klientů, platné hodnoty převede na UTC RFC 3339 a klienty s chybějícím nebo nečitelným markerem vynechá bez interní cesty nebo diagnostiky.
+8. Marker se nezapočítá do kapacity fronty, není vydán jako `data` a přežije cílený i oportunistický sweep. Přímý HTTP i HTTPS požadavek na `info.json` a jiné soubory storage rootu je znemožněn.
 
 ### 16.6 Omezená ochrana proti replay
 
@@ -773,7 +770,7 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - vrací nalezené publikované dávky přímo jako `data` bez obálky a bez stránkování, následované jediným `data-result` a jediným závěrečným `data-mac`, který autentizuje uspořádaný seznam `messageId` a GCM tagů i přesný `data-result`;
 - používá atomické at-most-once převzetí jednotlivých dávek bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
 - při nedostatku kapacity provede nejvýše jeden cílený sweep pro každé `dst`, publikaci celé cílové skupiny jednou zopakuje a trvající nedostatek kapacity vyjádří pouze pomocí `deferredMessageIds` v odpovědi `200`, nikdy pomocí `429`;
-- vede centrální best-effort `clients.json` v kořeni diskového storage, omezuje zápis `lastSeen` na hodnoty starší než 30 sekund a nikdy kvůli statistice nemění datový výsledek;
+- vede best-effort `lastSeen` jako `mtime` prázdného per-client markeru `info.json`, omezuje jeho aktualizaci na hodnoty starší než 30 sekund a nikdy kvůli statistice nemění datový výsledek;
 - znemožňuje přímý webový přístup k bufferům, statistikám a ostatním souborům storage rootu;
 - uplatňuje stejné chování přes HTTP, HTTPS a proxy;
 - mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
