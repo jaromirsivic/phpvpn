@@ -27,13 +27,14 @@ Protokol poskytuje:
 - integritu autentizovaného požadavku včetně přesných bajtů jeho těla;
 - end-to-end důvěrnost a integritu payloadu pomocí AES-256-GCM;
 - důvěrnost a integritu obsahu odpovědi `info` pomocí AES-256-GCM;
+- autenticitu výsledku akce `data` a integritu pořadí, počtu a úplnosti jejích datových řádků pomocí HMAC-SHA-256;
 - oddělení klíčů podle účelu pomocí HKDF-SHA-256.
 
 PHP implementace serveru i PHP implementace klienta musí všechny operace AES-256-GCM vždy provádět přibalenou softwarovou implementací v čistém PHP. Pro AES-256-GCM NESMÍ použít OpenSSL, Sodium ani jiné kryptografické rozšíření, a to ani tehdy, když je dostupné. Dostupnost volitelných rozšíření proto nemění funkce ani chování implementace.
 
 ### 1.2 Vědomě neposkytované vlastnosti
 
-Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once ani garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Úspěšná odpověď `data` není jako celek autentizovaná: AES-GCM chrání jednotlivé payloady a jejich směrovací AAD, nikoli úplnost odpovědi, pořadí řádků ani `data-result`. Server používá vědomě zvolený optimistický at-most-once model: data odstraní z bufferu před odesláním odpovědi a při ztrátě nebo nezpracování odpovědi je znovu nenabídne.
+Protokol pomocí autentizačního timestampu odmítá požadavky starší než povolené 60sekundové časové okno. Nezabrání však opakování platné zprávy uvnitř tohoto okna a neposkytuje exactly-once ani garantované doručení, ochranu proti zahození nebo zdržení zprávy ani skrytí provozních metadat. Úspěšná odpověď `data` autentizuje pomocí HMAC svůj `data-result` a uspořádaný seznam dvojic `messageId` a GCM tag, takže klient ověří počet, pořadí a úplnost datových řádků bez hashování jejich ciphertextu. Obsah každého datového řádku nadále chrání jeho vlastní AES-GCM tag. Tato ochrana nezabrání zahození nebo replay celé platné odpovědi. Server používá vědomě zvolený optimistický at-most-once model: data odstraní z bufferu před odesláním odpovědi a při ztrátě nebo nezpracování odpovědi je znovu nenabídne.
 
 V režimu čistého HTTP může útočník odposlechnout platný pollingový požadavek `data` a uvnitř jeho 60sekundového okna jej beze změny přehrát. Server takový replay znovu autentizuje, atomicky vyprázdní příchozí frontu oběti a vrátí její záznamy útočníkovi. Útočník bez `PAYLOAD_KEY` jejich plaintext nepřečte, ale záznamy z relay nenávratně odstraní dříve, než je získá legitimní klient. Opakovaným odposlechem nových pollingových požadavků může tímto způsobem trvale krást ciphertexty a ničit příchozí frontu oběti. Tento důsledek je známý, protokol v1 s ním výslovně počítá a riziko vědomě přijímá.
 
@@ -100,7 +101,7 @@ V URL je pouze `?action=<akce>`. Identita klienta, tokeny, autentizační HMAC t
 
 Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.
 
-Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit, měnit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC požadavku ani GCM tag jednotlivého payloadu. Odpověď `data` však nemá vlastní MAC: útočník může odstranit nebo přeskupit platné datové řádky a změnit, odstranit či podvrhnout `data-result`. Klient tak v režimu HTTP nemůže kryptograficky ověřit úplnost vráceného bufferu ani správnost výsledku přijetí. Protože server záznamy před odesláním odstraní, zahození či poškození odpovědi znamená jejich nevratnou ztrátu na úrovni relay. Autentizovaný požadavek lze úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
+Aktivní útočník na HTTP trase může požadavky a odpovědi kopírovat, opakovat, zdržet, zahodit, přeskupit, měnit nebo spojení ukončit. Nemůže bez znalosti příslušného klíče vytvořit nový platný HMAC požadavku, HMAC odpovědi `data` ani GCM tag jednotlivého payloadu. Závěrečný `data-mac` proto odhalí odstranění, přidání nebo přeuspořádání datových řádků i jakoukoli změnu `data-result`; změnu obsahu jednotlivého datového záznamu se zachovaným GCM tagem odhalí jeho následné AES-GCM ověření. Útočník stále může zahodit celou odpověď, přerušit spojení nebo zopakovat celou dříve platnou odpověď se shodným aktuálním `requestId`. Protože server záznamy před odesláním odstraní, nedoručení odpovědi znamená jejich nevratnou ztrátu na úrovni relay. Autentizovaný požadavek lze úspěšně opakovat pouze uvnitř jeho 60sekundového časového okna; odpověď nemá samostatnou kontrolu stáří.
 
 Pro útok na pollingovou frontu útočník nemusí změnit provoz na trase ani znát klíč. Stačí mu pasivně zachytit platný HTTP požadavek `data`, získanou kopii během otevřeného okna sám odeslat serveru a tento postup opakovat s novými požadavky oběti. Každá úspěšná kopie provede běžné at-most-once vyprázdnění fronty ve prospěch spojení útočníka. Tím lze dlouhodobě odebírat všechny nově čekající záznamy a legitimnímu klientovi ponechávat prázdnou frontu. Jde o výslovně přijaté riziko čistého HTTP podle kapitoly 1.2, nikoli o vlastnost, kterou by v1 detekovala nebo napravovala.
 
@@ -166,7 +167,7 @@ Identifikátory slouží ke korelaci. Server ani klient je NESMÍ používat jak
 
 Povinné algoritmy v1 jsou SHA-256, HMAC-SHA-256, HKDF-SHA-256 podle RFC 5869 a AES-256-GCM s 16bajtovým tagem.
 
-Všechny textové kanonické řetězce jsou ASCII/UTF-8, hodnoty jsou oddělené jedním LF a řetězec nekončí LF, není-li uvedeno jinak. `SHA256HEX(x)` je SHA-256 nad přesnými bajty `x`, zapsaný 64 malými hexadecimálními znaky. Výstup `HMAC-SHA-256(key, x)` má 32 bajtů a do autentizačního pole `tag` se zapisuje base64url bez paddingu. Autentizační HMAC `tag` se podle typu zprávy jednoznačně odlišuje od 16bajtového AES-GCM pole `tag` ve zprávách `info` a `data`.
+Všechny textové kanonické řetězce jsou ASCII/UTF-8, hodnoty jsou oddělené jedním LF a řetězec nekončí LF, není-li uvedeno jinak. `SHA256HEX(x)` je SHA-256 nad přesnými bajty `x`, zapsaný 64 malými hexadecimálními znaky. Výstup `HMAC-SHA-256(key, x)` má 32 bajtů a do HMAC pole `tag` se zapisuje base64url bez paddingu. HMAC `tag` ve zprávách `auth-semi`, `auth-full` a `data-mac` se podle typu zprávy jednoznačně odlišuje od 16bajtového AES-GCM pole `tag` ve zprávách `info` a `data`.
 
 ### 7.1 Klíč `auth-semi`
 
@@ -361,7 +362,8 @@ Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole.
 Úspěšná odpověď má Content-Type `application/x-ndjson; charset=utf-8` a pořadí:
 
 1. nula nebo více přímo uložených záznamů `data`;
-2. právě jeden závěrečný záznam `data-result`.
+2. právě jeden záznam `data-result`;
+3. právě jeden závěrečný záznam `data-mac`.
 
 Po úspěšném ověření požadavku a zpracování jeho odesílaných záznamů server atomickou operací načte všechny neexpirované datové záznamy aktuálně uložené v bufferu klienta a současně je z persistentního bufferu odstraní. Nově publikovaný záznam se `dst` shodným s autentizovaným `src` proto patří již do této odpovědi. Teprve z takto získaného lokálního seznamu server sestaví odpověď. Počet vrácených záznamů se neomezuje samostatným protokolovým ani konfiguračním limitem a odpověď se nestránkuje. Jedinou horní mezí objemu je kapacita bufferu. Každý záznam se vrací přímo ve stejném schématu `data`, bez další obálky:
 
@@ -382,13 +384,41 @@ Záznam `data-result`:
 
 Příklad výsledku pollingu bez odeslaných i bez vrácených dat:
 
-```json
+```ndjson
 {"type":"data-result","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","acceptedMessageIds":[],"deferredMessageIds":[],"acceptedRecords":0,"acceptedBytes":0}
+{"type":"data-mac","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","tag":"BASE64URL"}
 ```
 
-Klient MUSÍ přijmout úplné NDJSON tělo s právě jedním závěrečným `data-result`, jehož `requestId` odpovídá aktuálnímu požadavku. Každý datový řádek ověří samostatně podle AES-GCM pravidel v kapitole 9.4; řádek s neplatným tagem zahodí a ostatní platné payloady může zpracovat. Protokol neposílá žádné následné potvrzení.
+Server autentizuje počet, pořadí a úplnost datových řádků a přesný záznam `data-result` pomocí klíče `fullAuthKey` odvozeného pro aktuální požadavek. Nechť `recordCount` je počet řádků `data` v odpovědi, `dataResultLine` jsou přesné UTF-8 bajty JSON objektu `data-result` bez ukončovacího LF a dvojice `messageId_i`, `gcmTag_i` pocházejí z i-tého datového řádku v pořadí odpovědi. `gcmTag_i` je přesný base64url řetězec pole `tag` tak, jak je uveden v tomto řádku. Server sestaví:
 
-Jakmile atomické načtení a odstranění skončí, server data znovu nenabídne, a to ani když PHP worker selže před odesláním, HTTP/HTTPS odpověď nedorazí, je neúplná nebo ji klient nezpracuje. Jde o vědomě přijaté optimistické at-most-once chování serverového bufferu. Odpověď jako celek nemá HMAC ani jinou ochranu úplnosti a `requestId` ani výsledková pole nejsou v režimu HTTP kryptograficky chráněné; bezpečnostní důsledky stanoví kapitola 4.2. Síťová vrstva může dříve platnou odpověď zopakovat, takže at-most-once vlastnost serverového výdeje sama o sobě nezajišťuje deduplikaci u klienta. Klient nevede replay cache a opakovaně doručené platné payloady znovu zpracuje.
+```text
+canonical = "PHPVPN-DATA-RESPONSE" LF
+            "data" LF
+            requestId LF
+            DECIMAL(recordCount) LF
+            messageId_1 LF
+            gcmTag_1 LF
+            ...
+            messageId_recordCount LF
+            gcmTag_recordCount LF
+            SHA256HEX(dataResultLine)
+
+responseTag = HMAC-SHA-256(fullAuthKey, canonical)
+```
+
+`DECIMAL(recordCount)` je nezáporný desítkový zápis bez znaménka a bez vodicích nul; nula se zapisuje jako `0`. Při `recordCount = 0` se blok dvojic zcela vynechá. `canonical` končí posledním hexadecimálním znakem `SHA256HEX(dataResultLine)` a nekončí LF. Hashuje se pouze malý řádek `data-result`, nikoli ciphertext datových řádků. Záznam `data-mac` má přesně tři pole:
+
+```json
+{"type":"data-mac","requestId":"69e82c2a-2732-466f-b9b1-f891084df639","tag":"BASE64URL"}
+```
+
+Jeho `requestId` se musí shodovat s aktuálním požadavkem i s `data-result`. Pole `tag` je base64url bez paddingu a dekóduje se na přesně 32 bajtů `responseTag`.
+
+Klient MUSÍ přijmout úplné NDJSON tělo s uvedeným pořadím a přesně jedním závěrečným `data-mac`. Z přijatých datových řádků ve stejném pořadí sestaví `canonical`, použije přesné přijaté bajty `dataResultLine`, vypočte HMAC a porovná jej konstantním časem. Chybějící nebo neplatný `data-mac`, neshodný `requestId`, jiný počet či pořadí dvojic nebo změněný `data-result` zneplatní celou odpověď. V takovém případě klient NESMÍ odstranit žádnou položku ze své odchozí fronty ani předat žádný přijatý payload a odpověď zahodí.
+
+Teprve po úspěšném ověření `data-mac` klient použije `acceptedMessageIds` a každý datový řádek samostatně ověří podle AES-GCM pravidel v kapitole 9.4. Řádek s neplatným GCM tagem zahodí a ostatní platné payloady může zpracovat. GCM ověření chrání pole a ciphertext jednotlivého záznamu; HMAC nad uspořádanými dvojicemi chrání jeho přítomnost a pozici v odpovědi. Protokol neposílá žádné následné potvrzení.
+
+Jakmile atomické načtení a odstranění skončí, server data znovu nenabídne, a to ani když PHP worker selže před odesláním, HTTP/HTTPS odpověď nedorazí, je neúplná, má neplatný `data-mac` nebo ji klient nezpracuje. Jde o vědomě přijaté optimistické at-most-once chování serverového bufferu. `data-mac` zajišťuje autenticitu výsledku a detekci změny počtu či pořadí datových řádků, ale nezajišťuje doručení. Síťová vrstva může celou dříve platnou odpověď zopakovat, takže at-most-once vlastnost serverového výdeje sama o sobě nezajišťuje deduplikaci u klienta. Klient nevede replay cache a opakovaně doručené platné payloady znovu zpracuje.
 
 ## 10. Fronty a doručovací sémantika
 
@@ -402,9 +432,9 @@ Při sestavení odpovědi server atomicky vyprázdní všechny neexpirované zá
 
 ### 10.2 Částečné přijetí
 
-Server zpracovává cílové skupiny deterministicky. Přijaté položky uvede v `acceptedMessageIds`, nepřijaté v `deferredMessageIds`. Pokud přijme alespoň jednu položku nebo požadavek žádnou neodesílá, vrací `200` a `data-result`. Pokud nelze přijmout žádnou odesílanou položku kvůli kapacitě, vrací `429 queue_full`; při nedostupnosti backendu `503 queue_unavailable`.
+Server zpracovává cílové skupiny deterministicky. Přijaté položky uvede v `acceptedMessageIds`, nepřijaté v `deferredMessageIds`. Pokud přijme alespoň jednu položku nebo požadavek žádnou neodesílá, vrací `200`, `data-result` a závěrečný `data-mac`. Pokud nelze přijmout žádnou odesílanou položku kvůli kapacitě, vrací `429 queue_full`; při nedostupnosti backendu `503 queue_unavailable`.
 
-Chybová odpověď nikdy neopravňuje klienta odstranit položku z odchozí fronty. Při úspěchu klient vyhodnotí pouze jediný syntakticky platný závěrečný `data-result` se shodným `requestId`; v režimu HTTP však jeho správnost není kryptograficky zaručena.
+Chybová odpověď nikdy neopravňuje klienta odstranit položku z odchozí fronty. Při úspěchu klient vyhodnotí jediný syntakticky platný `data-result` se shodným `requestId` pouze po úspěšném ověření bezprostředně následujícího závěrečného `data-mac` podle kapitoly 9.5.
 
 ### 10.3 Vydání, ztráta a opakování
 
@@ -449,7 +479,7 @@ Po úspěšném ověření a normálním zpracování každého požadavku `data
 
 Neexistující soubor se interpretuje jako `{"clients":{}}` a způsobilá aktualizace se jej pokusí vytvořit. Syntakticky poškozený JSON nebo neplatné top-level schéma se interpretuje jako prázdná mapa; způsobilá aktualizace se jej jedním pokusem nahradí minimálním validním dokumentem obsahujícím právě aktualizovaného klienta. Neznámé nebo neplatné položky klientů v jinak platné mapě se při čtení ignorují; při zápisu se zachovají pouze platné položky. Jiná chyba otevření nebo čtení než neexistence souboru ukončí statistickou aktualizaci bez pokusu o zápis.
 
-Statistiky jsou striktně best effort. Selhání otevření, čtení, dekódování, kódování nebo zápisu NESMÍ změnit HTTP status, `data-result`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžní PHP workeři mohou navzájem přepsat své změny a poslední dokončený zápis vyhrává; tato race condition a případný dočasný regres hodnoty `lastSeen` jsou vědomě přijaty.
+Statistiky jsou striktně best effort. Selhání otevření, čtení, dekódování, kódování nebo zápisu NESMÍ změnit HTTP status, `data-result`, odpovídající `data-mac`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžní PHP workeři mohou navzájem přepsat své změny a poslední dokončený zápis vyhrává; tato race condition a případný dočasný regres hodnoty `lastSeen` jsou vědomě přijaty.
 
 Soubor `clients.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORAGE_ROOT` má být mimo document root; pokud není, webserver MUSÍ přímý přístup k celému storage rootu explicitně zakázat. Endpoint `info` načítá platné položky z tohoto souboru, ale neprozrazuje jeho jméno, umístění ani chyby čtení. Při chybějícím, nečitelném nebo poškozeném souboru smí `info.clients` vrátit prázdné pole.
 
@@ -469,7 +499,7 @@ Soubor `clients.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORA
 | `QUEUE_TTL_SECONDS` | 60 s | Nejvyšší věk čekající dávky. |
 | `LOCK_TIMEOUT_MS` | 200 ms | Nejvyšší čekání PHP workeru na storage zámek. |
 
-Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus závěrečný `data-result`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
+Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a závěrečný `data-mac`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
 
 Překročení syntaktického limitu vrací `413 payload_too_large`. Zaplnění persistentní fronty vrací `429 queue_full` a nesmí být zaměněno za syntaktickou chybu.
 
@@ -574,7 +604,7 @@ if ($serverSecret === '') {
 
 Všechny následné kryptografické operace používají výhradně `$serverSecret`. Funkce `empty()` se pro tuto normalizaci NESMÍ použít, protože by chybně považovala platný neprázdný řetězec `"0"` za prázdný. Po normalizaci není vstupní klíč žádného zde předepsaného volání `hash_hkdf()` prázdný: původně prázdný `SERVER_SECRET` má 32 ASCII znaků `0`, každá jiná hodnota `SERVER_SECRET` je z definice neprázdná a odvození `auth-full` dostane validovaný 32bajtový `ACCESS_KEY`. Prázdný nakonfigurovaný `SERVER_SECRET` proto nesmí vyvolat `ValueError`, `500 internal_error` ani `503 server_misconfigured`.
 
-Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result`. Bezpečnou volbou je validované záznamy dočasně držet v omezené paměti; `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
+Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a `data-mac`. Server pro HMAC odpovědi zpracovává pouze uspořádaný seznam `messageId` a GCM tagů a malý hash `data-result`, nikoli celý ciphertext; výpočet lze provádět průběžně s konstantní dodatečnou pamětí. `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
 
 Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění bufferů i centrálních statistik přes webserver. Nemá používat neomezený globální zámek. Zákaz zámků pro `clients.json` nemění zámková pravidla datového bufferu. Údržba po odpovědi musí mít časový a početní rozpočet.
 
@@ -598,7 +628,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
 5. Hrany pro celé tělo a buffer jsou testovány na `limit-1`, `limit` a `limit+1`.
 6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a neznámé nebo nadbytečné pole jsou odmítnuty.
-7. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data` a právě jeden poslední `data-result`; další řádek za výsledkem je neplatný.
+7. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data`, právě jeden `data-result` a právě jeden poslední `data-mac`; další řádek za `data-mac` je neplatný.
 
 ### 16.3 Kryptografie
 
@@ -619,13 +649,15 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 15. Nakonfigurovaný `SERVER_SECRET` o délce nula bajtů se při startu serveru i klienta normalizuje na přesně 32 ASCII znaků `0`. Known-answer test pro prázdnou a explicitně zadanou hodnotu `"00000000000000000000000000000000"` musí dát shodný `semiKey`, klíč odpovědi `info`, `authFullSalt`, `fullAuthKey` i výsledné tagy a nesmí vyvolat `ValueError`. Neprázdný řetězec `"0"` a 32 nulových bajtů `0x00` se nenormalizují a musí dát výsledky odpovídající jejich vlastním přesným bajtům.
 16. PHP server i PHP klient používá softwarovou implementaci AES-256-GCM v čistém PHP bez ohledu na to, zda jsou OpenSSL, Sodium nebo jiná kryptografická rozšíření dostupná. Test s dostupnými i nedostupnými rozšířeními musí projít stejnou softwarovou cestou a vytvořit přesně stejné výstupy pro `info` i end-to-end payload.
 17. Pro pevný klíč, IV, AAD a plaintext vytvoří softwarová implementace přesně očekávaný ciphertext a 16bajtový tag podle known-answer vektoru AES-256-GCM. Správně dešifruje platný vektor, odmítne změnu jediného bitu klíče, IV, AAD, ciphertextu či tagu a před úspěšným ověřením tagu nezpřístupní žádný plaintext.
+18. Known-answer test `data-mac` sestaví `canonical` z doménového řetězce, akce, `requestId`, desítkového počtu záznamů, uspořádaných dvojic `messageId` a přesného base64url GCM tagu a `SHA256HEX` přesných bajtů `data-result` bez LF. Výsledkem je přesně 32bajtový `HMAC-SHA-256(fullAuthKey, canonical)`, jehož pole `tag` je base64url bez paddingu a dekóduje se na přesně 32 bajtů.
+19. Přidání, odstranění nebo přeuspořádání datového řádku, změna jeho `messageId` či GCM tagu, změna počtu záznamů nebo jediného bajtu `data-result` zneplatní `data-mac`. Změnu jiného pole datového řádku při zachovaném GCM tagu odhalí následné AES-GCM ověření. Chybějící, změněný nebo neplatný `data-mac` nesmí způsobit odstranění žádné položky z odchozí fronty ani předání payloadu.
 
 ### 16.4 Fronty, souběh a pády
 
 1. Atomická publikace odolá pádu před a po `rename()` bez částečné dávky.
 2. Dva workery posílající stejnému cíli neztratí ani nespojí dávku.
 3. Odpověď atomicky vyprázdní všechny aktuálně buffered záznamy a vrátí je jako přímé řádky `data`, bez stránkování a bez obálky; jejich počet může překročit 16.
-4. Za datovými řádky následuje právě jeden `data-result` s přesnou uzavřenou sadou výsledkových polí; prázdný buffer vrátí pouze tento řádek.
+4. Za datovými řádky následuje právě jeden `data-result` s přesnou uzavřenou sadou výsledkových polí a právě jeden závěrečný `data-mac`; prázdný buffer vrátí tyto dva řádky.
 5. Pád workeru nebo přerušení spojení po `drainAll` vede ke ztrátě odstraněných dat a následující poll je znovu nevrátí.
 6. Záznamy zapsané souběžně až po atomickém `drainAll` zůstanou v bufferu pro další poll a nesmí se ztratit.
 7. Jedna plná cílová fronta nezruší již přijaté položky pro jiný cíl a výsledek je přesný.
@@ -640,7 +672,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 2. Neexistující soubor se při způsobilé aktualizaci vytvoří ve správném JSON schématu s jediným aktuálním klientem.
 3. Platný `lastSeen` starý přesně 30 sekund ani čas v budoucnosti zápis nevyvolá; hodnota stará 31 sekund se aktualizuje na aktuální UTC čas.
 4. Chybějící nebo neplatný `lastSeen` vyvolá jediný pokus o aktualizaci. Poškozený JSON se nahradí minimálním validním dokumentem; nečitelný soubor se přeskočí bez zápisu.
-5. Selhání čtení, JSON dekódování nebo zápisu nezmění HTTP status, `data-result`, publikování ani `drainAll`; zejména nevyvolá `500` ani `503`.
+5. Selhání čtení, JSON dekódování nebo zápisu nezmění HTTP status, `data-result`, odpovídající `data-mac`, publikování ani `drainAll`; zejména nevyvolá `500` ani `503`.
 6. Dva souběžné workery nepoužijí zámek ani retry; výsledek last-writer-wins a případná ztráta jedné statistické aktualizace jsou povolené.
 7. Přímý HTTP i HTTPS požadavek na `clients.json` a jiné soubory storage rootu je znemožněn. `info` při nečitelných statistikách vrátí prázdné `clients` bez interní cesty nebo diagnostiky.
 
@@ -648,7 +680,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 
 1. Dvojí odeslání identického platného requestu uvnitř 60sekundového okna vytvoří dvě zpracování.
 2. Tentýž request se stářím 61 s server odmítne obecným `401`; timestamp se nepersistuje a nevznikne nonce ani replay databáze.
-3. Dvojí doručení stejné platné odpovědi vede k opětovnému ověření jednotlivých GCM tagů a payload je předán dvakrát.
+3. Dvojí doručení stejné platné odpovědi vede k opětovnému ověření `data-mac` i jednotlivých GCM tagů a payload je předán dvakrát.
 4. Opakované `messageId`, IV a autentizační HMAC tag nejsou porovnávány s historií.
 5. Replay uvnitř okna může zaplnit frontu, ale nemůže bez klíče změnit chráněný obsah nebo vytvořit nový platný tag.
 6. Zdrojový strom a runtime storage po testech neobsahují adresář, tabulku ani soubor určený pro nonce/replay cache.
@@ -666,7 +698,7 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - ověřuje autentizaci před jakoukoli změnou storage;
 - vyžaduje v `auth-semi` i `auth-full` přesný UTC string `YYYY-MM-DDTHH:MM:SSZ`, zahrnuje jej v normativním pořadí do HMAC `tag` a odmítá absolutní odchylku větší než 60 s bez perzistence timestampu;
 - odvozuje klíč HMAC tagu `auth-full` normativním spojením jediného `SERVER_SECRET`, jediného `ACCESS_KEY` vybraného podle `src` a samotného `src`, takže správný tag vyžaduje znalost obou tajemství;
-- vrací všechny aktuálně buffered záznamy přímo jako `data` bez obálky a bez stránkování, zakončené jediným `data-result`;
+- vrací všechny aktuálně buffered záznamy přímo jako `data` bez obálky a bez stránkování, následované jediným `data-result` a jediným závěrečným `data-mac`, který autentizuje uspořádaný seznam `messageId` a GCM tagů i přesný `data-result`;
 - používá atomické at-most-once vyprázdnění celého bufferu bez potvrzení, zachovává TTL a přesné částečné výsledky odesílání;
 - vede centrální best-effort `clients.json` v kořeni diskového storage, omezuje zápis `lastSeen` na hodnoty starší než 30 sekund a nikdy kvůli statistice nemění datový výsledek;
 - znemožňuje přímý webový přístup k bufferům, statistikám a ostatním souborům storage rootu;
