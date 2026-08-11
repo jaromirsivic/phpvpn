@@ -168,10 +168,22 @@ Klient musí před prvním autentizovaným požadavkem získat a ověřit čas s
 - JSON objekt NESMÍ obsahovat duplicitní názvy členů.
 - Neznámé pole v autentizačním, datovém nebo výsledkovém záznamu je chyba `400 bad_request`.
 - Číselná pole jsou nezáporná celá čísla v bezpečném rozsahu PHP integeru.
-- Base64 hodnoty používají base64url abecedu `A-Z a-z 0-9 _ -` bez `=` paddingu.
+- Base64 hodnoty používají výhradně kanonické base64url podle pravidel níže.
 - Binární porovnání HMAC a tagů se provádí konstantním časem.
 
 PHP implementace musí duplicitní top-level klíče odhalit před nebo během dekódování; samotné `json_decode()` je tiše přepíše a není pro tuto kontrolu dostačující.
+
+`BASE64URL(x)` označuje jediný kanonický textový zápis přesných bajtů `x` pomocí abecedy `ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_` v tomto pořadí, bez znaku `=` a bez whitespace. Délka kanonického zápisu modulo 4 smí být pouze 0, 2 nebo 3; zbytek 1 je vždy neplatný. Prázdný řetězec je kanonickým zápisem prázdné posloupnosti bajtů, ale konkrétní pole jej může zakázat nebo vyžadovat jinou dekódovanou délku.
+
+Nevyužité spodní bity posledního znaku MUSÍ být nulové:
+
+- při délce modulo 4 rovné 2 musí mít poslední znak nulové spodní 4 bity své šestibitové hodnoty;
+- při délce modulo 4 rovné 3 musí mít poslední znak nulové spodní 2 bity své šestibitové hodnoty;
+- při délce modulo 4 rovné 0 žádné nevyužité bity nevznikají.
+
+Příjemce MUSÍ před použitím hodnoty, kontrolou její dekódované délky nebo vložením jejího textu do AAD či jiného kanonického řetězce ověřit kanoničnost. Ekvivalentní povinná kontrola je: ověřit abecedu a délku, přidat pouze padding nutný pro dekodér, striktně dekódovat, znovu zakódovat podle `BASE64URL` a vyžadovat bajtovou shodu s původním textem. Samotné úspěšné dekódování nestačí, protože tolerantní dekodér může ignorovat nenulové nevyužité bity. Například `_w` je kanonický zápis bajtu `ff`, zatímco `_x` musí být odmítnut, i když jej tolerantní dekodér může převést na stejný bajt. Obdobně `__8` je kanonický zápis bajtů `ffff`, zatímco `__9` je nekanonický.
+
+Nekanonická base64url hodnota v požadavku je `400 bad_request`. Klient při nekanonické base64url hodnotě v odpovědi odmítne celou odpověď a nesmí z ní použít plaintext, čas, výsledek odesílání ani payload. Po úspěšné kontrole je původní přijatý text totožný s `BASE64URL` dekódovaných bajtů; implementace proto smí pro AAD nebo jiný kanonický řetězec použít původní text nebo znovu zakódovanou hodnotu se shodným výsledkem.
 
 ### 6.2 NDJSON
 
@@ -640,7 +652,7 @@ Doporučené oddělení odpovědností v jednom nasaditelném PHP souboru:
 
 - `Config` a `ConfigValidator`: klíče, limity, storage driver a invarianty;
 - `Router` a `Http`: metoda, akce, hlavičky a obecné chyby;
-- `JsonWire` a `NdjsonReader`: limitované čtení, duplicitní klíče, striktní pole a base64url;
+- `JsonWire` a `NdjsonReader`: limitované čtení, duplicitní klíče, striktní pole a kanonické base64url ověřené zpětným zakódováním;
 - `KeyDerivation` a `Authenticator`: HKDF, HMAC, kanonizace a konstantní porovnání;
 - `AesGcm`: jediná softwarová implementace AES-256-GCM v čistém PHP pro GMAC odpovědi `health`, šifrování `info` a end-to-end payload;
 - `Storage` interface a `DiskStorage`;
@@ -689,8 +701,9 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
 5. Hrany pro celé tělo a buffer jsou testovány na `limit-1`, `limit` a `limit+1`.
 6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a neznámé nebo nadbytečné pole jsou odmítnuty.
-7. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data`, právě jeden `data-result` a právě jeden poslední `data-mac`; další řádek za `data-mac` je neplatný.
-8. `auth-none` má přesně pole `type` a `requestId`; chybějící, neznámé nebo nadbytečné pole včetně `timestamp`, `src` či `tag` vrátí `400 bad_request`.
+7. Kanonické zápisy `_w` pro bajt `ff` a `__8` pro bajty `ffff` projdou obecnou base64url validací. Nekanonické zápisy `_x` a `__9`, délka se zbytkem 1 modulo 4, znak `=`, whitespace a znaky `+` nebo `/` jsou odmítnuty, i když je použitý dekodér umí převést na bajty. Test decode–reencode musí pro každou přijatou hodnotu vrátit přesně původní text.
+8. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data`, právě jeden `data-result` a právě jeden poslední `data-mac`; další řádek za `data-mac` je neplatný.
+9. `auth-none` má přesně pole `type` a `requestId`; chybějící, neznámé nebo nadbytečné pole včetně `timestamp`, `src` či `tag` vrátí `400 bad_request`.
 
 ### 16.3 Kryptografie
 
@@ -766,6 +779,7 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - přijímá `health` pouze metodou `POST` s neautentizovaným `auth-none`, vrací původní `requestId`, IV a GCM tag nad všemi provozními poli a klient použije serverový čas teprve po ověření tagu pomocí efektivního `SERVER_SECRET`;
 - při startu serveru i klienta normalizuje pouze přesně prázdný nakonfigurovaný `SERVER_SECRET` na 32 ASCII znaků `0` a pro všechny kryptografické operace používá tuto efektivní hodnotu;
 - je-li napsána v PHP, provádí všechny operace AES-256-GCM vždy jedinou přibalenou softwarovou implementací v čistém PHP a nepoužívá pro ně OpenSSL, Sodium ani jiné kryptografické rozšíření;
+- přijímá pouze kanonické base64url bez paddingu, ověřuje nulové nevyužité bity zpětným zakódováním nebo ekvivalentní kontrolou a nekanonický text nikdy nepoužije v AAD ani jiném kanonickém řetězci;
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
 - ověřuje autentizaci před jakoukoli změnou storage;
 - vyžaduje v `auth-semi` i `auth-full` přesný UTC string `YYYY-MM-DDTHH:MM:SSZ`, zahrnuje jej v normativním pořadí do HMAC `tag` a odmítá absolutní odchylku větší než 60 s bez perzistence timestampu;
