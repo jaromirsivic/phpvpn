@@ -380,10 +380,14 @@ Pro `timestamp` platí stejný přesný UTC formát, kalendářní validace a ko
 ### 9.3 Záznam `data`
 
 ```json
-{"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
+{"type":"data","messageId":"d5b543a9-9fc3-4c98-916c-ea0198f67a79","src":"10.99.99.2","dst":"10.99.99.4","iv":"BASE64URL","tag":"BASE64URL","ciphertext":"BASE64URL"}
 ```
 
-Pravidla:
+Záznam `data` MUSÍ být zapsán jako kompaktní UTF-8 JSON objekt bez whitespace mimo hodnoty řetězců a přesně v uvedeném pořadí členů: `type`, `messageId`, `src`, `dst`, `iv`, `tag`, `ciphertext`. Po členu `ciphertext` NESMÍ následovat žádný další člen. Hodnota `ciphertext` je poslední řetězcová hodnota objektu; bezprostředně po jejím uzavíracím znaku `"` následuje `}` a LF. Všechny hodnoty záznamu `data` jsou ASCII a `ciphertext` je kanonický base64url bez paddingu, takže v něm NESMÍ být JSON escape sekvence.
+
+Implementace smí nejprve načíst a validovat krátkou hlavičku končící doslovným prefixem `,"ciphertext":"` a potom hodnotu `ciphertext` streamovat. Musí však ověřit její kanonický base64url tvar, uzavírací `"}` a LF; jiný zápis, whitespace, změněné pořadí členů nebo další člen po `ciphertext` MUSÍ odmítnout.
+
+Pravidla hodnot:
 
 - `src` se musí přesně shodovat se `src` v `auth-full`; jinak `401 unauthorized`;
 - `dst` musí být platná VPN adresa;
@@ -433,7 +437,7 @@ Klient nevede databázi přijatých IV a IV nepersistuje kvůli replay kontrole.
 Po úspěšném ověření požadavku a zpracování jeho odesílaných záznamů server atomickou operací načte všechny neexpirované datové záznamy aktuálně uložené v bufferu klienta a současně je z persistentního bufferu odstraní. Vyprázdnění příchozího bufferu volajícího NESMÍ záviset na tom, zda se podařilo publikovat některý nebo všechny jeho odesílané záznamy. Server je proto provede i tehdy, když kvůli nedostatku kapacity nepřijal žádný odesílaný záznam. Nově publikovaný záznam se `dst` shodným s autentizovaným `src` proto patří již do této odpovědi. Teprve z takto získaného lokálního seznamu server sestaví odpověď. Počet vrácených záznamů se neomezuje samostatným protokolovým ani konfiguračním limitem a odpověď se nestránkuje. Jedinou horní mezí objemu je kapacita bufferu. Každý záznam se vrací přímo ve stejném schématu `data`, bez další obálky:
 
 ```json
-{"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}
+{"type":"data","messageId":"e8edc241-96ec-4b51-9336-1fb0836f4db5","src":"10.99.99.4","dst":"10.99.99.2","iv":"BASE64URL","tag":"BASE64URL","ciphertext":"BASE64URL"}
 ```
 
 Záznam `data-result`:
@@ -695,7 +699,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 ### 16.2 JSON, NDJSON a limity
 
 1. Validní prázdný poll obsahuje pouze `auth-full` s LF.
-2. Chybějící poslední LF, CRLF, prázdný řádek, duplicitní klíč a neznámé pole jsou odmítnuty.
+2. Chybějící poslední LF, CRLF, prázdný řádek, duplicitní klíč a neznámé pole jsou odmítnuty. Záznam `data` s whitespace, jiným pořadím členů, `ciphertext` mimo poslední pozici nebo dalším členem za `ciphertext` je odmítnut.
 3. Jeden datový řádek `data` může využít zbývající kapacitu celého těla požadavku; odmítnut je až request, jehož celá velikost překročí `MAX_REQUEST_BODY_BYTES`.
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
 5. Hrany pro celé tělo a buffer jsou testovány na `limit-1`, `limit` a `limit+1`.
