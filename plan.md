@@ -325,13 +325,31 @@ Souběžně publikovaná dávka, kterou průchod nezastihl, zůstává pro dalš
 | `action` je známá a metoda je jiná | `405 method_not_allowed`, `Allow: POST` |
 | `action` je neznámá nebo není řetězec | `404 not_found` |
 
-Každá odpověď má `Cache-Control: no-store, no-cache, must-revalidate`, `Pragma: no-cache` a `X-Content-Type-Options: nosniff`. Chybová těla mají tvar `{"type":"error","code":"..."}` s Content-Type `application/json; charset=utf-8`. U `503` se přidává `Retry-After: 1`. Žádná hlavička typu `X-Forwarded-*` se nečte.
+### 9.2 Povinné hlavičky odpovědi
 
-### 9.2 Provozní stránka
+Kapitola 4.1 protokolu vyžaduje tři hlavičky na každé odpovědi bez výjimky. Jsou to:
+
+- `Cache-Control: no-store, no-cache, must-revalidate`
+- `Pragma: no-cache`
+- `X-Content-Type-Options: nosniff`
+
+Platí pro všechny odpovědi bez rozdílu, tedy pro provozní stránku, `health`, `info`, `data`, pro každou chybu od `400` po `503` i pro odpověď na `HEAD`. K nim se podle situace přidává:
+
+- `Content-Type`, u chyb vždy `application/json; charset=utf-8`, u provozní stránky `text/html; charset=utf-8`, u `health` a `info` `application/json; charset=utf-8`, u `data` `application/x-ndjson; charset=utf-8`
+- `Allow` u každé odpovědi `405 method_not_allowed`, s hodnotou `GET, HEAD` pro provozní stránku a `POST` pro akce
+- `Retry-After: 1` u každé odpovědi `503`
+
+Vynucení je konstrukční, nikoli disciplinární. Trojici povinných hlaviček zapisuje `ResponseWriter` ve svém jediném privátním bodě `beginResponse()`, kterým prochází každá odpověď, a to dřív, než smí kdokoli zapsat první bajt těla. Žádný handler, router, chybová větev, `set_exception_handler` ani `register_shutdown_function` nesmí sestavit odpověď jinudy, tedy ani přímým voláním `header()` nebo `echo`. Kód mimo `Http` a `ResponseWriter` proto nikdy nevolá `header()`, `http_response_code()` ani neposílá výstup přímo. Statusové cesty pro fatální chyby používají stejný zapisovač, takže i `500 internal_error` z shutdown handleru nese kompletní sadu hlaviček.
+
+Naopak na příjmu se žádná z těchto hlaviček nevyžaduje ani nekontroluje. Z požadavku se zkoumá pouze `Content-Type`, který může skončit `415`, a volitelně `Content-Length` jako zkratka k `413` bez čtení těla. Hlavičky `X-Forwarded-For`, `X-Forwarded-Proto` a `Forwarded` se nečtou vůbec.
+
+Chybové tělo má vždy tvar `{"type":"error","code":"..."}`.
+
+### 9.3 Provozní stránka
 
 Vrací `text/html; charset=utf-8` s `<h1>Server is running</h1>`. Červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>` se přidá, pokud byla nakonfigurovaná hodnota prázdná, nebo je efektivní hodnota tvořena pouze bajty `0x00`, nebo pouze ASCII znaky `0`. Stránka nespouští validaci konfigurace, nikdy nevrací `503` a nic dalšího neprozrazuje.
 
-### 9.3 `health`
+### 9.4 `health`
 
 1. Content-Type musí být `application/json`, jinak `415`.
 2. Tělo do 4096 bajtů, jinak `413`.
@@ -341,7 +359,7 @@ Vrací `text/html; charset=utf-8` s `<h1>Server is running</h1>`. Červený `<h2
 6. AAD podle kapitoly 7.3 nad přesnými hodnotami odpovědi, `tag` je 16bajtový GMAC s `healthKey`.
 7. Žádný persistentní stav, replay se zpracuje jako nový požadavek.
 
-### 9.4 `info`
+### 9.5 `info`
 
 1. Content-Type `application/json`, jinak `415`. Tělo do 4096 bajtů, jinak `413`.
 2. Objekt s přesnou sadou `type`, `timestamp`, `requestId`, `tag`.
@@ -352,7 +370,7 @@ Vrací `text/html; charset=utf-8` s `<h1>Server is running</h1>`. Červený `<h2
 7. Pokud plaintext přesáhne `MAX_INFO_PLAINTEXT_BYTES`, odeberou se položky `clients` od konce, dokud se nevejde. Pokud to nestačí ani bez klientů, vrátí se `503 server_misconfigured`.
 8. Odpověď se šifruje AES-256-GCM s novým 32bajtovým saltem a 12bajtovým IV, AAD podle kapitoly 8.3, výstupní objekt má pořadí `type`, `requestId`, `salt`, `iv`, `ciphertext`, `tag`.
 
-### 9.5 `data`
+### 9.6 `data`
 
 ```mermaid
 flowchart TD
@@ -443,8 +461,21 @@ Rozsah podle kapitoly 16 protokolu:
 5. **Limity.** 16 záznamů projde, 17. je `413`, hrany těla na `limit-1`, `limit` a `limit+1`.
 6. **Kontrakt storage.** Publikace a atomické převzetí, souběh dvou workerů nad stejnou frontou, TTL, cílený sweep ve všech třech stavech, kapacita s jedním sweepem a dvěma pokusy, přesné rozdělení na accepted a deferred, přežití markeru při sweepu, vyloučení expirovaných dávek z kapacity.
 7. **Statistiky.** Stáří 30 s neaktualizuje, 31 s ano, budoucí `mtime` neaktualizuje, selhání markeru nemění výsledek.
-8. **Endpointy end to end** přes injektované `RequestInput` a `ResponseWriter`, tedy bez HTTP serveru. Doplňkově volitelný běh proti `php -S` pro ověření hlaviček, metod a `405` nebo `404`.
-9. **Replay.** Dvojí odeslání stejného requestu uvnitř okna projde dvakrát, po 61 s selže, po testech nevznikne žádný soubor nebo adresář sloužící jako nonce cache.
+8. **Endpointy end to end** přes injektované `RequestInput` a `ResponseWriter`, tedy bez HTTP serveru. Doplňkově volitelný běh proti `php -S` pro ověření chování na skutečném HTTP.
+9. **Povinné hlavičky odpovědi.** Viz níže, jde o plošnou kontrolu nad celou testovací sadou.
+10. **Replay.** Dvojí odeslání stejného requestu uvnitř okna projde dvakrát, po 61 s selže, po testech nevznikne žádný soubor nebo adresář sloužící jako nonce cache.
+
+### 13.1 Plošný test hlaviček
+
+Test není volitelný a neběží jen nad vybranými případy. Testovací harness zachytává hlavičky přes injektovaný `ResponseWriter`, takže je má k dispozici u každé odpovědi, kterou kterýkoli test vytvoří. Po každé jednotlivé odpovědi se automaticky uplatní tato tvrzení:
+
+- přítomnost `Cache-Control: no-store, no-cache, must-revalidate`, `Pragma: no-cache` a `X-Content-Type-Options: nosniff` s přesnými hodnotami a bez duplicit
+- přítomnost `Content-Type` odpovídajícího typu odpovědi
+- u statusu `405` přítomnost `Allow` se správnou hodnotou, tedy `GET, HEAD` u provozní stránky a `POST` u akcí
+- u každého statusu `503` přítomnost `Retry-After`
+- absence hlavičky, která by prozrazovala cestu, verzi PHP nebo interní stav
+
+Kontrola se spouští jako společný hook harnessu, ne jako jednotlivé volání v každém testu. Nový test tedy nemůže na hlavičky zapomenout. Sada explicitně pokrývá i cesty, kde se na hlavičky zapomíná nejsnáz: provozní stránku, `HEAD`, `404` u neznámé akce, `405` u nepovolené metody, `415`, `413` při překročení limitu těla, `401` u neznámého `src`, `503 queue_unavailable` při nepoužitelném kořeni bufferu a `500 internal_error` vyvolané ze shutdown handleru.
 
 ## 14. Postup prací
 
