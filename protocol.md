@@ -304,7 +304,7 @@ Do `canonical` vstupují přesné ASCII bajty validovaného `timestamp` beze zm�
 Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 
 ```json
-{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxSerializedDataRecordBytes":262144,"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}}
 ```
 
 `generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 s přesností na sekundy. Kvůli 30sekundovému omezení aktualizací a best-effort povaze statistik jde pouze o přibližný provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
@@ -391,7 +391,7 @@ Pravidla:
 - `iv` po dekódování musí mít 12 bajtů;
 - `tag` po dekódování musí mít 16 bajtů;
 - `ciphertext` nesmí být prázdný;
-- celý NDJSON řádek včetně LF nesmí překročit `MAX_SERIALIZED_DATA_RECORD_BYTES`.
+- velikost záznamu `data` je omezena pouze celkovým limitem těla požadavku `MAX_REQUEST_BODY_BYTES`.
 
 ### 9.4 End-to-end šifrování payloadu
 
@@ -562,10 +562,9 @@ Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `STORAGE_
 
 | Konstanta | Výchozí hodnota | Význam |
 |---|---:|---|
-| `MAX_SERIALIZED_DATA_RECORD_BYTES` | 262144 B | Celý datový NDJSON řádek včetně LF. |
 | `MAX_DATA_RECORDS_PER_REQUEST` | 16 | Počet záznamů `data` v jednom requestu. |
 | `MAX_AUTH_RECORD_BYTES` | 4096 B | První řádek včetně LF. |
-| `MAX_REQUEST_BODY_BYTES` | 4198400 B | `4096 + 16×262144`. |
+| `MAX_REQUEST_BODY_BYTES` | 4198400 B | Celé NDJSON tělo požadavku včetně všech LF. |
 | `MAX_INFO_PLAINTEXT_BYTES` | 262144 B | Plaintext šifrované odpovědi `info`. |
 | `MAX_QUEUE_BYTES_PER_CLIENT` | 16777216 B | 16 MiB logické persistentní fronty. |
 | `AUTH_TIMESTAMP_SKEW_SECONDS` | 60 s | Nejvyšší absolutní odchylka autentizačního timestampu od času serveru. |
@@ -627,7 +626,7 @@ Chybové tělo je malý obecný JSON objekt:
 | 401 | `unauthorized` | Neplatný autentizační HMAC tag, `src`, konfigurace `SERVER_SECRET` nebo `ACCESS_KEY`, podvržené `src` v datovém záznamu nebo timestamp mimo povolené okno. | Obnovit čas pouze přes platně ověřený `health`, ověřit obě tajemství; nemaž data. |
 | 404 | `not_found` | Neznámá akce. | Opravit URL. |
 | 405 | `method_not_allowed` | Nepovolená metoda. | Řídit se `Allow`. |
-| 413 | `payload_too_large` | Překročen limit těla, řádku nebo počtu záznamů. | Zmenšit request. |
+| 413 | `payload_too_large` | Překročen limit těla nebo počtu záznamů. | Zmenšit request. |
 | 415 | `unsupported_media_type` | Chybný Content-Type. | Opravit Content-Type. |
 | 503 | `queue_busy` | Vyčerpán limit čekání na storage zámek. | Krátký backoff. |
 | 503 | `queue_unavailable` | Backend nelze bezpečně použít. | Backoff; administrátorská kontrola. |
@@ -697,7 +696,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 
 1. Validní prázdný poll obsahuje pouze `auth-full` s LF.
 2. Chybějící poslední LF, CRLF, prázdný řádek, duplicitní klíč a neznámé pole jsou odmítnuty.
-3. Přesně 262144bajtový datový řádek projde, o bajt delší vrátí `413`.
+3. Jeden datový řádek `data` může využít zbývající kapacitu celého těla požadavku; odmítnut je až request, jehož celá velikost překročí `MAX_REQUEST_BODY_BYTES`.
 4. Přesně 16 datových záznamů projde, sedmnáctý vrátí `413` bez změny storage.
 5. Hrany pro celé tělo a buffer jsou testovány na `limit-1`, `limit` a `limit+1`.
 6. Neplatná base64url, délka IV, délka tagu, UUID, VPN adresa a neznámé nebo nadbytečné pole jsou odmítnuty.

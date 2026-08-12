@@ -7,3 +7,4 @@ dat ciphertext az na konec, aby jsme mohli substringem vykopirovat hlavicku zpra
 klient přijímající požadavky může mít jednoduchou ochranu proti replay útoku
 doplnit mac pro odesilani
 adresarova struktura
+upravit nazvy souboru, pridat sequence id
