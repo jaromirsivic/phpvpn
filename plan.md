@@ -24,6 +24,8 @@ Body, které protokol nechává na implementaci. Každý z nich je v kódu okome
 - **Selhání known-answer testu AES-GCM vede na `500 internal_error`.** Jde o vadný runtime, nikoli o konfiguraci, a protokol zakazuje jakoukoli náhradní větev.
 - **Pořadí zpracování cílových skupin je vzestupně podle číselné hodnoty `dst`,** což naplňuje požadavek na deterministické pořadí z kapitoly 10.2.
 - **Pořadí vydávaných dávek je vzestupně podle názvu souboru.** Protože prvním polem názvu je expirace v pevné šířce a TTL je společné, jde o FIFO podle času publikace.
+- **Syntakticky neplatné `src` je `400 bad_request`, nikoli `401`.** Kapitola 9.2 řadí syntaktickou validaci `src` před vyhledání klíče, takže hodnota jako `10.99.99.999` nikdy nedojde k odvození. Zmínku o `src` v řádku `401` tabulky kapitoly 13 čteme jako neautorizovaného, tedy syntakticky platného ale neznámého klienta; ten skutečně dostane `401` až po odvození s dummy klíčem. Ani jedna větev neprozradí, kteří klienti jsou nakonfigurovaní.
+- **Prázdná hodnota `?action=` se chová jako chybějící akce.** Kapitola 5 tento případ nedefinuje. `GET` a `HEAD` vrací provozní stránku, jiná metoda `405` s `Allow: GET, HEAD`. Je to konzistentní s běžnou webovou konvencí a nevytváří čtvrtou, nedokumentovanou akci.
 
 ## 3. Rozvržení souboru `phpvpn.php`
 

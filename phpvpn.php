@@ -1,0 +1,2454 @@
+<?php
+
+/**
+ * phpvpn v1 relay server.
+ *
+ * Single deployable file implementing the normative wire protocol described in protocol.md.
+ * Requires PHP 8.2+ with no optional extensions. All AES-256-GCM operations use the bundled
+ * pure PHP implementation in this file, never OpenSSL, Sodium or any other crypto extension.
+ *
+ * Deployment notes:
+ *  - post_max_size and any proxy body limit must be strictly higher than MAX_REQUEST_BODY_BYTES.
+ *  - memory_limit should be at least 128M.
+ *  - BUFFER_DIRECTORY must not be reachable over HTTP. The server writes best effort
+ *    .htaccess and web.config guards, nginx must be configured manually, for example:
+ *        location ^~ /phpvpn/ { deny all; return 404; }
+ *
+ * MIT licensed.
+ */
+
+declare(strict_types=1);
+
+namespace PhpVpn;
+
+// ---------------------------------------------------------------------------
+// 1. Configuration header. This is the only part an administrator edits.
+// ---------------------------------------------------------------------------
+
+/** Informative SemVer version of this server application. */
+const SERVER_VERSION = '1.0.0';
+
+/**
+ * Single server secret shared with authorized clients.
+ * Replace the default with a strong random value. An empty string is normalized
+ * at runtime to 32 ASCII '0' characters and the status page warns about it.
+ */
+const SERVER_SECRET = '00000000000000000000000000000000';
+
+/**
+ * Per client access keys, keyed by the client VPN address.
+ * Every value is exactly 64 lowercase hexadecimal characters, that is 32 raw bytes.
+ * Replace all placeholder values before production use.
+ */
+const ACCESS_KEYS = [
+    '10.99.99.2' => '0202020202020202020202020202020202020202020202020202020202020202',
+    '10.99.99.3' => '0303030303030303030303030303030303030303030303030303030303030303',
+    '10.99.99.4' => '0404040404040404040404040404040404040404040404040404040404040404',
+];
+
+/** Storage backend. Only 'disk' exists in v1. */
+const STORAGE_DRIVER = 'disk';
+
+/** Storage root. A relative path is resolved against the directory of this file. */
+const BUFFER_DIRECTORY = './phpvpn';
+
+/** VPN address space. Changing it requires the same change on every participant. */
+const VPN_ADDRESS_PREFIX = '10.99.99.';
+const VPN_HOST_MIN = 2;
+const VPN_HOST_MAX = 254;
+
+/** Protocol limits, see chapter 11.1 of protocol.md. */
+const MAX_DATA_RECORDS_PER_REQUEST = 16;
+const MAX_AUTH_RECORD_BYTES = 4096;
+const MAX_REQUEST_BODY_BYTES = 4198400;
+const MAX_INFO_PLAINTEXT_BYTES = 262144;
+const MAX_QUEUE_BYTES_PER_CLIENT = 16777216;
+const AUTH_TIMESTAMP_SKEW_SECONDS = 60;
+const QUEUE_TTL_SECONDS = 60;
+const LOCK_TIMEOUT_MS = 200;
+const MIN_DATA_POLL_INTERVAL_MS = 80;
+const MAX_DATA_POLL_INTERVAL_MS = 1000;
+
+/** Best effort lastSeen marker is refreshed only when it is older than this. */
+const CLIENT_STATS_MIN_UPDATE_SECONDS = 30;
+
+/** Opportunistic maintenance budget. */
+const SWEEP_MIN_INTERVAL_SECONDS = 5;
+const SWEEP_MAX_DIRECTORIES = 8;
+const SWEEP_MAX_FILES = 256;
+const SWEEP_MAX_MILLISECONDS = 20;
+
+/** Create .htaccess, web.config and index.html guards inside the storage root. */
+const PROTECT_BUFFER_DIRECTORY = true;
+
+// ---------------------------------------------------------------------------
+// 2. Runtime hardening
+// ---------------------------------------------------------------------------
+
+final class Runtime
+{
+    private static bool $initialized = false;
+    private static ?ResponseWriter $writer = null;
+    /** @var string[] */
+    private static array $notices = [];
+
+    public static function init(): void
+    {
+        if (self::$initialized) {
+            return;
+        }
+        self::$initialized = true;
+
+        @ini_set('display_errors', '0');
+        @ini_set('html_errors', '0');
+        @ini_set('zlib.output_compression', '0');
+        error_reporting(E_ALL);
+        ignore_user_abort(true);
+        @set_time_limit(30);
+        @header_remove('X-Powered-By');
+
+        set_error_handler(static function (int $severity, string $message, string $file = '', int $line = 0): bool {
+            // Warnings must never reach the response body. Only a short internal note is kept.
+            self::note('e' . $severity . '@' . basename($file) . ':' . $line);
+            return true;
+        });
+
+        set_exception_handler(static function (\Throwable $e): void {
+            // Only a location, never a message, an argument or any request content.
+            self::log('exception@' . basename($e->getFile()) . ':' . $e->getLine());
+            $writer = self::$writer;
+            if ($writer !== null && !$writer->isStarted()) {
+                Http::error($writer, 500, 'internal_error');
+            }
+        });
+
+        register_shutdown_function(static function (): void {
+            $last = error_get_last();
+            if ($last === null) {
+                return;
+            }
+            $fatal = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+            if (!in_array($last['type'], $fatal, true)) {
+                return;
+            }
+            self::log('fatal@' . basename($last['file']) . ':' . $last['line']);
+            $writer = self::$writer;
+            if ($writer !== null && !$writer->isStarted()) {
+                Http::error($writer, 500, 'internal_error');
+            }
+        });
+    }
+
+    public static function bindWriter(ResponseWriter $writer): void
+    {
+        self::$writer = $writer;
+    }
+
+    public static function note(string $code): void
+    {
+        if (count(self::$notices) < 32) {
+            self::$notices[] = $code;
+        }
+    }
+
+    /** Chapter 4.1, the log never receives a secret, a tag, a ciphertext or a request. */
+    public static function log(string $code): void
+    {
+        self::note($code);
+        @error_log('phpvpn: ' . $code);
+    }
+
+    /** @return string[] */
+    public static function takeNotices(): array
+    {
+        $n = self::$notices;
+        self::$notices = [];
+        return $n;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Filesystem helpers. None of them ever throws or emits output.
+// ---------------------------------------------------------------------------
+
+final class Fs
+{
+    public static function isDir(string $path): bool
+    {
+        return @is_dir($path);
+    }
+
+    public static function ensureDir(string $path): bool
+    {
+        if (@is_dir($path)) {
+            return true;
+        }
+        @mkdir($path, 0o770, true);
+        return @is_dir($path);
+    }
+
+    public static function unlink(string $path): bool
+    {
+        return @unlink($path);
+    }
+
+    public static function rename(string $from, string $to): bool
+    {
+        return @rename($from, $to);
+    }
+
+    public static function mtime(string $path): ?int
+    {
+        clearstatcache(true, $path);
+        $t = @filemtime($path);
+        return $t === false ? null : $t;
+    }
+
+    public static function touch(string $path, ?int $unixSeconds = null): bool
+    {
+        return $unixSeconds === null ? @touch($path) : @touch($path, $unixSeconds);
+    }
+
+    public static function writeFileIfMissing(string $path, string $contents): void
+    {
+        if (@file_exists($path)) {
+            return;
+        }
+        $handle = @fopen($path, 'xb');
+        if ($handle === false) {
+            return;
+        }
+        @fwrite($handle, $contents);
+        @fclose($handle);
+    }
+
+    /** @return string[]|null */
+    public static function listDir(string $path): ?array
+    {
+        $handle = @opendir($path);
+        if ($handle === false) {
+            return null;
+        }
+        $entries = [];
+        while (($entry = @readdir($handle)) !== false) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            $entries[] = $entry;
+        }
+        @closedir($handle);
+        return $entries;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Time
+// ---------------------------------------------------------------------------
+
+final class Clock
+{
+    private int $nowMs;
+
+    public function __construct(?int $nowMs = null)
+    {
+        $this->nowMs = $nowMs ?? (int) round(microtime(true) * 1000.0);
+    }
+
+    public function nowMs(): int
+    {
+        return $this->nowMs;
+    }
+}
+
+final class Iso8601
+{
+    /** Strict parser for exactly YYYY-MM-DDTHH:MM:SS.sssZ, returns epoch milliseconds. */
+    public static function parseMs(string $text): ?int
+    {
+        if (strlen($text) !== 24) {
+            return null;
+        }
+        if ($text[4] !== '-' || $text[7] !== '-' || $text[10] !== 'T'
+            || $text[13] !== ':' || $text[16] !== ':' || $text[19] !== '.' || $text[23] !== 'Z') {
+            return null;
+        }
+        $digits = substr($text, 0, 4) . substr($text, 5, 2) . substr($text, 8, 2)
+            . substr($text, 11, 2) . substr($text, 14, 2) . substr($text, 17, 2) . substr($text, 20, 3);
+        if (strspn($digits, '0123456789') !== 17) {
+            return null;
+        }
+        $year = (int) substr($text, 0, 4);
+        $month = (int) substr($text, 5, 2);
+        $day = (int) substr($text, 8, 2);
+        $hour = (int) substr($text, 11, 2);
+        $minute = (int) substr($text, 14, 2);
+        $second = (int) substr($text, 17, 2);
+        $milli = (int) substr($text, 20, 3);
+
+        if ($month < 1 || $month > 12 || $day < 1 || $hour > 23 || $minute > 59 || $second > 59) {
+            return null;
+        }
+        if ($day > self::daysInMonth($year, $month)) {
+            return null;
+        }
+        $days = self::daysFromCivil($year, $month, $day);
+        return ((($days * 86400) + ($hour * 3600) + ($minute * 60) + $second) * 1000) + $milli;
+    }
+
+    public static function formatMs(int $epochMs): string
+    {
+        $seconds = (int) floor($epochMs / 1000);
+        $milli = $epochMs - ($seconds * 1000);
+        return gmdate('Y-m-d\TH:i:s', $seconds) . '.' . str_pad((string) $milli, 3, '0', STR_PAD_LEFT) . 'Z';
+    }
+
+    /** Filename safe variant, colons replaced by dashes. */
+    public static function formatFileNameMs(int $epochMs): string
+    {
+        $seconds = (int) floor($epochMs / 1000);
+        $milli = $epochMs - ($seconds * 1000);
+        return gmdate('Y-m-d\TH-i-s', $seconds) . '.' . str_pad((string) $milli, 3, '0', STR_PAD_LEFT) . 'Z';
+    }
+
+    public static function isLeapYear(int $year): bool
+    {
+        return ($year % 4 === 0 && $year % 100 !== 0) || $year % 400 === 0;
+    }
+
+    public static function daysInMonth(int $year, int $month): int
+    {
+        static $lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        if ($month === 2 && self::isLeapYear($year)) {
+            return 29;
+        }
+        return $lengths[$month - 1];
+    }
+
+    /** Days from 1970-01-01, Howard Hinnant civil algorithm. */
+    public static function daysFromCivil(int $year, int $month, int $day): int
+    {
+        $year -= $month <= 2 ? 1 : 0;
+        $era = intdiv($year >= 0 ? $year : $year - 399, 400);
+        $yoe = $year - $era * 400;
+        $doy = intdiv(153 * ($month + ($month > 2 ? -3 : 9)) + 2, 5) + $day - 1;
+        $doe = $yoe * 365 + intdiv($yoe, 4) - intdiv($yoe, 100) + $doy;
+        return $era * 146097 + $doe - 719468;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Canonical base64url
+// ---------------------------------------------------------------------------
+
+final class Base64Url
+{
+    private const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    /** @var array<string,int>|null */
+    private static ?array $values = null;
+
+    public static function encode(string $raw): string
+    {
+        return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+    }
+
+    /**
+     * Canonicity check, equivalent to the decode and re-encode round trip required by chapter 6.1.
+     * Verifies the alphabet, the length modulo rule and the zero unused bits of the last character.
+     */
+    public static function isCanonical(string $text): bool
+    {
+        $length = strlen($text);
+        $mod = $length % 4;
+        if ($mod === 1) {
+            return false;
+        }
+        if (strspn($text, self::ALPHABET) !== $length) {
+            return false;
+        }
+        if ($mod === 0) {
+            return true;
+        }
+        if (self::$values === null) {
+            $values = [];
+            for ($i = 0; $i < 64; $i++) {
+                $values[self::ALPHABET[$i]] = $i;
+            }
+            self::$values = $values;
+        }
+        $last = self::$values[$text[$length - 1]];
+        $mask = $mod === 2 ? 0x0F : 0x03;
+        return ($last & $mask) === 0;
+    }
+
+    public static function isCanonicalOfByteLength(string $text, int $bytes): bool
+    {
+        return strlen($text) === self::encodedLength($bytes) && self::isCanonical($text);
+    }
+
+    public static function encodedLength(int $bytes): int
+    {
+        return intdiv($bytes, 3) * 4 + [0 => 0, 1 => 2, 2 => 3][$bytes % 3];
+    }
+
+    /** Decodes a value that already passed isCanonical, returns null on any failure. */
+    public static function decode(string $text): ?string
+    {
+        if (!self::isCanonical($text)) {
+            return null;
+        }
+        $padded = strtr($text, '-_', '+/');
+        $pad = strlen($padded) % 4;
+        if ($pad !== 0) {
+            $padded .= str_repeat('=', 4 - $pad);
+        }
+        $raw = base64_decode($padded, true);
+        if ($raw === false) {
+            return null;
+        }
+        // Defense in depth, the re-encoded value must match the original text byte for byte.
+        return self::encode($raw) === $text ? $raw : null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Value validators
+// ---------------------------------------------------------------------------
+
+final class Validators
+{
+    public static function isVpnAddress(string $address): bool
+    {
+        $prefix = VPN_ADDRESS_PREFIX;
+        $prefixLength = strlen($prefix);
+        if (strncmp($address, $prefix, $prefixLength) !== 0) {
+            return false;
+        }
+        $host = substr($address, $prefixLength);
+        $length = strlen($host);
+        if ($length < 1 || $length > 3 || strspn($host, '0123456789') !== $length) {
+            return false;
+        }
+        if ($length > 1 && $host[0] === '0') {
+            return false;
+        }
+        $value = (int) $host;
+        return $value >= VPN_HOST_MIN && $value <= VPN_HOST_MAX;
+    }
+
+    public static function isUuidV4(string $uuid): bool
+    {
+        return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $uuid) === 1;
+    }
+
+    public static function newUuidV4(): string
+    {
+        $bytes = random_bytes(16);
+        $bytes[6] = chr((ord($bytes[6]) & 0x0F) | 0x40);
+        $bytes[8] = chr((ord($bytes[8]) & 0x3F) | 0x80);
+        $hex = bin2hex($bytes);
+        return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4)
+            . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20, 12);
+    }
+
+    public static function addressToDirectory(string $address): string
+    {
+        return str_replace('.', '_', $address);
+    }
+
+    public static function addressSortKey(string $address): int
+    {
+        $parts = explode('.', $address);
+        if (count($parts) !== 4) {
+            return 0;
+        }
+        return ((int) $parts[0] << 24) | ((int) $parts[1] << 16) | ((int) $parts[2] << 8) | (int) $parts[3];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Strict JSON and NDJSON wire layer
+// ---------------------------------------------------------------------------
+
+final class DataRecord
+{
+    public function __construct(
+        public readonly string $messageId,
+        public readonly string $dst,
+        public readonly string $gcmTag,
+        public readonly string $line,
+    ) {
+    }
+}
+
+final class JsonWire
+{
+    private const DATA_HEAD = '{"type":"data","messageId":"';
+
+    /**
+     * Scans a flat JSON object whose members are all plain ASCII strings.
+     * Rejects duplicate keys, unknown keys, nested values, escape sequences and trailing bytes.
+     *
+     * @param string[] $allowedKeys
+     * @return array<string,string>|null
+     */
+    public static function parseFlatStringObject(string $text, array $allowedKeys): ?array
+    {
+        $allowed = array_flip($allowedKeys);
+        $length = strlen($text);
+        $i = 0;
+        if ($i >= $length || $text[$i] !== '{') {
+            return null;
+        }
+        $i++;
+        $result = [];
+        $i = self::skipWhitespace($text, $i, $length);
+        if ($i < $length && $text[$i] === '}') {
+            $i++;
+            return self::atEnd($text, $i, $length) ? $result : null;
+        }
+        while (true) {
+            $i = self::skipWhitespace($text, $i, $length);
+            $key = self::readString($text, $i, $length);
+            if ($key === null) {
+                return null;
+            }
+            if (!isset($allowed[$key]) || array_key_exists($key, $result)) {
+                return null;
+            }
+            $i = self::skipWhitespace($text, $i, $length);
+            if ($i >= $length || $text[$i] !== ':') {
+                return null;
+            }
+            $i++;
+            $i = self::skipWhitespace($text, $i, $length);
+            $value = self::readString($text, $i, $length);
+            if ($value === null) {
+                return null;
+            }
+            $result[$key] = $value;
+            $i = self::skipWhitespace($text, $i, $length);
+            if ($i >= $length) {
+                return null;
+            }
+            if ($text[$i] === ',') {
+                $i++;
+                continue;
+            }
+            if ($text[$i] === '}') {
+                $i++;
+                break;
+            }
+            return null;
+        }
+        if (!self::atEnd($text, $i, $length)) {
+            return null;
+        }
+        return count($result) === count($allowedKeys) ? $result : null;
+    }
+
+    /**
+     * Strict scanner for a data record line, chapter 9.3. The member order is normative,
+     * so parsing is a sequence of literal comparisons at known offsets.
+     *
+     * @return DataRecord|int DataRecord on success, otherwise the HTTP status to return
+     */
+    public static function parseDataRecord(string $line, string $expectedSrc): DataRecord|int
+    {
+        $position = 0;
+        if (!self::literal($line, $position, self::DATA_HEAD)) {
+            return 400;
+        }
+        $position += strlen(self::DATA_HEAD);
+
+        if (strlen($line) < $position + 36) {
+            return 400;
+        }
+        $messageId = substr($line, $position, 36);
+        if (!Validators::isUuidV4($messageId)) {
+            return 400;
+        }
+        $position += 36;
+
+        if (!self::literal($line, $position, '","src":"')) {
+            return 400;
+        }
+        $position += 9;
+        $srcLength = strlen($expectedSrc);
+        if (!self::literal($line, $position, $expectedSrc)) {
+            return 401;
+        }
+        $position += $srcLength;
+        if (!self::literal($line, $position, '","dst":"')) {
+            // A longer src that merely starts with the authenticated address is a spoofed source.
+            return 401;
+        }
+        $position += 9;
+
+        $quote = strpos($line, '"', $position);
+        if ($quote === false) {
+            return 400;
+        }
+        $dst = substr($line, $position, $quote - $position);
+        if (!Validators::isVpnAddress($dst)) {
+            return 400;
+        }
+        $position = $quote;
+
+        if (!self::literal($line, $position, '","iv":"')) {
+            return 400;
+        }
+        $position += 8;
+        $ivLength = Base64Url::encodedLength(12);
+        if (strlen($line) < $position + $ivLength) {
+            return 400;
+        }
+        $iv = substr($line, $position, $ivLength);
+        if (!Base64Url::isCanonical($iv)) {
+            return 400;
+        }
+        $position += $ivLength;
+
+        if (!self::literal($line, $position, '","tag":"')) {
+            return 400;
+        }
+        $position += 9;
+        $tagLength = Base64Url::encodedLength(16);
+        if (strlen($line) < $position + $tagLength) {
+            return 400;
+        }
+        $tag = substr($line, $position, $tagLength);
+        if (!Base64Url::isCanonical($tag)) {
+            return 400;
+        }
+        $position += $tagLength;
+
+        if (!self::literal($line, $position, '","ciphertext":"')) {
+            return 400;
+        }
+        $position += 16;
+
+        $end = strlen($line);
+        if ($end < $position + 3 || substr_compare($line, '"}', $end - 2, 2) !== 0) {
+            return 400;
+        }
+        $ciphertext = substr($line, $position, $end - 2 - $position);
+        if ($ciphertext === '' || !Base64Url::isCanonical($ciphertext)) {
+            return 400;
+        }
+
+        return new DataRecord($messageId, $dst, $tag, $line);
+    }
+
+    private static function literal(string $text, int $position, string $literal): bool
+    {
+        $length = strlen($literal);
+        if ($position < 0 || $position + $length > strlen($text)) {
+            return false;
+        }
+        return substr_compare($text, $literal, $position, $length) === 0;
+    }
+
+    private static function skipWhitespace(string $text, int $i, int $length): int
+    {
+        while ($i < $length) {
+            $c = $text[$i];
+            if ($c !== ' ' && $c !== "\t" && $c !== "\n" && $c !== "\r") {
+                break;
+            }
+            $i++;
+        }
+        return $i;
+    }
+
+    /** Chapters 5.2 and 8.1, the body is exactly one JSON object and no further bytes. */
+    private static function atEnd(string $text, int $i, int $length): bool
+    {
+        return $i === $length;
+    }
+
+    /** Reads a plain ASCII JSON string, escape sequences are rejected. */
+    private static function readString(string $text, int &$i, int $length): ?string
+    {
+        if ($i >= $length || $text[$i] !== '"') {
+            return null;
+        }
+        $i++;
+        $start = $i;
+        while ($i < $length) {
+            $c = $text[$i];
+            if ($c === '"') {
+                $value = substr($text, $start, $i - $start);
+                $i++;
+                return $value;
+            }
+            $code = ord($c);
+            if ($c === '\\' || $code < 0x20 || $code > 0x7E) {
+                return null;
+            }
+            $i++;
+        }
+        return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Pure PHP AES-256-GCM, chapter 7.4. No crypto extension is used anywhere.
+// ---------------------------------------------------------------------------
+
+final class AesGcm
+{
+    private const SBOX_HEX =
+        '637c777bf26b6fc53001672bfed7ab76' .
+        'ca82c97dfa5947f0add4a2af9ca472c0' .
+        'b7fd9326363ff7cc34a5e5f171d83115' .
+        '04c723c31896059a071280e2eb27b275' .
+        '09832c1a1b6e5aa0523bd6b329e32f84' .
+        '53d100ed20fcb15b6acbbe394a4c58cf' .
+        'd0efaafb434d338545f9027f503c9fa8' .
+        '51a3408f929d38f5bcb6da2110fff3d2' .
+        'cd0c13ec5f974417c4a77e3d645d1973' .
+        '60814fdc222a908846eeb814de5e0bdb' .
+        'e0323a0a4906245cc2d3ac629195e479' .
+        'e7c8376d8dd54ea96c56f4ea657aae08' .
+        'ba78252e1ca6b4c6e8dd741f4bbd8b8a' .
+        '703eb5664803f60e613557b986c11d9e' .
+        'e1f8981169d98e949b1e87e9ce5528df' .
+        '8ca1890dbfe6426841992d0fb054bb16';
+
+    private const RCON = [0, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40];
+
+    private const LAST4 = [
+        0x0000, 0x1c20, 0x3840, 0x2460, 0x7080, 0x6ca0, 0x48c0, 0x54e0,
+        0xe100, 0xfd20, 0xd940, 0xc560, 0x9180, 0x8da0, 0xa9c0, 0xb5e0,
+    ];
+
+    /** @var int[]|null */
+    private static ?array $sbox = null;
+    /** @var int[]|null */
+    private static ?array $te0 = null;
+    private static ?bool $selfTestResult = null;
+    private static bool $selfTestRunning = false;
+
+    /** @var int[] */
+    private array $roundKeys;
+    /** @var array<int,int[]> */
+    private array $ghashTable;
+
+    public function __construct(string $key)
+    {
+        if (strlen($key) !== 32) {
+            throw new \InvalidArgumentException('aes key length');
+        }
+        self::initTables();
+        if (self::$selfTestResult === null && !self::$selfTestRunning) {
+            self::selfTest();
+        }
+        $this->roundKeys = self::expandKey($key);
+        $this->ghashTable = $this->buildGhashTable();
+    }
+
+    /** Runs the mandatory known answer test once per process. */
+    public static function selfTest(): bool
+    {
+        if (self::$selfTestResult !== null) {
+            return self::$selfTestResult;
+        }
+        self::$selfTestRunning = true;
+        $ok = true;
+        try {
+            // NIST GCM test case 13, AES-256, empty plaintext and empty AAD.
+            $gcm = new self(str_repeat("\x00", 32));
+            [$ciphertext, $tag] = $gcm->seal(str_repeat("\x00", 12), '', '');
+            $ok = $ok && $ciphertext === '' && bin2hex($tag) === '530f8afbc74536b9a963b4f1c4cb738b';
+
+            // NIST GCM test case 14, AES-256, single zero block, empty AAD.
+            [$ciphertext, $tag] = $gcm->seal(str_repeat("\x00", 12), str_repeat("\x00", 16), '');
+            $ok = $ok && bin2hex($ciphertext) === 'cea7403d4d606b6e074ec5d3baf39d18'
+                && bin2hex($tag) === 'd0d1c8a799996bf0265b98b5d48ab919';
+
+            // NIST GCM test case 16, AES-256, multi block plaintext with AAD.
+            $gcm = new self(hex2bin('feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308'));
+            $plaintext = hex2bin(
+                'd9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72'
+                . '1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39'
+            );
+            $aad = hex2bin('feedfacedeadbeeffeedfacedeadbeefabaddad2');
+            [$ciphertext, $tag] = $gcm->seal(hex2bin('cafebabefacedbaddecaf888'), $plaintext, $aad);
+            $ok = $ok && bin2hex($ciphertext) === '522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa'
+                . '8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662'
+                && bin2hex($tag) === '76fc6ece0f4e1768cddf8853bb2d551b';
+
+            // Authenticated decryption must round trip and must reject a modified tag.
+            $ok = $ok && $gcm->open(hex2bin('cafebabefacedbaddecaf888'), $ciphertext, $tag, $aad) === $plaintext;
+            $broken = $tag;
+            $broken[0] = chr(ord($broken[0]) ^ 0x01);
+            $ok = $ok && $gcm->open(hex2bin('cafebabefacedbaddecaf888'), $ciphertext, $broken, $aad) === null;
+        } catch (\Throwable) {
+            $ok = false;
+        }
+        self::$selfTestRunning = false;
+        self::$selfTestResult = $ok;
+        return $ok;
+    }
+
+    /**
+     * @return array{0:string,1:string} ciphertext and 16 byte tag
+     */
+    public function seal(string $iv, string $plaintext, string $aad): array
+    {
+        $counter = $this->initialCounter($iv);
+        $ciphertext = $plaintext === '' ? '' : $this->gctr($counter, $plaintext);
+        $s = $this->ghash($aad, $ciphertext);
+        $ek = $this->encryptWords($counter[0], $counter[1], $counter[2], $counter[3]);
+        $tag = pack('N4', $s[0] ^ $ek[0], $s[1] ^ $ek[1], $s[2] ^ $ek[2], $s[3] ^ $ek[3]);
+        return [$ciphertext, $tag];
+    }
+
+    /** Returns the plaintext only after the whole tag verified, otherwise null. */
+    public function open(string $iv, string $ciphertext, string $tag, string $aad): ?string
+    {
+        if (strlen($tag) !== 16) {
+            return null;
+        }
+        $counter = $this->initialCounter($iv);
+        $s = $this->ghash($aad, $ciphertext);
+        $ek = $this->encryptWords($counter[0], $counter[1], $counter[2], $counter[3]);
+        $expected = pack('N4', $s[0] ^ $ek[0], $s[1] ^ $ek[1], $s[2] ^ $ek[2], $s[3] ^ $ek[3]);
+        if (!hash_equals($expected, $tag)) {
+            return null;
+        }
+        return $ciphertext === '' ? '' : $this->gctr($counter, $ciphertext);
+    }
+
+    /** GMAC, AES-GCM over an empty plaintext. */
+    public function mac(string $iv, string $aad): string
+    {
+        return $this->seal($iv, '', $aad)[1];
+    }
+
+    /** @return int[] */
+    private function initialCounter(string $iv): array
+    {
+        if (strlen($iv) !== 12) {
+            throw new \InvalidArgumentException('iv length');
+        }
+        $words = unpack('N3', $iv);
+        return [$words[1], $words[2], $words[3], 1];
+    }
+
+    /** @param int[] $j0 */
+    private function gctr(array $j0, string $data): string
+    {
+        $length = strlen($data);
+        $c0 = $j0[0];
+        $c1 = $j0[1];
+        $c2 = $j0[2];
+        $c3 = $j0[3];
+        $out = '';
+        for ($offset = 0; $offset < $length; $offset += 16) {
+            $c3 = ($c3 + 1) & 0xFFFFFFFF;
+            $ks = $this->encryptWords($c0, $c1, $c2, $c3);
+            $keyStream = pack('N4', $ks[0], $ks[1], $ks[2], $ks[3]);
+            $out .= substr($data, $offset, 16) ^ $keyStream;
+        }
+        return $out;
+    }
+
+    /** @return int[] */
+    private function ghash(string $aad, string $ciphertext): array
+    {
+        $y = [0, 0, 0, 0];
+        $y = $this->ghashBlocks($y, $aad);
+        $y = $this->ghashBlocks($y, $ciphertext);
+        $aadBits = strlen($aad) * 8;
+        $ctBits = strlen($ciphertext) * 8;
+        $y[0] ^= ($aadBits >> 32) & 0xFFFFFFFF;
+        $y[1] ^= $aadBits & 0xFFFFFFFF;
+        $y[2] ^= ($ctBits >> 32) & 0xFFFFFFFF;
+        $y[3] ^= $ctBits & 0xFFFFFFFF;
+        return $this->multiplyH($y);
+    }
+
+    /**
+     * @param int[] $y
+     * @return int[]
+     */
+    private function ghashBlocks(array $y, string $data): array
+    {
+        $length = strlen($data);
+        for ($offset = 0; $offset < $length; $offset += 16) {
+            $chunk = substr($data, $offset, 16);
+            if (strlen($chunk) < 16) {
+                $chunk = str_pad($chunk, 16, "\x00");
+            }
+            $w = unpack('N4', $chunk);
+            $y[0] ^= $w[1];
+            $y[1] ^= $w[2];
+            $y[2] ^= $w[3];
+            $y[3] ^= $w[4];
+            $y = $this->multiplyH($y);
+        }
+        return $y;
+    }
+
+    /**
+     * Multiplies the 128 bit value by H in GF(2^128) using a 4 bit table.
+     *
+     * @param int[] $x
+     * @return int[]
+     */
+    private function multiplyH(array $x): array
+    {
+        $table = $this->ghashTable;
+        $bytes = [];
+        for ($w = 0; $w < 4; $w++) {
+            $v = $x[$w];
+            $bytes[] = ($v >> 24) & 0xFF;
+            $bytes[] = ($v >> 16) & 0xFF;
+            $bytes[] = ($v >> 8) & 0xFF;
+            $bytes[] = $v & 0xFF;
+        }
+        $entry = $table[$bytes[15] & 0x0F];
+        $z0 = $entry[0];
+        $z1 = $entry[1];
+        $z2 = $entry[2];
+        $z3 = $entry[3];
+        for ($i = 15; $i >= 0; $i--) {
+            $lo = $bytes[$i] & 0x0F;
+            $hi = ($bytes[$i] >> 4) & 0x0F;
+            if ($i !== 15) {
+                $rem = $z3 & 0x0F;
+                $z3 = (($z3 >> 4) | (($z2 & 0x0F) << 28)) & 0xFFFFFFFF;
+                $z2 = (($z2 >> 4) | (($z1 & 0x0F) << 28)) & 0xFFFFFFFF;
+                $z1 = (($z1 >> 4) | (($z0 & 0x0F) << 28)) & 0xFFFFFFFF;
+                $z0 = ($z0 >> 4) ^ (self::LAST4[$rem] << 16);
+                $entry = $table[$lo];
+                $z0 ^= $entry[0];
+                $z1 ^= $entry[1];
+                $z2 ^= $entry[2];
+                $z3 ^= $entry[3];
+            }
+            $rem = $z3 & 0x0F;
+            $z3 = (($z3 >> 4) | (($z2 & 0x0F) << 28)) & 0xFFFFFFFF;
+            $z2 = (($z2 >> 4) | (($z1 & 0x0F) << 28)) & 0xFFFFFFFF;
+            $z1 = (($z1 >> 4) | (($z0 & 0x0F) << 28)) & 0xFFFFFFFF;
+            $z0 = ($z0 >> 4) ^ (self::LAST4[$rem] << 16);
+            $entry = $table[$hi];
+            $z0 ^= $entry[0];
+            $z1 ^= $entry[1];
+            $z2 ^= $entry[2];
+            $z3 ^= $entry[3];
+        }
+        return [$z0, $z1, $z2, $z3];
+    }
+
+    /** @return array<int,int[]> */
+    private function buildGhashTable(): array
+    {
+        $h = $this->encryptWords(0, 0, 0, 0);
+        $table = array_fill(0, 16, [0, 0, 0, 0]);
+        $table[8] = $h;
+        for ($i = 4; $i > 0; $i >>= 1) {
+            $v = $table[$i * 2];
+            $carry = $v[3] & 1;
+            $n3 = (($v[3] >> 1) | (($v[2] & 1) << 31)) & 0xFFFFFFFF;
+            $n2 = (($v[2] >> 1) | (($v[1] & 1) << 31)) & 0xFFFFFFFF;
+            $n1 = (($v[1] >> 1) | (($v[0] & 1) << 31)) & 0xFFFFFFFF;
+            $n0 = ($v[0] >> 1);
+            if ($carry === 1) {
+                $n0 ^= 0xE1000000;
+            }
+            $table[$i] = [$n0, $n1, $n2, $n3];
+        }
+        for ($i = 2; $i <= 8; $i <<= 1) {
+            $base = $table[$i];
+            for ($j = 1; $j < $i; $j++) {
+                $table[$i + $j] = [
+                    $base[0] ^ $table[$j][0],
+                    $base[1] ^ $table[$j][1],
+                    $base[2] ^ $table[$j][2],
+                    $base[3] ^ $table[$j][3],
+                ];
+            }
+        }
+        return $table;
+    }
+
+    /** @return int[] */
+    private function encryptWords(int $s0, int $s1, int $s2, int $s3): array
+    {
+        $rk = $this->roundKeys;
+        $te = self::$te0;
+        $sb = self::$sbox;
+
+        $s0 ^= $rk[0];
+        $s1 ^= $rk[1];
+        $s2 ^= $rk[2];
+        $s3 ^= $rk[3];
+
+        $k = 4;
+        for ($round = 1; $round < 14; $round++) {
+            $a = $te[($s0 >> 24) & 0xFF];
+            $b = $te[($s1 >> 16) & 0xFF];
+            $c = $te[($s2 >> 8) & 0xFF];
+            $d = $te[$s3 & 0xFF];
+            $t0 = ($a ^ (($b >> 8) | ($b << 24)) ^ (($c >> 16) | ($c << 16)) ^ (($d >> 24) | ($d << 8))) & 0xFFFFFFFF;
+
+            $a = $te[($s1 >> 24) & 0xFF];
+            $b = $te[($s2 >> 16) & 0xFF];
+            $c = $te[($s3 >> 8) & 0xFF];
+            $d = $te[$s0 & 0xFF];
+            $t1 = ($a ^ (($b >> 8) | ($b << 24)) ^ (($c >> 16) | ($c << 16)) ^ (($d >> 24) | ($d << 8))) & 0xFFFFFFFF;
+
+            $a = $te[($s2 >> 24) & 0xFF];
+            $b = $te[($s3 >> 16) & 0xFF];
+            $c = $te[($s0 >> 8) & 0xFF];
+            $d = $te[$s1 & 0xFF];
+            $t2 = ($a ^ (($b >> 8) | ($b << 24)) ^ (($c >> 16) | ($c << 16)) ^ (($d >> 24) | ($d << 8))) & 0xFFFFFFFF;
+
+            $a = $te[($s3 >> 24) & 0xFF];
+            $b = $te[($s0 >> 16) & 0xFF];
+            $c = $te[($s1 >> 8) & 0xFF];
+            $d = $te[$s2 & 0xFF];
+            $t3 = ($a ^ (($b >> 8) | ($b << 24)) ^ (($c >> 16) | ($c << 16)) ^ (($d >> 24) | ($d << 8))) & 0xFFFFFFFF;
+
+            $s0 = $t0 ^ $rk[$k];
+            $s1 = $t1 ^ $rk[$k + 1];
+            $s2 = $t2 ^ $rk[$k + 2];
+            $s3 = $t3 ^ $rk[$k + 3];
+            $k += 4;
+        }
+
+        $o0 = (($sb[($s0 >> 24) & 0xFF] << 24) | ($sb[($s1 >> 16) & 0xFF] << 16)
+            | ($sb[($s2 >> 8) & 0xFF] << 8) | $sb[$s3 & 0xFF]) ^ $rk[56];
+        $o1 = (($sb[($s1 >> 24) & 0xFF] << 24) | ($sb[($s2 >> 16) & 0xFF] << 16)
+            | ($sb[($s3 >> 8) & 0xFF] << 8) | $sb[$s0 & 0xFF]) ^ $rk[57];
+        $o2 = (($sb[($s2 >> 24) & 0xFF] << 24) | ($sb[($s3 >> 16) & 0xFF] << 16)
+            | ($sb[($s0 >> 8) & 0xFF] << 8) | $sb[$s1 & 0xFF]) ^ $rk[58];
+        $o3 = (($sb[($s3 >> 24) & 0xFF] << 24) | ($sb[($s0 >> 16) & 0xFF] << 16)
+            | ($sb[($s1 >> 8) & 0xFF] << 8) | $sb[$s2 & 0xFF]) ^ $rk[59];
+
+        return [$o0 & 0xFFFFFFFF, $o1 & 0xFFFFFFFF, $o2 & 0xFFFFFFFF, $o3 & 0xFFFFFFFF];
+    }
+
+    /** @return int[] */
+    private static function expandKey(string $key): array
+    {
+        $words = array_values(unpack('N8', $key));
+        $sb = self::$sbox;
+        for ($i = 8; $i < 60; $i++) {
+            $t = $words[$i - 1];
+            if ($i % 8 === 0) {
+                $t = (($t << 8) | ($t >> 24)) & 0xFFFFFFFF;
+                $t = ($sb[($t >> 24) & 0xFF] << 24) | ($sb[($t >> 16) & 0xFF] << 16)
+                    | ($sb[($t >> 8) & 0xFF] << 8) | $sb[$t & 0xFF];
+                $t ^= self::RCON[intdiv($i, 8)] << 24;
+            } elseif ($i % 8 === 4) {
+                $t = ($sb[($t >> 24) & 0xFF] << 24) | ($sb[($t >> 16) & 0xFF] << 16)
+                    | ($sb[($t >> 8) & 0xFF] << 8) | $sb[$t & 0xFF];
+            }
+            $words[$i] = ($words[$i - 8] ^ $t) & 0xFFFFFFFF;
+        }
+        return $words;
+    }
+
+    private static function initTables(): void
+    {
+        if (self::$te0 !== null) {
+            return;
+        }
+        $raw = hex2bin(self::SBOX_HEX);
+        $sbox = [];
+        $te0 = [];
+        for ($i = 0; $i < 256; $i++) {
+            $s = ord($raw[$i]);
+            $sbox[$i] = $s;
+            $s2 = ($s << 1) & 0xFF;
+            if (($s & 0x80) !== 0) {
+                $s2 ^= 0x1B;
+            }
+            $s3 = $s2 ^ $s;
+            $te0[$i] = (($s2 << 24) | ($s << 16) | ($s << 8) | $s3) & 0xFFFFFFFF;
+        }
+        self::$sbox = $sbox;
+        self::$te0 = $te0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9. Configuration
+// ---------------------------------------------------------------------------
+
+final class ConfigException extends \RuntimeException
+{
+}
+
+final class Config
+{
+    /**
+     * @param array<string,string> $accessKeys address to raw 32 byte key
+     */
+    private function __construct(
+        public readonly string $configuredSecret,
+        public readonly string $serverSecret,
+        public readonly array $accessKeys,
+        public readonly string $bufferDirectory,
+    ) {
+    }
+
+    public static function fromConstants(): self
+    {
+        // Chapter 3.2, only an exactly empty string is normalized.
+        $configured = SERVER_SECRET;
+        $secret = $configured;
+        if ($secret === '') {
+            $secret = str_repeat('0', 32);
+        }
+
+        if (PHP_INT_SIZE < 8) {
+            throw new ConfigException('int size');
+        }
+        if (STORAGE_DRIVER !== 'disk') {
+            throw new ConfigException('storage driver');
+        }
+        if (MIN_DATA_POLL_INTERVAL_MS <= 0 || MIN_DATA_POLL_INTERVAL_MS > MAX_DATA_POLL_INTERVAL_MS) {
+            throw new ConfigException('poll interval');
+        }
+        if (QUEUE_TTL_SECONDS <= 0 || AUTH_TIMESTAMP_SKEW_SECONDS <= 0 || LOCK_TIMEOUT_MS <= 0) {
+            throw new ConfigException('timing');
+        }
+        if (MAX_DATA_RECORDS_PER_REQUEST < 1 || MAX_AUTH_RECORD_BYTES < 256) {
+            throw new ConfigException('record limits');
+        }
+        // The body must hold the auth line and the maximum number of minimal data records.
+        if (MAX_REQUEST_BODY_BYTES < MAX_AUTH_RECORD_BYTES + MAX_DATA_RECORDS_PER_REQUEST * 160) {
+            throw new ConfigException('body limit');
+        }
+        if (MAX_QUEUE_BYTES_PER_CLIENT < 1 || MAX_INFO_PLAINTEXT_BYTES < 1024) {
+            throw new ConfigException('capacity limits');
+        }
+
+        $keys = [];
+        foreach (ACCESS_KEYS as $address => $hex) {
+            if (!is_string($address) || !Validators::isVpnAddress($address)) {
+                throw new ConfigException('access key address');
+            }
+            if (!is_string($hex) || strlen($hex) !== 64 || strspn($hex, '0123456789abcdef') !== 64) {
+                throw new ConfigException('access key value');
+            }
+            $keys[$address] = (string) hex2bin($hex);
+        }
+
+        return new self($configured, $secret, $keys, self::resolveBufferDirectory(BUFFER_DIRECTORY));
+    }
+
+    public function withBufferDirectory(string $directory): self
+    {
+        return new self($this->configuredSecret, $this->serverSecret, $this->accessKeys, $directory);
+    }
+
+    public function withSecret(string $configured): self
+    {
+        $secret = $configured === '' ? str_repeat('0', 32) : $configured;
+        return new self($configured, $secret, $this->accessKeys, $this->bufferDirectory);
+    }
+
+    /** @param array<string,string> $hexKeys */
+    public function withAccessKeys(array $hexKeys): self
+    {
+        $keys = [];
+        foreach ($hexKeys as $address => $hex) {
+            $keys[$address] = (string) hex2bin($hex);
+        }
+        return new self($this->configuredSecret, $this->serverSecret, $keys, $this->bufferDirectory);
+    }
+
+    public function accessKey(string $address): ?string
+    {
+        return $this->accessKeys[$address] ?? null;
+    }
+
+    /** @return string[] configured client addresses ordered by numeric value */
+    public function clientAddresses(): array
+    {
+        $addresses = array_keys($this->accessKeys);
+        usort($addresses, static fn(string $a, string $b): int
+            => Validators::addressSortKey($a) <=> Validators::addressSortKey($b));
+        return $addresses;
+    }
+
+    /** True when the effective secret is publicly predictable, chapter 5.1. */
+    public function isInsecureSecret(): bool
+    {
+        if ($this->configuredSecret === '') {
+            return true;
+        }
+        $secret = $this->serverSecret;
+        return $secret === str_repeat("\x00", strlen($secret)) || $secret === str_repeat('0', strlen($secret));
+    }
+
+    private static function resolveBufferDirectory(string $path): string
+    {
+        if (preg_match('~^([A-Za-z]:[\\\\/]|\\\\\\\\|/)~', $path) === 1) {
+            return rtrim($path, '\\/');
+        }
+        $relative = preg_replace('~^\./~', '', $path) ?? $path;
+        return rtrim(__DIR__ . DIRECTORY_SEPARATOR . $relative, '\\/');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Key derivation and request authentication
+// ---------------------------------------------------------------------------
+
+final class KeyDerivation
+{
+    public const DUMMY_ACCESS_KEY = "\x9b\x1d\x36\xc7\x54\xa2\x0e\xf8\x63\x41\xd9\x25\x7c\x0b\xae\x52"
+        . "\x18\x77\xf3\x4c\x2a\x90\x6d\xbb\x05\xe4\x39\x81\xca\x6f\x17\x28";
+
+    public static function semiKey(string $serverSecret): string
+    {
+        $salt = hash('sha256', 'phpvpn/auth-semi/salt', true);
+        return hash_hkdf('sha256', $serverSecret, 32, 'phpvpn/auth-semi/key', $salt);
+    }
+
+    public static function fullAuthKey(string $serverSecret, string $accessKey, string $src): string
+    {
+        $salt = hash_hmac('sha256', "phpvpn/auth-full/salt\x00" . $src, $serverSecret, true);
+        return hash_hkdf('sha256', $accessKey, 32, "phpvpn/auth-full/key\x00" . $src, $salt);
+    }
+
+    public static function healthKey(string $serverSecret, string $requestId): string
+    {
+        $salt = hash('sha256', "phpvpn/health-response/salt\x00" . $requestId, true);
+        return hash_hkdf('sha256', $serverSecret, 32, "phpvpn/health-response/key\x00" . $requestId, $salt);
+    }
+
+    public static function infoKey(string $serverSecret, string $salt, string $requestId): string
+    {
+        return hash_hkdf('sha256', $serverSecret, 32, 'phpvpn/info-response/' . $requestId, $salt);
+    }
+}
+
+final class Authenticator
+{
+    public static function semiCanonical(string $timestamp, string $requestId): string
+    {
+        return "PHPVPN-AUTH-SEMI\nPOST\ninfo\n" . $timestamp . "\n" . $requestId;
+    }
+
+    public static function fullCanonical(string $src, string $timestamp, string $requestId, string $bodyHashHex): string
+    {
+        return "PHPVPN-AUTH-FULL\nPOST\ndata\n" . $src . "\n" . $timestamp . "\n" . $requestId . "\n" . $bodyHashHex;
+    }
+
+    public static function healthAad(string $requestId, string $timestamp, string $ivBase64): string
+    {
+        return "PHPVPN-HEALTH-RESPONSE\nhealth\n" . $requestId . "\n" . SERVER_VERSION
+            . "\nrunning\nOK\n" . $timestamp . "\n" . $ivBase64;
+    }
+
+    public static function infoAad(string $requestId, string $saltBase64, string $ivBase64): string
+    {
+        return "PHPVPN-INFO\ninfo\n" . $requestId . "\n" . $saltBase64 . "\n" . $ivBase64;
+    }
+
+    /** True when the timestamp is inside the allowed window, compared in milliseconds. */
+    public static function withinSkew(int $timestampMs, int $nowMs): bool
+    {
+        return abs($nowMs - $timestampMs) <= AUTH_TIMESTAMP_SKEW_SECONDS * 1000;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 11. Storage
+// ---------------------------------------------------------------------------
+
+final class ClaimedBatch
+{
+    /**
+     * @param array<int,array{0:string,1:string}> $pairs messageId and gcm tag pairs
+     */
+    public function __construct(
+        public readonly string $path,
+        public readonly int $offset,
+        public readonly int $bytes,
+        public readonly array $pairs,
+    ) {
+    }
+}
+
+interface Storage
+{
+    public function isUsable(): bool;
+
+    /**
+     * @param string[] $lines serialized data lines without the terminating LF
+     * @param array<int,array{0:string,1:string}> $pairs
+     */
+    public function enqueue(string $dst, string $src, array $lines, array $pairs, int $expiresAtMs): bool;
+
+    /** @return ClaimedBatch[] */
+    public function drainAll(string $client, int $nowMs): array;
+
+    public function usage(string $client, int $nowMs): int;
+
+    public function sweepQueue(string $dst, int $nowMs): void;
+
+    public function sweep(int $nowMs, int $budgetMs): void;
+
+    public function readLastSeenMs(string $client): ?int;
+
+    public function touchLastSeenBestEffort(string $client, int $nowMs): void;
+}
+
+final class DiskStorage implements Storage
+{
+    private const BATCH_PATTERN =
+        '/^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})\.(\d{3})Z_(\d{1,12})_([0-9.]{7,15})_'
+        . '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(receiving|data|sending)$/';
+
+    private const MARKER = 'info.json';
+    private const LOCK = '.lock';
+    private const SWEEP_MARKER = '.sweep';
+
+    public function __construct(private readonly string $root)
+    {
+    }
+
+    public function isUsable(): bool
+    {
+        if (Fs::isDir($this->root)) {
+            return true;
+        }
+        if (!Fs::ensureDir($this->root)) {
+            return false;
+        }
+        // Guards are written once, when the root is created, never on the request hot path.
+        if (PROTECT_BUFFER_DIRECTORY) {
+            $this->writeGuards();
+        }
+        return true;
+    }
+
+    public function enqueue(string $dst, string $src, array $lines, array $pairs, int $expiresAtMs): bool
+    {
+        if ($lines === []) {
+            return true;
+        }
+        $directory = $this->clientDirectory($dst);
+        if (!Fs::ensureDir($directory)) {
+            return false;
+        }
+
+        $bytes = 0;
+        foreach ($lines as $line) {
+            $bytes += strlen($line) + 1;
+        }
+
+        $lock = $this->acquireLock($directory);
+        if ($lock === null) {
+            return false;
+        }
+        try {
+            $nowMs = $expiresAtMs - QUEUE_TTL_SECONDS * 1000;
+            if ($this->usage($dst, $nowMs) + $bytes > MAX_QUEUE_BYTES_PER_CLIENT) {
+                // Chapter 10.2, exactly one capacity driven sweep and one retry per destination.
+                $this->sweepQueue($dst, $nowMs);
+                if ($this->usage($dst, $nowMs) + $bytes > MAX_QUEUE_BYTES_PER_CLIENT) {
+                    return false;
+                }
+            }
+            return $this->writeBatch($directory, $src, $lines, $pairs, $bytes, $expiresAtMs);
+        } finally {
+            $this->releaseLock($lock);
+        }
+    }
+
+    public function drainAll(string $client, int $nowMs): array
+    {
+        $directory = $this->clientDirectory($client);
+        if (!Fs::ensureDir($directory)) {
+            return [];
+        }
+        $entries = Fs::listDir($directory);
+        if ($entries === null) {
+            return [];
+        }
+
+        $candidates = [];
+        foreach ($entries as $entry) {
+            $parsed = self::parseBatchName($entry);
+            if ($parsed === null || $parsed['state'] !== 'data' || $parsed['expiresAtMs'] <= $nowMs) {
+                continue;
+            }
+            $candidates[] = $entry;
+        }
+        sort($candidates, SORT_STRING);
+
+        $claimed = [];
+        foreach ($candidates as $entry) {
+            $from = $directory . DIRECTORY_SEPARATOR . $entry;
+            $base = substr($entry, 0, -strlen('.data'));
+            $to = $directory . DIRECTORY_SEPARATOR . $base . '.sending';
+            if (!Fs::rename($from, $to)) {
+                continue;
+            }
+            $batch = $this->readClaimed($to);
+            if ($batch === null) {
+                Fs::unlink($to);
+                continue;
+            }
+            $claimed[] = $batch;
+        }
+        return $claimed;
+    }
+
+    public function usage(string $client, int $nowMs): int
+    {
+        $entries = Fs::listDir($this->clientDirectory($client));
+        if ($entries === null) {
+            return 0;
+        }
+        $total = 0;
+        foreach ($entries as $entry) {
+            $parsed = self::parseBatchName($entry);
+            if ($parsed === null || $parsed['expiresAtMs'] <= $nowMs) {
+                continue;
+            }
+            if ($parsed['state'] === 'data' || $parsed['state'] === 'receiving') {
+                $total += $parsed['bytes'];
+            }
+        }
+        return $total;
+    }
+
+    public function sweepQueue(string $dst, int $nowMs): void
+    {
+        $directory = $this->clientDirectory($dst);
+        $entries = Fs::listDir($directory);
+        if ($entries === null) {
+            return;
+        }
+        foreach ($entries as $entry) {
+            $parsed = self::parseBatchName($entry);
+            if ($parsed === null || $parsed['expiresAtMs'] > $nowMs) {
+                continue;
+            }
+            Fs::unlink($directory . DIRECTORY_SEPARATOR . $entry);
+        }
+    }
+
+    public function sweep(int $nowMs, int $budgetMs): void
+    {
+        $marker = $this->root . DIRECTORY_SEPARATOR . self::SWEEP_MARKER;
+        $mtime = Fs::mtime($marker);
+        if ($mtime !== null && ($nowMs - $mtime * 1000) < SWEEP_MIN_INTERVAL_SECONDS * 1000) {
+            return;
+        }
+        if (!Fs::touch($marker)) {
+            return;
+        }
+
+        $directories = Fs::listDir($this->root);
+        if ($directories === null || $directories === []) {
+            return;
+        }
+        $count = count($directories);
+        $start = random_int(0, $count - 1);
+        $deadline = microtime(true) + ($budgetMs / 1000.0);
+        $visited = 0;
+        $files = 0;
+
+        for ($i = 0; $i < $count && $visited < SWEEP_MAX_DIRECTORIES; $i++) {
+            $name = $directories[($start + $i) % $count];
+            $path = $this->root . DIRECTORY_SEPARATOR . $name;
+            if (!Fs::isDir($path)) {
+                continue;
+            }
+            $visited++;
+            $entries = Fs::listDir($path);
+            if ($entries === null) {
+                continue;
+            }
+            foreach ($entries as $entry) {
+                if ($files >= SWEEP_MAX_FILES || microtime(true) > $deadline) {
+                    return;
+                }
+                $parsed = self::parseBatchName($entry);
+                if ($parsed === null || $parsed['expiresAtMs'] > $nowMs) {
+                    continue;
+                }
+                $files++;
+                Fs::unlink($path . DIRECTORY_SEPARATOR . $entry);
+            }
+        }
+    }
+
+    public function readLastSeenMs(string $client): ?int
+    {
+        $marker = $this->clientDirectory($client) . DIRECTORY_SEPARATOR . self::MARKER;
+        $mtime = Fs::mtime($marker);
+        return $mtime === null ? null : $mtime * 1000;
+    }
+
+    public function touchLastSeenBestEffort(string $client, int $nowMs): void
+    {
+        // Chapter 10.6, at most one metadata read and at most one touch, never a lock or a retry.
+        $directory = $this->clientDirectory($client);
+        Fs::ensureDir($directory);
+        $marker = $directory . DIRECTORY_SEPARATOR . self::MARKER;
+        $mtime = Fs::mtime($marker);
+        if ($mtime !== null) {
+            $ageMs = $nowMs - $mtime * 1000;
+            if ($ageMs <= CLIENT_STATS_MIN_UPDATE_SECONDS * 1000) {
+                return;
+            }
+        }
+        Fs::touch($marker);
+    }
+
+    public function clientDirectory(string $address): string
+    {
+        return $this->root . DIRECTORY_SEPARATOR . Validators::addressToDirectory($address);
+    }
+
+    /**
+     * @param string[] $lines
+     * @param array<int,array{0:string,1:string}> $pairs
+     */
+    private function writeBatch(
+        string $directory,
+        string $src,
+        array $lines,
+        array $pairs,
+        int $bytes,
+        int $expiresAtMs
+    ): bool {
+        $base = Iso8601::formatFileNameMs($expiresAtMs) . '_' . $bytes . '_' . $src . '_' . Validators::newUuidV4();
+        $temporary = $directory . DIRECTORY_SEPARATOR . $base . '.receiving';
+        $final = $directory . DIRECTORY_SEPARATOR . $base . '.data';
+
+        $index = json_encode(['v' => 1, 'bytes' => $bytes, 'records' => $pairs], JSON_UNESCAPED_SLASHES);
+        if ($index === false) {
+            return false;
+        }
+
+        $handle = @fopen($temporary, 'xb');
+        if ($handle === false) {
+            return false;
+        }
+        $ok = self::writeAll($handle, $index . "\n");
+        foreach ($lines as $line) {
+            if (!$ok) {
+                break;
+            }
+            $ok = self::writeAll($handle, $line . "\n");
+        }
+        if ($ok) {
+            $ok = @fflush($handle);
+        }
+        @fclose($handle);
+        if (!$ok || !Fs::rename($temporary, $final)) {
+            Fs::unlink($temporary);
+            return false;
+        }
+        return true;
+    }
+
+    private static function writeAll($handle, string $data): bool
+    {
+        $length = strlen($data);
+        $written = 0;
+        while ($written < $length) {
+            $result = @fwrite($handle, $written === 0 ? $data : substr($data, $written));
+            if ($result === false || $result === 0) {
+                return false;
+            }
+            $written += $result;
+        }
+        return true;
+    }
+
+    private function readClaimed(string $path): ?ClaimedBatch
+    {
+        $handle = @fopen($path, 'rb');
+        if ($handle === false) {
+            return null;
+        }
+        $header = @fgets($handle, 1024 * 1024);
+        if ($header === false) {
+            @fclose($handle);
+            return null;
+        }
+        $offset = @ftell($handle);
+        @fclose($handle);
+        if ($offset === false) {
+            return null;
+        }
+
+        $decoded = json_decode(rtrim($header, "\n"), true);
+        if (!is_array($decoded) || !isset($decoded['records']) || !is_array($decoded['records'])) {
+            return null;
+        }
+        $pairs = [];
+        foreach ($decoded['records'] as $pair) {
+            if (!is_array($pair) || count($pair) !== 2 || !is_string($pair[0]) || !is_string($pair[1])) {
+                return null;
+            }
+            $pairs[] = [$pair[0], $pair[1]];
+        }
+        $parsed = self::parseBatchName(basename($path));
+        if ($parsed === null) {
+            return null;
+        }
+        return new ClaimedBatch($path, $offset, $parsed['bytes'], $pairs);
+    }
+
+    /** @return resource|null */
+    private function acquireLock(string $directory)
+    {
+        $handle = @fopen($directory . DIRECTORY_SEPARATOR . self::LOCK, 'cb');
+        if ($handle === false) {
+            return null;
+        }
+        $deadline = microtime(true) + (LOCK_TIMEOUT_MS / 1000.0);
+        $waitUs = 1000;
+        while (true) {
+            if (@flock($handle, LOCK_EX | LOCK_NB)) {
+                return $handle;
+            }
+            if (microtime(true) >= $deadline) {
+                @fclose($handle);
+                return null;
+            }
+            usleep($waitUs);
+            $waitUs = min($waitUs * 2, 25000);
+        }
+    }
+
+    /** @param resource $handle */
+    private function releaseLock($handle): void
+    {
+        @flock($handle, LOCK_UN);
+        @fclose($handle);
+    }
+
+    /** @return array{expiresAtMs:int,bytes:int,src:string,state:string}|null */
+    public static function parseBatchName(string $name): ?array
+    {
+        if (preg_match(self::BATCH_PATTERN, $name, $m) !== 1) {
+            return null;
+        }
+        $days = Iso8601::daysFromCivil((int) $m[1], (int) $m[2], (int) $m[3]);
+        $expires = ((($days * 86400) + ((int) $m[4]) * 3600 + ((int) $m[5]) * 60 + (int) $m[6]) * 1000) + (int) $m[7];
+        return [
+            'expiresAtMs' => $expires,
+            'bytes' => (int) $m[8],
+            'src' => $m[9],
+            'state' => $m[11],
+        ];
+    }
+
+    private function writeGuards(): void
+    {
+        Fs::writeFileIfMissing(
+            $this->root . DIRECTORY_SEPARATOR . '.htaccess',
+            "Require all denied\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n"
+        );
+        Fs::writeFileIfMissing(
+            $this->root . DIRECTORY_SEPARATOR . 'web.config',
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration><system.webServer><security>"
+            . "<requestFiltering><hiddenSegments><add segment=\".\" /></hiddenSegments></requestFiltering>"
+            . "</security></system.webServer></configuration>\n"
+        );
+        Fs::writeFileIfMissing($this->root . DIRECTORY_SEPARATOR . 'index.html', '');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. HTTP layer. Every response is produced here and nowhere else.
+// ---------------------------------------------------------------------------
+
+interface ResponseWriter
+{
+    /** @param array<string,string> $extraHeaders */
+    public function begin(int $status, string $contentType, array $extraHeaders = []): void;
+
+    public function write(string $data): void;
+
+    /** @param resource $stream */
+    public function copyFrom($stream): int;
+
+    public function isStarted(): bool;
+}
+
+final class HttpResponseWriter implements ResponseWriter
+{
+    private bool $started = false;
+    /** @var resource|null */
+    private $output = null;
+
+    public function __construct(private readonly bool $suppressBody = false)
+    {
+    }
+
+    public function begin(int $status, string $contentType, array $extraHeaders = []): void
+    {
+        if ($this->started) {
+            return;
+        }
+        $this->started = true;
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+        http_response_code($status);
+        header('Content-Type: ' . $contentType);
+        // Chapter 4.1, mandatory on every response without exception.
+        header('Cache-Control: no-store, no-cache, must-revalidate');
+        header('Pragma: no-cache');
+        header('X-Content-Type-Options: nosniff');
+        foreach ($extraHeaders as $name => $value) {
+            header($name . ': ' . $value);
+        }
+    }
+
+    public function write(string $data): void
+    {
+        if ($this->suppressBody || $data === '') {
+            return;
+        }
+        echo $data;
+    }
+
+    public function copyFrom($stream): int
+    {
+        if ($this->suppressBody) {
+            return 0;
+        }
+        if ($this->output === null) {
+            $handle = @fopen('php://output', 'wb');
+            if ($handle === false) {
+                return -1;
+            }
+            $this->output = $handle;
+        }
+        $copied = @stream_copy_to_stream($stream, $this->output);
+        return $copied === false ? -1 : $copied;
+    }
+
+    public function isStarted(): bool
+    {
+        return $this->started;
+    }
+}
+
+final class BufferedResponseWriter implements ResponseWriter
+{
+    public int $status = 0;
+    /** @var array<string,string> */
+    public array $headers = [];
+    public string $body = '';
+    private bool $started = false;
+
+    public function begin(int $status, string $contentType, array $extraHeaders = []): void
+    {
+        if ($this->started) {
+            return;
+        }
+        $this->started = true;
+        $this->status = $status;
+        $this->headers = [
+            'Content-Type' => $contentType,
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+            'Pragma' => 'no-cache',
+            'X-Content-Type-Options' => 'nosniff',
+        ];
+        foreach ($extraHeaders as $name => $value) {
+            $this->headers[$name] = $value;
+        }
+    }
+
+    public function write(string $data): void
+    {
+        $this->body .= $data;
+    }
+
+    public function copyFrom($stream): int
+    {
+        $data = @stream_get_contents($stream);
+        if ($data === false) {
+            return -1;
+        }
+        $this->body .= $data;
+        return strlen($data);
+    }
+
+    public function isStarted(): bool
+    {
+        return $this->started;
+    }
+}
+
+final class Http
+{
+    public const JSON = 'application/json; charset=utf-8';
+    public const NDJSON = 'application/x-ndjson; charset=utf-8';
+    public const HTML = 'text/html; charset=utf-8';
+
+    /** @param array<string,string> $extraHeaders */
+    public static function error(ResponseWriter $writer, int $status, string $code, array $extraHeaders = []): void
+    {
+        if ($status === 503) {
+            $extraHeaders['Retry-After'] = '1';
+        }
+        $writer->begin($status, self::JSON, $extraHeaders);
+        $writer->write('{"type":"error","code":"' . $code . '"}');
+    }
+
+    /** Media type comparison, parameters are tolerated but a charset must be utf-8. */
+    public static function isMediaType(?string $header, string $expected): bool
+    {
+        if ($header === null) {
+            return false;
+        }
+        $parts = explode(';', $header);
+        $media = strtolower(trim($parts[0]));
+        if ($media !== $expected) {
+            return false;
+        }
+        for ($i = 1; $i < count($parts); $i++) {
+            $parameter = trim($parts[$i]);
+            if (stripos($parameter, 'charset=') === 0) {
+                $charset = strtolower(trim(substr($parameter, 8), '"'));
+                if ($charset !== 'utf-8' && $charset !== 'utf8') {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 13. Request abstraction
+// ---------------------------------------------------------------------------
+
+interface RequestInput
+{
+    /** @return resource|null */
+    public function stream();
+}
+
+final class PhpInput implements RequestInput
+{
+    public function stream()
+    {
+        $handle = @fopen('php://input', 'rb');
+        return $handle === false ? null : $handle;
+    }
+}
+
+final class StringInput implements RequestInput
+{
+    public function __construct(private readonly string $body)
+    {
+    }
+
+    public function stream()
+    {
+        $handle = fopen('php://temp', 'w+b');
+        fwrite($handle, $this->body);
+        rewind($handle);
+        return $handle;
+    }
+}
+
+final class Request
+{
+    public function __construct(
+        public readonly string $method,
+        public readonly ?string $action,
+        public readonly ?string $contentType,
+        public readonly ?int $contentLength,
+        public readonly RequestInput $input,
+    ) {
+    }
+
+    public static function fromGlobals(): self
+    {
+        $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        $action = $_GET['action'] ?? null;
+        $length = $_SERVER['CONTENT_LENGTH'] ?? null;
+        return new self(
+            $method,
+            // A non string action, for example action[]=x, can never match a known action.
+            is_string($action) ? $action : ($action === null ? null : 'invalid'),
+            isset($_SERVER['CONTENT_TYPE']) && is_string($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : null,
+            is_string($length) && ctype_digit($length) ? (int) $length : null,
+            new PhpInput(),
+        );
+    }
+
+    /** Reads at most $max bytes, returns null when the body is larger. */
+    public function readBody(int $max): ?string
+    {
+        if ($this->contentLength !== null && $this->contentLength > $max) {
+            return null;
+        }
+        $stream = $this->input->stream();
+        if ($stream === null) {
+            return '';
+        }
+        $data = @stream_get_contents($stream, $max + 1);
+        @fclose($stream);
+        if ($data === false) {
+            return '';
+        }
+        return strlen($data) > $max ? null : $data;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 14. Handlers
+// ---------------------------------------------------------------------------
+
+final class StatusPageHandler
+{
+    public function handle(ResponseWriter $writer, bool $insecure): void
+    {
+        $html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>phpvpn</title></head>\n"
+            . "<body>\n<h1>Server is running</h1>\n";
+        if ($insecure) {
+            $html .= "<h2 style=\"color:red\">Server is not secure. "
+                . "Please modify SERVER_SECRET in the phpvpn.php</h2>\n";
+        }
+        $html .= "</body>\n</html>\n";
+        $writer->begin(200, Http::HTML, ['Content-Length' => (string) strlen($html)]);
+        $writer->write($html);
+    }
+}
+
+final class HealthHandler
+{
+    public function __construct(private readonly Config $config, private readonly Clock $clock)
+    {
+    }
+
+    public function handle(Request $request, ResponseWriter $writer): void
+    {
+        if (!Http::isMediaType($request->contentType, 'application/json')) {
+            Http::error($writer, 415, 'unsupported_media_type');
+            return;
+        }
+        $body = $request->readBody(MAX_AUTH_RECORD_BYTES);
+        if ($body === null) {
+            Http::error($writer, 413, 'payload_too_large');
+            return;
+        }
+        $fields = JsonWire::parseFlatStringObject($body, ['type', 'requestId']);
+        if ($fields === null || $fields['type'] !== 'auth-none' || !Validators::isUuidV4($fields['requestId'])) {
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+
+        $requestId = $fields['requestId'];
+        $timestamp = Iso8601::formatMs($this->clock->nowMs());
+        $iv = random_bytes(12);
+        $ivBase64 = Base64Url::encode($iv);
+        $gcm = new AesGcm(KeyDerivation::healthKey($this->config->serverSecret, $requestId));
+        $tag = $gcm->mac($iv, Authenticator::healthAad($requestId, $timestamp, $ivBase64));
+
+        $writer->begin(200, Http::JSON);
+        $writer->write((string) json_encode([
+            'serverVersion' => SERVER_VERSION,
+            'status' => 'running',
+            'description' => 'OK',
+            'timestamp' => $timestamp,
+            'requestId' => $requestId,
+            'iv' => $ivBase64,
+            'tag' => Base64Url::encode($tag),
+        ], JSON_UNESCAPED_SLASHES));
+    }
+}
+
+final class InfoHandler
+{
+    public function __construct(
+        private readonly Config $config,
+        private readonly Clock $clock,
+        private readonly Storage $storage,
+    ) {
+    }
+
+    public function handle(Request $request, ResponseWriter $writer): void
+    {
+        if (!Http::isMediaType($request->contentType, 'application/json')) {
+            Http::error($writer, 415, 'unsupported_media_type');
+            return;
+        }
+        $body = $request->readBody(MAX_AUTH_RECORD_BYTES);
+        if ($body === null) {
+            Http::error($writer, 413, 'payload_too_large');
+            return;
+        }
+        $fields = JsonWire::parseFlatStringObject($body, ['type', 'timestamp', 'requestId', 'tag']);
+        if ($fields === null || $fields['type'] !== 'auth-semi' || !Validators::isUuidV4($fields['requestId'])) {
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+        $timestampMs = Iso8601::parseMs($fields['timestamp']);
+        if ($timestampMs === null || !Base64Url::isCanonicalOfByteLength($fields['tag'], 32)) {
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+        if (!Authenticator::withinSkew($timestampMs, $this->clock->nowMs())) {
+            Http::error($writer, 401, 'unauthorized');
+            return;
+        }
+
+        $expected = hash_hmac(
+            'sha256',
+            Authenticator::semiCanonical($fields['timestamp'], $fields['requestId']),
+            KeyDerivation::semiKey($this->config->serverSecret),
+            true
+        );
+        $provided = Base64Url::decode($fields['tag']);
+        if ($provided === null || !hash_equals($expected, $provided)) {
+            Http::error($writer, 401, 'unauthorized');
+            return;
+        }
+
+        $plaintext = $this->buildPlaintext();
+        if ($plaintext === null) {
+            Http::error($writer, 503, 'server_misconfigured');
+            return;
+        }
+
+        $requestId = $fields['requestId'];
+        $salt = random_bytes(32);
+        $iv = random_bytes(12);
+        $saltBase64 = Base64Url::encode($salt);
+        $ivBase64 = Base64Url::encode($iv);
+        $gcm = new AesGcm(KeyDerivation::infoKey($this->config->serverSecret, $salt, $requestId));
+        [$ciphertext, $tag] = $gcm->seal($iv, $plaintext, Authenticator::infoAad($requestId, $saltBase64, $ivBase64));
+
+        $writer->begin(200, Http::JSON);
+        $writer->write((string) json_encode([
+            'type' => 'info',
+            'requestId' => $requestId,
+            'salt' => $saltBase64,
+            'iv' => $ivBase64,
+            'ciphertext' => Base64Url::encode($ciphertext),
+            'tag' => Base64Url::encode($tag),
+        ], JSON_UNESCAPED_SLASHES));
+    }
+
+    private function buildPlaintext(): ?string
+    {
+        $clients = [];
+        foreach ($this->config->clientAddresses() as $address) {
+            $lastSeen = $this->storage->readLastSeenMs($address);
+            if ($lastSeen === null) {
+                continue;
+            }
+            $clients[] = ['address' => $address, 'lastSeen' => Iso8601::formatMs($lastSeen)];
+        }
+        $limits = [
+            'maxDataRecordsPerRequest' => MAX_DATA_RECORDS_PER_REQUEST,
+            'maxRequestBodyBytes' => MAX_REQUEST_BODY_BYTES,
+            'maxQueueBytesPerClient' => MAX_QUEUE_BYTES_PER_CLIENT,
+            'queueTtlSeconds' => QUEUE_TTL_SECONDS,
+            'minDataPollIntervalMs' => MIN_DATA_POLL_INTERVAL_MS,
+            'maxDataPollIntervalMs' => MAX_DATA_POLL_INTERVAL_MS,
+        ];
+
+        while (true) {
+            $plaintext = json_encode([
+                'serverVersion' => SERVER_VERSION,
+                'generatedAt' => Iso8601::formatMs($this->clock->nowMs()),
+                'clients' => $clients,
+                'limits' => $limits,
+            ], JSON_UNESCAPED_SLASHES);
+            if ($plaintext === false) {
+                return null;
+            }
+            if (strlen($plaintext) <= MAX_INFO_PLAINTEXT_BYTES) {
+                return $plaintext;
+            }
+            if ($clients === []) {
+                return null;
+            }
+            array_pop($clients);
+        }
+    }
+}
+
+final class DataHandler
+{
+    public function __construct(
+        private readonly Config $config,
+        private readonly Clock $clock,
+        private readonly Storage $storage,
+    ) {
+    }
+
+    public function handle(Request $request, ResponseWriter $writer): void
+    {
+        if (!Http::isMediaType($request->contentType, 'application/x-ndjson')) {
+            Http::error($writer, 415, 'unsupported_media_type');
+            return;
+        }
+        $body = $request->readBody(MAX_REQUEST_BODY_BYTES);
+        if ($body === null) {
+            Http::error($writer, 413, 'payload_too_large');
+            return;
+        }
+
+        $lf = strpos($body, "\n");
+        if ($lf === false) {
+            if (strlen($body) + 1 > MAX_AUTH_RECORD_BYTES) {
+                Http::error($writer, 413, 'payload_too_large');
+                return;
+            }
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+        if ($lf + 1 > MAX_AUTH_RECORD_BYTES) {
+            Http::error($writer, 413, 'payload_too_large');
+            return;
+        }
+        $authLine = substr($body, 0, $lf);
+        $rest = substr($body, $lf + 1);
+
+        $auth = JsonWire::parseFlatStringObject($authLine, ['type', 'src', 'timestamp', 'requestId', 'tag']);
+        if ($auth === null || $auth['type'] !== 'auth-full' || !Validators::isUuidV4($auth['requestId'])) {
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+        if (!Validators::isVpnAddress($auth['src'])) {
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+        $timestampMs = Iso8601::parseMs($auth['timestamp']);
+        if ($timestampMs === null || !Base64Url::isCanonicalOfByteLength($auth['tag'], 32)) {
+            Http::error($writer, 400, 'bad_request');
+            return;
+        }
+        if (!Authenticator::withinSkew($timestampMs, $this->clock->nowMs())) {
+            Http::error($writer, 401, 'unauthorized');
+            return;
+        }
+
+        $src = $auth['src'];
+        // An unknown client runs the identical derivation with a fixed dummy key, chapter 9.2.
+        $accessKey = $this->config->accessKey($src) ?? KeyDerivation::DUMMY_ACCESS_KEY;
+        $known = $this->config->accessKey($src) !== null;
+        $fullAuthKey = KeyDerivation::fullAuthKey($this->config->serverSecret, $accessKey, $src);
+        $canonical = Authenticator::fullCanonical(
+            $src,
+            $auth['timestamp'],
+            $auth['requestId'],
+            hash('sha256', $rest)
+        );
+        $expected = hash_hmac('sha256', $canonical, $fullAuthKey, true);
+        $provided = Base64Url::decode($auth['tag']);
+        $valid = $provided !== null && hash_equals($expected, $provided);
+        if (!$known || !$valid) {
+            Http::error($writer, 401, 'unauthorized');
+            return;
+        }
+
+        $records = $this->parseRecords($rest, $src, $status);
+        if ($records === null) {
+            Http::error($writer, $status, match ($status) {
+                413 => 'payload_too_large',
+                401 => 'unauthorized',
+                default => 'bad_request',
+            });
+            return;
+        }
+
+        if (!$this->storage->isUsable()) {
+            Http::error($writer, 503, 'queue_unavailable');
+            return;
+        }
+
+        $nowMs = $this->clock->nowMs();
+        [$accepted, $deferred, $acceptedBytes] = $this->publish($records, $src, $nowMs);
+
+        // Best effort statistics, never able to change the protocol result, chapter 10.6.
+        $this->storage->touchLastSeenBestEffort($src, $nowMs);
+
+        $claimed = $this->storage->drainAll($src, $nowMs);
+
+        $recordCount = 0;
+        foreach ($claimed as $batch) {
+            $recordCount += count($batch->pairs);
+        }
+
+        $resultLine = (string) json_encode([
+            'type' => 'data-result',
+            'requestId' => $auth['requestId'],
+            'acceptedMessageIds' => array_values($accepted),
+            'deferredMessageIds' => array_values($deferred),
+            'acceptedRecords' => count($accepted),
+            'acceptedBytes' => $acceptedBytes,
+        ], JSON_UNESCAPED_SLASHES);
+
+        $mac = $this->responseMac($fullAuthKey, $auth['requestId'], $recordCount, $claimed, $resultLine);
+        $macLine = (string) json_encode([
+            'type' => 'data-mac',
+            'requestId' => $auth['requestId'],
+            'tag' => Base64Url::encode($mac),
+        ], JSON_UNESCAPED_SLASHES);
+
+        $writer->begin(200, Http::NDJSON);
+        foreach ($claimed as $batch) {
+            if (!$this->emitBatch($writer, $batch)) {
+                // The response is already partially written, ending it without data-mac
+                // makes the client discard everything, which is the intended failure mode.
+                return;
+            }
+        }
+        $writer->write($resultLine . "\n");
+        $writer->write($macLine . "\n");
+
+        $this->afterResponse($nowMs);
+    }
+
+    /**
+     * @return DataRecord[]|null
+     */
+    private function parseRecords(string $rest, string $src, ?int &$status): ?array
+    {
+        $status = 400;
+        if ($rest === '') {
+            return [];
+        }
+        if (substr($rest, -1) !== "\n") {
+            return null;
+        }
+        // The split is bounded, otherwise a body of line feeds would allocate one entry per byte.
+        $lines = explode("\n", substr($rest, 0, -1), MAX_DATA_RECORDS_PER_REQUEST + 1);
+        if (count($lines) > MAX_DATA_RECORDS_PER_REQUEST) {
+            $status = 413;
+            return null;
+        }
+
+        $records = [];
+        $seen = [];
+        foreach ($lines as $line) {
+            if ($line === '' || str_contains($line, "\r")) {
+                return null;
+            }
+            $record = JsonWire::parseDataRecord($line, $src);
+            if (is_int($record)) {
+                $status = $record;
+                return null;
+            }
+            if (isset($seen[$record->messageId])) {
+                return null;
+            }
+            $seen[$record->messageId] = true;
+            $records[] = $record;
+        }
+        return $records;
+    }
+
+    /**
+     * @param DataRecord[] $records
+     * @return array{0:string[],1:string[],2:int}
+     */
+    private function publish(array $records, string $src, int $nowMs): array
+    {
+        if ($records === []) {
+            return [[], [], 0];
+        }
+        $groups = [];
+        foreach ($records as $record) {
+            $groups[$record->dst][] = $record;
+        }
+        // Deterministic processing order, chapter 10.2.
+        uksort($groups, static fn(string $a, string $b): int
+            => Validators::addressSortKey($a) <=> Validators::addressSortKey($b));
+
+        $acceptedIds = [];
+        $deferredIds = [];
+        $acceptedBytes = 0;
+        $expiresAtMs = $nowMs + QUEUE_TTL_SECONDS * 1000;
+
+        foreach ($groups as $dst => $groupRecords) {
+            $lines = [];
+            $pairs = [];
+            $bytes = 0;
+            foreach ($groupRecords as $record) {
+                $lines[] = $record->line;
+                $pairs[] = [$record->messageId, $record->gcmTag];
+                $bytes += strlen($record->line) + 1;
+            }
+            $published = $this->storage->enqueue((string) $dst, $src, $lines, $pairs, $expiresAtMs);
+            foreach ($groupRecords as $record) {
+                if ($published) {
+                    $acceptedIds[$record->messageId] = $record->messageId;
+                } else {
+                    $deferredIds[$record->messageId] = $record->messageId;
+                }
+            }
+            if ($published) {
+                $acceptedBytes += $bytes;
+            }
+        }
+
+        // Preserve the request order in both result arrays.
+        $accepted = [];
+        $deferred = [];
+        foreach ($records as $record) {
+            if (isset($acceptedIds[$record->messageId])) {
+                $accepted[] = $record->messageId;
+            } else {
+                $deferred[] = $record->messageId;
+            }
+        }
+        return [$accepted, $deferred, $acceptedBytes];
+    }
+
+    /** @param ClaimedBatch[] $claimed */
+    private function responseMac(
+        string $fullAuthKey,
+        string $requestId,
+        int $recordCount,
+        array $claimed,
+        string $resultLine
+    ): string {
+        $context = hash_init('sha256', HASH_HMAC, $fullAuthKey);
+        hash_update($context, "PHPVPN-DATA-RESPONSE\ndata\n" . $requestId . "\n" . $recordCount . "\n");
+        foreach ($claimed as $batch) {
+            foreach ($batch->pairs as $pair) {
+                hash_update($context, $pair[0] . "\n" . $pair[1] . "\n");
+            }
+        }
+        hash_update($context, hash('sha256', $resultLine));
+        return hash_final($context, true);
+    }
+
+    private function emitBatch(ResponseWriter $writer, ClaimedBatch $batch): bool
+    {
+        $handle = @fopen($batch->path, 'rb');
+        if ($handle === false) {
+            return false;
+        }
+        if (@fseek($handle, $batch->offset) !== 0) {
+            @fclose($handle);
+            return false;
+        }
+        $copied = $writer->copyFrom($handle);
+        @fclose($handle);
+        Fs::unlink($batch->path);
+        // A short copy means a truncated or damaged batch file, the response must not be completed.
+        return $copied === $batch->bytes;
+    }
+
+    private function afterResponse(int $nowMs): void
+    {
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
+        }
+        $this->storage->sweep($nowMs, SWEEP_MAX_MILLISECONDS);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 15. Router and application
+// ---------------------------------------------------------------------------
+
+final class Application
+{
+    public function handle(Request $request, ResponseWriter $writer): void
+    {
+        $method = $request->method;
+        $action = $request->action;
+
+        if ($action === null || $action === '') {
+            if ($method === 'GET' || $method === 'HEAD') {
+                $insecure = self::isConfiguredSecretInsecure();
+                (new StatusPageHandler())->handle($writer, $insecure);
+                return;
+            }
+            Http::error($writer, 405, 'method_not_allowed', ['Allow' => 'GET, HEAD']);
+            return;
+        }
+
+        if ($action !== 'health' && $action !== 'info' && $action !== 'data') {
+            Http::error($writer, 404, 'not_found');
+            return;
+        }
+        if ($method !== 'POST') {
+            Http::error($writer, 405, 'method_not_allowed', ['Allow' => 'POST']);
+            return;
+        }
+
+        try {
+            $config = Config::fromConstants();
+        } catch (ConfigException) {
+            Http::error($writer, 503, 'server_misconfigured');
+            return;
+        }
+
+        $this->dispatch($config, $request, $writer, $action);
+    }
+
+    public function dispatch(
+        Config $config,
+        Request $request,
+        ResponseWriter $writer,
+        string $action,
+        ?Clock $clock = null,
+        ?Storage $storage = null
+    ): void {
+        $clock ??= new Clock();
+        $storage ??= new DiskStorage($config->bufferDirectory);
+
+        if ($action === 'health') {
+            if (!AesGcm::selfTest()) {
+                Http::error($writer, 500, 'internal_error');
+                return;
+            }
+            (new HealthHandler($config, $clock))->handle($request, $writer);
+            return;
+        }
+        if ($action === 'info') {
+            if (!AesGcm::selfTest()) {
+                Http::error($writer, 500, 'internal_error');
+                return;
+            }
+            (new InfoHandler($config, $clock, $storage))->handle($request, $writer);
+            return;
+        }
+        (new DataHandler($config, $clock, $storage))->handle($request, $writer);
+    }
+
+    /** The status page must never depend on full configuration validation, chapter 5.1. */
+    private static function isConfiguredSecretInsecure(): bool
+    {
+        $configured = SERVER_SECRET;
+        if ($configured === '') {
+            return true;
+        }
+        return $configured === str_repeat("\x00", strlen($configured))
+            || $configured === str_repeat('0', strlen($configured));
+    }
+
+    public static function runFromGlobals(): void
+    {
+        Runtime::init();
+        $request = Request::fromGlobals();
+        $writer = new HttpResponseWriter($request->method === 'HEAD');
+        Runtime::bindWriter($writer);
+        (new Application())->handle($request, $writer);
+    }
+}
+
+if (!defined('PHPVPN_NO_AUTORUN')) {
+    Application::runFromGlobals();
+}
