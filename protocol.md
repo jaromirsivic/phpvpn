@@ -539,7 +539,7 @@ Wire protokol nesmí záviset na názvech souborů, adresářích ani databázov
 - `sweepQueue(destination, now)` pro cílené odstranění expirací z jedné fronty;
 - `sweep(now)` pro omezenou oportunistickou údržbu.
 
-Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SSZ_<bytes>_<src>_<uuid>`, kde první pole je čas expirace v UTC, `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Každý per-client adresář navíc smí obsahovat statistický marker `info.json` podle kapitoly 10.6; tento soubor není dávkou a operace fronty jej musí ignorovat. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
+Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SS.sssZ_<bytes>_<src>_<uuid>`, kde první pole je jediný časový údaj: čas expirace v UTC s přesně třemi číslicemi milisekund. Pomlčky mezi hodinou, minutou a sekundou jsou filename-safe náhradou dvojteček; `Z` označuje UTC. Příklad: `2026-08-12T14-37-05.123Z_2048_10.99.99.2_d5b543a9-9fc3-4c98-916c-ea0198f67a79.data`. `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Každý per-client adresář navíc smí obsahovat statistický marker `info.json` podle kapitoly 10.6; tento soubor není dávkou a operace fronty jej musí ignorovat. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
 
 ### 10.6 Statistiky klientů ovladače `disk`
 
@@ -750,6 +750,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 13. Expirovaná dávka není vydána; sweep ji maže ve stavu `.receiving`, `.data` i `.sending`.
 14. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
 15. Stejná sada kontraktních testů běží nad každým storage driverem.
+16. Název diskové dávky obsahuje právě jeden UTC čas: expiraci ve filename-safe tvaru `YYYY-MM-DDTHH-MM-SS.sssZ` s přesně třemi číslicemi milisekund.
 
 ### 16.5 Statistiky klientů
 
