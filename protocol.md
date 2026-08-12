@@ -144,13 +144,13 @@ Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfigu
 Úspěšná odpověď má Content-Type `application/json; charset=utf-8` a právě tato pole:
 
 ```json
-{"serverVersion":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30Z","requestId":"c22cd6e8-14a9-4d83-97b7-54c26a72d1f0","iv":"BASE64URL","tag":"BASE64URL"}
+{"serverVersion":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30.123Z","requestId":"c22cd6e8-14a9-4d83-97b7-54c26a72d1f0","iv":"BASE64URL","tag":"BASE64URL"}
 ```
 
 - `serverVersion` je verze serverové aplikace;
 - `status` je při úspěchu `running`;
 - `description` je při úspěchu `OK`;
-- `timestamp` je aktuální UTC čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SSZ`;
+- `timestamp` je aktuální UTC čas serveru s přesností na milisekundy, přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`;
 - `requestId` je přesná hodnota z odpovídajícího požadavku `auth-none`;
 - `iv` je 12 nových náhodných bajtů z CSPRNG, zapsaných jako base64url bez paddingu;
 - `tag` je 16bajtový AES-256-GCM autentizační tag zapsaný jako base64url bez paddingu a vypočtený podle kapitoly 7.3.
@@ -697,7 +697,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 3. URL s neznámou akcí a nepovolená metoda vrátí správné obecné chyby.
 4. Root stránka zobrazí H1; při výchozích 32 ASCII znacích `0` i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `health`, `info` a `data` zůstávají funkční.
 5. `GET` a `HEAD` na akci `health` vrátí `405` s `Allow: POST`. Validní `POST` obsahuje právě `auth-none` s čerstvým UUIDv4 `requestId`, bez timestampu, tagu nebo jiného důkazu znalosti tajemství.
-6. Úspěšný `health` má přesně sedm povinných polí `serverVersion`, `status`, `description`, `timestamp`, původní `requestId`, 12bajtové `iv` a 16bajtový `tag`; status je `running`, description `OK` a timestamp má přesný UTC tvar `YYYY-MM-DDTHH:MM:SSZ`.
+6. Úspěšný `health` má přesně sedm povinných polí `serverVersion`, `status`, `description`, `timestamp`, původní `requestId`, 12bajtové `iv` a 16bajtový `tag`; status je `running`, description `OK` a timestamp má přesný UTC tvar `YYYY-MM-DDTHH:MM:SS.sssZ` s přesností na milisekundy.
 7. Klient před ověřením GCM tagu nezmění časový offset. Po úspěšném ověření pomocí efektivního `SERVER_SECRET` odvodí offset vůči serveru; změněná nebo podvržená odpověď offset neovlivní.
 
 ### 16.2 JSON, NDJSON a limity
