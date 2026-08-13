@@ -76,8 +76,9 @@ Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu s
 3. **Ověření serveru a času.** Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří, že `requestId` souhlasí, a ověří GCM tag podle protokolu. Teprve potom přijme čas serveru a vypočítá `timeDelta`; lokální systémový čas nikdy nemění.
 4. **Časová rezerva.** Serverový čas se plánuje s milisekundovou přesností. Klient používá efektivní serverový čas `localNow + timeDelta - safetyMargin`. Výchozí konzervativní mez je jedna sekunda za serverem; přesná hodnota má být konfigurovatelná či později definitivně stanovena.
 5. **Info.** Klient autentizovaně odešle `auth-semi` na `?action=info`, ověří a dešifruje odpověď a uloží obdržené limity a doporučené provozní hodnoty. Tvrdé limity, zejména maximální velikost těla požadavku, musí dodržet. Doporučené intervaly pollingů slouží jako plánovač, pokud nejsou v budoucí specifikaci označené za závazné.
-6. **Provoz.** Po úspěšném `health` a `info` se zahájí čtení tunelu a pravidelný polling endpointu `data`.
-7. **Obnova.** Při dočasné síťové nebo autentizační chybě klient nevypíná tunel bezprostředně, loguje stav, používá omezený backoff a opakuje `health` a `info` před návratem do provozu. Chyba konfigurace nebo neplatný server secret vyžaduje zásah uživatele.
+6. **Ověření přístupového klíče.** Ještě před spuštěním tří pracovních rolí klient provede prázdný autentizovaný polling `data`. Tím ověří `ACCESS_KEY` i úplnou odpověď `data`. Přijaté platné dávky zpracuje stejně jako při běžném pollingu a připraví je pro výstupní pracovník.
+7. **Provoz.** Teprve po úspěšném `health`, `info` a prvním prázdném `data` pollingu se zahájí čtení tunelu a pravidelný polling endpointu `data`.
+8. **Obnova.** Při dočasné síťové nebo autentizační chybě klient nevypíná tunel bezprostředně, loguje stav, používá omezený backoff a opakuje `health`, `info` a prázdný `data` polling před návratem do provozu. Chyba konfigurace nebo neplatný server secret vyžaduje zásah uživatele.
 
 Příkazový výstup má stručně ukazovat fáze: připojování k serveru, dostupný server, úspěšně ověřený `SERVER_SECRET`, zjištěné provozní limity a stav tunelu. Tajemství ani autentizační tagy se nevypisují.
 
@@ -136,6 +137,26 @@ Windows je primární platforma. Použije se ovladač TUN/TAP kompatibilní s po
 Službový režim je vhodný pro dlouhodobý běh a automatické obnovení. Konzolový režim zůstane pro diagnostiku, s čitelnými fázemi připojení a agregovanými statistikami. Síťovou konfiguraci, DNS a routes je nutné měnit pouze explicitně a při ukončení obnovit předchozí stav.
 
 Platformní vrstva poskytne jeden sekvenční zdroj paketů pro vstupního pracovníka a jeden sekvenční cíl pro výstupního pracovníka. Případné asynchronní I/O dokončení se serializuje na těchto hranicích.
+
+#### Windows Service, konzole a tray
+
+Pro běžný provoz je klient implementovaný jako Windows Service. Služba vlastní konfiguraci, TUN/TAP, síťové operace i tři pracovní role. Konzolová aplikace poskytuje instalaci, diagnostiku a správu služby. Samostatná tray aplikace běží v uživatelské relaci a službu ovládá pouze přes lokální zabezpečené IPC; nesmí sama otevírat tunel, provádět VPN provoz ani držet klíče.
+
+Tray používá ikonu Material Symbols `shield_lock` pod licencí Apache 2.0. Šedá ikona znamená odpojeno, oranžová ikona znamená připojování a zelená ikona znamená úspěšně ověřené připojení. Po selhání se zobrazí modální chyba a ikona se vrátí do šedého stavu.
+
+Menu tray aplikace má přesně toto pořadí:
+
+1. **Edit Config** otevře konfigurační JSON v Notepadu. Úprava konfigurace se projeví až při dalším připojení; je-li služba připojená, uživatel ji nejprve odpojí.
+2. **Show Info** požádá službu o jednorázový `health` a poté `info`, ověří a dešifruje odpověď, uloží její plaintext jako `info.json` vedle konfiguračního JSON a otevře jej v Notepadu. Tato volba nespouští `data` polling ani VPN provoz.
+3. **Connect** zahájí bootstrap; při připojeném stavu se tato položka změní na **Disconnect** a bezpečně zastaví provoz služby.
+
+Bootstrap po volbě **Connect** probíhá v pořadí `health`, `info`, prázdný `data` polling. Selhání `health` zobrazí, že se nepodařilo spojit a ověřit server na nakonfigurované URL. Selhání `info` po úspěšném `health` oznámí problém se `SERVER_SECRET` nebo s odpovědí serveru. Selhání prvního `data` requestu se jako problém `ACCESS_KEY` označí pouze při autorizačním výsledku; ostatní chyby zůstanou obecnou síťovou nebo serverovou chybou. Diagnostika nikdy nevypisuje klíče, tagy ani ciphertext.
+
+#### Distribuce a instalace ve Windows
+
+Distribuce pro Windows je složka `dist`. Obsahuje binární soubory služby, tray aplikace, konzolového správce, všechny nezbytné knihovny a skripty `install.bat` a `uninstall.bat`. Složka `dist` je kompletní předatelná distribuční jednotka.
+
+`install.bat` je podporovaný vstupní bod instalace. Smí zavolat pomocný PowerShellový skript a vyžádat si zvýšená administrátorská oprávnění. Nainstaluje a zaregistruje Windows Service, provede nutné kroky pro TUN/TAP a nakonfiguruje automatické spuštění tray aplikace při přihlášení uživatele; tray aplikace se po dokončení instalace spustí a zobrazí vedle systémových hodin. `uninstall.bat` provede opačný, bezpečný postup: zastaví a odregistruje službu, odebere automatické spuštění tray aplikace a odstraní pouze součásti vytvořené instalací. Konfigurační soubor a uživatelská data se při odinstalaci nemažou bez výslovné volby uživatele.
 
 ### macOS
 
