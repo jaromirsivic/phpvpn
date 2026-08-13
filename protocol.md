@@ -410,13 +410,25 @@ aad = "PHPVPN-DATA" LF
       BASE64URL(iv)
 ```
 
-Plaintext je přesný binární IPv4 paket. Odesílatel jej zašifruje AES-256-GCM a přenese ciphertext a 16bajtový tag. Příjemce musí před předáním paketu virtuální kartě:
+Plaintext je jedna binární dávka IPv4 paketů pro přesnou uspořádanou dvojici `src`, `dst`. Všechny vícebajtové hodnoty používají network byte order (big-endian):
+
+```text
+packetCount                     : unsigned 32-bit integer
+packetLength[0..packetCount-1]  : unsigned 16-bit integer
+packetBytes[0..packetCount-1]   : přesně packetLength[i] bajtů IPv4 paketu
+```
+
+`packetCount` MUSÍ být nejméně 1. Každý `packetLength` MUSÍ být v rozsahu 20 až 65535 a každá položka `packetBytes` MUSÍ být úplný syntakticky platný IPv4 paket, jehož délka IPv4 hlavičky a pole Total Length přesně odpovídají `packetLength`. Součet délky čtyřbajtové hlavičky, všech dvoubajtových délek a všech `packetBytes` MUSÍ přesně odpovídat délce plaintextu; trailing data ani částečná položka nejsou povoleny.
+
+Odesílatel sestaví dávku pouze z paketů, jejichž vnitřní zdrojová a cílová IPv4 adresa se přesně shodují s vnějšími poli `src` a `dst` datového záznamu. Poté celý plaintext dávky zašifruje AES-256-GCM a přenese ciphertext a 16bajtový tag. Příjemce musí před předáním paketů virtuální kartě:
 
 1. zahodit řádek, pokud se `dst` nerovná jeho jediné nakonfigurované VPN adrese;
 2. vyhledat jediný klíč podle přesných směrovacích adres `src` a `dst`;
 3. sestavit přesné AAD;
 4. ověřit GCM tag a teprve poté získat plaintext;
-5. zkontrolovat syntaxi IPv4, celkovou délku a shodu vnitřních zdrojových a cílových adres s `src` a `dst`.
+5. ověřit `packetCount`, tabulku délek, přesnou délku plaintextu a každý IPv4 paket;
+6. ověřit shodu vnitřních zdrojových a cílových adres každého paketu s `src` a `dst`;
+7. předat všechny platné pakety dávky virtuální kartě sekvenčně v pořadí, v jakém jsou uloženy v plaintextu. Neplatná dávka se nesmí předat částečně.
 
 Relay tag neověřuje, protože nemá `PAYLOAD_KEY`. Změna `src`, `dst`, `messageId`, IV nebo ciphertextu způsobí u příjemce neplatný tag.
 
@@ -711,6 +723,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 7. Kanonické zápisy `_w` pro bajt `ff` a `__8` pro bajty `ffff` projdou obecnou base64url validací. Nekanonické zápisy `_x` a `__9`, délka se zbytkem 1 modulo 4, znak `=`, whitespace a znaky `+` nebo `/` jsou odmítnuty, i když je použitý dekodér umí převést na bajty. Test decode–reencode musí pro každou přijatou hodnotu vrátit přesně původní text.
 8. Úspěšná odpověď obsahuje nula nebo více přímých řádků `data`, právě jeden `data-result` a právě jeden poslední `data-mac`; další řádek za `data-mac` je neplatný.
 9. `auth-none` má přesně pole `type` a `requestId`; chybějící, neznámé nebo nadbytečné pole včetně `timestamp`, `src` či `tag` vrátí `400 bad_request`.
+10. Dávka payloadu se dvěma IPv4 pakety projde jen při přesném big-endian `packetCount`, tabulce délek a odpovídajících IPv4 Total Length. Nulový `packetCount`, délka kratší než 20, trailing bajt, neúplná tabulka délek, neúplný paket nebo neshoda vnitřního `src` či `dst` s datovým řádkem způsobí zahození celé dávky bez předání jediného paketu.
 
 ### 16.3 Kryptografie
 

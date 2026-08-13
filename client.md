@@ -24,6 +24,16 @@ Jádro klienta nesmí záviset na API konkrétní platformy. Je rozděleno do t�
 
 Platformní implementace poskytne pouze rozhraní `Tunnel` a případné API pro služby, privilegia a síťovou konfiguraci. Pro HTTP lze použít jednotnou knihovnu dostupnou na všech třech platformách, například libcurl. Pro nativní kryptografii lze použít ověřenou knihovnu s interoperabilní implementací AES-GCM; požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
 
+### Běhový model
+
+Společné jádro používá tři sériově pracující role. Implementace je smí realizovat třemi vlákny nebo ekvivalentním event-loopem, ale vlastnictví dat a pravidla souběhu musí zůstat stejná.
+
+1. **Vstupní pracovník tunelu** je jediným čtenářem TUN/TAP. Ověří základní syntaxi IPv4, že vnitřní zdroj odpovídá lokální VPN adrese, a vloží celý paket do odchozí FIFO fronty podle cílové VPN adresy. Nešifruje ani nečeká na síť.
+2. **Síťový pracovník** je jediným vlastníkem `health`, `info` a `data` requestů, plánování dávek, šifrování, ověřování odpovědí a dešifrování. V jednom okamžiku smí existovat nanejvýš jeden probíhající `data` request.
+3. **Výstupní pracovník tunelu** je jediným zapisovatelem do TUN/TAP. Sekvenčně odebírá ověřené IPv4 pakety z příchozí FIFO fronty a zapisuje je do virtuálního rozhraní.
+
+Fronty se zamykají pouze krátce při vložení, odebrání nebo atomickém převzetí položek a při změně jejich velikostních počítadel. Zámek nesmí být držen během šifrování, dešifrování, HTTP komunikace, čekání na odpověď ani zápisu do tunelu. První pracovník proto pokračuje ve čtení i v době, kdy síťový pracovník zpracovává předchozí request.
+
 ## Konfigurační soubor
 
 Konfigurace je JSON, načtený jednou při startu. Po úspěšné validaci zůstává v paměti; běžný datový tok znovu nečte disk. Chybná nebo neúplná konfigurace brání spuštění.
@@ -39,6 +49,10 @@ Navržená struktura:
     "virtualIp": "10.99.99.2",
     "accessKey": "64-znakový-malý-hex"
   },
+  "runtime": {
+    "maxOutboundQueueBytes": 16777216,
+    "maxInboundQueueBytes": 16777216
+  },
   "communicationContracts": {
     "10.99.99.3": {
       "payloadKey": "64-znakový-malý-hex"
@@ -53,47 +67,42 @@ Navržená struktura:
 
 Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu serveru, virtuální IP a seznam vzdálených IP bez klíčů a secretů.
 
+`maxOutboundQueueBytes` je celková maximální velikost paketů načtených z TUN/TAP, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do TUN/TAP. Obě hodnoty jsou kladná celá čísla v bajtech a při vynechání mají výchozí hodnotu 16 MiB (`16777216`).
+
 ## Stavový automat připojení
 
 1. **Načtení konfigurace.** Klient validuje URL, VPN IP, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost virtuálního rozhraní.
 2. **Health.** Vygeneruje nový UUIDv4 `requestId` a odešle `auth-none` na `?action=health`.
 3. **Ověření serveru a času.** Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří, že `requestId` souhlasí, a ověří GCM tag podle protokolu. Teprve potom přijme čas serveru a vypočítá `timeDelta`; lokální systémový čas nikdy nemění.
-4. **Časová rezerva.** Serverový čas se plánuje s milisekundovou přesností. Klient používá efektivní serverový čas `localNow + timeDelta - safetyMargin`. Výchozí konzervativní mez je jedna sekunda za serverem; přesná hodnota má být konfigurovatelná či později definitivně stanovena. Specifikace serveru musí být upravena z sekund na milisekundy.
+4. **Časová rezerva.** Serverový čas se plánuje s milisekundovou přesností. Klient používá efektivní serverový čas `localNow + timeDelta - safetyMargin`. Výchozí konzervativní mez je jedna sekunda za serverem; přesná hodnota má být konfigurovatelná či později definitivně stanovena.
 5. **Info.** Klient autentizovaně odešle `auth-semi` na `?action=info`, ověří a dešifruje odpověď a uloží obdržené limity a doporučené provozní hodnoty. Tvrdé limity, zejména maximální velikost těla požadavku, musí dodržet. Doporučené intervaly pollingů slouží jako plánovač, pokud nejsou v budoucí specifikaci označené za závazné.
 6. **Provoz.** Po úspěšném `health` a `info` se zahájí čtení tunelu a pravidelný polling endpointu `data`.
 7. **Obnova.** Při dočasné síťové nebo autentizační chybě klient nevypíná tunel bezprostředně, loguje stav, používá omezený backoff a opakuje `health` a `info` před návratem do provozu. Chyba konfigurace nebo neplatný server secret vyžaduje zásah uživatele.
 
 Příkazový výstup má stručně ukazovat fáze: připojování k serveru, dostupný server, úspěšně ověřený `SERVER_SECRET`, zjištěné provozní limity a stav tunelu. Tajemství ani autentizační tagy se nevypisují.
 
-## Odchozí tok paketů
+## Odchozí tok paketů a plánování requestů
 
-Virtuální rozhraní dodává kompletní IPv4 pakety. Klient z hlavičky IPv4 přečte cílovou adresu a pracuje jen s adresami VPN prostoru.
+Virtuální rozhraní dodává kompletní IPv4 pakety. Paket určený vlastní virtuální IP ani paket bez platného `communicationContract` se přes relay neodesílá; zahození se loguje pouze souhrnně po cíli. Pro známý cíl vstupní pracovník vloží paket do FIFO fronty dané cílové IP. Při dosažení `maxOutboundQueueBytes` nové pakety zahazuje.
 
-1. Paket určený vlastní virtuální IP se neodesílá jako odchozí zpráva přes relay.
-2. Pro cíl, který nemá platný `communicationContract`, se paket tiše zahodí. Log nehlásí každý paket, ale například jednou za jednu až pět sekund souhrn po cílové IP.
-3. Pro známý cíl se paket přidá do FIFO bucketu dané cílové IP. Fronty zachovávají pořadí paketů pro jednotlivého příjemce.
-4. Flush nastane po doporučeném minimálním pollingovém intervalu, nebo když se další paket bezpečně nevejde do plánovaného requestu. Je-li buffer plný před povoleným časem pollingu, další pakety se zahazují a zahrnou do souhrnného logu.
-5. Po vypršení intervalu se odešle request `data`; i při prázdných frontách se odešle prázdný autentizovaný polling, aby klient vyzvedl příchozí data.
+Síťový pracovník pro každý request vybírá pouze requestově velký prefix front. Jeden datový element patří přesně jedné uspořádané dvojici `src`, `dst` a nese dávku paketů jen pro tento cíl. Binární plaintext, byte order a validační pravidla jsou normativně definované v `protocol.md`. Síťový pracovník jej šifruje AES-256-GCM příslušným `PAYLOAD_KEY` a vytváří normativní řádek `data`.
 
-### Balení jedné cílové dávky
+### Pollingový interval
 
-Jedna dávka pro danou vzdálenou IP má binární plaintext:
+Klient používá absolutní lokální hranice 20 ms a 2 s. Po ověřené odpovědi `info` vypočte:
 
 ```text
-packetCount : unsigned 32-bit integer
-packetLength[0..packetCount-1] : unsigned 16-bit integer pro každý paket
-packetBytes[0..packetCount-1] : surové IPv4 pakety ve stejném pořadí
+effectiveMinPollIntervalMs = clamp(minDataPollIntervalMs, 20, 2000)
+effectiveMaxPollIntervalMs = clamp(maxDataPollIntervalMs, 20, 2000)
 ```
 
-Musí být pevně stanoveno pořadí bajtů vícebajtových čísel; doporučený je network byte order (big-endian). Každý paket musí mít délku v rozsahu reprezentovatelném 16 bity a parser na příjmu musí ověřit, že součet délek přesně odpovídá zbývajícím bajtům. Přídavný náhodný „salt“ v plaintextu se nepřidává: AES-GCM již používá pro každý záznam nový náhodný 12bajtový IV a další náhodná data bezpečnost nezvyšují.
+Síťový pracovník provede polling i při prázdných odchozích frontách a zahájí jej nejpozději po efektivním maximu, je-li volný. Timeout může skutečný interval prodloužit; klient kvůli tomu neotevře paralelní request.
 
-Plaintext se zašifruje AES-256-GCM klíčem z kontraktu přesně pro uspořádanou dvojici lokální `src` a vzdálená `dst`. Použije se nový 12bajtový IV, 16bajtový tag a normativní AAD z `protocol.md`, včetně směrovacích polí a `messageId`. IV, ciphertext i tag se kódují kanonickým base64url bez paddingu a tvoří normativní řádek `data`. Jednotlivé řádky se spojí LF do NDJSON, předcházené `auth-full`, jehož HMAC pokrývá přesné bajty těla.
+### Velikostní a spravedlivé plánování
 
-### Velikostní plánování
+Pracovník používá rozpočet `maxRequestBodyBytes - 1024`; 1 KiB je pevná rezerva nad očekávanou serializační režií. Konečná kontrola vždy změří skutečně sestavené tělo v bajtech. Pokud by další datový element nebo paket překročil `maxRequestBodyBytes` či limit počtu záznamů, zůstane na čele své FIFO fronty pro další request.
 
-Pro dávku s `n` pakety a součtem jejich délek `S` je délka binárního plaintextu `4 + 2n + S`. Base64url délka hodnoty o `x` bajtech je `4 × floor(x / 3) + (0, 2, 3)` pro zbytek dělení `x` hodnoty `0, 1, 2`. Samostatně se započítají IV, GCM tag, JSON syntaxe, `messageId`, `src`, `dst`, LF řádky i řádek `auth-full`.
-
-Plánovač může předem používat přesný výpočet, včetně rezervy 256 bajtů pro budoucí rozšíření. Závazná poslední kontrola však vždy změří skutečně sestavené tělo requestu v bajtech. Pokud přesahuje `MAX_REQUEST_BODY_BYTES`, klient odebere poslední přidanou dávku či paket a zařadí jej do dalšího requestu. Nesmí se spoléhat pouze na hrubý přepočet „tři čtvrtiny“, protože JSON a odděleně kódované hodnoty mají vlastní režii.
+Výběr je spravedlivý: pracovník vede kruhové pořadí cílů, v první fázi se pokusí zařadit alespoň jeden paket z každé neprázdné fronty a v dalších průchodech doplňuje pakety opět kruhově, dokud zbývá rozpočet. Po každém requestu posune počáteční cíl. Jedna dlouhá fronta tak nevytlačuje krátké fronty; pakety v každé konkrétní frontě zůstávají FIFO.
 
 ## Příjem dat
 
@@ -104,7 +113,8 @@ Odpověď na `data` je NDJSON: nula nebo více řádků `data`, právě jeden `d
 3. Podle přesné dvojice `src`, `dst` vyhledá kontrakt. Neexistuje-li, řádek zahodí a souhrnně zaloguje.
 4. Ověří kanonický base64url, délky IV a tagu a provede AES-GCM dešifrování s příslušným `PAYLOAD_KEY` a normativním AAD. Neplatný GCM tag znamená zahození pouze daného řádku.
 5. Ověří formát binární dávky: hlavičku počtu, tabulku délek, přesný počet a hranice surových bajtů. Nesmí předat částečně rozbalenou nebo neověřenou dávku.
-6. Platné IPv4 pakety zapíše do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
+6. Před pollingem kontroluje rezervu `maxInboundQueueBytes`, aby data nevyzvedl jen proto, aby je následně zahodil. Jestliže se ověřený paket do příchozí fronty přesto nevejde, zahodí jej a souhrnně zaloguje.
+7. Výstupní pracovník zapíše platné IPv4 pakety do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
 
 Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo pád po převzetí může znamenat ztrátu dávky; klient nemá předstírat garantované doručení. Aplikační vrstvy nad VPN mohou používat vlastní retransmise.
 
@@ -125,9 +135,13 @@ Windows je primární platforma. Použije se ovladač TUN/TAP kompatibilní s po
 
 Službový režim je vhodný pro dlouhodobý běh a automatické obnovení. Konzolový režim zůstane pro diagnostiku, s čitelnými fázemi připojení a agregovanými statistikami. Síťovou konfiguraci, DNS a routes je nutné měnit pouze explicitně a při ukončení obnovit předchozí stav.
 
+Platformní vrstva poskytne jeden sekvenční zdroj paketů pro vstupního pracovníka a jeden sekvenční cíl pro výstupního pracovníka. Případné asynchronní I/O dokončení se serializuje na těchto hranicích.
+
 ### macOS
 
 V macOS je doporučené použít nativní síťový mechanismus podporovaný systémem, typicky Network Extension s packet tunnel providerem. Ten vyžaduje správné podepisování, entitlementy a uživatelské schválení. Společné C++ jádro zůstává stejné; malý host/provider obstará čtení a zápis paketů a předá je přes stabilní C nebo C++ rozhraní.
+
+`NEPacketTunnelFlow` může předávat dávky paketů v callbacku. Provider je předá vstupnímu pracovníkovi v pořadí dávky; výstupní pracovník může zapisovat dávky, aniž by tím změnil FIFO pořadí jednotlivých paketů.
 
 Alternativy založené na `/dev/tun` nejsou na moderním macOS obecně přenositelné ani doporučené pro distribuovaný produkt. Je nutné počítat s pravidly sandboxingu, životním cyklem rozšíření a omezeními distribuce.
 
@@ -137,13 +151,16 @@ Na Linuxu je přirozeným rozhraním TUN zařízení `/dev/net/tun`. Klient vytv
 
 Produkční služba může běžet pod systemd s minimálními capability, restartovací politikou a ochranou konfiguračního souboru. Implementace nemá předpokládat jeden konkrétní firewall ani síťový manažer; jejich integrace má být volitelná.
 
+Základní implementace používá jeden TUN file descriptor a tři společné pracovní role. Linuxový multiqueue TUN je volitelná optimalizace; nesmí změnit společná pravidla FIFO, limitů front ani vlastnictví paketů.
+
 ## Doporučené pořadí implementace
 
 1. Implementovat a testovat čisté multiplatformní jádro: konfiguraci, kanonickou base64url, HMAC/HKDF, AES-GCM, čas a parsery.
 2. Implementovat HTTP transport a kontraktní testy `health`, `info` a prázdného `data` pollingu proti serveru.
-3. Implementovat fronty, přesné plánování velikosti a odchozí/příchozí datové řádky bez tunelu, s testovacími binárními pakety.
-4. Přidat Windows tunel a end-to-end test dvou klientů.
-5. Přidat linuxovou TUN implementaci, poté macOS Network Extension wrapper.
-6. Doplnit zátěžové testy, pádové scénáře, neplatné NDJSON, limity těla, ztrátu odpovědi a bezpečnostní regresní testy.
+3. Implementovat tři pracovní role, omezené fronty, spravedlivé plánování a přesné měření velikosti requestu bez tunelu.
+4. Implementovat agregovaný binární payload a kontraktní testy jeho parseru.
+5. Přidat Windows tunel a end-to-end test dvou klientů.
+6. Přidat linuxovou TUN implementaci, poté macOS Network Extension wrapper.
+7. Doplnit zátěžové testy, pádové scénáře, neplatné NDJSON, limity těla, přeplněné fronty, ztrátu odpovědi a bezpečnostní regresní testy.
 
-Před implementací je nutné promítnout milisekundový formát času do `protocol.md` a definitivně normativně definovat binární payload formát, byte order, velikostní politiku a chování při přeplněných frontách.
+Před implementací musí být změny `client.md` a `protocol.md` nasazeny společně; agregovaný payload není kompatibilní se starším pravidlem jednoho IPv4 paketu v ciphertextu.
