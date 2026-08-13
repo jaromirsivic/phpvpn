@@ -28,7 +28,7 @@ Platformní implementace poskytne pouze rozhraní `Tunnel` a případné API pro
 
 Společné jádro používá tři sériově pracující role. Implementace je smí realizovat třemi vlákny nebo ekvivalentním event-loopem, ale vlastnictví dat a pravidla souběhu musí zůstat stejná.
 
-1. **Vstupní pracovník tunelu** je jediným čtenářem TUN/TAP. Ověří základní syntaxi IPv4, že vnitřní zdroj odpovídá lokální VPN adrese, a vloží celý paket do odchozí FIFO fronty podle cílové VPN adresy. Nešifruje ani nečeká na síť.
+1. **Vstupní pracovník tunelu** je jediným čtenářem TUN/TAP. Provede úplnou validaci IPv4 paketu podle pravidel níže, vyžaduje lokální virtuální IP jako vnitřní zdroj a zařadí jej výhradně do FIFO fronty kontraktu odpovídajícího jeho vnitřnímu cíli. Nešifruje ani nečeká na síť.
 2. **Síťový pracovník** je jediným vlastníkem `health`, `info` a `data` requestů, plánování dávek, šifrování, ověřování odpovědí a dešifrování. V jednom okamžiku smí existovat nanejvýš jeden probíhající `data` request.
 3. **Výstupní pracovník tunelu** je jediným zapisovatelem do TUN/TAP. Sekvenčně odebírá ověřené IPv4 pakety z příchozí FIFO fronty a zapisuje je do virtuálního rozhraní.
 
@@ -84,9 +84,17 @@ Příkazový výstup má stručně ukazovat fáze: připojování k serveru, dos
 
 ## Odchozí tok paketů a plánování requestů
 
-Virtuální rozhraní dodává kompletní IPv4 pakety. Paket určený vlastní virtuální IP ani paket bez platného `communicationContract` se přes relay neodesílá; zahození se loguje pouze souhrnně po cíli. Pro známý cíl vstupní pracovník vloží paket do FIFO fronty dané cílové IP. Při dosažení `maxOutboundQueueBytes` nové pakety zahazuje.
+Virtuální rozhraní dodává kompletní IPv4 pakety. Před zařazením musí vstupní pracovník provést úplnou strukturální validaci podle následující podkapitoly. Vnitřní zdroj musí přesně odpovídat lokální virtuální IP a vnitřní cíl musí být platná VPN IP s existujícím `communicationContract`; výběr fronty i payload klíče proto vždy vychází ze stejné uspořádané dvojice `(lokální IP, vnitřní cíl)`. Paket určený vlastní virtuální IP, paket s neplatnou hlavičkou nebo paket bez platného kontraktu se přes relay neodesílá; zahození se loguje pouze souhrnně po důvodu a cíli. Při dosažení `maxOutboundQueueBytes` nové pakety zahazuje.
 
 Síťový pracovník pro každý request vybírá pouze requestově velký prefix front. Jeden datový element patří přesně jedné uspořádané dvojici `src`, `dst` a nese dávku paketů jen pro tento cíl. Binární plaintext, byte order a validační pravidla jsou normativně definované v `protocol.md`. Síťový pracovník jej šifruje AES-256-GCM příslušným `PAYLOAD_KEY` a vytváří normativní řádek `data`.
+
+### Úplná validace vnitřních IPv4 paketů
+
+Klient považuje IPv4 paket za platný pouze tehdy, pokud má alespoň 20 bajtů, první nibble udává verzi 4, `IHL` je alespoň 5 a délka hlavičky nepřesahuje délku bufferu. Pole `total length` musí být alespoň tak velké jako délka hlavičky a musí se přesně rovnat délce celého bufferu; klient nesmí akceptovat přívěsné ani chybějící bajty. Kontrolní součet IPv4 hlavičky musí být platný. Implementace před každým čtením pole ověří jeho hranice a nesmí z neověřených hodnot provádět alokaci ani výpočet ukazatelů.
+
+Klient fragmenty znovu neskládá ani je neinterpretuje jako neúplný paket. Platný IPv4 fragment smí projít jako samostatný celý paket, pokud splňuje výše uvedenou strukturální kontrolu a kontrolu vnitřních adres. Fragmenty nikdy nesmějí obcházet vazbu adres ani vytvářet vlastní stav skládání.
+
+Při odesílání musí být vnitřní zdroj shodný s lokální virtuální IP a vnitřní cíl shodný s cílem kontraktu, do jehož fronty byl paket zařazen. Po přijetí musí být vnitřní zdroj shodný s `src` datového řádku a vnitřní cíl shodný s lokální virtuální IP, která je současně `dst` datového řádku. Kontrola se provede po úspěšném AES-GCM dešifrování a rozbalení dávky, ale před vložením paketu do příchozí fronty nebo zápisem do tunelu. Každý nevyhovující paket se samostatně zahodí a eviduje pouze souhrnně; neplatný paket nesmí zablokovat zpracování ostatních paketů stejné dávky.
 
 ### Pollingový interval
 
@@ -114,8 +122,9 @@ Odpověď na `data` je NDJSON: nula nebo více řádků `data`, právě jeden `d
 3. Podle přesné dvojice `src`, `dst` vyhledá kontrakt. Neexistuje-li, řádek zahodí a souhrnně zaloguje.
 4. Ověří kanonický base64url, délky IV a tagu a provede AES-GCM dešifrování s příslušným `PAYLOAD_KEY` a normativním AAD. Neplatný GCM tag znamená zahození pouze daného řádku.
 5. Ověří formát binární dávky: hlavičku počtu, tabulku délek, přesný počet a hranice surových bajtů. Nesmí předat částečně rozbalenou nebo neověřenou dávku.
-6. Před pollingem kontroluje rezervu `maxInboundQueueBytes`, aby data nevyzvedl jen proto, aby je následně zahodil. Jestliže se ověřený paket do příchozí fronty přesto nevejde, zahodí jej a souhrnně zaloguje.
-7. Výstupní pracovník zapíše platné IPv4 pakety do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
+6. U každého rozbaleného paketu provede úplnou validaci IPv4. Navíc vyžaduje, aby jeho vnitřní zdroj přesně odpovídal `src` datového řádku a vnitřní cíl lokální virtuální IP, tedy `dst` datového řádku. Nevyhovující paket zahodí ještě před vložením do příchozí fronty; platnost ostatních paketů dávky tím není dotčena.
+7. Před pollingem kontroluje rezervu `maxInboundQueueBytes`, aby data nevyzvedl jen proto, aby je následně zahodil. Jestliže se ověřený paket do příchozí fronty přesto nevejde, zahodí jej a souhrnně zaloguje.
+8. Výstupní pracovník zapíše pouze takto platné IPv4 pakety do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
 
 Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo pád po převzetí může znamenat ztrátu dávky; klient nemá předstírat garantované doručení. Aplikační vrstvy nad VPN mohou používat vlastní retransmise.
 
