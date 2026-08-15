@@ -36,7 +36,7 @@ Fronty se zamykají pouze krátce při vložení, odebrání nebo atomickém př
 
 ## Konfigurační soubor
 
-Konfigurace je JSON, načtený jednou při startu. Po úspěšné validaci zůstává v paměti; běžný datový tok znovu nečte disk. Chybná nebo neúplná konfigurace brání spuštění.
+Konfigurace je JSON ve vlastnictví služby. Služba ji načte a přísně validuje při každém novém pokusu o připojení; po úspěšné validaci zůstává po dobu připojení v paměti a běžný datový tok znovu nečte disk. Chybná nebo neúplná konfigurace brání spuštění VPN provozu. Tray ani konzolová aplikace konfiguraci přímo nečtou ani nezapisují do souboru a nevalidují ji za službu. Přes veřejné IPC však mohou získat nebo odeslat celý konfigurační JSON, a proto mohou při obsluze `get-config` a `set-config` dočasně držet i jeho tajné hodnoty v paměti.
 
 Navržená struktura:
 
@@ -65,7 +65,7 @@ Navržená struktura:
 
 `trustAnyTlsCertificate` má podle současného rozhodnutí výchozí hodnotu `true`. Při HTTPS pak klient záměrně přijme libovolný certifikát pro nakonfigurovanou URL, včetně self-signed certifikátu a certifikátu vydaného neznámou nebo nedůvěryhodnou certifikační autoritou. Jde o vědomě přijaté kritické bezpečnostní riziko: klient nebude ve výchozím stavu ověřovat řetězec důvěry ani důvěryhodnost vydávající autority. Implementace klienta s tímto rizikem záměrně počítá. Bezpečnější budoucí profil může nastavit hodnotu na `false` a vyžadovat standardní validaci řetězce a názvu hostitele.
 
-Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu serveru, virtuální IP a seznam vzdálených IP bez klíčů a secretů.
+Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu serveru, virtuální IP a seznam vzdálených IP bez klíčů a secretů. To neomezuje záměrně veřejné IPC příkazy `get-config` a `set-config`.
 
 `maxOutboundQueueBytes` je celková maximální velikost paketů načtených z TUN/TAP, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do TUN/TAP. Obě hodnoty jsou kladná celá čísla v bajtech a při vynechání mají výchozí hodnotu 16 MiB (`16777216`).
 
@@ -134,8 +134,9 @@ Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo p
 - `health` autentizuje serverový čas a veřejná pole pomocí `SERVER_SECRET`; `info` a `data` vyžadují přesnou protokolovou autentizaci.
 - HTTP zůstává záměrně podporovaným provozním režimem. Jsme si vědomi, že aktivní útočník může zachycený platný polling v časovém okně zopakovat, vyzvednout ciphertext z příchozí fronty oběti a nenávratně jej z relay odstranit, i když bez payload klíče nepřečte plaintext. Toto riziko replay útoku a související ztráty dostupnosti vědomě přijímáme; klient bude implementován s podporou HTTP a bez mechanismu, který by tento protokolový replay sám potlačoval.
 - Pokud `trustAnyTlsCertificate` zůstane `true`, HTTPS nechrání klienta spolehlivě proti podvržení serveru na úrovni TLS. Nastavení je vědomě akceptované kompatibilitní riziko a musí být zřetelně viditelné v konfiguraci i startovním logu.
+- Řídicí named pipe je záměrně dostupná každé lokální aplikaci bez ověřování uživatele, skupiny, procesu nebo Windows tokenu. Každý lokální proces proto může číst stav a diagnostiku služby, vyžádat si `info` a úplnou konfiguraci včetně jejích tajných hodnot, uložit novou konfiguraci a odeslat povolené příkazy včetně `connect` a `disconnect`. Toto riziko neoprávněného lokálního ovládání, změny konfigurace a zpřístupnění jejích údajů vědomě přijímáme. Validace formátu zpráv, verze smlouvy a whitelist příkazů tím nejsou zrušeny.
 - Protokol nebrání replayi uvnitř platného časového okna, neposkytuje exactly-once, potvrzení ani ochranu dostupnosti. Klient nemá vytvářet vlastní replay cache, pokud se současně nezmění normativní specifikace.
-- Klíče, tagy, ciphertexty, celé requesty a interní cesty se nesmí zapisovat do logů. Konfigurační soubor má mít omezená přístupová oprávnění.
+- Klíče, tagy, ciphertexty, celé requesty a interní cesty se nesmí zapisovat do logů. Konfigurační soubor má mít omezená přístupová oprávnění jako ochranu proti přímému čtení ze souborového systému; tato oprávnění však neomezují záměrně veřejné `get-config` a `set-config` přes named pipe.
 
 ## Specifika platforem
 
@@ -143,21 +144,70 @@ Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo p
 
 Windows je primární platforma. Použije se ovladač TUN/TAP kompatibilní s požadovaným způsobem provozu; při výběru je vhodné preferovat aktivně udržované řešení s dokumentovaným uživatelským API a možností tichého nasazení. Aplikace obvykle potřebuje administrátorské oprávnění pro instalaci ovladače, vytvoření či konfiguraci rozhraní a směrování.
 
-Službový režim je vhodný pro dlouhodobý běh a automatické obnovení. Konzolový režim zůstane pro diagnostiku, s čitelnými fázemi připojení a agregovanými statistikami. Síťovou konfiguraci, DNS a routes je nutné měnit pouze explicitně a při ukončení obnovit předchozí stav.
+Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Síťovou konfiguraci, DNS a routes je nutné měnit pouze explicitně a při ukončení obnovit předchozí stav.
 
 Platformní vrstva poskytne jeden sekvenční zdroj paketů pro vstupního pracovníka a jeden sekvenční cíl pro výstupního pracovníka. Případné asynchronní I/O dokončení se serializuje na těchto hranicích.
 
 #### Windows Service, konzole a tray
 
-Pro běžný provoz je klient implementovaný jako Windows Service. Služba vlastní konfiguraci, TUN/TAP, síťové operace i tři pracovní role. Konzolová aplikace poskytuje instalaci, diagnostiku a správu služby. Samostatná tray aplikace běží v uživatelské relaci a službu ovládá pouze přes lokální zabezpečené IPC; nesmí sama otevírat tunel, provádět VPN provoz ani držet klíče.
+Pro běžný provoz je klient implementovaný jako Windows Service. Služba výhradně vlastní konfiguraci, TUN/TAP, všechny síťové operace a všechny tři pracovní role. Samostatná tray aplikace běží v uživatelské relaci a spolu s konzolovou aplikací je pouze lokálním klientem služby. Obě aplikace smějí službu ovládat výhradně přes níže definované lokální IPC; nesmějí samy otevírat tunel ani provádět VPN provoz. Přes `get-config` a `set-config` však mohou dočasně přijmout nebo odeslat konfiguraci včetně `SERVER_SECRET`, `ACCESS_KEY` a `PAYLOAD_KEY`; stejný přístup má každá lokální aplikace připojená k pipe.
+
+Instalace, odinstalace, registrace, spuštění a zastavení samotné Windows Service nejsou operacemi IPC. Instalaci a odinstalaci zajišťují výhradně `install.bat`, `uninstall.bat` a Windows Service Manager. Konzolová aplikace nesmí tuto hranici obcházet řídicím příkazem poslaným přes pipe.
+
+##### Veřejné lokální IPC
+
+IPC je Windows named pipe s pevnou verzovanou smlouvou v1. Název pipe je pevná implementační konstanta obsahující verzi; klient nesmí vyhledávat pipe podle uživatelského vstupu ani přijmout neoznačenou nebo jinou verzi smlouvy. Zprávy jsou UTF-8 JSON a každý požadavek obsahuje `ipcVersion`, `requestId` a `command`; `set-config` navíc obsahuje právě jedno pole `config`. `ipcVersion` je pro tuto smlouvu celé číslo `1`, `requestId` je čerstvé UUIDv4 a `command` je právě jedna z povolených hodnot. Neznámá verze, neznámý příkaz, duplicitní pole nebo nadbytečné pole se odmítne stručnou bezpečnou IPC chybou bez provedení operace.
+
+Instalátor nastaví na řídicí pipe explicitní Windows ACL, která umožní připojení každé lokální aplikaci bez ohledu na jejího uživatele, skupinu nebo efektivní Windows token. Přístup nesmí vyžadovat zvláštní účet, členství ve skupině ani oprávnění vytvořené instalátorem. Služba při připojení klienta neprovádí impersonaci ani autorizaci identity klienta a nesmí rozhodovat podle názvu procesu, PID, cesty spustitelného souboru nebo údajů ve zprávě. Jedinou ochrannou hranicí IPC zůstává pevná verzovaná smlouva, úplná validace zprávy a výhradní seznam povolených příkazů.
+
+Smlouva v1 podporuje výhradně tyto příkazy:
+
+- `get-status`;
+- `connect`;
+- `disconnect`;
+- `get-info`;
+- `get-config`;
+- `set-config`;
+- `get-diagnostics`.
+
+Pipe NESMÍ podporovat průběžný odběr stavu, restart služby, spuštění libovolného procesu nebo příkazu ani samostatný příkaz pro práci s klíči mimo celý konfigurační JSON předávaný příkazy `get-config` a `set-config`. Nesmí poskytovat obecný rozšiřující příkaz, kterým by bylo možné tato omezení obejít.
+
+Úspěšné odpovědi kromě `get-info` a `get-config` obsahují `ipcVersion`, původní `requestId`, výsledek příkazu a pouze pole povolená pro daný příkaz. Chyba obsahuje původní `requestId`, stabilní stručný kód, bezpečný uživatelský popis a údaj, zda je chyba obnovitelná. Nesmí obsahovat detail výjimky, systémový chybový text ani interní cestu. Odpovědi `get-info` a `get-config` mají zvláštní přímý formát popsaný níže.
+
+`get-status` vrátí bezpečný lokální snímek obsahující:
+
+- stav právě z množiny `disconnected`, `connecting`, `connected`, `recovering`, `error`;
+- fázi právě z množiny `idle`, `health`, `info`, `access-key-check`, `starting-tunnel`, `running`, `stopping`;
+- UTC čas poslední změny stavu;
+- samostatný stav dosažitelnosti serveru a stav jeho kryptografického ověření, každý jako `unknown`, `yes` nebo `no`;
+- stav tunelu;
+- bezpečnou poslední chybu, nebo `null`, není-li žádná;
+- agregované počty přijatých a odeslaných paketů a počet obnov;
+- verzi klienta a verzi IPC smlouvy.
+
+Snímek `get-status` NESMÍ obsahovat URL, konfiguraci, VPN ani jiné IP adresy, klíče, autentizační nebo GCM tagy, ciphertexty ani detailní síťové chyby. Jde pouze o čtení již existujícího lokálního stavu; příkaz nesmí sám spustit `health`, `info`, `data`, tunel ani obnovu.
+
+`connect` zahájí v rámci služby bootstrap v přesném pořadí `health`, `info` a prázdný autentizovaný polling `data`. Tunel, tři pracovní role a pravidelný VPN provoz smí služba spustit až po úspěchu všech tří kroků. Pokud připojování nebo provoz již běží, příkaz je idempotentní a vrátí aktuální stav bez založení druhého bootstrapu, tunelu nebo sady pracovních rolí.
+
+`disconnect` v rámci služby bezpečně ukončí pravidelný polling, zastaví tři pracovní role, uzavře tunel a obnoví síťový stav, který klient změnil. Příkaz je idempotentní; pokud je již odpojeno, vrátí aktuální stav. Dokončení příkazu nesmí být oznámeno dříve, než je další VPN polling zastaven a tunel bezpečně uzavřen.
+
+`get-info` provede uvnitř služby jednorázový `health` a po jeho úspěšném ověření jednorázový `info`. Služba ověří a dešifruje obě odpovědi. Příkaz nesmí spustit tunel, pracovní role ani `data` polling a nesmí měnit stav odpojeného klienta na připojený. Při úspěchu služba pošle přes pipe bez vlastní IPC obálky přesně validovaný dešifrovaný plaintext objekt `info` ze serveru, tedy objekt s poli `serverVersion`, `generatedAt`, `clients` a `limits`. Nevrací šifrovaný obal odpovědi, klíče, tagy ani ciphertext. Při selhání vrátí pouze stručnou bezpečnou IPC chybu. Služba, tray ani konzolová aplikace NESMĚJÍ kvůli tomuto příkazu zapisovat nebo vytvářet lokální soubor s výsledkem; tray a konzolová aplikace plaintext přímo zobrazí.
+
+`get-config` vrátí přes pipe bez vlastní IPC obálky přesný aktuální konfigurační JSON služby. Smí jej vyžádat každá lokální aplikace bez ohledu na uživatele, skupinu nebo Windows token. Konfigurační JSON se neposílá v logu ani v chybové odpovědi, ale jeho zpřístupnění přes veřejnou pipe je vědomě přijaté riziko tohoto klienta.
+
+`set-config` přijme v poli `config` celý konfigurační JSON. Služba před zápisem ověří syntaxi JSON a úplnou platnost konfigurace stejnými pravidly jako při připojení; při chybě nic nezapíše a vrátí bezpečnou IPC chybu. Při úspěchu služba konfiguraci atomicky uloží do pevného konfiguračního souboru, nahradí jí aktuální konfiguraci a vrátí běžnou úspěšnou IPC odpověď. Příkaz sám neodpojí ani nepřipojí VPN; uložená konfigurace se použije při následujícím pokusu o připojení.
+
+`get-diagnostics` vrátí rozšířený jednorázový bezpečný snímek místního stavu. Obsahuje stav, verzi a dobu běhu služby; výsledek validace konfigurace a bezpečná varování; výsledky posledního ověření `health`, `info` a `data` a poslední obnovy; připravenost tunelu; pro vstupní i výstupní fronty počet položek, obsazené bajty a platný limit; agregované provozní čítače; a bezpečnou poslední chybu včetně údaje o její obnovitelnosti. Příkaz je pouze čtecí, nespouští nové síťové požadavky, tunel ani obnovu a NESMÍ vrátit URL, VPN ani jiné IP adresy, klíče, tagy, ciphertexty, obsah paketů, interní cesty ani detailní systémové nebo síťové chyby.
+
+Tray získává stav pevně příkazem `get-status` jednou za 5 sekund a navíc ihned po každém příkazu `connect` nebo `disconnect`. Interval se za žádných okolností nezkracuje, neprodlužuje ani jinak adaptivně nemění. Smlouva nepoužívá streamování ani odběr změn stavu.
 
 Tray používá ikonu Material Symbols `shield_lock` pod licencí Apache 2.0. Šedá ikona znamená odpojeno, oranžová ikona znamená připojování a zelená ikona znamená úspěšně ověřené připojení. Po selhání se zobrazí modální chyba a ikona se vrátí do šedého stavu.
 
 Menu tray aplikace má přesně toto pořadí:
 
-1. **Edit Config** otevře konfigurační JSON v Notepadu. Úprava konfigurace se projeví až při dalším připojení; je-li služba připojená, uživatel ji nejprve odpojí.
-2. **Show Info** požádá službu o jednorázový `health` a poté `info`, ověří a dešifruje odpověď, uloží její plaintext jako `info.json` vedle konfiguračního JSON a otevře jej v Notepadu. Tato volba nespouští `data` polling ani VPN provoz.
-3. **Connect** zahájí bootstrap; při připojeném stavu se tato položka změní na **Disconnect** a bezpečně zastaví provoz služby.
+1. **Edit Config** pošle službě přes IPC příkaz `get-config` a otevře jednoduché editační okno. Jeho obsah tvoří víceřádkové editovatelné textové pole s neproporcionálním písmem, které obsahuje vrácený konfigurační JSON, a tlačítka **Save** a **Cancel**. **Save** odešle aktuální obsah pole příkazem `set-config`; **Cancel** zavře okno bez zápisu. Tray konfiguraci nečte ani nezapisuje přímo do souboru. Úprava se použije až při následujícím pokusu o připojení; je-li služba připojená, uživatel ji nejprve odpojí.
+2. **Show Info** pošle službě přes IPC příkaz `get-info` a otevře obdobné okno s víceřádkovým textovým polem s neproporcionálním písmem. Vrácený JSON je v poli pouze pro čtení: uživatel jej smí označit a zkopírovat, nesmí jej upravit ani uložit. Tato volba nespouští `data` polling ani VPN provoz.
+3. **Connect** pošle službě přes IPC příkaz `connect`; při připojeném nebo připojovaném stavu se tato položka změní na **Disconnect**, která pošle příkaz `disconnect` a bezpečně zastaví VPN provoz služby.
 
 Bootstrap po volbě **Connect** probíhá v pořadí `health`, `info`, prázdný `data` polling. Selhání `health` zobrazí, že se nepodařilo spojit a ověřit server na nakonfigurované URL. Selhání `info` po úspěšném `health` oznámí problém se `SERVER_SECRET` nebo s odpovědí serveru. Selhání prvního `data` requestu se jako problém `ACCESS_KEY` označí pouze při autorizačním výsledku; ostatní chyby zůstanou obecnou síťovou nebo serverovou chybou. Diagnostika nikdy nevypisuje klíče, tagy ani ciphertext.
 
@@ -165,7 +215,7 @@ Bootstrap po volbě **Connect** probíhá v pořadí `health`, `info`, prázdný
 
 Distribuce pro Windows je složka `dist`. Obsahuje binární soubory služby, tray aplikace, konzolového správce, všechny nezbytné knihovny a skripty `install.bat` a `uninstall.bat`. Složka `dist` je kompletní předatelná distribuční jednotka.
 
-`install.bat` je podporovaný vstupní bod instalace. Smí zavolat pomocný PowerShellový skript a vyžádat si zvýšená administrátorská oprávnění. Nainstaluje a zaregistruje Windows Service, provede nutné kroky pro TUN/TAP a nakonfiguruje automatické spuštění tray aplikace při přihlášení uživatele; tray aplikace se po dokončení instalace spustí a zobrazí vedle systémových hodin. `uninstall.bat` provede opačný, bezpečný postup: zastaví a odregistruje službu, odebere automatické spuštění tray aplikace a odstraní pouze součásti vytvořené instalací. Konfigurační soubor a uživatelská data se při odinstalaci nemažou bez výslovné volby uživatele.
+`install.bat` je podporovaný vstupní bod instalace. Smí zavolat pomocný PowerShellový skript a vyžádat si zvýšená administrátorská oprávnění. Nainstaluje a zaregistruje Windows Service, provede nutné kroky pro TUN/TAP, nastaví veřejný lokální přístup k named pipe podle této smlouvy a nakonfiguruje automatické spuštění tray aplikace při přihlášení uživatele; tray aplikace se po dokončení instalace spustí a zobrazí vedle systémových hodin. `uninstall.bat` provede opačný, bezpečný postup: zastaví a odregistruje službu přes Windows Service Manager, odebere automatické spuštění tray aplikace a odstraní pouze součásti vytvořené instalací. Konfigurační soubor a uživatelská data se při odinstalaci nemažou bez výslovné volby uživatele.
 
 ### macOS
 
@@ -179,7 +229,7 @@ Alternativy založené na `/dev/tun` nejsou na moderním macOS obecně přenosit
 
 Na Linuxu je přirozeným rozhraním TUN zařízení `/dev/net/tun`. Klient vytvoří TUN rozhraní, přiřadí virtuální IP a nastaví potřebné routy přes netlink nebo spolehlivý systémový integrační modul. Operace vyžadují oprávnění `CAP_NET_ADMIN` nebo vhodně omezený privilegovaný pomocný proces.
 
-Produkční služba může běžet pod systemd s minimálními capability, restartovací politikou a ochranou konfiguračního souboru. Implementace nemá předpokládat jeden konkrétní firewall ani síťový manažer; jejich integrace má být volitelná.
+Produkční služba může běžet pod systemd s minimálními capability, restartovací politikou a ochranou konfiguračního souboru před přímým přístupem přes souborový systém. Tato ochrana nemění záměrně veřejný přístup ke konfiguraci přes IPC. Implementace nemá předpokládat jeden konkrétní firewall ani síťový manažer; jejich integrace má být volitelná.
 
 Základní implementace používá jeden TUN file descriptor a tři společné pracovní role. Linuxový multiqueue TUN je volitelná optimalizace; nesmí změnit společná pravidla FIFO, limitů front ani vlastnictví paketů.
 
