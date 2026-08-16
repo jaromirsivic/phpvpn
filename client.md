@@ -19,7 +19,7 @@ Jádro klienta nesmí záviset na API konkrétní platformy. Je rozděleno do t�
 | `Crypto` | AES-256-GCM pro payload, bezpečné mazání tajných hodnot a generování IV z CSPRNG. |
 | `Transport` | HTTP/HTTPS POST, časové limity, kontrola velikosti odpovědi a politika certifikátů. |
 | `Tunnel` | Abstrakce čtení a zápisu surových IPv4 paketů do virtuálního rozhraní. |
-| `Queues` | Fronty podle cílové VPN adresy, plánování flushů, limity paměti a souhrnné statistiky zahozených paketů. |
+| `Queues` | Odchozí fronty podle cílové VPN adresy, příchozí fronty podle zdrojové VPN adresy, plánování flushů, logické per-peer rezervace, limity paměti a souhrnné statistiky zahozených paketů. |
 | `Runtime` | Stavový automat připojení, vlákna nebo event loop, ukončení a srozumitelný log. |
 
 Platformní implementace poskytne pouze rozhraní `Tunnel` a případné API pro služby, privilegia a síťovou konfiguraci. Pro HTTP lze použít jednotnou knihovnu dostupnou na všech třech platformách, například libcurl. Pro nativní kryptografii lze použít ověřenou knihovnu s interoperabilní implementací AES-GCM; požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
@@ -30,7 +30,7 @@ Společné jádro používá tři sériově pracující role. Implementace je sm
 
 1. **Vstupní pracovník tunelu** je jediným čtenářem virtuálního L3 rozhraní. Provede úplnou validaci IPv4 paketu podle pravidel níže, vyžaduje lokální virtuální IP jako vnitřní zdroj a zařadí jej výhradně do FIFO fronty kontraktu odpovídajícího jeho vnitřnímu cíli. Nešifruje ani nečeká na síť.
 2. **Síťový pracovník** je jediným vlastníkem `health`, `info` a `data` requestů, plánování dávek, šifrování, ověřování odpovědí a dešifrování. V jednom okamžiku smí existovat nanejvýš jeden probíhající `data` request.
-3. **Výstupní pracovník tunelu** je jediným zapisovatelem do virtuálního L3 rozhraní. Sekvenčně odebírá ověřené IPv4 pakety z příchozí FIFO fronty a zapisuje je do virtuálního rozhraní.
+3. **Výstupní pracovník tunelu** je jediným zapisovatelem do virtuálního L3 rozhraní. Sekvenčně odebírá ověřené IPv4 pakety z příchozích per-peer FIFO front účtovaných podle zdrojové VPN adresy a zapisuje je do virtuálního rozhraní. V každé peer frontě zachovává FIFO; vzájemné pořadí obsluhy různých zdrojových peerů tato specifikace neurčuje.
 
 Fronty se zamykají pouze krátce při vložení, odebrání nebo atomickém převzetí položek a při změně jejich velikostních počítadel. Zámek nesmí být držen během šifrování, dešifrování, HTTP komunikace, čekání na odpověď ani zápisu do tunelu. První pracovník proto pokračuje ve čtení i v době, kdy síťový pracovník zpracovává předchozí request.
 
@@ -50,8 +50,9 @@ Navržená struktura:
     "accessKey": "64-znakový-malý-hex"
   },
   "runtime": {
-    "maxOutboundQueueBytes": 16777216,
-    "maxInboundQueueBytes": 16777216,
+    "maxOutboundQueueBytes": 67108864,
+    "maxInboundQueueBytes": 67108864,
+    "minPerPeerQueueBytes": 131072,
     "maxResponseBodyBytes": 67108864,
     "maxNdjsonLineBytes": 67108864,
     "maxDataRecordsPerResponse": 65535,
@@ -71,7 +72,26 @@ Navržená struktura:
 
 Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu serveru, virtuální IP a seznam vzdálených IP bez klíčů a secretů. To neomezuje záměrně veřejné IPC příkazy `get-config` a `set-config`.
 
-`maxOutboundQueueBytes` je celková maximální velikost paketů načtených z virtuálního L3 rozhraní, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do tohoto rozhraní. Obě hodnoty jsou kladná celá čísla v bajtech a při vynechání mají výchozí hodnotu 16 MiB (`16777216`).
+`maxOutboundQueueBytes` je celková maximální velikost paketů načtených z virtuálního L3 rozhraní, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do tohoto rozhraní. `minPerPeerQueueBytes` je minimální logická rezervace pro každou možnou per-peer frontu v každém směru. Všechny tři hodnoty jsou uživatelsky konfigurovatelná kladná celá čísla v bajtech; při vynechání mají první dvě výchozí hodnotu 64 MiB (`67108864`) a třetí 128 KiB (`131072`).
+
+Ve výchozím adresním prostoru existuje 253 platných klientských adres `10.99.99.2` až `10.99.99.254`, takže jeden lokální klient má nejvýše 252 vzdálených peerů. Při jiném společně nakonfigurovaném adresním prostoru se `maxRemotePeers` odvodí z počtu všech možných platných klientských adres po vyloučení jediné lokální adresy. Nejde pouze o počet právě uvedených `communicationContracts`, ale o počet všech peerů, pro které v daném adresním prostoru může existovat fronta.
+
+Před každým pokusem o připojení MUSÍ konfigurace pro odchozí a příchozí směr samostatně splnit:
+
+```text
+maxOutboundQueueBytes >= maxRemotePeers × minPerPeerQueueBytes
+maxInboundQueueBytes  >= maxRemotePeers × minPerPeerQueueBytes
+```
+
+Nesplnění kteréhokoli invariantu konfiguraci odmítne ještě před `health` a před vytvořením tunelu. `minPerPeerQueueBytes` je pouze logická rezervace pro admission účetnictví; implementace NESMÍ fyzicky předalokovat 252 bufferů ani jiný maximální počet per-peer front. Skutečná fronta a její paměť vznikají líně až při prvním přijatém paketu daného peeru.
+
+Při každém pokusu o zařazení nového paketu se v příslušném směru použije obsazenost po hypotetickém vložení a MUSÍ platit obě podmínky: skutečný součet obsazeností všech peer front nepřekročí odpovídající `maxQueueBytes` a současně
+
+```text
+sum(max(obsazenostPeerFronty, minPerPeerQueueBytes)) přes všechny možné peer fronty <= maxQueueBytes
+```
+
+Odchozí směr používá jako `maxQueueBytes` hodnotu `maxOutboundQueueBytes` a účtuje fronty podle cílové VPN adresy; příchozí směr používá `maxInboundQueueBytes` a účtuje je podle zdrojové VPN adresy. Z uvedeného invariantu plyne, že jediná peer fronta může dosáhnout nanejvýš `maxQueueBytes - (maxRemotePeers - 1) × minPerPeerQueueBytes`. Pro výchozí hodnoty je tato mez 32.625 MiB, tedy 32 MiB + 640 KiB (`34209792` bajtů). Logická rezervace se počítá v každém směru samostatně a neznamená vlastnictví předem přidělené fyzické paměti.
 
 `maxResponseBodyBytes`, `maxNdjsonLineBytes`, `maxDataRecordsPerResponse` a `responseTimeoutSeconds` jsou uživatelsky konfigurovatelná kladná celá čísla. Při vynechání mají po řadě výchozí hodnoty `67108864` bajtů (64 MiB), `67108864` bajtů, `65535` záznamů a `30` sekund. Prozatím pro ně neexistuje globální horní strop; úplná validace konfigurace však vždy odmítne nulu, zápornou hodnotu, necelé číslo nebo hodnotu nereprezentovatelnou podporovaným celočíselným typem implementace.
 
@@ -94,7 +114,9 @@ Příkazový výstup má stručně ukazovat fáze: připojování k serveru, dos
 
 ## Odchozí tok paketů a plánování requestů
 
-Virtuální rozhraní dodává kompletní IPv4 pakety. Před zařazením musí vstupní pracovník provést úplnou strukturální validaci podle následující podkapitoly. Vnitřní zdroj musí přesně odpovídat lokální virtuální IP a vnitřní cíl musí být platná VPN IP s existujícím `communicationContract`; výběr fronty i payload klíče proto vždy vychází ze stejné uspořádané dvojice `(lokální IP, vnitřní cíl)`. Paket určený vlastní virtuální IP, paket s neplatnou hlavičkou nebo paket bez platného kontraktu se přes relay neodesílá; zahození se loguje pouze souhrnně po důvodu a cíli. Při dosažení `maxOutboundQueueBytes` nové pakety zahazuje.
+Virtuální rozhraní dodává kompletní IPv4 pakety. Před zařazením musí vstupní pracovník provést úplnou strukturální validaci podle následující podkapitoly. Vnitřní zdroj musí přesně odpovídat lokální virtuální IP a vnitřní cíl musí být platná VPN IP s existujícím `communicationContract`; výběr fronty i payload klíče proto vždy vychází ze stejné uspořádané dvojice `(lokální IP, vnitřní cíl)`. Paket určený vlastní virtuální IP, paket s neplatnou hlavičkou nebo paket bez platného kontraktu se přes relay neodesílá; zahození se loguje pouze souhrnně po důvodu a cíli.
+
+Odchozí per-peer fronta se účtuje podle cílové VPN adresy paketu. Pokud by vložení nového paketu porušilo globální `maxOutboundQueueBytes` nebo logickou per-peer rezervaci, vstupní pracovník zahodí pouze tento nový paket. NESMÍ kvůli němu odstranit ani přeuspořádat již zařazené pakety. Zahození eviduje agregovaně podle stabilního bezpečného důvodu a cílového peeru, bez obsahu paketu, klíčů, tagů, ciphertextu nebo jiných citlivých hodnot.
 
 Síťový pracovník pro každý request vybírá pouze requestově velký prefix front. Jeden datový element patří přesně jedné uspořádané dvojici `src`, `dst` a nese dávku paketů jen pro tento cíl. Binární plaintext, byte order a validační pravidla jsou normativně definované v `protocol.md`. Síťový pracovník jej šifruje AES-256-GCM příslušným `PAYLOAD_KEY` a vytváří normativní řádek `data`.
 
@@ -123,7 +145,7 @@ Pracovník používá rozpočet `maxRequestBodyBytes - 1024`; 1 KiB je pevná re
 
 Pokud se paket nebo datový element z čela per-peer FIFO nevejde ani do samostatného jinak prázdného platného requestu po započtení všech přesných režijních bajtů šifrování, kódování, NDJSON a autentizačního řádku, síťový pracovník jej atomicky odstraní z čela fronty a trvale zahodí. Toto odstranění NESMÍ změnit vzájemné FIFO pořadí zbývajících paketů. Klient zahození agregovaně eviduje podle důvodu a cíle; do logu NESMÍ zapsat obsah paketu, klíče, tagy, ciphertext ani jiné citlivé hodnoty. MTU tunelu a nakonfigurovaná nebo odvozená maximální velikost datového elementu jsou preventivní limity, ale toto povinné runtime rozhodnutí a přesné změření skutečně sestaveného requestu nenahrazují.
 
-Výběr je spravedlivý: pracovník vede kruhové pořadí cílů, v první fázi se pokusí zařadit alespoň jeden paket z každé neprázdné fronty a v dalších průchodech doplňuje pakety opět kruhově, dokud zbývá rozpočet. Po každém requestu posune počáteční cíl. Jedna dlouhá fronta tak nevytlačuje krátké fronty; pakety v každé konkrétní frontě zůstávají FIFO.
+Výběr je spravedlivý: pracovník vede kruhové pořadí cílů, v první fázi se pokusí zařadit alespoň jeden paket z každé neprázdné fronty a v dalších průchodech doplňuje pakety opět kruhově, dokud zbývá rozpočet. Po každém requestu posune počáteční cíl. Jedna dlouhá fronta tak nevytlačuje krátké fronty; pakety v každé konkrétní frontě zůstávají FIFO. FIFO určuje neměnné pořadí paketů uvnitř jedné peer fronty, zatímco kruhové plánování určuje pouze spravedlivé střídání mezi různými peer frontami při sestavení requestu. Kruhové plánování NESMÍ měnit admission účetnictví, obcházet logické rezervace ani přeuspořádat pakety uvnitř fronty.
 
 ## Příjem dat
 
@@ -135,10 +157,20 @@ Odpověď na `data` je NDJSON: nula nebo více řádků `data`, právě jeden `d
 4. Ověří kanonický base64url, délky IV a tagu a provede AES-GCM dešifrování s příslušným `PAYLOAD_KEY` a normativním AAD. Neplatný GCM tag znamená zahození pouze daného řádku.
 5. Ověří formát binární dávky: hlavičku počtu, tabulku délek, přesný počet a hranice surových bajtů. Nesmí předat částečně rozbalenou nebo neověřenou dávku.
 6. U každého rozbaleného paketu provede úplnou validaci IPv4. Navíc vyžaduje, aby jeho vnitřní zdroj přesně odpovídal `src` datového řádku a vnitřní cíl lokální virtuální IP, tedy `dst` datového řádku. Nevyhovující paket zahodí ještě před vložením do příchozí fronty; platnost ostatních paketů dávky tím není dotčena.
-7. Před pollingem kontroluje rezervu `maxInboundQueueBytes`, aby data nevyzvedl jen proto, aby je následně zahodil. Jestliže se ověřený paket do příchozí fronty přesto nevejde, zahodí jej a souhrnně zaloguje.
-8. Výstupní pracovník zapíše pouze takto platné IPv4 pakety do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
+7. Před pollingem ochrana příchozí fronty vyhodnotí nejen zbývající globální prostor `maxInboundQueueBytes`, ale také logické rezervace všech možných zdrojových peerů podle stejného admission invariantu. Polling odloží, pokud podle aktuálního účetnictví nelze bezpečně přijmout další platný paket; běžný maximální pollingový interval tuto kapacitní ochranu nepřebíjí. Protože klient před přijetím odpovědi nezná její skutečné rozdělení podle zdrojů, tato předběžná kontrola nenahrazuje runtime admission každého paketu.
+8. Příchozí per-peer fronta se účtuje podle `src` datového řádku. Pokud by vložení již ověřeného paketu porušilo globální `maxInboundQueueBytes` nebo logickou per-peer rezervaci, klient zahodí pouze tento nový paket. NESMÍ odstranit ani přeuspořádat již zařazené pakety a zahození agregovaně eviduje podle bezpečného důvodu a zdrojového peeru, bez obsahu paketu nebo citlivých hodnot.
+9. Výstupní pracovník zapíše pouze takto platné IPv4 pakety do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
 
 Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo pád po převzetí může znamenat ztrátu dávky; klient nemá předstírat garantované doručení. Výchozí hodnota `65535` pro `maxDataRecordsPerResponse` je vysoký klientský kompromis bez změny protokolu. Uživatel smí limit zmenšit, ale tím může způsobit odmítnutí odpovědi obsahující dávky, které server již atomicky vyzvedl a z bufferu odstranil. Aplikační vrstvy nad VPN mohou používat vlastní retransmise.
+
+## Povinné testovací scénáře front a per-peer kvót
+
+1. Výchozí adresní prostor odvodí přesně 252 vzdálených peerů a výchozí hodnoty obou 64MiB globálních limitů a 128KiB logické rezervace projdou validací bez fyzického vytvoření 252 front nebo bufferů.
+2. Pro odchozí i příchozí směr samostatně projde konfigurace s `maxQueueBytes = maxRemotePeers × minPerPeerQueueBytes` a hodnota o jeden bajt menší je před `health` odmítnuta. Stejný test se provede pro jiný společný adresní prostor s počtem peerů odvozeným z jeho konfigurace.
+3. Při výchozích hodnotách lze jednu peer frontu naplnit přesně na 32.625 MiB (`34209792` bajtů), pokud ostatní možné fronty zůstávají prázdné; další bajt je odmítnut kvůli logické rezervaci, aniž by se změnily již zařazené pakety.
+4. Odchozí fronty se odděleně účtují podle `dst` a příchozí podle `src`. Paket na hranici globálního limitu i logické rezervace projde, paket o jeden bajt nad příslušnou hranicí se zahodí jako nový a zachová obsah i FIFO pořadí všech existujících front.
+5. Kruhové plánování obsluhuje neprázdné odchozí peer fronty spravedlivě, ale v každé zachová FIFO a nikdy nepřesune kapacitu vyhrazenou admission invariantem. Agregovaná diagnostika rozliší globální limit a logickou rezervaci a uvede peer, aniž by obsahovala paket nebo citlivé hodnoty.
+6. Předběžná ochrana příchozí fronty před pollingem zahrne globální obsazenost i logické rezervace; souběžná změna obsazenosti nebo neočekávané rozdělení přijaté odpovědi je následně znovu zachyceno runtime admission každého paketu bez odstranění či přeuspořádání dříve zařazených paketů.
 
 ## Bezpečnostní model a přijatá rizika
 
