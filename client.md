@@ -48,6 +48,7 @@ Navržená struktura:
     "serverUrl": "https://vpn.example.test/phpvpn.php",
     "trustAnyTlsCertificate": true,
     "serverSecret": "server-shared-secret",
+    "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
     "accessKey": "64-znakový-malý-hex"
   },
@@ -69,7 +70,7 @@ Navržená struktura:
 }
 ```
 
-`serverUrl` obsahuje celou URL serverového souboru `phpvpn.php` a klient záměrně podporuje HTTP i HTTPS. `accessKey` odpovídá protokolovému `ACCESS_KEY`; je přesně 32 bajtů zapsaných jako 64 malých hexadecimálních znaků. Každý `payloadKey` je protokolový `PAYLOAD_KEY`: pevný 32bajtový klíč pro přesně danou uspořádanou dvojici `src`, `dst`. Nejde o uživatelské heslo ani o klíč odvozovaný za běhu.
+`serverUrl` obsahuje celou URL serverového souboru `phpvpn.php` a klient záměrně podporuje HTTP i HTTPS. `vpnCidr` je kanonický IPv4 CIDR společného VPN adresního prostoru; při vynechání má výchozí hodnotu `10.99.99.0/24`. Hodnota musí obsahovat síťovou adresu odpovídající uvedenému prefixu, nikoli host adresu s nenulovými host bity. `virtualIp` i všechny adresy v `communicationContracts` musí patřit do `vpnCidr` a současně splňovat pravidla platných klientských adres společné konfigurace. `accessKey` odpovídá protokolovému `ACCESS_KEY`; je přesně 32 bajtů zapsaných jako 64 malých hexadecimálních znaků. Každý `payloadKey` je protokolový `PAYLOAD_KEY`: pevný 32bajtový klíč pro přesně danou uspořádanou dvojici `src`, `dst`. Nejde o uživatelské heslo ani o klíč odvozovaný za běhu.
 
 `trustAnyTlsCertificate` má podle současného rozhodnutí výchozí hodnotu `true`. Při HTTPS pak klient záměrně přijme libovolný certifikát pro nakonfigurovanou URL, včetně self-signed certifikátu a certifikátu vydaného neznámou nebo nedůvěryhodnou certifikační autoritou. Jde o vědomě přijaté kritické bezpečnostní riziko: klient nebude ve výchozím stavu ověřovat řetězec důvěry ani důvěryhodnost vydávající autority. Implementace klienta s tímto rizikem záměrně počítá. Bezpečnější budoucí profil může nastavit hodnotu na `false` a vyžadovat standardní validaci řetězce a názvu hostitele.
 
@@ -77,7 +78,7 @@ Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu s
 
 `maxOutboundQueueBytes` je celková maximální velikost paketů načtených z virtuálního L3 rozhraní, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do tohoto rozhraní. `minPerPeerQueueBytes` je minimální logická rezervace pro každou možnou per-peer frontu v každém směru. Všechny tři hodnoty jsou uživatelsky konfigurovatelná kladná celá čísla v bajtech; při vynechání mají první dvě výchozí hodnotu 64 MiB (`67108864`) a třetí 128 KiB (`131072`).
 
-Ve výchozím adresním prostoru existuje 253 platných klientských adres `10.99.99.2` až `10.99.99.254`, takže jeden lokální klient má nejvýše 252 vzdálených peerů. Při jiném společně nakonfigurovaném adresním prostoru se `maxRemotePeers` odvodí z počtu všech možných platných klientských adres po vyloučení jediné lokální adresy. Nejde pouze o počet právě uvedených `communicationContracts`, ale o počet všech peerů, pro které v daném adresním prostoru může existovat fronta.
+Ve výchozím `vpnCidr` `10.99.99.0/24` existuje 253 platných klientských adres `10.99.99.2` až `10.99.99.254`, takže jeden lokální klient má nejvýše 252 vzdálených peerů. Při jiném společně nakonfigurovaném `vpnCidr` se `maxRemotePeers` odvodí z počtu všech možných platných klientských adres v tomto prefixu po vyloučení jediné lokální adresy. Nejde pouze o počet právě uvedených `communicationContracts`, ale o počet všech peerů, pro které v daném adresním prostoru může existovat fronta.
 
 Před každým pokusem o připojení MUSÍ konfigurace pro odchozí a příchozí směr samostatně splnit:
 
@@ -106,7 +107,7 @@ Odchozí směr používá jako `maxQueueBytes` hodnotu `maxOutboundQueueBytes` a
 
 ## Stavový automat připojení
 
-1. **Načtení konfigurace.** Klient validuje URL, VPN IP, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost podporované platformní vrstvy. Na Windows v této fázi smí ověřit distribuční manifest, DLL, architekturu a povinné Wintun API, ale NESMÍ ještě vytvořit ani otevřít adaptér, zahájit Wintun session nebo měnit síť.
+1. **Načtení konfigurace.** Klient validuje URL, kanonický IPv4 tvar `vpnCidr`, příslušnost `virtualIp` a všech adres kontraktů do tohoto prefixu, pravidla platných klientských adres, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost podporované platformní vrstvy. Na Windows v této fázi smí ověřit distribuční manifest, DLL, architekturu a povinné Wintun API, ale NESMÍ ještě vytvořit ani otevřít adaptér, zahájit Wintun session nebo měnit síť.
 2. **Health.** Před prvním `info` nebo `data` vygeneruje nový UUIDv4 `requestId`, zaznamená monotónní `sendMono` a odešle `auth-none` na `?action=health`.
 3. **Ověření serveru a času.** Po přijetí celé odpovědi zaznamená monotónní `receiveMono`. Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří shodu `requestId` a GCM tag podle protokolu. Teprve potom přijme autentizovaný UTC čas serveru a atomicky vytvoří počáteční časový odhad podle následující části; lokální systémový čas nikdy nemění.
 4. **Časová rezerva.** Timestamp každého následujícího autentizovaného `info` nebo `data` requestu vznikne výhradně z posledního ověřeného odhadu serverového času, aktuálního monotónního času a normativní bezpečnostní rezervy podle následující části. Po synchronizaci se nesmí přímo odvozovat z aktuálních systémových hodin.
@@ -213,8 +214,8 @@ Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo p
 
 ## Povinné testovací scénáře front a per-peer kvót
 
-1. Výchozí adresní prostor odvodí přesně 252 vzdálených peerů a výchozí hodnoty obou 64MiB globálních limitů a 128KiB logické rezervace projdou validací bez fyzického vytvoření 252 front nebo bufferů.
-2. Pro odchozí i příchozí směr samostatně projde konfigurace s `maxQueueBytes = maxRemotePeers × minPerPeerQueueBytes` a hodnota o jeden bajt menší je před `health` odmítnuta. Stejný test se provede pro jiný společný adresní prostor s počtem peerů odvozeným z jeho konfigurace.
+1. Chybějící `vpnCidr` použije výchozí hodnotu `10.99.99.0/24`, odvodí přesně 252 vzdálených peerů a výchozí hodnoty obou 64MiB globálních limitů a 128KiB logické rezervace projdou validací bez fyzického vytvoření 252 front nebo bufferů. Nekanonický CIDR s nenulovými host bity, `virtualIp` mimo prefix nebo kontrakt mimo prefix se odmítne před prvním `health`.
+2. Pro odchozí i příchozí směr samostatně projde konfigurace s `maxQueueBytes = maxRemotePeers × minPerPeerQueueBytes` a hodnota o jeden bajt menší je před `health` odmítnuta. Stejný test se provede pro jiné společně nakonfigurované `vpnCidr` s počtem peerů odvozeným z tohoto prefixu.
 3. Při výchozích hodnotách lze jednu peer frontu naplnit přesně na 32.625 MiB (`34209792` bajtů), pokud ostatní možné fronty zůstávají prázdné; další bajt je odmítnut kvůli logické rezervaci, aniž by se změnily již zařazené pakety.
 4. Odchozí fronty se odděleně účtují podle `dst` a příchozí podle `src`. Paket na hranici globálního limitu i logické rezervace projde, paket o jeden bajt nad příslušnou hranicí se zahodí jako nový a zachová obsah i FIFO pořadí všech existujících front.
 5. Kruhové plánování obsluhuje neprázdné odchozí peer fronty spravedlivě, ale v každé zachová FIFO a nikdy nepřesune kapacitu vyhrazenou admission invariantem. Agregovaná diagnostika rozliší globální limit a logickou rezervaci a uvede peer, aniž by obsahovala paket nebo citlivé hodnoty.
@@ -236,7 +237,7 @@ Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo p
 
 Windows je primární platforma. Klient MUSÍ používat výhradně Wintun jako L3 TUN pro IPv4. NESMÍ používat TAP, vlastní kernelový ovladač ani automaticky přejít na jiný tunelový backend, chybí-li nebo selže-li Wintun. Instalace, vytvoření či konfigurace adaptéru a změny rout vyžadují administrátorská oprávnění; samotný běh těchto operací patří výhradně Windows Service.
 
-Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Verze v1 používá výhradně split tunnel. Po úspěšném bootstrapu služba přidá lokální virtuální IPv4 adresu a právě jednu explicitní routu společně nakonfigurovaného VPN adresního prostoru přes vlastní adaptér. Nepřidává výchozí routu, nemění DNS a nezavádí kill switch. Full tunnel, změny DNS a kill switch jsou mimo v1 a vyžadují budoucí samostatnou specifikaci. Relay server na nakonfigurované URL MUSÍ před změnou i po ní zůstat dosažitelný existující síťovou cestou mimo tunel phpvpn.
+Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Verze v1 používá výhradně split tunnel. Po úspěšném bootstrapu služba přidá lokální `virtualIp` s prefixem z `vpnCidr` a právě jednu explicitní routu přesného prefixu `vpnCidr` přes vlastní adaptér. Nepřidává výchozí routu, nemění DNS a nezavádí kill switch. Full tunnel, změny DNS a kill switch jsou mimo v1 a vyžadují budoucí samostatnou specifikaci. Relay server na nakonfigurované URL MUSÍ před změnou i po ní zůstat dosažitelný existující síťovou cestou mimo tunel phpvpn.
 
 Platformní vrstva poskytne jeden sekvenční zdroj paketů pro vstupního pracovníka a jeden sekvenční cíl pro výstupního pracovníka. Případné asynchronní I/O dokončení se serializuje na těchto hranicích.
 
@@ -264,7 +265,7 @@ Záznam vlastnictví je perzistentní soubor v chráněném adresáři Windows S
 
 Každé vytvoření nebo odstranění adaptéru, adresy či routy je malá perzistentně žurnálovaná transakce: služba před provedením kroku bezpečně zapíše a trvale uloží zamýšlenou operaci vytvoření nebo odstranění se stavem `planned`; po ověřeném úspěchu kroku atomicky uloží odpovídající potvrzený stav `created` nebo `removed`. Každá routa MUSÍ určit cílový prefix, next hop, konkrétní rozhraní a metriku. Implementace NESMÍ neurčitě vyhledat „nejlepší“ rozhraní nebo routu, měnit globální priority ani spoléhat na automaticky zvolenou metriku.
 
-Po úspěšném vytvoření session a dokončení preflightu služba přidá pouze svou virtuální IPv4 adresu a jedinou explicitně evidovanou split-tunnel routu společného VPN adresního prostoru přes vlastní adaptér. Bezprostředně ověří, že výchozí routa a DNS zůstaly beze změny a že relay server zůstává dosažitelný přes ne-phpvpn rozhraní; selhání dokončí bezpečný rollback pouze jednoznačně vlastních kroků podle záznamu.
+Po úspěšném vytvoření session a dokončení preflightu služba přidá pouze svou `virtualIp` s prefixem z `vpnCidr` a jedinou explicitně evidovanou split-tunnel routu přesného prefixu `vpnCidr` přes vlastní adaptér. Bezprostředně ověří, že výchozí routa a DNS zůstaly beze změny a že relay server zůstává dosažitelný přes ne-phpvpn rozhraní; selhání dokončí bezpečný rollback pouze jednoznačně vlastních kroků podle záznamu.
 
 Recovery po pádu, restartu služby nebo systému je idempotentní: služba porovná skutečný stav s perzistentním záznamem a dokončí nebo vrátí pouze jednoznačně vlastní nedokončené kroky. Před novým úspěšným bootstrapem přitom NESMÍ vytvořit ani otevřít adaptér nebo zahájit session a nesmí slepě mazat stejně vypadající cizí síťovou konfiguraci. Pokud záznam chybí, je poškozený, má neznámou verzi nebo se jeho identita a skutečný stav neshodují tak, že vlastnictví nelze jednoznačně prokázat, reconciliation NESMÍ nic odstranit ani přepsat a služba přejde do bezpečného chybového stavu vyžadujícího zásah správce.
 
