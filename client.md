@@ -109,7 +109,9 @@ Síťový pracovník provede polling i při prázdných odchozích frontách a z
 
 ### Velikostní a spravedlivé plánování
 
-Pracovník používá rozpočet `maxRequestBodyBytes - 1024`; 1 KiB je pevná rezerva nad očekávanou serializační režií. Konečná kontrola vždy změří skutečně sestavené tělo v bajtech. Pokud by další datový element nebo paket překročil `maxRequestBodyBytes` či limit počtu záznamů, zůstane na čele své FIFO fronty pro další request.
+Pracovník používá rozpočet `maxRequestBodyBytes - 1024`; 1 KiB je pevná rezerva nad očekávanou serializační režií. Konečná kontrola vždy změří skutečně sestavené tělo v bajtech. Pokud paket nebo z něj vytvářený datový element z čela per-peer FIFO nelze vložit do aktuální dávky, ale vešel by se do samostatného jinak prázdného platného requestu, zůstane na čele této FIFO fronty pro další request.
+
+Pokud se paket nebo datový element z čela per-peer FIFO nevejde ani do samostatného jinak prázdného platného requestu po započtení všech přesných režijních bajtů šifrování, kódování, NDJSON a autentizačního řádku, síťový pracovník jej atomicky odstraní z čela fronty a trvale zahodí. Toto odstranění NESMÍ změnit vzájemné FIFO pořadí zbývajících paketů. Klient zahození agregovaně eviduje podle důvodu a cíle; do logu NESMÍ zapsat obsah paketu, klíče, tagy, ciphertext ani jiné citlivé hodnoty. MTU tunelu a nakonfigurovaná nebo odvozená maximální velikost datového elementu jsou preventivní limity, ale toto povinné runtime rozhodnutí a přesné změření skutečně sestaveného requestu nenahrazují.
 
 Výběr je spravedlivý: pracovník vede kruhové pořadí cílů, v první fázi se pokusí zařadit alespoň jeden paket z každé neprázdné fronty a v dalších průchodech doplňuje pakety opět kruhově, dokud zbývá rozpočet. Po každém requestu posune počáteční cíl. Jedna dlouhá fronta tak nevytlačuje krátké fronty; pakety v každé konkrétní frontě zůstávají FIFO.
 
