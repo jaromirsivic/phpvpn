@@ -6,7 +6,7 @@ Tento dokument popisuje návrh nativního klienta pro protokol phpvpn v1. Klient
 
 Primárním cílem je Windows. Návrh současně odděluje platformně nezávislé jádro od síťového rozhraní a integrace operačního systému, aby jej bylo možné přenést na macOS a Linux. Doporučeným jazykem je C++20 s malou, explicitní C++ platformní vrstvou; čisté C je možné, ale bude znamenat více ruční správy zdrojů a chybových stavů.
 
-Server nezná payload klíče ani IP obsah. Klient zajišťuje výběr klíče, AES-256-GCM ochranu payloadu, validaci a předání paketů TUN/TAP rozhraní.
+Server nezná payload klíče ani IP obsah. Klient zajišťuje výběr klíče, AES-256-GCM ochranu payloadu, validaci a předání paketů virtuálnímu L3 rozhraní.
 
 ## Architektura
 
@@ -28,9 +28,9 @@ Platformní implementace poskytne pouze rozhraní `Tunnel` a případné API pro
 
 Společné jádro používá tři sériově pracující role. Implementace je smí realizovat třemi vlákny nebo ekvivalentním event-loopem, ale vlastnictví dat a pravidla souběhu musí zůstat stejná.
 
-1. **Vstupní pracovník tunelu** je jediným čtenářem TUN/TAP. Provede úplnou validaci IPv4 paketu podle pravidel níže, vyžaduje lokální virtuální IP jako vnitřní zdroj a zařadí jej výhradně do FIFO fronty kontraktu odpovídajícího jeho vnitřnímu cíli. Nešifruje ani nečeká na síť.
+1. **Vstupní pracovník tunelu** je jediným čtenářem virtuálního L3 rozhraní. Provede úplnou validaci IPv4 paketu podle pravidel níže, vyžaduje lokální virtuální IP jako vnitřní zdroj a zařadí jej výhradně do FIFO fronty kontraktu odpovídajícího jeho vnitřnímu cíli. Nešifruje ani nečeká na síť.
 2. **Síťový pracovník** je jediným vlastníkem `health`, `info` a `data` requestů, plánování dávek, šifrování, ověřování odpovědí a dešifrování. V jednom okamžiku smí existovat nanejvýš jeden probíhající `data` request.
-3. **Výstupní pracovník tunelu** je jediným zapisovatelem do TUN/TAP. Sekvenčně odebírá ověřené IPv4 pakety z příchozí FIFO fronty a zapisuje je do virtuálního rozhraní.
+3. **Výstupní pracovník tunelu** je jediným zapisovatelem do virtuálního L3 rozhraní. Sekvenčně odebírá ověřené IPv4 pakety z příchozí FIFO fronty a zapisuje je do virtuálního rozhraní.
 
 Fronty se zamykají pouze krátce při vložení, odebrání nebo atomickém převzetí položek a při změně jejich velikostních počítadel. Zámek nesmí být držen během šifrování, dešifrování, HTTP komunikace, čekání na odpověď ani zápisu do tunelu. První pracovník proto pokračuje ve čtení i v době, kdy síťový pracovník zpracovává předchozí request.
 
@@ -67,17 +67,17 @@ Navržená struktura:
 
 Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu serveru, virtuální IP a seznam vzdálených IP bez klíčů a secretů. To neomezuje záměrně veřejné IPC příkazy `get-config` a `set-config`.
 
-`maxOutboundQueueBytes` je celková maximální velikost paketů načtených z TUN/TAP, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do TUN/TAP. Obě hodnoty jsou kladná celá čísla v bajtech a při vynechání mají výchozí hodnotu 16 MiB (`16777216`).
+`maxOutboundQueueBytes` je celková maximální velikost paketů načtených z virtuálního L3 rozhraní, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do tohoto rozhraní. Obě hodnoty jsou kladná celá čísla v bajtech a při vynechání mají výchozí hodnotu 16 MiB (`16777216`).
 
 ## Stavový automat připojení
 
-1. **Načtení konfigurace.** Klient validuje URL, VPN IP, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost virtuálního rozhraní.
+1. **Načtení konfigurace.** Klient validuje URL, VPN IP, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost podporované platformní vrstvy. Na Windows v této fázi smí ověřit distribuční manifest, DLL, architekturu a povinné Wintun API, ale NESMÍ ještě vytvořit ani otevřít adaptér, zahájit Wintun session nebo měnit síť.
 2. **Health.** Vygeneruje nový UUIDv4 `requestId` a odešle `auth-none` na `?action=health`.
 3. **Ověření serveru a času.** Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří, že `requestId` souhlasí, a ověří GCM tag podle protokolu. Teprve potom přijme čas serveru a vypočítá `timeDelta`; lokální systémový čas nikdy nemění.
 4. **Časová rezerva.** Serverový čas se plánuje s milisekundovou přesností. Klient používá efektivní serverový čas `localNow + timeDelta - safetyMargin`. Výchozí konzervativní mez je jedna sekunda za serverem; přesná hodnota má být konfigurovatelná či později definitivně stanovena.
 5. **Info.** Klient autentizovaně odešle `auth-semi` na `?action=info`, ověří a dešifruje odpověď a uloží obdržené limity a doporučené provozní hodnoty. Tvrdé limity, zejména maximální velikost těla požadavku, musí dodržet. Doporučené intervaly pollingů slouží jako plánovač, pokud nejsou v budoucí specifikaci označené za závazné.
 6. **Ověření přístupového klíče.** Ještě před spuštěním tří pracovních rolí klient provede prázdný autentizovaný polling `data`. Tím ověří `ACCESS_KEY` i úplnou odpověď `data`. Přijaté platné dávky zpracuje stejně jako při běžném pollingu a připraví je pro výstupní pracovník.
-7. **Provoz.** Teprve po úspěšném `health`, `info` a prvním prázdném `data` pollingu se zahájí čtení tunelu a pravidelný polling endpointu `data`.
+7. **Spuštění tunelu a provoz.** Teprve po úspěšném `health`, `info` a prvním prázdném `data` pollingu služba na Windows vytvoří nebo otevře jediný vlastní Wintun adaptér, zahájí jedinou session, nakonfiguruje vlastní adresu a routy a spustí tři pracovní role. Čtení tunelu a pravidelný polling endpointu `data` nesmějí začít dříve.
 8. **Obnova.** Při dočasné síťové nebo autentizační chybě klient nevypíná tunel bezprostředně, loguje stav, používá omezený backoff a opakuje `health`, `info` a prázdný `data` polling před návratem do provozu. Chyba konfigurace nebo neplatný server secret vyžaduje zásah uživatele.
 
 Příkazový výstup má stručně ukazovat fáze: připojování k serveru, dostupný server, úspěšně ověřený `SERVER_SECRET`, zjištěné provozní limity a stav tunelu. Tajemství ani autentizační tagy se nevypisují.
@@ -142,15 +142,51 @@ Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo p
 
 ### Windows
 
-Windows je primární platforma. Použije se ovladač TUN/TAP kompatibilní s požadovaným způsobem provozu; při výběru je vhodné preferovat aktivně udržované řešení s dokumentovaným uživatelským API a možností tichého nasazení. Aplikace obvykle potřebuje administrátorské oprávnění pro instalaci ovladače, vytvoření či konfiguraci rozhraní a směrování.
+Windows je primární platforma. Klient MUSÍ používat výhradně Wintun jako L3 TUN pro IPv4. NESMÍ používat TAP, vlastní kernelový ovladač ani automaticky přejít na jiný tunelový backend, chybí-li nebo selže-li Wintun. Instalace, vytvoření či konfigurace adaptéru a změny rout vyžadují administrátorská oprávnění; samotný běh těchto operací patří výhradně Windows Service.
 
-Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Síťovou konfiguraci, DNS a routes je nutné měnit pouze explicitně a při ukončení obnovit předchozí stav.
+Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Síťovou konfiguraci, DNS a routy je nutné měnit pouze explicitně, průběžně evidovat jejich vlastnictví a při ukončení odstranit pouze změny vytvořené klientem.
 
 Platformní vrstva poskytne jeden sekvenční zdroj paketů pro vstupního pracovníka a jeden sekvenční cíl pro výstupního pracovníka. Případné asynchronní I/O dokončení se serializuje na těchto hranicích.
 
+#### Wintun baseline a integrita distribuce
+
+Baseline první verze je oficiální předkompilovaný a digitálně podepsaný Wintun (nejnovější stabilní verze) stažený z `wintun.net`, a to pouze pro architektury podporované konkrétním vydáním phpvpn. Projekt NESMÍ Wintun sám překládat, upravovat ani přejmenovat `wintun.dll`. Distribuce NESMÍ vyjímat ani samostatně dodávat soubory `.sys`, `.cat` nebo `.inf`; používá upstream architekturní `wintun.dll` v podobě a distribučním modelu určeném Wintunem a přikládá odpovídající upstream licenční text.
+
+Podepsaný release manifest MUSÍ pro každou podporovanou architekturu uvést verzi Wintunu, očekávanou architekturu a SHA-256 přesných bajtů dodané `wintun.dll`. `install.bat` nebo jeho podepsaný pomocný instalátor MUSÍ před registrací služby a před jakoukoli změnou sítě ověřit podpis manifestu, shodu SHA-256, platný digitální podpis DLL a shodu architektury DLL s instalovanou službou a operačním systémem. Jakákoli neshoda je neobnovitelná chyba daného balíčku; instalace selže uzavřeně a NESMÍ vytvořit adaptér, nainstalovat službu ani změnit adresy, DNS nebo routy.
+
+Oficiální ZIP Wintun (nejnovější stabilní verze) má publikovaný SHA-256 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`. Tato hodnota ověřuje výhradně původní ZIP archiv při přípravě vydání; NENÍ hashem žádné jednotlivé `wintun.dll` a NESMÍ nahradit per-DLL hashe v podepsaném release manifestu distribuční složky `dist`.
+
+`wintun.dll` MUSÍ být uložena v instalačním adresáři chráněném proti zápisu neprivilegovaným uživatelem. Služba ji načítá pouze absolutní kanonickou cestou pomocí `LoadLibraryExW` s příznaky `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`. NESMÍ ji načíst přes `PATH`, aktuální pracovní adresář, relativní cestu, uživatelský profil, dočasný adresář ani jiné zapisovatelné umístění.
+
+Platformní vrstva má pevný allowlist API potřebných první verzí: `WintunCreateAdapter`, `WintunOpenAdapter`, `WintunCloseAdapter`, `WintunGetRunningDriverVersion`, `WintunStartSession`, `WintunEndSession`, `WintunGetReadWaitEvent`, `WintunReceivePacket`, `WintunReleaseReceivePacket`, `WintunAllocateSendPacket` a `WintunSendPacket`. Služba před první síťovou změnou bezpečně načte DLL a vyřeší všechny tyto symboly. Chybějící symbol, nesprávná architektura nebo jiná staticky zjistitelná nekompatibilita způsobí chybu bez vytvoření adaptéru, session, adresy nebo routy. Kompatibilitu skutečně běžící verze ověří bezprostředně po vytvoření nebo otevření adaptéru podle následující části a před zahájením session nebo změnou adres a rout; žádný fallback není dovolen.
+
+#### Vlastnictví adaptéru a session
+
+Wintun DLL, adaptér i session smí používat pouze Windows Service. Tray ani konzolová aplikace NESMĚJÍ načíst `wintun.dll`, volat její API, otevírat adaptér ani přímo měnit tunel; nadále komunikují pouze přes IPC. V jednom procesu a pro jednu instalaci phpvpn smí existovat nejvýše jeden otevřený adaptér a jedna aktivní session. Adaptér používá pevný název `phpvpn` a pevný typ tunelu `phpvpn`; implementace používá stabilní instalační identitu adaptéru a NESMÍ při opakovaném připojení vytvářet další adaptéry s odvozenými názvy.
+
+Služba smí adaptér vytvořit nebo otevřít a session zahájit až po úspěšném bootstrapu `health`, `info`, prázdný `data` polling. Bezprostředně po vytvoření nebo otevření adaptéru ověří pomocí `WintunGetRunningDriverVersion`, že skutečně běžící Wintun patří do podporovaného kompatibilního rozsahu vydání. Nevyhovující výsledek zavře adaptér a skončí bez zahájení session a bez konfigurace adres a rout. Pro první verzi má `WintunStartSession` kapacitu ring bufferu přesně 4 MiB (`4194304` bajtů), tedy mocninu dvou uvnitř rozsahu povoleného API; jiná hodnota vyžaduje předchozí zátěžové, overflow a paměťové testy a aktualizaci této specifikace.
+
+Po úspěšném vytvoření session služba přidá pouze svou virtuální IPv4 adresu a své explicitně evidované routy. Záznam vlastnictví rozlišuje prostředky vytvořené aktuální instalací od existujících adaptérů, adres a rout jiných aplikací. Recovery po pádu, restartu služby nebo systému je idempotentní: služba nejprve porovná skutečný stav se svým záznamem a opraví nebo odstraní jen vlastní nedokončené změny; před novým úspěšným bootstrapem přitom NESMÍ vytvořit ani otevřít adaptér nebo zahájit session a nesmí slepě mazat stejně vypadající cizí síťovou konfiguraci.
+
+#### Sekvenční I/O a vlastnictví paketů
+
+Vstupní pracovník je jediným volajícím `WintunReceivePacket`. Každý úspěšně vrácený buffer vlastní Wintun session a pracovník jej MUSÍ po zkopírování nebo dokončení validace právě jednou vrátit pomocí `WintunReleaseReceivePacket`, a to i při neplatném, ne-IPv4, příliš velkém nebo jinak zahozeném paketu. Ukazatel do receive ringu NESMÍ uložit do FIFO, předat jinému vláknu ani použít po `WintunReleaseReceivePacket`. Neplatné a non-IPv4 pakety se bezpečně zahodí a evidují pouze agregovaným čítačem; validace IPv4 a zařazení do per-peer FIFO se dále řídí společnými pravidly tohoto dokumentu.
+
+Není-li paket okamžitě dostupný, pracovník čeká přerušitelně na událost z `WintunGetReadWaitEvent` společně s vlastní událostí ukončení. NESMÍ pollovat v busy-loopu. Disconnect, stop služby, chyba session, sleep/hibernate a recovery musí čekání probudit nebo jinak řízeně ukončit, aby bylo možné pracovníka připojit bez časově neomezeného blokování.
+
+Výstupní pracovník je jediným volajícím `WintunAllocateSendPacket` a `WintunSendPacket`. Pro každý již ověřený IPv4 paket nejprve alokuje přesně potřebný buffer v send ringu, zkopíruje do něj paket a jediným `WintunSendPacket` předá vlastnictví session. Buffer NESMÍ odeslat dvakrát, použít po předání ani sdílet s jiným vláknem. Nedostatek místa v ringu nesmí vést k přepsání paměti ani busy-loopu; pracovník použije omezené přerušitelné čekání/backpressure a při zastavení bezpečně zahodí dosud nealokovaný paket podle existujících limitů a FIFO pravidel.
+
+#### Disconnect, upgrade a rollback
+
+Disconnect MUSÍ proběhnout v tomto pořadí: zastavit zakládání nových `data` pollingů a zrušit nebo nechat bezpečně doběhnout jediný existující request; signalizovat ukončení síťového i obou tunelových pracovníků, probudit jejich čekání a všechna vlákna připojit; odstranit pouze vlastní routy a vlastní adresu; zavolat nejvýše jednou `WintunEndSession`; a nakonec zavolat nejvýše jednou `WintunCloseAdapter`. Jednotlivé kroky i celý postup jsou idempotentní, snesou částečnou inicializaci a po pádu se dokončí přes vlastnický reconciliation. Stav `disconnected` se nesmí oznámit před dokončením tohoto pořadí.
+
+Upgrade je atomický a fail-closed: podporovaný instalační postup zastaví službu, ověří podpis balíčku a manifestu, per-DLL hash, digitální podpis, architekturu a API, atomicky nahradí aplikační soubory, provede omezený test vytvoření/otevření adaptéru a session bez trvalých rout a teprve potom službu spustí. Selže-li kontrola nebo test, síť zůstane odpojená a instalátor obnoví předchozí aplikační soubory pouze tehdy, pokud ověřil jejich kompatibilitu se skutečně běžící verzí Wintunu.
+
+Rollback aplikace NESMÍ slepě downgradovat kernelový ovladač. Před návratem starší aplikace musí instalátor ověřit, že její allowlist API a podporovaný rozsah zahrnují skutečně běžící Wintun; jinak rollback odmítne a ponechá službu zastavenou s bezpečnou diagnostikou. Instalace, upgrade, rollback ani běžná odinstalace NESMĚJÍ automaticky volat `WintunDeleteDriver`, protože systémový Wintun může současně používat WireGuard nebo jiná aplikace.
+
 #### Windows Service, konzole a tray
 
-Pro běžný provoz je klient implementovaný jako Windows Service. Služba výhradně vlastní konfiguraci, TUN/TAP, všechny síťové operace a všechny tři pracovní role. Samostatná tray aplikace běží v uživatelské relaci a spolu s konzolovou aplikací je pouze lokálním klientem služby. Obě aplikace smějí službu ovládat výhradně přes níže definované lokální IPC; nesmějí samy otevírat tunel ani provádět VPN provoz. Přes `get-config` a `set-config` však mohou dočasně přijmout nebo odeslat konfiguraci včetně `SERVER_SECRET`, `ACCESS_KEY` a `PAYLOAD_KEY`; stejný přístup má každá lokální aplikace připojená k pipe.
+Pro běžný provoz je klient implementovaný jako Windows Service. Služba výhradně vlastní konfiguraci, Wintun adaptér a session, všechny síťové operace a všechny tři pracovní role. Samostatná tray aplikace běží v uživatelské relaci a spolu s konzolovou aplikací je pouze lokálním klientem služby. Obě aplikace smějí službu ovládat výhradně přes níže definované lokální IPC; nesmějí načítat Wintun DLL, otevírat tunel ani provádět VPN provoz. Přes `get-config` a `set-config` však mohou dočasně přijmout nebo odeslat konfiguraci včetně `SERVER_SECRET`, `ACCESS_KEY` a `PAYLOAD_KEY`; stejný přístup má každá lokální aplikace připojená k pipe.
 
 Instalace, odinstalace, registrace, spuštění a zastavení samotné Windows Service nejsou operacemi IPC. Instalaci a odinstalaci zajišťují výhradně `install.bat`, `uninstall.bat` a Windows Service Manager. Konzolová aplikace nesmí tuto hranici obcházet řídicím příkazem poslaným přes pipe.
 
@@ -189,7 +225,7 @@ Snímek `get-status` NESMÍ obsahovat URL, konfiguraci, VPN ani jiné IP adresy,
 
 `connect` zahájí v rámci služby bootstrap v přesném pořadí `health`, `info` a prázdný autentizovaný polling `data`. Tunel, tři pracovní role a pravidelný VPN provoz smí služba spustit až po úspěchu všech tří kroků. Pokud připojování nebo provoz již běží, příkaz je idempotentní a vrátí aktuální stav bez založení druhého bootstrapu, tunelu nebo sady pracovních rolí.
 
-`disconnect` v rámci služby bezpečně ukončí pravidelný polling, zastaví tři pracovní role, uzavře tunel a obnoví síťový stav, který klient změnil. Příkaz je idempotentní; pokud je již odpojeno, vrátí aktuální stav. Dokončení příkazu nesmí být oznámeno dříve, než je další VPN polling zastaven a tunel bezpečně uzavřen.
+`disconnect` v rámci služby provede přesné pořadí z části „Disconnect, upgrade a rollback“: zastaví nové pollingy, ukončí pracovníky, odstraní pouze vlastní routy a adresu, ukončí Wintun session a zavře adaptér. Příkaz je idempotentní a recovery-safe; pokud je již odpojeno, vrátí aktuální stav. Dokončení příkazu nesmí být oznámeno dříve, než je další VPN polling zastaven a všechny tyto kroky bezpečně dokončeny.
 
 `get-info` provede uvnitř služby jednorázový `health` a po jeho úspěšném ověření jednorázový `info`. Služba ověří a dešifruje obě odpovědi. Příkaz nesmí spustit tunel, pracovní role ani `data` polling a nesmí měnit stav odpojeného klienta na připojený. Při úspěchu služba pošle přes pipe bez vlastní IPC obálky přesně validovaný dešifrovaný plaintext objekt `info` ze serveru, tedy objekt s poli `serverVersion`, `generatedAt`, `clients` a `limits`. Nevrací šifrovaný obal odpovědi, klíče, tagy ani ciphertext. Při selhání vrátí pouze stručnou bezpečnou IPC chybu. Služba, tray ani konzolová aplikace NESMĚJÍ kvůli tomuto příkazu zapisovat nebo vytvářet lokální soubor s výsledkem; tray a konzolová aplikace plaintext přímo zobrazí.
 
@@ -213,9 +249,25 @@ Bootstrap po volbě **Connect** probíhá v pořadí `health`, `info`, prázdný
 
 #### Distribuce a instalace ve Windows
 
-Distribuce pro Windows je složka `dist`. Obsahuje binární soubory služby, tray aplikace, konzolového správce, všechny nezbytné knihovny a skripty `install.bat` a `uninstall.bat`. Složka `dist` je kompletní předatelná distribuční jednotka.
+Distribuce pro Windows je složka `dist`. Obsahuje binární soubory služby, tray aplikace, konzolového správce, všechny nezbytné knihovny, nepřejmenované architekturní `wintun.dll`, upstream licenční text, podepsaný release manifest s per-DLL SHA-256 a skripty `install.bat` a `uninstall.bat`. Neobsahuje samostatné Wintun `.sys`, `.cat` ani `.inf`. Složka `dist` je kompletní předatelná distribuční jednotka; instalační postup NESMÍ stahovat nebo přijímat neověřenou náhradu některé její součásti.
 
-`install.bat` je podporovaný vstupní bod instalace. Smí zavolat pomocný PowerShellový skript a vyžádat si zvýšená administrátorská oprávnění. Nainstaluje a zaregistruje Windows Service, provede nutné kroky pro TUN/TAP, nastaví veřejný lokální přístup k named pipe podle této smlouvy a nakonfiguruje automatické spuštění tray aplikace při přihlášení uživatele; tray aplikace se po dokončení instalace spustí a zobrazí vedle systémových hodin. `uninstall.bat` provede opačný, bezpečný postup: zastaví a odregistruje službu přes Windows Service Manager, odebere automatické spuštění tray aplikace a odstraní pouze součásti vytvořené instalací. Konfigurační soubor a uživatelská data se při odinstalaci nemažou bez výslovné volby uživatele.
+`install.bat` je podporovaný vstupní bod instalace. Smí zavolat podepsaný pomocný PowerShellový skript a vyžádat si zvýšená administrátorská oprávnění. Nejdříve fail-closed ověří celý balíček podle podepsaného manifestu a teprve potom nainstaluje a zaregistruje Windows Service, připraví chráněný instalační adresář a Wintun, nastaví veřejný lokální přístup k named pipe podle této smlouvy a nakonfiguruje automatické spuštění tray aplikace při přihlášení uživatele; tray aplikace se po dokončení instalace spustí a zobrazí vedle systémových hodin. `uninstall.bat` provede opačný, bezpečný postup: zastaví a odregistruje službu přes Windows Service Manager, odebere automatické spuštění tray aplikace a odstraní pouze součásti vytvořené instalací. Nevolá automaticky `WintunDeleteDriver` a neodstraní systémový Wintun používaný jinou aplikací. Konfigurační soubor a uživatelská data se při odinstalaci nemažou bez výslovné volby uživatele.
+
+#### Povinné Windows integrační a lifecycle testy
+
+Každé podporované vydání a architektura MUSÍ před publikací projít alespoň těmito scénáři:
+
+1. čistá instalace z úplné složky `dist`, první bootstrap a vytvoření právě jednoho adaptéru `phpvpn` a jedné session s 4MiB ringem;
+2. instalace a běh na systému, kde Wintun současně používá WireGuard nebo jiná aplikace, bez změny či odstranění jejího adaptéru a ovladače;
+3. fail-closed odmítnutí po změně hashe DLL, neplatném podpisu manifestu nebo DLL, nesprávné architektuře, chybějícím povinném API a nepodporované běžící verzi, vždy bez nové služby a síťové změny;
+4. opakované connect/disconnect cykly, částečné selhání každé inicializační a teardown fáze a kontrola, že nezůstala vlastní adresa, routa, druhý adaptér ani session;
+5. pád a restart služby v každé fázi, včetně reconciliation vlastních zbytků bez zásahu do cizí síťové konfigurace;
+6. sleep, hibernate a resume během čekání na receive event, během pollingového requestu i při zaplněném send ringu, bez busy-loopu a deadlocku;
+7. podporovaný Windows upgrade a následný restart systému;
+8. upgrade a rollback phpvpn s ověřením kompatibility skutečně běžícího Wintunu a s odmítnutím slepého downgrade ovladače;
+9. zaplnění a overflow 4MiB receive i send ringu, backpressure, probuzení při stopu a zachování paměťové bezpečnosti, ownershipu a FIFO pravidel;
+10. souběh s jinou VPN, kolize rout a odpojení phpvpn bez odstranění cizích adres, DNS nebo rout;
+11. odinstalace při přítomnosti jiného uživatele Wintunu, která odstraní pouze phpvpn součásti, automaticky nevolá `WintunDeleteDriver` a neporuší funkčnost cizího Wintunu.
 
 ### macOS
 
