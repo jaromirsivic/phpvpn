@@ -51,7 +51,11 @@ Navržená struktura:
   },
   "runtime": {
     "maxOutboundQueueBytes": 16777216,
-    "maxInboundQueueBytes": 16777216
+    "maxInboundQueueBytes": 16777216,
+    "maxResponseBodyBytes": 67108864,
+    "maxNdjsonLineBytes": 67108864,
+    "maxDataRecordsPerResponse": 65535,
+    "responseTimeoutSeconds": 30
   },
   "communicationContracts": {
     "10.99.99.3": {
@@ -68,6 +72,12 @@ Navržená struktura:
 Konfigurace nesmí být běžně vypisována do logu. Log smí zobrazit adresu serveru, virtuální IP a seznam vzdálených IP bez klíčů a secretů. To neomezuje záměrně veřejné IPC příkazy `get-config` a `set-config`.
 
 `maxOutboundQueueBytes` je celková maximální velikost paketů načtených z virtuálního L3 rozhraní, které čekají na odeslání na server. `maxInboundQueueBytes` je celková maximální velikost ověřených a dešifrovaných paketů čekajících na zápis do tohoto rozhraní. Obě hodnoty jsou kladná celá čísla v bajtech a při vynechání mají výchozí hodnotu 16 MiB (`16777216`).
+
+`maxResponseBodyBytes`, `maxNdjsonLineBytes`, `maxDataRecordsPerResponse` a `responseTimeoutSeconds` jsou uživatelsky konfigurovatelná kladná celá čísla. Při vynechání mají po řadě výchozí hodnoty `67108864` bajtů (64 MiB), `67108864` bajtů, `65535` záznamů a `30` sekund. Prozatím pro ně neexistuje globální horní strop; úplná validace konfigurace však vždy odmítne nulu, zápornou hodnotu, necelé číslo nebo hodnotu nereprezentovatelnou podporovaným celočíselným typem implementace.
+
+`maxResponseBodyBytes` omezuje počet přesných bajtů těla jedné HTTP odpovědi. Transport jej průběžně počítá při přijímání odpovědí `health`, `info` i `data`; při překročení limitu request ukončí, neúplnou odpověď nepoužije a nepředá ji protokolovému parseru. `maxNdjsonLineBytes` omezuje počet bajtů jednoho řádku NDJSON odpovědi endpointu `data`, včetně jeho ukončovacího LF. NDJSON parser délku kontroluje průběžně a příliš dlouhý řádek odmítne ještě před base64 dekódováním jeho polí. `maxDataRecordsPerResponse` je maximální počet záznamů, tedy NDJSON řádků typu `data`, které klient přijme v jedné odpovědi endpointu `data`; parser po překročení limitu odmítne celou odpověď ještě před následným kryptografickým zpracováním překračujícího řádku.
+
+`responseTimeoutSeconds` je celková doba od zahájení HTTP requestu do přijetí celé odpovědi a platí pro `health`, `info` i `data`. Při jejím překročení klient request ukončí, nepoužije žádná neúplná data a přejde do běžné recovery logiky odpovídající dané fázi. Limity celkové velikosti odpovědi, délky NDJSON řádku, počtu datových řádků a celkového času se kontrolují samostatně a žádný z nich nenahrazuje ostatní.
 
 ## Stavový automat připojení
 
@@ -119,7 +129,7 @@ Výběr je spravedlivý: pracovník vede kruhové pořadí cílů, v první fáz
 
 Odpověď na `data` je NDJSON: nula nebo více řádků `data`, právě jeden `data-result` a poslední `data-mac`.
 
-1. Klient ověří strukturu odpovědi, `data-result` a závěrečný `data-mac`. Ten chrání počet, pořadí a úplnost datových řádků.
+1. Transport nejprve průběžně uplatní `maxResponseBodyBytes` a `responseTimeoutSeconds`. NDJSON parser potom průběžně uplatní `maxNdjsonLineBytes` ještě před base64 dekódováním příliš dlouhého řádku, počítá řádky typu `data` a odmítne celou odpověď, jakmile jejich počet překročí `maxDataRecordsPerResponse`; překračující řádek nesmí před odmítnutím kryptograficky zpracovat. Poté klient ověří strukturu odpovědi, `data-result` a závěrečný `data-mac`. Ten chrání počet, pořadí a úplnost datových řádků.
 2. U každého řádku nejdříve ověří, že `dst` je jeho lokální virtuální IP. Cizí řádek zahodí ještě před výběrem payload klíče.
 3. Podle přesné dvojice `src`, `dst` vyhledá kontrakt. Neexistuje-li, řádek zahodí a souhrnně zaloguje.
 4. Ověří kanonický base64url, délky IV a tagu a provede AES-GCM dešifrování s příslušným `PAYLOAD_KEY` a normativním AAD. Neplatný GCM tag znamená zahození pouze daného řádku.
@@ -128,7 +138,7 @@ Odpověď na `data` je NDJSON: nula nebo více řádků `data`, právě jeden `d
 7. Před pollingem kontroluje rezervu `maxInboundQueueBytes`, aby data nevyzvedl jen proto, aby je následně zahodil. Jestliže se ověřený paket do příchozí fronty přesto nevejde, zahodí jej a souhrnně zaloguje.
 8. Výstupní pracovník zapíše pouze takto platné IPv4 pakety do tunelu sekvenčně v pořadí, v jakém byly v dávce uvedeny.
 
-Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo pád po převzetí může znamenat ztrátu dávky; klient nemá předstírat garantované doručení. Aplikační vrstvy nad VPN mohou používat vlastní retransmise.
+Protokol je at-most-once na serverovém bufferu. Ztracená HTTP odpověď nebo pád po převzetí může znamenat ztrátu dávky; klient nemá předstírat garantované doručení. Výchozí hodnota `65535` pro `maxDataRecordsPerResponse` je vysoký klientský kompromis bez změny protokolu. Uživatel smí limit zmenšit, ale tím může způsobit odmítnutí odpovědi obsahující dávky, které server již atomicky vyzvedl a z bufferu odstranil. Aplikační vrstvy nad VPN mohou používat vlastní retransmise.
 
 ## Bezpečnostní model a přijatá rizika
 
