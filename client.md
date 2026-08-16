@@ -56,7 +56,8 @@ Navržená struktura:
     "maxResponseBodyBytes": 67108864,
     "maxNdjsonLineBytes": 67108864,
     "maxDataRecordsPerResponse": 65535,
-    "responseTimeoutSeconds": 30
+    "responseTimeoutSeconds": 30,
+    "timeSyncIntervalSeconds": 300
   },
   "communicationContracts": {
     "10.99.99.3": {
@@ -99,18 +100,63 @@ Odchozí směr používá jako `maxQueueBytes` hodnotu `maxOutboundQueueBytes` a
 
 `responseTimeoutSeconds` je celková doba od zahájení HTTP requestu do přijetí celé odpovědi a platí pro `health`, `info` i `data`. Při jejím překročení klient request ukončí, nepoužije žádná neúplná data a přejde do běžné recovery logiky odpovídající dané fázi. Limity celkové velikosti odpovědi, délky NDJSON řádku, počtu datových řádků a celkového času se kontrolují samostatně a žádný z nich nenahrazuje ostatní.
 
+`timeSyncIntervalSeconds` je uživatelsky konfigurovatelné kladné celé číslo určující periodu zahájení běžného pravidelného pokusu o obnovení ověřeného času serveru. Při vynechání má výchozí hodnotu `300`, tedy 5 minut. Prozatím nemá globální horní strop; úplná validace konfigurace odmítne nulu, zápornou hodnotu, necelé číslo i hodnotu nereprezentovatelnou podporovaným celočíselným typem implementace.
+
 ## Stavový automat připojení
 
 1. **Načtení konfigurace.** Klient validuje URL, VPN IP, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost podporované platformní vrstvy. Na Windows v této fázi smí ověřit distribuční manifest, DLL, architekturu a povinné Wintun API, ale NESMÍ ještě vytvořit ani otevřít adaptér, zahájit Wintun session nebo měnit síť.
-2. **Health.** Vygeneruje nový UUIDv4 `requestId` a odešle `auth-none` na `?action=health`.
-3. **Ověření serveru a času.** Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří, že `requestId` souhlasí, a ověří GCM tag podle protokolu. Teprve potom přijme čas serveru a vypočítá `timeDelta`; lokální systémový čas nikdy nemění.
-4. **Časová rezerva.** Serverový čas se plánuje s milisekundovou přesností. Klient používá efektivní serverový čas `localNow + timeDelta - safetyMargin`. Výchozí konzervativní mez je jedna sekunda za serverem; přesná hodnota má být konfigurovatelná či později definitivně stanovena.
+2. **Health.** Před prvním `info` nebo `data` vygeneruje nový UUIDv4 `requestId`, zaznamená monotónní `sendMono` a odešle `auth-none` na `?action=health`.
+3. **Ověření serveru a času.** Po přijetí celé odpovědi zaznamená monotónní `receiveMono`. Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří shodu `requestId` a GCM tag podle protokolu. Teprve potom přijme autentizovaný UTC čas serveru a atomicky vytvoří počáteční časový odhad podle následující části; lokální systémový čas nikdy nemění.
+4. **Časová rezerva.** Timestamp každého následujícího autentizovaného `info` nebo `data` requestu vznikne výhradně z posledního ověřeného odhadu serverového času, aktuálního monotónního času a normativní bezpečnostní rezervy podle následující části. Po synchronizaci se nesmí přímo odvozovat z aktuálních systémových hodin.
 5. **Info.** Klient autentizovaně odešle `auth-semi` na `?action=info`, ověří a dešifruje odpověď a uloží obdržené limity a doporučené provozní hodnoty. Tvrdé limity, zejména maximální velikost těla požadavku, musí dodržet. Doporučené intervaly pollingů slouží jako plánovač, pokud nejsou v budoucí specifikaci označené za závazné.
 6. **Ověření přístupového klíče.** Ještě před spuštěním tří pracovních rolí klient provede prázdný autentizovaný polling `data`. Tím ověří `ACCESS_KEY` i úplnou odpověď `data`. Přijaté platné dávky zpracuje stejně jako při běžném pollingu a připraví je pro výstupní pracovník.
 7. **Spuštění tunelu a provoz.** Teprve po úspěšném `health`, `info` a prvním prázdném `data` pollingu služba na Windows vytvoří nebo otevře jediný vlastní Wintun adaptér, zahájí jedinou session, nakonfiguruje vlastní adresu a routy a spustí tři pracovní role. Čtení tunelu a pravidelný polling endpointu `data` nesmějí začít dříve.
 8. **Obnova.** Při dočasné síťové nebo autentizační chybě klient nevypíná tunel bezprostředně, loguje stav, používá omezený backoff a opakuje `health`, `info` a prázdný `data` polling před návratem do provozu. Chyba konfigurace nebo neplatný server secret vyžaduje zásah uživatele.
 
 Příkazový výstup má stručně ukazovat fáze: připojování k serveru, dostupný server, úspěšně ověřený `SERVER_SECRET`, zjištěné provozní limity a stav tunelu. Tajemství ani autentizační tagy se nevypisují.
+
+## Synchronizace času
+
+Veškerý proměnný stav synchronizace času vlastní výhradně síťový pracovník. Žádná tunelová role jej nesmí měnit ani z něj samostatně vytvářet timestampy. Jeden úplný časový snímek obsahuje alespoň ověřený serverový UTC timestamp z `health`, odhad `serverTimeAtReceive`, monotónní `receiveMono`, naměřené RTT, rozdíl od lokálního systémového UTC času v okamžiku synchronizace a okamžik synchronizace. Snímek se zveřejní nebo nahradí pouze jako jeden celek po úspěšném ověření odpovědi.
+
+První `health` MUSÍ skončit úspěchem před prvním `info` nebo `data`. Síťový pracovník bezprostředně před zahájením HTTP requestu zaznamená `sendMono` z monotónních hodin a bezprostředně po přijetí celé odpovědi zaznamená `receiveMono` ze stejného monotónního časového zdroje. Nejprve ověří přesný očekávaný `requestId`, syntaxi všech polí a GCM tag. Pouze při úplném úspěchu vypočte:
+
+```text
+RTT = receiveMono - sendMono
+serverTimeAtReceive = authenticatedServerTimestamp + RTT / 2
+serverLocalOffsetAtSync = serverTimeAtReceive - localSystemUtcAtReceive
+```
+
+Záporné RTT, zpětný chod monotónních hodin nebo nereprezentovatelný výsledek zneplatní pokus. `serverLocalOffsetAtSync` slouží pro stav synchronizace a detekci změny systémových hodin; po přijetí snímku se nesmí používat spolu s aktuálními systémovými hodinami jako primární zdroj timestampů autentizovaných requestů.
+
+Pro každý běžný autentizovaný request síťový pracovník načte aktuální monotónní čas a vypočte:
+
+```text
+safetyMargin = max(1000 ms, RTT / 2 + 250 ms)
+requestTimestamp = serverTimeAtReceive
+                   + (currentMonotonic - receiveMono)
+                   - safetyMargin
+```
+
+Výsledek se zapíše v přesném milisekundovém UTC formátu vyžadovaném protokolem. Po úspěšné synchronizaci klient NESMÍ pro tento výpočet přímo použít aktuální systémové datum a čas. Změna wall clock proto sama neposune vytvářené autentizační timestampy; vyvolá pouze rychlou obnovu popsanou níže.
+
+Každých `timeSyncIntervalSeconds`, měřeno monotónním časem od posledního dokončeného synchronizačního pokusu, síťový pracovník sériově provede nový `health`, znovu změří RTT a po úplném ověření atomicky nahradí celý časový snímek. Periodická synchronizace je průběžná obnova během normálního provozu, nikoli vypršení odhadu nebo zastavení VPN po pěti minutách. Síťový pracovník zůstává jediným vlastníkem HTTP requestů: synchronizační `health` naplánuje až po dokončení právě probíhajícího requestu a během něj NESMÍ existovat paralelní `data` request.
+
+Po návratu ze sleep, hibernate nebo resume, po restartu síťové vrstvy a po zjištěné změně systémových hodin síťový pracovník označí časový odhad k rychlé obnově. Jakmile bezpečně dokončí nebo ukončí právě probíhající request, upřednostní nový `health` před dalším běžným autentizovaným requestem; ani rychlá obnova nesmí vytvořit paralelní HTTP request.
+
+Neplatná, neúplná nebo kryptograficky neověřená odpověď `health` NESMÍ změnit žádnou část platného časového snímku. Selže-li pravidelná nebo rychlá synchronizace, síťový pracovník zachová poslední úplný ověřený odhad, bezpečně zaznamená pouze stav selhání a spustí běžný recovery pokus s příslušným backoffem. Částečně vypočtené RTT, timestamp ani offset nesmí publikovat. Do logu NESMÍ zapsat timestampy requestů, přesný časový offset, klíče, HMAC nebo GCM tagy ani celé požadavky či odpovědi; smí uvést pouze bezpečné stavové informace, například že synchronizace uspěla, selhala nebo čeká na opakování.
+
+## Povinné testovací scénáře synchronizace času
+
+1. Výchozí konfigurace použije `timeSyncIntervalSeconds = 300`; kladná celá uživatelská hodnota projde a nula, záporná, necelá nebo nereprezentovatelná hodnota je odmítnuta před prvním `health`.
+2. Před prvním `info` a `data` proběhne právě jeden úspěšně ověřený `health`. Chybějící, změněný nebo cizí `requestId`, neplatný GCM tag či neplatné pole zabrání vytvoření počátečního časového snímku a žádný autentizovaný request se neodešle.
+3. Pro pevné `sendMono`, `receiveMono` a autentizovaný serverový timestamp test ověří přesné `RTT = receiveMono - sendMono`, `serverTimeAtReceive = timestamp + RTT / 2` a rozdíl vůči lokálnímu UTC času v okamžiku synchronizace.
+4. Known-answer test vytvoří běžný autentizační timestamp přesně jako `serverTimeAtReceive + (currentMonotonic - receiveMono) - max(1000 ms, RTT / 2 + 250 ms)`. Ověří větev s minimální rezervou 1000 ms i větev s rezervou zvětšenou vysokým RTT.
+5. Změna systémových hodin po synchronizaci nezmění timestamp odvozený ze stejného monotónního průběhu; pouze naplánuje rychlý `health`. Simulovaný zpětný chod monotónních hodin pokus bezpečně zneplatní.
+6. Za nepřerušeného provozu se po 300 sekundách monotónního času provede další `health`, přeměří RTT a atomicky nahradí snímek, aniž by ukončil VPN provoz nebo vytvořil paralelní `data` request.
+7. Sleep/hibernate/resume, restart síťové vrstvy a detekovaná změna wall clock vyvolají rychlou sériovou obnovu před dalším běžným autentizovaným requestem.
+8. Selhání periodického nebo rychlého `health` zachová beze změny celý předchozí snímek, zaznamená bezpečný stav a spustí běžnou recovery logiku; následný úspěšný pokus nahradí všechna pole snímku současně.
+9. Logovací test ověří, že úspěch, chyba ani diagnostika neobsahují request timestamp, přesný offset, klíč, HMAC/GCM tag, celé tělo požadavku ani celou odpověď.
 
 ## Odchozí tok paketů a plánování requestů
 
