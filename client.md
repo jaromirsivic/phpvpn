@@ -4,6 +4,8 @@
 
 Tento dokument popisuje návrh nativního klienta pro protokol phpvpn v1. Klient funguje jako krátce připojovaný relayový peer: zachytává IPv4 pakety z virtuálního rozhraní, end-to-end je šifruje pro konkrétního příjemce, odesílá je přes endpoint `data` a přijaté, ověřené pakety opět zapisuje do virtuálního rozhraní.
 
+Klient MUSÍ být implementován jako **fault-proof** a **thread-safe**. Musí používat právě tři vlákna, která bezpečně sdílejí zdroje bez datových závodů a souběžných kolizí. Při pádu pracovní části nebo závažné provozní chybě MUSÍ řízeně uvolnit či uvést do konzistentního stavu vlastní prostředky, přejít do recovery a pokusit se obnovit pokračování přeposílání paketů; neopravitelná chyba konfigurace nebo bezpečnostního ověření nadále vyžaduje zásah uživatele.
+
 Primárním cílem je Windows. Návrh současně odděluje platformně nezávislé jádro od síťového rozhraní a integrace operačního systému, aby jej bylo možné přenést na macOS a Linux. Doporučeným jazykem je C++20 s malou, explicitní C++ platformní vrstvou; čisté C je možné, ale bude znamenat více ruční správy zdrojů a chybových stavů.
 
 Server nezná payload klíče ani IP obsah. Klient zajišťuje výběr klíče, AES-256-GCM ochranu payloadu, validaci a předání paketů virtuálnímu L3 rozhraní.
@@ -20,13 +22,13 @@ Jádro klienta nesmí záviset na API konkrétní platformy. Je rozděleno do t�
 | `Transport` | HTTP/HTTPS POST, časové limity, kontrola velikosti odpovědi a politika certifikátů. |
 | `Tunnel` | Abstrakce čtení a zápisu surových IPv4 paketů do virtuálního rozhraní. |
 | `Queues` | Odchozí fronty podle cílové VPN adresy, příchozí fronty podle zdrojové VPN adresy, plánování flushů, logické per-peer rezervace, limity paměti a souhrnné statistiky zahozených paketů. |
-| `Runtime` | Stavový automat připojení, vlákna nebo event loop, ukončení a srozumitelný log. |
+| `Runtime` | Stavový automat připojení, tři vlákna, ukončení, recovery a srozumitelný log. |
 
 Platformní implementace poskytne pouze rozhraní `Tunnel` a případné API pro služby, privilegia a síťovou konfiguraci. Pro HTTP lze použít jednotnou knihovnu dostupnou na všech třech platformách, například libcurl. Pro nativní kryptografii lze použít ověřenou knihovnu s interoperabilní implementací AES-GCM; požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
 
 ### Běhový model
 
-Společné jádro používá tři sériově pracující role. Implementace je smí realizovat třemi vlákny nebo ekvivalentním event-loopem, ale vlastnictví dat a pravidla souběhu musí zůstat stejná.
+Společné jádro používá právě tři sériově pracující role, z nichž každá běží ve vlastním vlákně; implementace je NESMÍ nahradit samostatnými procesy, workery ani ekvivalentním event-loopem. Vlastnictví dat a pravidla souběhu musí zůstat stejná.
 
 1. **Vstupní pracovník tunelu** je jediným čtenářem virtuálního L3 rozhraní. Provede úplnou validaci IPv4 paketu podle pravidel níže, vyžaduje lokální virtuální IP jako vnitřní zdroj a zařadí jej výhradně do FIFO fronty kontraktu odpovídajícího jeho vnitřnímu cíli. Nešifruje ani nečeká na síť.
 2. **Síťový pracovník** je jediným vlastníkem `health`, `info` a `data` requestů, plánování dávek, šifrování, ověřování odpovědí a dešifrování. V jednom okamžiku smí existovat nanejvýš jeden probíhající `data` request.
