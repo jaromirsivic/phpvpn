@@ -209,15 +209,33 @@ Recovery při dočasné chybě nevypíná tunel okamžitě, používá exponenci
 
 Soubor je `%ProgramData%\phpvpn\config.json` s DACL pouze pro `SYSTEM` a `Administrators`. Validace probíhá před každým pokusem o připojení a před každým zápisem přes `set-config`.
 
-Kontroly:
+### 8.1 Výchozí hodnoty
+
+Chybějící volitelné pole se doplní výchozí hodnotou ještě před validací invariantů. Doplněná hodnota se chová stejně, jako by byla v souboru uvedena.
+
+| Pole | Výchozí hodnota | Poznámka |
+|---|---:|---|
+| `masterSetup.vpnCidr` | `10.99.99.0/24` | Určuje platné klientské adresy a `maxRemotePeers` 252 |
+| `masterSetup.trustAnyTlsCertificate` | `true` | Vědomě přijaté riziko, hlásí se ve startovním logu |
+| `runtime.maxOutboundQueueBytes` | 67108864 | 64 MiB |
+| `runtime.maxInboundQueueBytes` | 67108864 | 64 MiB |
+| `runtime.minPerPeerQueueBytes` | 131072 | 128 KiB logická rezervace v každém směru |
+| `runtime.maxResponseBodyBytes` | 67108864 | 64 MiB, platí pro `health`, `info` i `data` |
+| `runtime.maxNdjsonLineBytes` | 67108864 | 64 MiB na jeden řádek včetně LF |
+| `runtime.maxDataRecordsPerResponse` | 65535 | Klientský kompromis podle `client.md`, riziko odmítnutí platné odpovědi je přijaté |
+| `runtime.responseTimeoutSeconds` | 30 | Celková doba requestu pro `health`, `info` i `data` |
+| `runtime.timeSyncIntervalSeconds` | 300 | Perioda pravidelné obnovy ověřeného času |
+
+### 8.2 Kontroly
 
 - `serverUrl` je absolutní `http` nebo `https` URL bez userinfo, query a fragmentu, s kanonickým hostem a platným portem.
 - `vpnCidr` je kanonický zápis `A.B.C.D/len` s délkou prefixu 16 až 29 a nulovými host bity.
 - `virtualIp` je platná klientská adresa uvnitř `vpnCidr`.
 - Každý klíč `communicationContracts` je platná klientská adresa uvnitř `vpnCidr`, různá od `virtualIp`, a v mapě se vyskytuje právě jednou.
-- `serverSecret` je neprázdný řetězec, prázdná hodnota se normalizuje na 32 ASCII znaků `0` přesně testem nulové délky podle kapitoly 3.2 protokolu.
+- `serverSecret` je řetězec libovolné délky. Prázdná hodnota o nulové délce je platná konfigurace a normalizuje se na 32 ASCII znaků `0` přesně testem nulové délky podle kapitoly 3.2 protokolu. Validace ji nikdy neodmítne a řetězec `"0"` ani hodnota z nulových bajtů se nenormalizují.
+- `trustAnyTlsCertificate` je boolean. Při hodnotě `false` provede transport standardní ověření řetězce důvěry i shody názvu hostitele a neúspěšné ověření je chyba requestu, nikoli varování. Při hodnotě `true` se ověření záměrně vypne.
 - `accessKey` a každý `payloadKey` má přesně 64 malých hexadecimálních znaků.
-- Všechny runtime hodnoty jsou kladná celá čísla reprezentovatelná v `int64_t`.
+- Všechny runtime hodnoty jsou kladná celá čísla reprezentovatelná v `int64_t`. Nula, záporná hodnota, necelé číslo i nereprezentovatelná hodnota se odmítnou.
 - `maxRemotePeers` se odvodí z `vpnCidr` a pro oba směry samostatně platí `maxQueueBytes >= maxRemotePeers * minPerPeerQueueBytes`. Součin se počítá kontrolovaně, přetečení konfiguraci odmítne.
 - `maxNdjsonLineBytes <= maxResponseBodyBytes`.
 
@@ -255,7 +273,9 @@ Známé odpovědi pro AES-256-GCM, HMAC-SHA-256, HKDF, všechna čtyři odvozen�
 - **`Iso8601`** parsuje a formátuje přesně 24 znaků `YYYY-MM-DDTHH:MM:SS.sssZ` bez závislosti na časové zóně procesu, s vlastním celočíselným převodem days from civil.
 - **`JsonScanner`** čte ploché objekty se zavřenou sadou polí, odmítá duplicitní člen, neznámý člen, escape sekvenci a jakýkoli bajt za uzavírací závorkou.
 - **`RequestBuilder`** sestavuje `auth-none`, `auth-semi`, `auth-full` a řádek `data` v přesném pořadí členů a bez whitespace.
-- **`NdjsonResponseReader`** čte odpověď `data` průběžně. Uplatňuje `maxResponseBodyBytes`, `maxNdjsonLineBytes` a `maxDataRecordsPerResponse` dříve, než začne dekódovat pole řádku. Každý řádek `data` převede na záznam s dekódovaným ciphertextem a zapamatuje dvojici `messageId` a přesný text GCM tagu pro pozdější `data-mac`.
+- **`NdjsonResponseReader`** čte odpověď `data` průběžně. Nad rámec transportního limitu celého těla uplatňuje `maxNdjsonLineBytes` a `maxDataRecordsPerResponse` dříve, než začne dekódovat pole řádku. Každý řádek `data` převede na záznam s dekódovaným ciphertextem a zapamatuje dvojici `messageId` a přesný text GCM tagu pro pozdější `data-mac`.
+
+Čtyři limity jsou nezávislé a žádný nenahrazuje ostatní. `maxResponseBodyBytes` a `responseTimeoutSeconds` uplatňuje transport pro `health`, `info` i `data`. `maxNdjsonLineBytes` a `maxDataRecordsPerResponse` uplatňuje NDJSON parser pouze u akce `data`.
 
 Ověření odpovědi `data` má pevné pořadí. Nejprve struktura a pořadí řádků, potom `data-result` se shodným `requestId`, potom `data-mac` nad kanonickým řetězcem podle kapitoly 9.5 protokolu. Kanonický řetězec vyžaduje počet záznamů před dvojicemi, proto se dvojice drží v paměti a HMAC se počítá až na konci. Teprve po úspěšném konstantním porovnání se smí použít `acceptedMessageIds` a dešifrovat jednotlivé záznamy.
 
@@ -266,7 +286,9 @@ Ověření odpovědi `data` má pevné pořadí. Nejprve struktura a pořadí ř
 WinHTTP v asynchronním režimu, jedno spojení na request, žádná session cache mezi requesty jiného typu.
 
 - `WinHttpSetTimeouts` s resolve a connect 5 s podle kapitoly 11.2 protokolu, celkový deadline `responseTimeoutSeconds` hlídá síťový pracovník vlastním časovačem.
-- Při HTTPS a `trustAnyTlsCertificate` se nastaví `SECURITY_FLAG_IGNORE_UNKNOWN_CA`, `SECURITY_FLAG_IGNORE_CERT_CN_INVALID`, `SECURITY_FLAG_IGNORE_CERT_DATE_INVALID` a `SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE`. Startovní log tento stav zřetelně hlásí jako přijaté riziko.
+- **Limity odpovědi platí pro všechny tři akce stejně.** Transport počítá přijaté bajty průběžně po každém `WinHttpReadData` a při překročení `maxResponseBodyBytes` request okamžitě ukončí, neúplnou odpověď nepředá parseru a nepoužije z ní žádnou hodnotu. Stejně průběžně hlídá `responseTimeoutSeconds` od zahájení requestu do přijetí celé odpovědi. Obě kontroly se uplatní i u malých odpovědí `health` a `info`, kde chrání proti nekonečnému nebo extrémně pomalému tělu.
+- Při HTTPS a `trustAnyTlsCertificate` s hodnotou `true` se nastaví `SECURITY_FLAG_IGNORE_UNKNOWN_CA`, `SECURITY_FLAG_IGNORE_CERT_CN_INVALID`, `SECURITY_FLAG_IGNORE_CERT_DATE_INVALID` a `SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE`. Startovní log tento stav zřetelně hlásí jako přijaté riziko.
+- Při hodnotě `false` se žádný z těchto příznaků nenastaví, platí standardní ověření řetězce důvěry i názvu hostitele podle systémového úložiště a selhání ověření ukončí request jako chybu.
 - Content-Type je `application/json; charset=utf-8` pro `health` a `info` a `application/x-ndjson; charset=utf-8` pro `data`.
 - Tělo se posílá jedním `WinHttpWriteData` z už sestaveného bufferu, odpověď se čte po blocích přímo do parseru.
 - Zrušení má jeden token na request. Uzavře handle a probudí čekání bez ohledu na nakonfigurovaný timeout, takže disconnect a zastavení služby mají tvrdý horní limit.
@@ -342,11 +364,51 @@ Disconnect má pevné pořadí: zastavit zakládání nových pollingů, zrušit
 
 Služba se jmenuje `phpvpn`, běží pod LocalSystem s uvozeným absolutním `ImagePath`, přijímá `SERVICE_ACCEPT_STOP`, `SERVICE_ACCEPT_SHUTDOWN` a `SERVICE_ACCEPT_POWEREVENT` a nikdy nezobrazuje UI. Singleton zajišťuje pojmenovaný mutex v globálním namespace.
 
-IPC je named pipe `\\.\pipe\phpvpn-ipc-v1` v message režimu s verzovanou smlouvou v1. Každý požadavek nese `ipcVersion` s hodnotou 1, čerstvé UUIDv4 `requestId` a `command` z uzavřeného seznamu `get-status`, `connect`, `disconnect`, `get-info`, `get-config`, `set-config` a `get-diagnostics`. Neznámá verze, neznámý příkaz, duplicitní nebo nadbytečné pole končí stručnou bezpečnou chybou bez provedení operace.
+IPC je named pipe `\\.\pipe\phpvpn-ipc-v1` v message režimu s verzovanou smlouvou v1. Každý požadavek nese `ipcVersion` s hodnotou 1, čerstvé UUIDv4 `requestId` a `command` z uzavřeného seznamu `get-status`, `connect`, `disconnect`, `get-info`, `get-config`, `set-config` a `get-diagnostics`. Požadavek `set-config` navíc nese právě jedno pole `config`. Neznámá verze, neznámý příkaz, duplicitní nebo nadbytečné pole končí stručnou bezpečnou chybou bez provedení operace.
 
-`get-status` a `get-diagnostics` jsou čistě čtecí a nespouštějí síťovou operaci ani tunel. `connect` a `disconnect` jsou globální a idempotentní. `get-info` se zařadí jako příkaz do fronty síťového pracovníka, souběžné požadavky se deduplikují na jediné provedení a odpověď se rozešle všem čekajícím. `get-config` a `set-config` přenášejí celý konfigurační JSON bez IPC obálky přesně podle specifikace, včetně vědomě přijatého zpřístupnění tajných hodnot každé lokální aplikaci.
+### 17.1 Obálka odpovědi
 
-Tray aplikace běží v každé interaktivní relaci, po startu volá `get-status` a poté se dotazuje pevně jednou za 5 sekund a navíc ihned po `connect` a `disconnect`. Ikona `shield_lock` je šedá pro odpojeno, oranžová pro připojování a zelená pro ověřené připojení. Menu má pořadí Edit Config, Show Info a Connect nebo Disconnect. Editační okno je víceřádkové pole s neproporcionálním písmem a tlačítky Save a Cancel, okno Show Info je pouze pro čtení.
+Úspěšná odpověď každého příkazu kromě `get-info` a `get-config` má IPC obálku s `ipcVersion`, původním `requestId`, výsledkem příkazu a pouze poli povolenými pro daný příkaz. Do této skupiny patří i `set-config`, který při úspěchu vrací běžnou úspěšnou obálku bez konfiguračních dat.
+
+Odpovědi `get-info` a `get-config` jsou jediné dvě výjimky. Posílají se bez vlastní IPC obálky jako přímý JSON dokument. Právě proto smlouva vyžaduje jeden požadavek a jednu odpověď na jedno spojení, takže korelace nezávisí na `requestId` uvnitř těla.
+
+Chybová odpověď má vždy obálku a obsahuje původní `requestId`, stabilní stručný kód, bezpečný uživatelský popis a příznak obnovitelnosti. Nikdy neobsahuje detail výjimky, systémový chybový text ani interní cestu. Platí to i pro selhání `get-info` a `get-config`.
+
+### 17.2 Kontrakt jednotlivých příkazů
+
+| Příkaz | Provedení | Odpověď |
+|---|---|---|
+| `get-status` | Pouze čtení lokálního stavu, nespouští `health`, `info`, `data`, tunel ani obnovu | Obálka s devíti poli podle části 17.3 |
+| `connect` | Globální idempotentní bootstrap `health`, `info`, prázdný polling `data`, poté tunel a role | Obálka s aktuálním stavem, druhý bootstrap nevznikne |
+| `disconnect` | Globální idempotentní teardown v pevném pořadí podle kapitoly 16 | Obálka s aktuálním stavem, hlásí se až po dokončení celého pořadí |
+| `get-info` | Jednorázový `health` a po jeho ověření jednorázový `info` ve frontě síťového pracovníka | Bez obálky, přesně validovaný dešifrovaný plaintext s poli `serverVersion`, `generatedAt`, `clients` a `limits` |
+| `get-config` | Pouze čtení aktuální konfigurace | Bez obálky, přesný konfigurační JSON včetně tajných hodnot |
+| `set-config` | Úplná validace stejnými pravidly jako při připojení, poté atomický zápis | Obálka s úspěchem, při chybě se nic nezapíše |
+| `get-diagnostics` | Pouze čtení rozšířeného lokálního snímku, nespouští síťový požadavek, tunel ani obnovu | Obálka s poli podle části 17.4 |
+
+`get-info` nemění stav odpojeného klienta na připojený, nespouští tunel, pracovní role ani `data` polling a nevrací šifrovaný obal, klíče, tagy ani ciphertext. Souběžné požadavky se deduplikují na jediné provedení a výsledek se rozešle všem čekajícím. Služba, tray ani konzolová aplikace kvůli tomuto příkazu nikdy nevytvoří lokální soubor s výsledkem.
+
+`set-config` sám neodpojí ani nepřipojí VPN. Uložená konfigurace se použije až při následujícím pokusu o připojení, aktivní snímek se nemění.
+
+### 17.3 Povolená pole `get-status`
+
+Snímek obsahuje právě těchto devět položek: stav z množiny `disconnected`, `connecting`, `connected`, `recovering` a `error`, fázi z množiny `idle`, `health`, `info`, `access-key-check`, `starting-tunnel`, `running` a `stopping`, UTC čas poslední změny stavu, samostatný stav dosažitelnosti serveru a samostatný stav jeho kryptografického ověření, každý s hodnotou `unknown`, `yes` nebo `no`, stav tunelu, bezpečnou poslední chybu nebo `null`, agregované počty přijatých a odeslaných paketů spolu s počtem obnov, verzi klienta a verzi IPC smlouvy.
+
+Snímek nesmí obsahovat URL, konfiguraci, VPN ani jinou IP adresu, klíče, autentizační ani GCM tagy, ciphertexty a detailní síťové chyby.
+
+### 17.4 Bezpečný obsah `get-diagnostics`
+
+Rozšířený jednorázový snímek obsahuje stav, verzi a dobu běhu služby, výsledek validace konfigurace a bezpečná varování, výsledky posledního ověření `health`, `info` a `data` a poslední obnovy, připravenost tunelu, pro vstupní i výstupní fronty počet položek, obsazené bajty a platný limit, agregované provozní čítače a bezpečnou poslední chybu s příznakem obnovitelnosti.
+
+Snímek nesmí obsahovat URL, VPN ani jinou IP adresu, klíče, tagy, ciphertexty, obsah paketů, interní cesty ani detailní systémové nebo síťové chyby. Varování o zapnutém `trustAnyTlsCertificate` a o veřejné pipe jsou bezpečná a uvádějí se.
+
+### 17.5 Tray a konzole
+
+Tray aplikace běží v každé interaktivní relaci, po startu volá `get-status` a poté se dotazuje pevně jednou za 5 sekund a navíc ihned po `connect` a `disconnect`. Interval se nikdy nezkracuje, neprodlužuje ani adaptivně nemění.
+
+Ikona je Material Symbols `shield_lock` pod licencí Apache 2.0. Licenční text a soubor NOTICE jsou součástí distribuce i repozitáře. Šedá ikona znamená odpojeno, oranžová připojování a zelená úspěšně ověřené připojení. Po selhání tray zobrazí modální chybové okno s bezpečným popisem z IPC odpovědi a ikona se vrátí do šedého stavu.
+
+Menu má pořadí Edit Config, Show Info a Connect nebo Disconnect. Editační okno je víceřádkové pole s neproporcionálním písmem a tlačítky Save a Cancel, okno Show Info je stejné pole pouze pro čtení, které lze označit a zkopírovat, ale nelze upravit ani uložit.
 
 Konzolová aplikace je rovnocenný IPC klient s příkazy odpovídajícími smlouvě, hodí se pro skriptování a diagnostiku. Nespouští VPN provoz sama a neobchází hranici instalace a odinstalace.
 
@@ -375,7 +437,45 @@ Startovní log povinně zřetelně uvádí, že `trustAnyTlsCertificate` je zapn
 | Neshoda hashe nebo podpisu `wintun.dll` | Fail-closed, žádný adaptér, session ani síťová změna |
 | Sleep, hibernate a resume | Probuzení čekání, rychlá obnova času, pokračování bez deadlocku |
 
-## 20. Testy
+## 20. Instalace, upgrade, rollback a odinstalace
+
+Distribuční složka `dist` je kompletní předatelná jednotka. Obsahuje `phpvpn-service.exe`, `phpvpn-tray.exe`, `phpvpn-cli.exe`, všechny nezbytné knihovny, nepřejmenovanou architekturní `wintun.dll`, upstream licenci Wintunu, licenci Apache 2.0 pro ikonu, podepsaný release manifest s per-DLL SHA-256 a skripty `install.bat` a `uninstall.bat`. Neobsahuje samostatné `.sys`, `.cat` ani `.inf`. Instalace nikdy nestahuje ani nepřijímá neověřenou náhradu žádné součásti, takže bez sítě proběhne stejně.
+
+### 20.1 Release manifest
+
+Manifest je jeden JSON soubor s verzí formátu, verzí vydání, architekturou, verzí Wintunu a seznamem všech souborů balíčku s jejich SHA-256. Je podepsaný a jeho podpis se ověřuje proti pinované podpisové identitě phpvpn. Manifest generuje `tools/make-dist.ps1` a nikdy se needituje ručně.
+
+### 20.2 Instalace
+
+`install.bat` je podporovaný vstupní bod, smí zavolat podepsaný pomocný PowerShellový skript a vyžádat si zvýšená oprávnění. Pořadí je fail-closed a před jeho dokončením nesmí vzniknout služba ani jakákoli síťová změna:
+
+1. ověření podpisu manifestu a jeho kanonického tvaru,
+2. ověření SHA-256 každého souboru balíčku a odmítnutí chybějícího i nadbytečného spustitelného souboru,
+3. ověření digitálního podpisu `wintun.dll`, jejího vydavatele a shody architektury s instalovanou službou i operačním systémem,
+4. ověření povinného Wintun API v allowlistu bez vytvoření adaptéru,
+5. vytvoření chráněného instalačního adresáře v `%ProgramFiles%\phpvpn` a datového adresáře v `%ProgramData%\phpvpn`, oba s DACL pro `SYSTEM` a `Administrators` a s kontrolou reparse pointů,
+6. registrace jediné Windows Service `phpvpn` s uvozeným absolutním `ImagePath`,
+7. vytvoření řídicí named pipe podle smlouvy v1 s veřejným lokálním přístupem,
+8. zápis autostartu tray aplikace do `HKLM\Software\Microsoft\Windows\CurrentVersion\Run`, takže se spustí při každém novém interaktivním přihlášení,
+9. spuštění tray aplikace v aktuální relaci, aby se ikona objevila vedle systémových hodin.
+
+Jakákoli neshoda v krocích 1 až 4 je neobnovitelná chyba balíčku. Instalace skončí uzavřeně a nevytvoří adaptér, nenainstaluje službu a nezmění adresy, DNS ani routy.
+
+### 20.3 Upgrade
+
+Upgrade je atomický a fail-closed. Instalátor zastaví službu, ověří podpis balíčku a manifestu, per-DLL hash, digitální podpis, architekturu a API, rozbalí novou generaci do samostatného verzovaného adresáře, provede omezený test vytvoření nebo otevření adaptéru a session bez trvalých adres a rout a teprve potom atomicky přepne jediný malý ukazatel generace spolu s konfigurací SCM a službu spustí. Celý postup má vlastní crash-safe instalační žurnál, takže výpadek napájení uprostřed nevytvoří smíšenou instalaci. Služba při startu ověří, že všechny soubory patří jedné podepsané generaci, jinak se nespustí. Selže-li kontrola nebo test, síť zůstane odpojená.
+
+### 20.4 Rollback
+
+Rollback vybírá pouze kompletní, dříve ověřenou generaci. Před návratem starší aplikace instalátor ověří, že její allowlist API a podporovaný rozsah zahrnují skutečně běžící verzi Wintunu. Pokud ne, rollback se odmítne a služba zůstane zastavená s bezpečnou diagnostikou. Kernelový ovladač se nikdy slepě nedowngraduje.
+
+### 20.5 Odinstalace
+
+`uninstall.bat` provede opačné bezpečné pořadí: bezpečný disconnect s odstraněním pouze vlastních rout a adresy, ukončení session a zavření adaptéru, zastavení a odregistrování služby přes Windows Service Manager, odebrání autostartu tray aplikace a odstranění pouze součástí vytvořených instalací.
+
+Instalace, upgrade, rollback ani odinstalace nikdy nevolají `WintunDeleteDriver`, protože systémový Wintun může současně používat WireGuard nebo jiná aplikace. Konfigurační soubor, žurnál vlastnictví ani logy se nemažou bez výslovné volby uživatele. Instalace, odinstalace, registrace, spuštění a zastavení služby nejsou operacemi IPC a konzolová aplikace tuto hranici neobchází.
+
+## 21. Testy
 
 Unit testy běží nad vlastním malým harnessem, registrují se automaticky a spouští přes CTest jako `phpvpn-client-tests.exe`. Kontraktní testy potřebují běžící relay server, integrační testy navíc administrátorská práva.
 
@@ -389,9 +489,11 @@ Unit testy běží nad vlastním malým harnessem, registrují se automaticky a 
 | Payload a IPv4 | Dávka se dvěma pakety, nulový `packetCount`, chybná tabulka délek, trailing bajt, neshoda vnitřních adres, kontrolní součet hlavičky, atomické zahození celé dávky |
 | Kontrakt proti serveru | `health`, `info`, prázdný polling, odeslání a příjem dat, `413` při překročení limitu, chování při `401` a `503`, měření latence |
 | End-to-end s virtuálním peerem | `ping` a UDP přes tunel proti `tools/virtual-peer.py`, ztráta odpovědi, plná fronta, replay pollingu |
+| IPC smlouva | Obálka u všech příkazů kromě `get-info` a `get-config`, včetně úspěšného `set-config`, povolená pole `get-status` a `get-diagnostics`, absence citlivých hodnot, odmítnutí neznámé verze, neznámého příkazu, duplicitního i nadbytečného pole a překročené velikosti zprávy |
+| Instalace a upgrade | Fail-closed odmítnutí poškozeného manifestu, hashe, podpisu a architektury, atomický upgrade s crash-safe žurnálem, odmítnutí nekompatibilního rollbacku, zachování konfigurace při odinstalaci, nevolání `WintunDeleteDriver` a funkční autostart tray aplikace |
 | Windows lifecycle | Osmnáct scénářů z části „Povinné Windows integrační a lifecycle testy“ v `client.md`, zejména čistá instalace, souběh s WireGuard, fail-closed odmítnutí, opakované connect a disconnect, pád v každé fázi, sleep a resume, overflow ringu, dvě uživatelské relace |
 
-## 21. Postup prací
+## 22. Postup prací
 
 1. Příprava prostředí podle kapitoly 3, ověření překladu prázdné kostry a zprovoznění lokálního relay serveru.
 2. Jádro bez I/O: `base`, `config`, `protocol`, `crypto` a jejich unit testy včetně known-answer vektorů.
@@ -402,10 +504,10 @@ Unit testy běží nad vlastním malým harnessem, registrují se automaticky a 
 7. Wintun vrstva, síťová konfigurace, žurnál vlastnictví, preflight a reconciliation.
 8. Windows Service, IPC server a konzolová aplikace.
 9. Tray aplikace, ikony a obě dialogová okna.
-10. Distribuční složka `dist`, release manifest, `install.bat` a `uninstall.bat`.
+10. Distribuční složka `dist`, release manifest a celý lifecycle podle kapitoly 20, tedy `install.bat`, `uninstall.bat`, atomický upgrade s generacemi a ověřovaný rollback.
 11. Windows lifecycle testy, zátěžové a pádové scénáře, doladění rozpočtů a diagnostiky.
 
-## 22. Otevřené body k potvrzení během implementace
+## 23. Otevřené body k potvrzení během implementace
 
 - Podporovaný rozsah běžící verze Wintunu se zafixuje po ověření proti aktuálnímu 0.14.1 a zapíše se do manifestu i do kontroly v kódu.
 - Metrika vlastní routy se zvolí tak, aby nepřebíjela existující specifičtější routy, výchozí návrh je nízká explicitní hodnota potvrzená testem číslo 12 z lifecycle sady.
