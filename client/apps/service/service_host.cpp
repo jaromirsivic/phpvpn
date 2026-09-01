@@ -77,6 +77,11 @@ public:
         paths.journalFile = journalFilePath(data);
         paths.installDirectory = installDirectory.wstring();
 
+        // The first IPC get-config must already see a valid document. This is
+        // an exclusive create: an administrator's existing file, valid or not,
+        // is never replaced automatically.
+        PHPVPN_TRY(ensureDefaultConfigFile(paths.configFile));
+
         engine_ = std::make_unique<VpnEngine>(*crypto_, *transport_, *clock_, *tunnelDriver_,
                                               *netConfig_, std::move(paths));
         PHPVPN_TRY(engine_->start());

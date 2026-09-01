@@ -3,6 +3,7 @@ add_executable(phpvpn-client-tests
     unit/test_base64url.cpp
     unit/test_config.cpp
     unit/test_crypto.cpp
+    unit/test_default_config.cpp
     unit/test_ipc.cpp
     unit/test_iso8601.cpp
     unit/test_json.cpp

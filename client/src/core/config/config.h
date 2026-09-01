@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/base/result.h"
@@ -29,6 +30,22 @@ inline constexpr std::int64_t kDefaultMaxNdjsonLineBytes = 67108864;
 inline constexpr std::int64_t kDefaultMaxDataRecordsPerResponse = 65535;
 inline constexpr std::int64_t kDefaultResponseTimeoutSeconds = 30;
 inline constexpr std::int64_t kDefaultTimeSyncIntervalSeconds = 300;
+
+// First-start document written by the Windows Service when config.json is
+// absent. It is intentionally valid but points at a hostname that requires an
+// administrator edit before a real connection is attempted.
+inline constexpr std::string_view kDefaultConfigDocument = R"json({
+  "masterSetup": {
+    "serverUrl": "https://MODIFY-THIS/phpvpn.php",
+    "trustAnyTlsCertificate": true,
+    "serverSecret": "0000000000000000000000000000000000000000000000000000000000000000",
+    "vpnCidr": "10.99.99.0/24",
+    "virtualIp": "10.99.99.2",
+    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  "communicationContracts": {}
+}
+)json";
 
 // Absolute local polling bounds of client.md "Pollingovy interval".
 inline constexpr std::int64_t kMinPollIntervalMs = 20;
