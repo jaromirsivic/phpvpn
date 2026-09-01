@@ -1,0 +1,47 @@
+// Version, description, manifest and icon resource shared by every executable,
+// plan_client.md chapter 5.
+
+#include <winver.h>
+
+#define PHPVPN_RC_MANIFEST_ID 1
+
+PHPVPN_RC_MANIFEST_ID RT_MANIFEST "@PHPVPN_RC_MANIFEST@"
+
+#if @PHPVPN_RC_HAS_ICON@
+// The first icon of the resource table is the one Explorer and the task bar
+// show for the file itself.
+100 ICON "@PHPVPN_RC_ICON@"
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @PHPVPN_RC_VERSION_COMMA@
+PRODUCTVERSION @PHPVPN_RC_VERSION_COMMA@
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+FILEFLAGS VS_FF_DEBUG
+#else
+FILEFLAGS 0x0L
+#endif
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "phpvpn"
+            VALUE "FileDescription", "@PHPVPN_RC_DESCRIPTION@"
+            VALUE "FileVersion", "@PHPVPN_RC_VERSION@"
+            VALUE "InternalName", "@PHPVPN_RC_INTERNAL_NAME@"
+            VALUE "LegalCopyright", "phpvpn"
+            VALUE "OriginalFilename", "@PHPVPN_RC_ORIGINAL_NAME@"
+            VALUE "ProductName", "phpvpn client"
+            VALUE "ProductVersion", "@PHPVPN_RC_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

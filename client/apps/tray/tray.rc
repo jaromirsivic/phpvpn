@@ -1,0 +1,5 @@
+#include "resource.h"
+
+IDI_PHPVPN_DISCONNECTED ICON "../../assets/icons/shield_lock_grey.ico"
+IDI_PHPVPN_CONNECTING   ICON "../../assets/icons/shield_lock_orange.ico"
+IDI_PHPVPN_CONNECTED    ICON "../../assets/icons/shield_lock_green.ico"

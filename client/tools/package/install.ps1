@@ -1,0 +1,305 @@
+<#
+.SYNOPSIS
+    Installs the phpvpn client from this package.
+
+.DESCRIPTION
+    plan_client.md chapter 20.2. The order is fail closed: nothing is created,
+    registered or changed on the network until every verification passed.
+
+      1. the manifest signature and its canonical form,
+      2. the SHA-256 of every packaged file, with no missing and no extra
+         executable,
+      3. the Authenticode signature, the publisher and the architecture of
+         wintun.dll,
+      4. the mandatory tunnel driver API, without creating an adapter,
+      5. the protected installation and data directories,
+      6. the single Windows service with a quoted absolute ImagePath,
+      7. the control pipe of contract v1, created by the service itself,
+      8. the tray autostart for every new interactive logon,
+      9. the tray application in the current session.
+
+    A mismatch in steps 1 to 4 is an unrecoverable package error. The script
+    then stops without creating an adapter, without installing the service and
+    without changing a single address, route or DNS setting.
+
+    The installation never calls WintunDeleteDriver, because WireGuard or
+    another application may be using the same system driver.
+#>
+[CmdletBinding()]
+param(
+    # Pinned signing identity of the phpvpn release key.
+    [string]$ExpectedThumbprint = "7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8",
+
+    # Verifies the package and stops before anything is created.
+    [switch]$VerifyOnly
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$package = Split-Path -Parent $MyInvocation.MyCommand.Path
+$installRoot = Join-Path $env:ProgramFiles "phpvpn"
+$dataRoot = Join-Path $env:ProgramData "phpvpn"
+$binaries = @("phpvpn-service.exe", "phpvpn-tray.exe", "phpvpn.exe")
+
+function Fail {
+    param([string]$Message)
+    Write-Host "installation refused: $Message" -ForegroundColor Red
+    exit 1
+}
+
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+if (-not $VerifyOnly -and -not (Assert-Administrator)) {
+    # Re-launch elevated once. The user sees exactly one consent prompt.
+    $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+    Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs
+    exit 0
+}
+
+# --------------------------------------------------- 1. manifest and signature
+
+$manifestPath = Join-Path $package "release-manifest.json"
+$signaturePath = Join-Path $package "release-manifest.sig"
+$certificatePath = Join-Path $package "release-signing.cer"
+
+foreach ($required in @($manifestPath, $signaturePath, $certificatePath)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+        Fail "the package is incomplete, $(Split-Path $required -Leaf) is missing"
+    }
+}
+
+$manifestBytes = [System.IO.File]::ReadAllBytes($manifestPath)
+if ($manifestBytes.Length -ge 3 -and $manifestBytes[0] -eq 0xEF) {
+    Fail "the manifest carries a byte order mark and is therefore not canonical"
+}
+$manifestText = [System.Text.Encoding]::UTF8.GetString($manifestBytes)
+if ($manifestText.Contains("`r") -or $manifestText.Contains("`n")) {
+    Fail "the manifest is not in its canonical single line form"
+}
+
+try {
+    $manifest = $manifestText | ConvertFrom-Json
+} catch {
+    Fail "the manifest is not valid JSON"
+}
+if ($manifest.manifestVersion -ne 1) {
+    Fail "the manifest format version $($manifest.manifestVersion) is not supported"
+}
+
+$detached = [System.IO.File]::ReadAllText($signaturePath) | ConvertFrom-Json
+if ($detached.algorithm -ne "RSA-PKCS1-SHA256") {
+    Fail "the signature algorithm $($detached.algorithm) is not supported"
+}
+
+$certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certificatePath)
+if ($certificate.Thumbprint.ToUpperInvariant() -ne $ExpectedThumbprint.ToUpperInvariant()) {
+    Fail "the package was signed by an identity that is not pinned"
+}
+if ($detached.thumbprint.ToUpperInvariant() -ne $ExpectedThumbprint.ToUpperInvariant()) {
+    Fail "the signature names an identity that is not pinned"
+}
+if ($manifest.signingIdentity.ToUpperInvariant() -ne $ExpectedThumbprint.ToUpperInvariant()) {
+    Fail "the manifest names an identity that is not pinned"
+}
+
+$publicKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+$verified = $publicKey.VerifyData(
+    $manifestBytes,
+    [Convert]::FromBase64String($detached.signature),
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+    [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+if (-not $verified) {
+    Fail "the manifest signature did not verify"
+}
+Write-Host "manifest      : verified, release $($manifest.releaseVersion) for $($manifest.architecture)"
+
+# ------------------------------------------------------ 2. per file SHA-256
+
+$listed = @{}
+foreach ($entry in $manifest.files) {
+    $path = Join-Path $package $entry.path
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        Fail "the packaged file $($entry.path) is missing"
+    }
+    $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $entry.sha256.ToLowerInvariant()) {
+        Fail "the packaged file $($entry.path) does not match its recorded hash"
+    }
+    $listed[$entry.path] = $true
+}
+
+foreach ($file in Get-ChildItem -LiteralPath $package -File) {
+    if ($file.Extension -eq ".exe" -or $file.Extension -eq ".dll") {
+        if (-not $listed.ContainsKey($file.Name)) {
+            Fail "the package holds the unexpected binary $($file.Name)"
+        }
+    }
+}
+foreach ($name in $binaries) {
+    if (-not $listed.ContainsKey($name)) {
+        Fail "the package does not hold $name"
+    }
+}
+Write-Host "package files : $($manifest.files.Count) verified"
+
+# ------------------------------------- 3. tunnel driver signature and machine
+
+function Get-PeMachine {
+    param([string]$Path)
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $reader = New-Object System.IO.BinaryReader($stream)
+        $stream.Position = 0x3C
+        $stream.Position = $reader.ReadInt32()
+        if ($reader.ReadUInt32() -ne 0x00004550) { return "unknown" }
+        switch ($reader.ReadUInt16()) {
+            0x8664 { return "x64" }
+            0x014C { return "x86" }
+            0xAA64 { return "arm64" }
+            default { return "unknown" }
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+$driverPath = Join-Path $package "wintun.dll"
+$driverSignature = Get-AuthenticodeSignature -LiteralPath $driverPath
+if ($driverSignature.Status -ne "Valid") {
+    Fail "wintun.dll does not carry a valid Authenticode signature"
+}
+if ($driverSignature.SignerCertificate.Subject -notmatch "WireGuard") {
+    Fail "wintun.dll was not published by the expected vendor"
+}
+
+$serviceMachine = Get-PeMachine (Join-Path $package "phpvpn-service.exe")
+$driverMachine = Get-PeMachine $driverPath
+$osMachine = switch ($env:PROCESSOR_ARCHITECTURE) {
+    "AMD64" { "x64" }
+    "ARM64" { "arm64" }
+    "x86"   { "x86" }
+    default { "unknown" }
+}
+if ($serviceMachine -ne $driverMachine) {
+    Fail "the service is $serviceMachine but the tunnel driver is $driverMachine"
+}
+if ($serviceMachine -ne $osMachine) {
+    Fail "the package is $serviceMachine but this system is $osMachine"
+}
+Write-Host "tunnel driver : $($driverSignature.SignerCertificate.Subject), $driverMachine"
+
+# ------------------------------------------------- 4. the mandatory driver API
+
+$probe = & (Join-Path $package "phpvpn-service.exe") --verify-tunnel
+if ($LASTEXITCODE -ne 0) {
+    Fail "the tunnel driver does not expose the required API"
+}
+Write-Host "driver API    : $probe"
+
+if ($VerifyOnly) {
+    Write-Host ""
+    Write-Host "the package is complete and trustworthy, nothing was installed"
+    exit 0
+}
+
+# -------------------------------------------------------- 5. directories
+
+function New-ProtectedDirectory {
+    param([string]$Path)
+
+    if (Test-Path -LiteralPath $Path) {
+        $item = Get-Item -LiteralPath $Path -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Fail "$Path is a reparse point and cannot be used safely"
+        }
+    } else {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+
+    # SYSTEM and Administrators keep full control, authenticated users may read
+    # so the tray and the console can start from the installation directory.
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($account in @("NT AUTHORITY\SYSTEM", "BUILTIN\Administrators")) {
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $account, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")))
+    }
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "BUILTIN\Users", "ReadAndExecute", "ContainerInherit,ObjectInherit", "None", "Allow")))
+    $acl.SetOwner((New-Object System.Security.Principal.NTAccount("BUILTIN\Administrators")))
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+$generation = Join-Path $installRoot $manifest.releaseVersion
+New-ProtectedDirectory $installRoot
+New-ProtectedDirectory $dataRoot
+New-ProtectedDirectory $generation
+
+foreach ($entry in $manifest.files) {
+    Copy-Item -LiteralPath (Join-Path $package $entry.path) -Destination $generation -Force
+}
+Copy-Item -LiteralPath $manifestPath -Destination $generation -Force
+Copy-Item -LiteralPath $signaturePath -Destination $generation -Force
+Copy-Item -LiteralPath $certificatePath -Destination $generation -Force
+
+# The generation pointer is a single small file, so the switch of chapter 20.3
+# stays atomic on the same volume.
+$pointerTemp = Join-Path $installRoot "current.generation.new"
+[System.IO.File]::WriteAllText($pointerTemp, $manifest.releaseVersion, `
+                               (New-Object System.Text.UTF8Encoding($false)))
+Move-Item -LiteralPath $pointerTemp -Destination (Join-Path $installRoot "current.generation") -Force
+Write-Host "installed to  : $generation"
+
+# ------------------------------------------------------------ 6. the service
+
+$serviceBinary = Join-Path $generation "phpvpn-service.exe"
+$existing = Get-Service -Name "phpvpn" -ErrorAction SilentlyContinue
+if ($null -ne $existing) {
+    Write-Host "service       : stopping the previous generation"
+    Stop-Service -Name "phpvpn" -Force -ErrorAction SilentlyContinue
+    & $serviceBinary --uninstall | Out-Null
+}
+
+& $serviceBinary --install
+if ($LASTEXITCODE -ne 0) {
+    Fail "the service could not be registered"
+}
+Start-Service -Name "phpvpn"
+
+# --------------------------------------------------------- 7. the control pipe
+
+# The service creates the pipe of contract v1 itself, so the installer only
+# waits for it to appear instead of pre-creating anything.
+$pipeReady = $false
+for ($attempt = 0; $attempt -lt 50; ++$attempt) {
+    if (Test-Path -LiteralPath "\\.\pipe\phpvpn-control-v1") {
+        $pipeReady = $true
+        break
+    }
+    Start-Sleep -Milliseconds 200
+}
+if (-not $pipeReady) {
+    Fail "the service started but did not publish the control pipe"
+}
+Write-Host "service       : running, control pipe published"
+
+# ------------------------------------------------------------ 8. tray autostart
+
+$trayBinary = Join-Path $generation "phpvpn-tray.exe"
+New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" `
+                 -Name "phpvpn-tray" -Value "`"$trayBinary`"" -PropertyType String -Force | Out-Null
+
+# ------------------------------------------------- 9. the tray in this session
+
+Start-Process -FilePath $trayBinary -ErrorAction SilentlyContinue
+
+Write-Host ""
+Write-Host "phpvpn $($manifest.releaseVersion) is installed."
+Write-Host "  configuration : $(Join-Path $dataRoot 'config.json')"
+Write-Host "  logs          : $(Join-Path $dataRoot 'logs')"
+Write-Host "  console       : $(Join-Path $generation 'phpvpn.exe') status"
