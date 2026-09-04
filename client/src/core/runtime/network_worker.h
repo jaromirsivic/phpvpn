@@ -26,6 +26,7 @@
 #include "core/queues/packet_queues.h"
 #include "core/queues/scheduler.h"
 #include "core/runtime/time_sync.h"
+#include "core/runtime/traffic_counters.h"
 #include "platform/iface/clock.h"
 #include "platform/iface/transport.h"
 
@@ -49,7 +50,8 @@ public:
 
     // Rebinds the worker to a new active configuration and derives the long
     // lived keys once per connection.
-    Status configure(ClientConfigPtr config);
+    Status configure(ClientConfigPtr config, TrafficCounters* counters = nullptr,
+                     std::function<bool()> requestCancelled = {});
 
     const ClientConfigPtr& config() const noexcept { return config_; }
     const ServerLimits& serverLimits() const noexcept { return serverLimits_; }
@@ -60,7 +62,7 @@ public:
 
     // One verified `health` exchange. On success the time snapshot is replaced
     // atomically, so a failure keeps the previous verified time.
-    Result<HealthResponse> performHealth();
+    Result<HealthResponse> performHealth(const std::function<void()>& onSyntaxUsable = {});
 
     // One verified `info` exchange. Also publishes the server limits used by the
     // scheduler and by the polling interval.
@@ -108,6 +110,8 @@ private:
     Clock& clock_;
 
     ClientConfigPtr config_;
+    TrafficCounters* counters_ = nullptr;
+    std::function<bool()> requestCancelled_;
     KeyDerivation keys_;
     std::string normalisedServerSecret_;
     SecureBuffer semiKey_;

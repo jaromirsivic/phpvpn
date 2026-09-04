@@ -4,6 +4,8 @@ Plán popisuje kompletní implementaci nativního klienta podle [client.md](clie
 
 Audit [PROBLEM_CLIENT.md](PROBLEM_CLIENT.md) se v tomto plánu záměrně neřeší. Rizika, která popisuje, jsou vědomě přijatá rozhodnutí zadavatele, zejména veřejná lokální named pipe, podpora čistého HTTP, výchozí `trustAnyTlsCertificate` s hodnotou `true` a instalace řízená skriptem `install.bat`.
 
+Aktuální Windows rozšíření konkretizuje [plan2_client.md](plan2_client.md) podle normativního [client.md](client.md). Plány popisují požadovanou implementaci, nikoli potvrzení jejího dokončení.
+
 ## 1. Potvrzená rozhodnutí
 
 - **Jazyk a toolchain.** C++20, kompilátor MSVC z Visual Studio Build Tools 2022, generátor CMake a Ninja. Klient nepoužívá žádnou knihovnu třetí strany a nepoužívá vcpkg. HTTP zajišťuje WinHTTP, kryptografii CNG (`bcrypt.dll`), síťovou konfiguraci IP Helper, uživatelské rozhraní tray aplikace nativní Win32.
@@ -203,7 +205,9 @@ Pořadí připojení odpovídá kapitole „Stavový automat připojení“ v `c
 6. přidání vlastní adresy a jediné routy prefixu `vpnCidr`, ověření nezměněné výchozí routy a DNS,
 7. spuštění obou tunelových pracovníků a pravidelného pollingu.
 
-Recovery při dočasné chybě nevypíná tunel okamžitě, používá exponenciální backoff od 250 ms do 30 s s jitterem a opakuje `health`, `info` a prázdný polling. Chyba konfigurace, ověření serveru nebo přístupového klíče vede do stavu `error`, který vyžaduje zásah uživatele.
+Recovery při dočasné chybě nevypíná tunel okamžitě, používá exponenciální backoff od 250 ms do 30 s s jitterem a opakuje `health`, `info` a prázdný polling. Chyba konfigurace, kryptografického ověření serveru nebo skutečné autorizační odmítnutí klíče vede do stavu `error`, který vyžaduje zásah uživatele. Timeout je obnovitelná komunikační chyba a sám neprokazuje nesprávný klíč.
+
+Služba uchovává výsledky úvodních kontrol Server URL, SERVER_SECRET a ACCESS_KEY. Recovery je nenuluje ani nepřepisuje dalšími běhy, aktualizuje jen stav, fázi a bezpečnou chybu. Reset na pending proběhne při novém logickém connect z disconnected nebo error a po dokončeném disconnect, idempotentní connect jej neprovede. Server URL se publikuje jako success již po syntaktické validaci health, před kryptografií pomocí krátkého callbacku bez zámku přes ověřování.
 
 ## 8. Konfigurace a validace
 
@@ -291,6 +295,7 @@ WinHTTP v asynchronním režimu, jedno spojení na request, žádná session cac
 - Při hodnotě `false` se žádný z těchto příznaků nenastaví, platí standardní ověření řetězce důvěry i názvu hostitele podle systémového úložiště a selhání ověření ukončí request jako chybu.
 - Content-Type je `application/json; charset=utf-8` pro `health` a `info` a `application/x-ndjson; charset=utf-8` pro `data`.
 - Tělo se posílá jedním `WinHttpWriteData` z už sestaveného bufferu, odpověď se čte po blocích přímo do parseru.
+- Pro `data` transport lokálně sčítá každý skutečně přečtený blok včetně bloku přes limit. Součet předá i při timeoutu, zrušení nebo jiné chybě. Služba jej jednou zaúčtuje do `serializedDataResponseBodyBytes` po dokončení pokusu, nikoli průběžně. Neúplný obsah se nepoužije jako protokolový výsledek, počet bajtů se však zachová. Žádné další kopírování těla ani globální zamykání po bajtech.
 - Zrušení má jeden token na request. Uzavře handle a probudí čekání bez ohledu na nakonfigurovaný timeout, takže disconnect a zastavení služby mají tvrdý horní limit.
 
 ## 12. Synchronizace času
@@ -364,7 +369,7 @@ Disconnect má pevné pořadí: zastavit zakládání nových pollingů, zrušit
 
 Služba se jmenuje `phpvpn`, běží pod LocalSystem s uvozeným absolutním `ImagePath`, přijímá `SERVICE_ACCEPT_STOP`, `SERVICE_ACCEPT_SHUTDOWN` a `SERVICE_ACCEPT_POWEREVENT` a nikdy nezobrazuje UI. Singleton zajišťuje pojmenovaný mutex v globálním namespace.
 
-IPC je named pipe `\\.\pipe\phpvpn-ipc-v1` v message režimu s verzovanou smlouvou v1. Každý požadavek nese `ipcVersion` s hodnotou 1, čerstvé UUIDv4 `requestId` a `command` z uzavřeného seznamu `get-status`, `connect`, `disconnect`, `get-info`, `get-config`, `set-config` a `get-diagnostics`. Požadavek `set-config` navíc nese právě jedno pole `config`. Neznámá verze, neznámý příkaz, duplicitní nebo nadbytečné pole končí stručnou bezpečnou chybou bez provedení operace.
+IPC je named pipe `\\.\pipe\phpvpn-control-v1` v message režimu s verzovanou smlouvou v1. Každý požadavek nese `ipcVersion` s hodnotou 1, čerstvé UUIDv4 `requestId` a `command` z uzavřeného seznamu `get-status`, `connect`, `disconnect`, `get-info`, `get-config`, `set-config` a `get-diagnostics`. Požadavek `set-config` navíc nese právě jedno pole `config`. Neznámá verze, neznámý příkaz, duplicitní nebo nadbytečné pole končí stručnou bezpečnou chybou bez provedení operace.
 
 ### 17.1 Obálka odpovědi
 
@@ -378,7 +383,7 @@ Chybová odpověď má vždy obálku a obsahuje původní `requestId`, stabilní
 
 | Příkaz | Provedení | Odpověď |
 |---|---|---|
-| `get-status` | Pouze čtení lokálního stavu, nespouští `health`, `info`, `data`, tunel ani obnovu | Obálka s devíti poli podle části 17.3 |
+| `get-status` | Pouze čtení lokálního stavu, nespouští `health`, `info`, `data`, tunel ani obnovu | Obálka s konzistentním snímkem podle části 17.3 |
 | `connect` | Globální idempotentní bootstrap `health`, `info`, prázdný polling `data`, poté tunel a role | Obálka s aktuálním stavem, druhý bootstrap nevznikne |
 | `disconnect` | Globální idempotentní teardown v pevném pořadí podle kapitoly 16 | Obálka s aktuálním stavem, hlásí se až po dokončení celého pořadí |
 | `get-info` | Jednorázový `health` a po jeho ověření jednorázový `info` ve frontě síťového pracovníka | Bez obálky, přesně validovaný dešifrovaný plaintext s poli `serverVersion`, `generatedAt`, `clients` a `limits` |
@@ -392,23 +397,37 @@ Chybová odpověď má vždy obálku a obsahuje původní `requestId`, stabilní
 
 ### 17.3 Povolená pole `get-status`
 
-Snímek obsahuje právě těchto devět položek: stav z množiny `disconnected`, `connecting`, `connected`, `recovering` a `error`, fázi z množiny `idle`, `health`, `info`, `access-key-check`, `starting-tunnel`, `running` a `stopping`, UTC čas poslední změny stavu, samostatný stav dosažitelnosti serveru a samostatný stav jeho kryptografického ověření, každý s hodnotou `unknown`, `yes` nebo `no`, stav tunelu, bezpečnou poslední chybu nebo `null`, agregované počty přijatých a odeslaných paketů spolu s počtem obnov, verzi klienta a verzi IPC smlouvy.
+Snímek obsahuje stav, fázi, UTC čas poslední změny stavu, `serverUrlCheck`, `serverSecretCheck`, `accessKeyCheck`, dosažitelnost a kryptografické ověření serveru, stav tunelu, bezpečnou poslední chybu nebo null, počet obnov, verzi klienta a IPC a devět čítačů:
 
-Snímek nesmí obsahovat URL, konfiguraci, VPN ani jinou IP adresu, klíče, autentizační ani GCM tagy, ciphertexty a detailní síťové chyby.
+- `dataPollsTotal`, `dataPollsEmpty`, `dataPollsWithPayload`,
+- `serializedDataRequestBodyBytes`, `serializedDataResponseBodyBytes`,
+- `ipv4PacketsSent`, `ipv4PacketsReceived`, `ipv4BytesSent`, `ipv4BytesReceived`.
+
+Přesné názvy, typy a význam stanovuje client.md a část 4 plan2_client.md. Staré `packetsSent` a `packetsReceived` se ruší. Čítače používají nejméně 64bitový nezáporný rozsah, kontrolovanou saturaci a invariant `dataPollsTotal = dataPollsEmpty + dataPollsWithPayload`. Pollingová trojice při vyčerpání rozsahu společně zamrzne. Stav, fáze, body i čítače jsou jeden konzistentní paměťový snímek. Pořadí členů JSON objektů není závazné, parser čte názvy a testy porovnávají význam, nikoli pořadí.
+
+Request a odchozí IPv4 pakety se účtují při předání úplného requestu transportu. Opakované odeslání stejného paketu v novém requestu je nový přenosový pokus, odpověď jej podruhé neúčtuje. Přijaté IPv4 pakety se účtují až po úplném ověření odpovědi a dávky, validaci paketu a přijetí do příchozí fronty. Bajty odpovědi se jednou účtují po dokončení requestu i při chybě podle kapitoly 11. HTTP/TLS režie, nižší vrstvy, health a info se nepočítají.
+
+Čítače se nulují novým logickým connect, ne idempotentním connect nebo recovery. Před dokončením disconnect se uzavře a doúčtuje starý request, poté se atomicky publikuje odpojený stav s pending kontrolami a nulovými čítači. Opožděný výsledek nesmí změnit nový snímek. Čítače nejsou persistentní, restart i pád je vynulují.
+
+Snímek nesmí obsahovat URL ani její část, konfiguraci, IP adresy, klíče, tagy, ciphertexty, obsah requestů nebo paketů, interní cesty a raw systémové nebo detailní síťové chyby. Služba vytváří bezpečný `lastError.code`, anglický `description` a `recoverable` podle části 4.4 plan2_client.md. Rozlišuje endpoint, ověření serveru, skutečné odmítnutí klíče, selhání spuštění tunelu a nedokončenou komunikaci včetně timeoutu. Tray příčinu neodvozuje z kontrol. Čtení snímku je pouze paměťové, nemění stav ani čítače, nečeká na síť a neblokuje pracovníky přes kryptografii nebo HTTP.
 
 ### 17.4 Bezpečný obsah `get-diagnostics`
 
-Rozšířený jednorázový snímek obsahuje stav, verzi a dobu běhu služby, výsledek validace konfigurace a bezpečná varování, výsledky posledního ověření `health`, `info` a `data` a poslední obnovy, připravenost tunelu, pro vstupní i výstupní fronty počet položek, obsazené bajty a platný limit, agregované provozní čítače a bezpečnou poslední chybu s příznakem obnovitelnosti.
+Rozšířený jednorázový snímek obsahuje stav, verzi a dobu běhu služby, výsledek validace konfigurace a bezpečná varování, výsledky posledního ověření `health`, `info` a `data` a poslední obnovy, připravenost tunelu, pro vstupní i výstupní fronty počet položek, obsazené bajty a platný limit, devět globálních provozních čítačů z části 17.3 a ostatní diagnostické čítače `packetsDropped`, `batchesRejected`, `responsesRejected` a `peakResponseCiphertextBytes`, a bezpečnou poslední chybu s příznakem obnovitelnosti. Poslední chyba používá stejné veřejné kategorie a anglické popisy jako get-status.
 
 Snímek nesmí obsahovat URL, VPN ani jinou IP adresu, klíče, tagy, ciphertexty, obsah paketů, interní cesty ani detailní systémové nebo síťové chyby. Varování o zapnutém `trustAnyTlsCertificate` a o veřejné pipe jsou bezpečná a uvádějí se.
 
 ### 17.5 Tray a konzole
 
-Tray aplikace běží v každé interaktivní relaci, po startu volá `get-status` a poté se dotazuje pevně jednou za 5 sekund a navíc ihned po `connect` a `disconnect`. Interval se nikdy nezkracuje, neprodlužuje ani adaptivně nemění.
+Tray aplikace běží v každé interaktivní relaci, po startu volá `get-status`, poté základní timer každých 5 sekund a navíc ihned po connect a disconnect. Progress okno má samostatný 500ms polling po celou dobu otevření. Zavření jej ukončí. Základní timer se neposouvá ani nenahrazuje. Statistics může při otevření vyvolat jediný okamžitý dotaz a dál používá pětisekundové snímky. Nevzniká get-statistics ani streamování.
 
-Ikona je Material Symbols `shield_lock` pod licencí Apache 2.0. Licenční text a soubor NOTICE jsou součástí distribuce i repozitáře. Šedá ikona znamená odpojeno, oranžová připojování a zelená úspěšně ověřené připojení. Po selhání tray zobrazí modální chybové okno s bezpečným popisem z IPC odpovědi a ikona se vrátí do šedého stavu.
+Tři ikony Material Symbols `shield_lock` mají stejnou čtvercovou geometrii, neprůhledné bílé pozadí a souvislý černý rámeček. Liší se pouze šedou, oranžovou nebo zelenou barvou štítu. Licence Apache 2.0 a požadovaná oznámení patří do distribuce. Ostrost a čitelnost se ověří na světlém i tmavém motivu při podporovaných DPI.
 
-Menu má pořadí Edit Config, Show Info a Connect nebo Disconnect. Editační okno je víceřádkové pole s neproporcionálním písmem a tlačítky Save a Cancel, okno Show Info je stejné pole pouze pro čtení, které lze označit a zkopírovat, ale nelze upravit ani uložit.
+Menu má pořadí Edit Config, Show Info, Connect nebo Disconnect, Statistics a za oddělovačem Exit. Exit zavírá pouze místní tray. Edit Config zobrazuje konfigurační JSON včetně URL a klíčů z get-config bez povinného maskování, ukládá přes set-config. Výchozí klientská plocha je 1080 × 560 při 100% DPI, větší vnější výška je přípustná. DPI škálování, malá pracovní plocha, oba posuvníky a tlačítka Save a Cancel musí fungovat bez překryvů a artefaktů. Show Info zobrazuje pouze pro čtení výsledek vlastní smlouvy get-info. Zákaz citlivých údajů se vztahuje na stavová, statistická a chybová zobrazení, nikoli plošně na editor konfigurace.
+
+Connect otevře nemodální progress okno uprostřed pracovní plochy aktivního monitoru. Zobrazuje Connecting, oranžový štít a Server URL, SERVER_SECRET, ACCESS_KEY. Pending je oranžové, success zelené, failed červené. Během připojování přebírá celou trojici ze služby bez kumulace dřívějších úspěchů. Teprve skutečný connected dovoluje zelené Successfully connected a automatické zavření po přibližně 3 sekundách bez odpočtu. Chyba zobrazí Cannot connect to the server a hotový bezpečný anglický popis služby. Konečný chybový výsledek zůstane do ručního zavření, ani úspěšná recovery jej automaticky nezavře. Zavření okna během připojování neodesílá disconnect ani neovlivňuje VPN. Globální stav nadále zobrazuje tray ikona podle aktuálních snímků.
+
+Statistics pouze zobrazuje devět globálních čítačů ze stejné služby, vlastní čítače nevede. Podrobný návrh modelů, callbacku health, mapování chyb a testů obsahuje plan2_client.md.
 
 Konzolová aplikace je rovnocenný IPC klient s příkazy odpovídajícími smlouvě, hodí se pro skriptování a diagnostiku. Nespouští VPN provoz sama a neobchází hranici instalace a odinstalace.
 
@@ -490,8 +509,9 @@ Unit testy běží nad vlastním malým harnessem, registrují se automaticky a 
 | Kontrakt proti serveru | `health`, `info`, prázdný polling, odeslání a příjem dat, `413` při překročení limitu, chování při `401` a `503`, měření latence |
 | End-to-end s virtuálním peerem | `ping` a UDP přes tunel proti `tools/virtual-peer.py`, ztráta odpovědi, plná fronta, replay pollingu |
 | IPC smlouva | Obálka u všech příkazů kromě `get-info` a `get-config`, včetně úspěšného `set-config`, povolená pole `get-status` a `get-diagnostics`, absence citlivých hodnot, odmítnutí neznámé verze, neznámého příkazu, duplicitního i nadbytečného pole a překročené velikosti zprávy |
+| Windows rozšíření | Nezávislé timery 500 ms a 5 s, ukončení timeru okna, historie kontrol při recovery, přímé převzetí snímku, timeout versus autorizační odmítnutí, callback Server URL před kryptografií, částečná těla i při chybě a doúčtování před resetem, opakovaný paket 100 bajtů ve dvou requestech jako 2 pakety a 200 bajtů, JSON kolem INT64_MAX a UINT64_MAX až do tray, nezávislost na pořadí členů, oba posuvníky a DPI editoru |
 | Instalace a upgrade | Fail-closed odmítnutí poškozeného manifestu, hashe, podpisu a architektury, atomický upgrade s crash-safe žurnálem, odmítnutí nekompatibilního rollbacku, zachování konfigurace při odinstalaci, nevolání `WintunDeleteDriver` a funkční autostart tray aplikace |
-| Windows lifecycle | Osmnáct scénářů z části „Povinné Windows integrační a lifecycle testy“ v `client.md`, zejména čistá instalace, souběh s WireGuard, fail-closed odmítnutí, opakované connect a disconnect, pád v každé fázi, sleep a resume, overflow ringu, dvě uživatelské relace |
+| Windows lifecycle | Všech 35 scénářů z části „Povinné Windows integrační a lifecycle testy“ v `client.md`, zejména čistá instalace, souběh s WireGuard, fail-closed odmítnutí, opakované connect a disconnect, pád v každé fázi, sleep a resume, overflow ringu, dvě uživatelské relace |
 
 ## 22. Postup prací
 

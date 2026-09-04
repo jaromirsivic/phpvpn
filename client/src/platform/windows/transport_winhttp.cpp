@@ -14,7 +14,9 @@
 #include <winhttp.h>
 
 #include <atomic>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -137,7 +139,7 @@ public:
         return Status::success();
     }
 
-    Result<HttpResponse> post(HttpAction action, std::string_view body) override {
+    HttpExchangeResult post(HttpAction action, std::string_view body) override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!session_ || !connection_) {
             return Error(ErrorCode::transport_unavailable, "the transport is not configured");
@@ -185,7 +187,8 @@ public:
         const std::wstring headers =
             std::wstring(L"Content-Type: ") + widen(httpActionContentType(action)) + L"\r\n";
 
-        auto outcome = performRequest(request, headers, body);
+        std::uint64_t responseBodyBytesRead = 0;
+        auto outcome = performRequest(request, headers, body, responseBodyBytesRead);
 
         bool ownsHandle = false;
         {
@@ -196,9 +199,9 @@ public:
         if (ownsHandle) {
             WinHttpCloseHandle(request);
         } else {
-            return Error(ErrorCode::cancelled, "the request was cancelled");
+            return {Error(ErrorCode::cancelled, "the request was cancelled"), responseBodyBytesRead};
         }
-        return outcome;
+        return {std::move(outcome), responseBodyBytesRead};
     }
 
     void cancelCurrentRequest() override {
@@ -218,7 +221,8 @@ public:
 private:
     Result<HttpResponse> performRequest(HINTERNET request,
                                         const std::wstring& headers,
-                                        std::string_view body) {
+                                        std::string_view body,
+                                        std::uint64_t& responseBodyBytesRead) {
         if (!WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
                                 const_cast<char*>(body.data()), static_cast<DWORD>(body.size()),
                                 static_cast<DWORD>(body.size()), 0)) {
@@ -241,6 +245,23 @@ private:
 
         HttpResponse response;
         response.statusCode = static_cast<int>(statusCode);
+        std::optional<std::uint64_t> contentLength;
+        wchar_t lengthText[32]{};
+        DWORD lengthSize = sizeof(lengthText);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH,
+                                WINHTTP_HEADER_NAME_BY_INDEX, lengthText, &lengthSize,
+                                WINHTTP_NO_HEADER_INDEX)) {
+            std::uint64_t length = 0;
+            const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+            for (const wchar_t* digit = lengthText; *digit; ++digit) {
+                if (*digit < L'0' || *digit > L'9' || length > (maximum - (*digit - L'0')) / 10)
+                    return Error(ErrorCode::transport_receive_failed, "the response length is invalid");
+                length = length * 10 + (*digit - L'0');
+            }
+            contentLength = length;
+        } else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND) {
+            return Error(ErrorCode::transport_receive_failed, "the response length could not be read");
+        }
 
         const std::size_t cap = settings_.maxResponseBodyBytes > 0
                                     ? static_cast<std::size_t>(settings_.maxResponseBodyBytes)
@@ -253,8 +274,13 @@ private:
                 return Error(mapWinHttpError(GetLastError()), "the response could not be read");
             }
             if (read == 0) {
+                if (contentLength && responseBodyBytesRead != *contentLength)
+                    return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
                 break;
             }
+            const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+            responseBodyBytesRead = read > maximum - responseBodyBytesRead
+                ? maximum : responseBodyBytesRead + read;
             if (response.body.size() + read > cap) {
                 return Error(ErrorCode::transport_response_too_large,
                              "the response exceeds the configured limit");

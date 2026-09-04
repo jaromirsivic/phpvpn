@@ -60,7 +60,8 @@ public:
     // Stops every worker and releases the adapter. Safe to call more than once.
     void shutdown();
 
-    // IPC surface. All of these return immediately.
+    // IPC surface. Connect waits only for the network writer's acceptance
+    // publication, never for network I/O or the bootstrap result.
     Status connect();
     Status disconnect();
     StatusSnapshot status() const;
@@ -82,6 +83,7 @@ public:
     Result<std::string> fetchInfoOnce();
 
 private:
+    friend struct VpnEngineTestAccess;
     enum class Command { none, connect, disconnect, stop };
 
     void runNetworkThread();
@@ -89,7 +91,7 @@ private:
     Command takeCommand(std::int64_t waitMs);
 
     Status loadStoredConfig();
-    Status runConnectSequence();
+    Status runConnectSequence(bool initialBootstrap);
     void runConnectedIteration();
     void teardown(bool keepError);
 
@@ -108,6 +110,7 @@ private:
     EnginePaths paths_;
 
     NetworkWorker network_;
+    TrafficCounters counters_;
     TunnelSession tunnelSession_;
 
     // Queues live for the whole process, they are only cleared between
@@ -122,9 +125,15 @@ private:
     std::unique_ptr<TunnelOutputWorker> outputWorker_;
 
     mutable std::mutex stateMutex_;
+    std::condition_variable stateSignal_;
     ConnectionState state_ = ConnectionState::disconnected;
     ConnectionPhase phase_ = ConnectionPhase::idle;
     std::string stateChangedAtUtc_;
+    CheckpointResult serverUrlCheck_ = CheckpointResult::pending;
+    CheckpointResult serverSecretCheck_ = CheckpointResult::pending;
+    CheckpointResult accessKeyCheck_ = CheckpointResult::pending;
+    bool healthSyntaxUsable_ = false;
+    bool connectCommandPending_ = false;
     Tristate serverReachable_ = Tristate::unknown;
     Tristate serverVerified_ = Tristate::unknown;
     Tristate tunnelReady_ = Tristate::unknown;

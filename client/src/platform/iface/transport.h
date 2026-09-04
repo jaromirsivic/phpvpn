@@ -34,6 +34,21 @@ struct HttpResponse {
     std::string body;
 };
 
+// Read accounting survives every failure, independently of the returned body.
+struct HttpExchangeResult {
+    Result<HttpResponse> result;
+    std::uint64_t responseBodyBytesRead = 0;
+
+    HttpExchangeResult(Error error) : result(std::move(error)) {}
+    HttpExchangeResult(Result<HttpResponse> outcome, std::uint64_t bytes)
+        : result(std::move(outcome)), responseBodyBytesRead(bytes) {}
+    bool ok() const noexcept { return result.ok(); }
+    const Error& error() const { return result.error(); }
+    HttpResponse& value() & { return result.value(); }
+    const HttpResponse& value() const & { return result.value(); }
+    HttpResponse&& value() && { return std::move(result).value(); }
+};
+
 // Cancellation token shared with the role that owns the request. Closing it
 // aborts DNS resolution, the TCP connect, the TLS handshake and a slow read.
 class RequestCancellation {
@@ -50,7 +65,7 @@ public:
 
     // Performs exactly one POST to `?action=<action>` and returns the complete
     // body. Never follows a redirect and never uses a proxy.
-    virtual Result<HttpResponse> post(HttpAction action, std::string_view body) = 0;
+    virtual HttpExchangeResult post(HttpAction action, std::string_view body) = 0;
 
     // Aborts the request that is currently in flight, if any.
     virtual void cancelCurrentRequest() = 0;

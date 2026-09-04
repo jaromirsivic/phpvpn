@@ -30,12 +30,15 @@ std::int64_t clampToRange(std::int64_t value, std::int64_t low, std::int64_t hig
 NetworkWorker::NetworkWorker(CryptoProvider& crypto, Transport& transport, Clock& clock)
     : crypto_(crypto), transport_(transport), clock_(clock), keys_(crypto) {}
 
-Status NetworkWorker::configure(ClientConfigPtr config) {
+Status NetworkWorker::configure(ClientConfigPtr config, TrafficCounters* counters,
+                                 std::function<bool()> requestCancelled) {
     if (!config) {
         return Error(ErrorCode::config_missing, "no active configuration");
     }
 
     reset();
+    counters_ = counters;
+    requestCancelled_ = std::move(requestCancelled);
     config_ = std::move(config);
     normalisedServerSecret_ = normalizeServerSecret(config_->serverSecret);
 
@@ -76,7 +79,7 @@ Result<std::string> NetworkWorker::currentTimestamp() {
     return timeSync_.requestTimestamp(clock_.monotonicMs());
 }
 
-Result<HealthResponse> NetworkWorker::performHealth() {
+Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>& onSyntaxUsable) {
     if (!config_) {
         return Error(ErrorCode::config_missing, "no active configuration");
     }
@@ -97,6 +100,7 @@ Result<HealthResponse> NetworkWorker::performHealth() {
     }
 
     const std::int64_t sendMono = clock_.monotonicMs();
+    if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
     HttpResponse response;
     PHPVPN_TRY_ASSIGN(response, transport_.post(HttpAction::health, body));
     const std::int64_t receiveMono = clock_.monotonicMs();
@@ -109,7 +113,7 @@ Result<HealthResponse> NetworkWorker::performHealth() {
 
     HealthResponse health;
     PHPVPN_TRY_ASSIGN(health, ResponseParser::parseHealth(crypto_, keys_, normalisedServerSecret_,
-                                                          requestId, response.body));
+                                                          requestId, response.body, onSyntaxUsable));
 
     // The timestamp is authenticated at this point, so it may enter the clock.
     TimeSnapshot snapshot;
@@ -138,6 +142,7 @@ Result<InfoResponse> NetworkWorker::performInfo() {
     PHPVPN_TRY_ASSIGN(body, RequestBuilder::buildAuthSemi(crypto_, semiKey_, timestamp, requestId));
 
     HttpResponse response;
+    if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
     PHPVPN_TRY_ASSIGN(response, transport_.post(HttpAction::info, body));
     if (response.statusCode != 200) {
         return Error(ResponseParser::mapServerError(response.statusCode, response.body),
@@ -264,9 +269,11 @@ void NetworkWorker::ingestRecord(const DataResponseRecord& record,
     }
 
     for (PacketBytes& packet : packets.value()) {
+        const auto packetBytes = packet.size();
         DropReason reason = DropReason::global_limit;
         if (inbound.tryEnqueue(source, std::move(packet), reason)) {
             ++outcome.packetsReceived;
+            if (counters_) counters_->recordAcceptedPacket(packetBytes);
         } else {
             inboundDrops.record(source, reason);
             ++outcome.packetsDropped;
@@ -326,7 +333,21 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
         return bodyResult.error();
     }
 
+    if (requestCancelled_ && requestCancelled_()) {
+        returnEverything();
+        return Error(ErrorCode::cancelled);
+    }
+    if (counters_) {
+        std::uint64_t packets = 0;
+        std::uint64_t packetBytes = 0;
+        for (const auto& record : plan.records) {
+            packets += record.packets.size();
+            for (const auto& packet : record.packets) packetBytes += packet.size();
+        }
+        counters_->recordRequest(!plan.records.empty(), bodyResult.value().size(), packets, packetBytes);
+    }
     auto response = transport_.post(HttpAction::data, bodyResult.value());
+    if (counters_) counters_->recordResponseBody(response.responseBodyBytesRead);
     if (!response.ok()) {
         returnEverything();
         return response.error();

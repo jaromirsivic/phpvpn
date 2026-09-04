@@ -4,6 +4,8 @@ The upstream glyph is distributed by Google under the Apache License 2.0, see
 `client/assets/icons/LICENSE-material-symbols.txt`. The script rasterises the
 single SVG path into the three state colours the tray uses: grey for
 disconnected, orange for connecting and green for a verified connection.
+PHPVPN modification: opaque white tile with a crisp black border, one pixel
+per 16 frame pixels (minimum one). The glyph uses the remaining inner square.
 
 Run it with `uv run client/tools/make_icons.py`. The generated `.ico` files are
 committed, so a normal build does not need Python at all.
@@ -17,6 +19,8 @@ committed, so a normal build does not need Python at all.
 from __future__ import annotations
 
 import pathlib
+import io
+import struct
 import sys
 
 from PIL import Image, ImageChops, ImageDraw
@@ -88,9 +92,11 @@ def subpath_polygons(path: Path, size: int) -> list[list[tuple[float, float]]]:
 
 def render(path: Path, size: int, colour: tuple[int, int, int, int]) -> Image.Image:
     hi_res = size * SUPERSAMPLE
+    border = border_width(size)
     coverage = Image.new("1", (hi_res, hi_res), 0)
 
-    for polygon in subpath_polygons(path, hi_res):
+    for polygon in subpath_polygons(path, (size - 2 * border) * SUPERSAMPLE):
+        polygon = [(x + border * SUPERSAMPLE, y + border * SUPERSAMPLE) for x, y in polygon]
         layer = Image.new("1", (hi_res, hi_res), 0)
         ImageDraw.Draw(layer).polygon(polygon, fill=1)
         # Even-odd accumulation, so an inner subpath punches a hole into the
@@ -98,9 +104,33 @@ def render(path: Path, size: int, colour: tuple[int, int, int, int]) -> Image.Im
         coverage = ImageChops.logical_xor(coverage, layer)
 
     alpha = coverage.convert("L").resize((size, size), Image.LANCZOS)
-    image = Image.new("RGBA", (size, size), colour[:3] + (0,))
-    image.putalpha(alpha)
+    image = Image.new("RGBA", (size, size), "white")
+    image.paste(colour, (0, 0, size, size), alpha)
+    ImageDraw.Draw(image).rectangle((0, 0, size - 1, size - 1), outline="black", width=border)
     return image
+
+
+def border_width(size: int) -> int:
+    return max(1, size // 16)
+
+
+def save_ico(destination: pathlib.Path, frames: list[Image.Image]) -> None:
+    # Write each independently rasterised frame. Resizing the 256px frame would
+    # blur the border and change the geometry of the notification-area sizes.
+    blobs = []
+    for frame in frames:
+        buffer = io.BytesIO()
+        frame.save(buffer, format="PNG")
+        blobs.append(buffer.getvalue())
+    offset = 6 + 16 * len(frames)
+    with destination.open("wb") as output:
+        output.write(struct.pack("<HHH", 0, 1, len(frames)))
+        for frame, blob in zip(frames, blobs):
+            output.write(struct.pack("<BBBBHHII", frame.width % 256, frame.height % 256,
+                                     0, 0, 1, 32, len(blob), offset))
+            offset += len(blob)
+        for blob in blobs:
+            output.write(blob)
 
 
 def main() -> int:
@@ -112,7 +142,7 @@ def main() -> int:
     for name, colour in STATES.items():
         frames = [render(path, size, colour) for size in ICON_SIZES]
         destination = target / name
-        frames[-1].save(destination, format="ICO", sizes=[(s, s) for s in ICON_SIZES])
+        save_ico(destination, frames)
         print(f"wrote {destination}")
 
     return 0

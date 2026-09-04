@@ -34,6 +34,7 @@ add_library(phpvpn-core STATIC
     core/runtime/network_worker.cpp
     core/runtime/status_snapshot.cpp
     core/runtime/time_sync.cpp
+    core/runtime/traffic_counters.cpp
     core/runtime/tunnel_session.cpp
     core/runtime/tunnel_workers.cpp
     core/runtime/vpn_engine.cpp

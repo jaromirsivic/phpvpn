@@ -42,6 +42,13 @@ phpvpn_add_version_resource(phpvpn-cli "phpvpn console client" "phpvpn" "phpvpn.
 
 add_executable(phpvpn-tray WIN32
     tray/main.cpp
+    tray/status_model.cpp
+    tray/progress_model.cpp
+    tray/layout.cpp
+    tray/status_reader.cpp
+    tray/progress_window.cpp
+    tray/statistics_window.cpp
+    tray/editor_window.cpp
     tray/tray.rc
 )
 target_include_directories(phpvpn-tray PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tray)

@@ -167,6 +167,8 @@ Copy-Item -LiteralPath (Join-Path $clientRoot "third_party\wintun\LICENSE.txt") 
           -Destination (Join-Path $OutputDirectory "LICENSE-wintun.txt")
 Copy-Item -LiteralPath (Join-Path $clientRoot "assets\icons\LICENSE-material-symbols.txt") `
           -Destination $OutputDirectory
+Copy-Item -LiteralPath (Join-Path $clientRoot "assets\icons\NOTICE-material-symbols.txt") `
+          -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\install.bat") -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\uninstall.bat") -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\install.ps1") -Destination $OutputDirectory

@@ -23,7 +23,7 @@ class JsonValue;
 using JsonObject = std::vector<std::pair<std::string, JsonValue>>;
 using JsonArray = std::vector<JsonValue>;
 
-enum class JsonType { null, boolean, integer, real, string, array, object };
+enum class JsonType { null, boolean, integer, unsignedInteger, real, string, array, object };
 
 class JsonValue {
 public:
@@ -32,6 +32,7 @@ public:
     static JsonValue makeNull();
     static JsonValue makeBool(bool value);
     static JsonValue makeInteger(std::int64_t value);
+    static JsonValue makeUnsignedInteger(std::uint64_t value);
     static JsonValue makeReal(double value);
     static JsonValue makeString(std::string value);
     static JsonValue makeArray(JsonArray value);
@@ -41,8 +42,9 @@ public:
     bool isNull() const noexcept { return type_ == JsonType::null; }
     bool isBool() const noexcept { return type_ == JsonType::boolean; }
     bool isInteger() const noexcept { return type_ == JsonType::integer; }
+    bool isUnsignedInteger() const noexcept { return type_ == JsonType::unsignedInteger; }
     bool isNumber() const noexcept {
-        return type_ == JsonType::integer || type_ == JsonType::real;
+        return isInteger() || isUnsignedInteger() || type_ == JsonType::real;
     }
     bool isString() const noexcept { return type_ == JsonType::string; }
     bool isArray() const noexcept { return type_ == JsonType::array; }
@@ -50,6 +52,7 @@ public:
 
     bool boolValue() const noexcept { return boolean_; }
     std::int64_t integerValue() const noexcept { return integer_; }
+    std::uint64_t unsignedValue() const noexcept { return unsigned_; }
     double realValue() const noexcept { return real_; }
     const std::string& stringValue() const noexcept { return string_; }
     const JsonArray& arrayValue() const noexcept { return array_; }
@@ -64,11 +67,14 @@ private:
     JsonType type_ = JsonType::null;
     bool boolean_ = false;
     std::int64_t integer_ = 0;
+    std::uint64_t unsigned_ = 0;
     double real_ = 0.0;
     std::string string_;
     JsonArray array_;
     JsonObject object_;
 };
+
+std::uint64_t jsonUnsignedOrZero(const JsonValue* value) noexcept;
 
 class Json {
 public:

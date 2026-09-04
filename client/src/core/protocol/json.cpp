@@ -343,6 +343,15 @@ private:
             const auto result =
                 std::from_chars(literal.data(), literal.data() + literal.size(), value);
             if (result.ec != std::errc() || result.ptr != literal.data() + literal.size()) {
+                if (literal.front() != '-') {
+                    std::uint64_t unsignedValue = 0;
+                    const auto unsignedResult = std::from_chars(
+                        literal.data(), literal.data() + literal.size(), unsignedValue);
+                    if (unsignedResult.ec == std::errc() &&
+                        unsignedResult.ptr == literal.data() + literal.size()) {
+                        return JsonValue::makeUnsignedInteger(unsignedValue);
+                    }
+                }
                 // Out of range for int64_t; keep it as a real so the validator
                 // can reject it with a precise configuration error.
                 return JsonValue::makeReal(std::strtod(std::string(literal).c_str(), nullptr));
@@ -376,6 +385,9 @@ void serializeInto(const JsonValue& value, std::string& out, int indent, int lev
             break;
         case JsonType::integer:
             out += std::to_string(value.integerValue());
+            break;
+        case JsonType::unsignedInteger:
+            out += std::to_string(value.unsignedValue());
             break;
         case JsonType::real: {
             char buffer[64];
@@ -446,6 +458,20 @@ JsonValue JsonValue::makeInteger(std::int64_t value) {
     json.type_ = JsonType::integer;
     json.integer_ = value;
     return json;
+}
+
+JsonValue JsonValue::makeUnsignedInteger(std::uint64_t value) {
+    JsonValue json;
+    json.type_ = JsonType::unsignedInteger;
+    json.unsigned_ = value;
+    return json;
+}
+
+std::uint64_t jsonUnsignedOrZero(const JsonValue* value) noexcept {
+    if (value && value->isUnsignedInteger()) return value->unsignedValue();
+    if (value && value->isInteger() && value->integerValue() >= 0)
+        return static_cast<std::uint64_t>(value->integerValue());
+    return 0;
 }
 
 JsonValue JsonValue::makeReal(double value) {

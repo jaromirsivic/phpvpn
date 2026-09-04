@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,7 +53,8 @@ public:
                                               KeyDerivation& keys,
                                               std::string_view serverSecret,
                                               std::string_view expectedRequestId,
-                                              std::string_view body);
+                                              std::string_view body,
+                                              const std::function<void()>& onSyntaxUsable = {});
 
     // Validates the envelope, derives the key from the transmitted salt and
     // decrypts the plaintext. Unknown members of the plaintext are ignored, as

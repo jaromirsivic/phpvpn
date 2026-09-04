@@ -37,7 +37,8 @@ Result<HealthResponse> ResponseParser::parseHealth(CryptoProvider& crypto,
                                                    KeyDerivation& keys,
                                                    std::string_view serverSecret,
                                                    std::string_view expectedRequestId,
-                                                   std::string_view body) {
+                                                   std::string_view body,
+                                                   const std::function<void()>& onSyntaxUsable) {
     FlatObjectFields fields;
     PHPVPN_TRY_ASSIGN(fields, JsonScanner::parseFlatStringObject(body, kHealthKeys));
 
@@ -78,6 +79,8 @@ Result<HealthResponse> ResponseParser::parseHealth(CryptoProvider& crypto,
         return Error(ErrorCode::wire_invalid_base64url, "health iv or tag is not canonical");
     }
 
+    // client.md: publish usable syntax before key derivation or GMAC work.
+    if (onSyntaxUsable) onSyntaxUsable();
     SecureBuffer healthKey;
     PHPVPN_TRY_ASSIGN(healthKey, keys.healthKey(serverSecret, requestId));
 

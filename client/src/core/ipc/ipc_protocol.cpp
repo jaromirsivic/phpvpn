@@ -48,6 +48,18 @@ JsonValue queueValue(const QueueDiagnostics& queue) {
     return JsonValue::makeObject(std::move(members));
 }
 
+void appendTrafficCounters(JsonObject& target, const TrafficCountersSnapshot& counters) {
+    target.emplace_back("dataPollsTotal", JsonValue::makeUnsignedInteger(counters.dataPollsTotal));
+    target.emplace_back("dataPollsEmpty", JsonValue::makeUnsignedInteger(counters.dataPollsEmpty));
+    target.emplace_back("dataPollsWithPayload", JsonValue::makeUnsignedInteger(counters.dataPollsWithPayload));
+    target.emplace_back("serializedDataRequestBodyBytes", JsonValue::makeUnsignedInteger(counters.serializedDataRequestBodyBytes));
+    target.emplace_back("serializedDataResponseBodyBytes", JsonValue::makeUnsignedInteger(counters.serializedDataResponseBodyBytes));
+    target.emplace_back("ipv4PacketsSent", JsonValue::makeUnsignedInteger(counters.ipv4PacketsSent));
+    target.emplace_back("ipv4PacketsReceived", JsonValue::makeUnsignedInteger(counters.ipv4PacketsReceived));
+    target.emplace_back("ipv4BytesSent", JsonValue::makeUnsignedInteger(counters.ipv4BytesSent));
+    target.emplace_back("ipv4BytesReceived", JsonValue::makeUnsignedInteger(counters.ipv4BytesReceived));
+}
+
 std::int64_t asCounter(std::uint64_t value) noexcept {
     // The counters are aggregated locally and never approach the signed limit,
     // but the conversion is still clamped so no negative number can be emitted.
@@ -164,12 +176,14 @@ std::string IpcProtocol::buildStatusResponse(std::string_view requestId,
     status.emplace_back("state", JsonValue::makeString(connectionStateName(snapshot.state)));
     status.emplace_back("phase", JsonValue::makeString(connectionPhaseName(snapshot.phase)));
     status.emplace_back("stateChangedAt", JsonValue::makeString(snapshot.stateChangedAtUtc));
+    status.emplace_back("serverUrlCheck", JsonValue::makeString(checkpointResultName(snapshot.serverUrlCheck)));
+    status.emplace_back("serverSecretCheck", JsonValue::makeString(checkpointResultName(snapshot.serverSecretCheck)));
+    status.emplace_back("accessKeyCheck", JsonValue::makeString(checkpointResultName(snapshot.accessKeyCheck)));
     status.emplace_back("serverReachable", tristateValue(snapshot.serverReachable));
     status.emplace_back("serverVerified", tristateValue(snapshot.serverVerified));
     status.emplace_back("tunnelReady", tristateValue(snapshot.tunnelReady));
     status.emplace_back("lastError", safeErrorValue(snapshot.lastError));
-    status.emplace_back("packetsReceived", JsonValue::makeInteger(asCounter(snapshot.packetsReceived)));
-    status.emplace_back("packetsSent", JsonValue::makeInteger(asCounter(snapshot.packetsSent)));
+    appendTrafficCounters(status, snapshot.counters);
     status.emplace_back("recoveryCount", JsonValue::makeInteger(asCounter(snapshot.recoveryCount)));
     status.emplace_back("clientVersion", JsonValue::makeString(snapshot.clientVersion));
     status.emplace_back("ipcVersion", JsonValue::makeInteger(snapshot.ipcVersion));
@@ -189,8 +203,7 @@ std::string IpcProtocol::buildDiagnosticsResponse(std::string_view requestId,
     }
 
     JsonObject counters;
-    counters.emplace_back("packetsReceived", JsonValue::makeInteger(asCounter(snapshot.packetsReceived)));
-    counters.emplace_back("packetsSent", JsonValue::makeInteger(asCounter(snapshot.packetsSent)));
+    appendTrafficCounters(counters, snapshot.counters);
     counters.emplace_back("packetsDropped", JsonValue::makeInteger(asCounter(snapshot.packetsDropped)));
     counters.emplace_back("batchesRejected", JsonValue::makeInteger(asCounter(snapshot.batchesRejected)));
     counters.emplace_back("responsesRejected",

@@ -12,6 +12,16 @@ add_executable(phpvpn-client-tests
     unit/test_service_registration.cpp
     unit/test_time_sync.cpp
     unit/test_wire.cpp
+    unit/test_traffic_counters.cpp
+    unit/test_runtime_status.cpp
+    unit/test_tray_status.cpp
+    unit/test_tray_progress.cpp
+    unit/test_tray_layout.cpp
+    unit/test_status_contract.cpp
+    unit/test_winhttp_accounting.cpp
+    ../apps/tray/status_model.cpp
+    ../apps/tray/progress_model.cpp
+    ../apps/tray/layout.cpp
 )
 
 target_include_directories(phpvpn-client-tests PRIVATE

@@ -102,8 +102,12 @@ PHPVPN_TEST(ipc, round_trips_a_built_request) {
 
 PHPVPN_TEST(ipc, builds_an_acknowledgement_with_the_envelope) {
     const std::string text = IpcProtocol::buildAcknowledgement(kRequestId);
-    PHPVPN_CHECK_EQ(text, std::string(R"({"ipcVersion":1,"requestId":")") + kRequestId +
-                              R"(","result":"ok"})");
+    auto document = Json::parse(text);
+    PHPVPN_REQUIRE_OK(document);
+    PHPVPN_CHECK_EQ(document.value().objectValue().size(), std::size_t(3));
+    PHPVPN_CHECK_EQ(document.value().find("ipcVersion")->integerValue(), std::int64_t(1));
+    PHPVPN_CHECK_EQ(document.value().find("requestId")->stringValue(), std::string(kRequestId));
+    PHPVPN_CHECK_EQ(document.value().find("result")->stringValue(), std::string("ok"));
 }
 
 PHPVPN_TEST(ipc, builds_a_status_response_with_the_documented_fields) {
@@ -114,8 +118,8 @@ PHPVPN_TEST(ipc, builds_a_status_response_with_the_documented_fields) {
     snapshot.serverReachable = Tristate::yes;
     snapshot.serverVerified = Tristate::yes;
     snapshot.tunnelReady = Tristate::yes;
-    snapshot.packetsReceived = 12;
-    snapshot.packetsSent = 34;
+    snapshot.counters.ipv4PacketsReceived = 12;
+    snapshot.counters.ipv4PacketsSent = 34;
 
     auto document = Json::parse(IpcProtocol::buildStatusResponse(kRequestId, snapshot));
     PHPVPN_REQUIRE_OK(document);
@@ -127,7 +131,7 @@ PHPVPN_TEST(ipc, builds_a_status_response_with_the_documented_fields) {
     PHPVPN_CHECK_EQ(status->find("state")->stringValue(), std::string("connected"));
     PHPVPN_CHECK_EQ(status->find("phase")->stringValue(), std::string("running"));
     PHPVPN_CHECK_EQ(status->find("serverVerified")->stringValue(), std::string("yes"));
-    PHPVPN_CHECK_EQ(status->find("packetsSent")->integerValue(), std::int64_t(34));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(status->find("ipv4PacketsSent")), std::uint64_t(34));
     // Without a failure the field is present and null, never absent.
     PHPVPN_CHECK(status->find("lastError")->isNull());
 }
