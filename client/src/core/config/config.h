@@ -49,7 +49,7 @@ inline constexpr std::string_view kDefaultConfigDocument = R"json({
 
 // Absolute local polling bounds of client.md "Pollingovy interval".
 inline constexpr std::int64_t kMinPollIntervalMs = 20;
-inline constexpr std::int64_t kMaxPollIntervalMs = 2000;
+inline constexpr std::int64_t kMaxPollIntervalMs = 5000;
 
 struct RuntimeLimits {
     std::int64_t maxOutboundQueueBytes = kDefaultMaxOutboundQueueBytes;

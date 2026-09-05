@@ -183,11 +183,11 @@ Při odesílání musí být vnitřní zdroj shodný s lokální virtuální IP 
 
 ### Pollingový interval
 
-Klient používá absolutní lokální hranice 20 ms a 2 s. Po ověřené odpovědi `info` vypočte:
+Klient používá absolutní lokální hranice 20 ms a 5 s. Po ověřené odpovědi `info` vypočte:
 
 ```text
-effectiveMinPollIntervalMs = clamp(minDataPollIntervalMs, 20, 2000)
-effectiveMaxPollIntervalMs = clamp(maxDataPollIntervalMs, 20, 2000)
+effectiveMinPollIntervalMs = clamp(minDataPollIntervalMs, 20, 5000)
+effectiveMaxPollIntervalMs = clamp(maxDataPollIntervalMs, 20, 5000)
 ```
 
 Síťový pracovník provede polling i při prázdných odchozích frontách a zahájí jej nejpozději po efektivním maximu, je-li volný. Timeout může skutečný interval prodloužit; klient kvůli tomu neotevře paralelní request.
