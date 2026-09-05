@@ -2,13 +2,13 @@
 
 Stav: plán realizace, bez provedené implementace. Zpracováno 5. září 2026 nad revizí `9f25f1333834596e46394f67f0a056a2595506da` v `C:\git\phpvpn`. Projekt zatím není nikde nasazený. Tento dokument zahrnuje rozhodnutí zadavatele z navazujícího rozhovoru a nahrazuje rozporné formulace původního zadání v rozsahu této etapy.
 
-Výchozí podklady jsou `protocol.md`, `client.md`, `notes/2026-09-05-09-53-11_notes.processed.md`, skutečný zdrojový kód, existující testy a konvence z `plan_client.md` a `plan2_client.md`. Cesty souborů níže jsou relativní ke kořeni `C:\git\phpvpn`. Při realizaci se nejprve společně aktualizují normativní dokumenty. Historické poznámky se zpětně nepřepisují.
+Výchozí podklady jsou `protocol.md`, `client.md`, `notes/2026-09-05-09-53-11_notes.processed.md`, skutečný zdrojový kód, existující testy a konvence z `plan_client.md` a `plan2_client.md`. Aktualizace z 5. září 2026 zapracovává schválená rozhodnutí u nálezů 1–8 z `plan3_client_problems.md`, která nahrazují jejich původní doporučení i rozporné části tohoto plánu. Nálezy 9–12 jsou přijatá rizika bez nových implementačních požadavků. Cesty souborů níže jsou relativní ke kořeni `C:\git\phpvpn`. Při realizaci se nejprve společně aktualizují normativní dokumenty podle kapitoly 11. Historické poznámky se zpětně nepřepisují.
 
 ## 1. Výsledek a hranice etapy
 
 Tray dostane popisný čtyřkrokový průvodce s podmíněným odpojovacím krokem. Služba vlastní načtení a uložení konfigurace i všechny síťové kontroly. Průvodce smí vytvořit nebo změnit `config.json` až při úspěšném Finish. Po úspěchu se zavře a otevře zavíratelné prázdné okno Communication Contracts. VPN se tím nepřipojí.
 
-Součástí jsou změny serverového defaultu, rozšíření výchozí mapy přístupových klíčů, IPC, správy konfiguračního souboru, testů a dokumentace. Není součástí editor komunikačních kontraktů, automatická distribuce klíčů, rezervace IP na serveru, nové drátové endpointy, automatické připojení, implementace macOS/Linux ani změna přijatého modelu veřejného lokálního IPC.
+Součástí jsou změny serverového defaultu, rozšíření výchozí mapy přístupových klíčů, IPC, správy konfiguračního souboru, bezpečného rušení a celkových HTTP timeoutů, Edit Config, testů a dokumentace. Edit Config může po výslovném potvrzení vytvořit chybějící soubor ze společné platné šablony již před otevřením editoru. Jde o samostatnou cestu vedle Finish Wizardu. Není součástí editor komunikačních kontraktů, automatická distribuce klíčů, rezervace IP na serveru, nové drátové endpointy, automatické připojení, implementace macOS/Linux ani změna přijatého modelu veřejného lokálního IPC.
 
 Implementace zůstává C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové knihovny třetí strany. Přenositelné modely nesmějí obsahovat `HWND`, `HANDLE`, Win32 zprávy ani závislost na tray procesu. Pythonové závislosti a běhy se spravují výhradně přes `uv`.
 
@@ -17,11 +17,11 @@ Implementace zůstává C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové
 | ID | Rozhodnutí |
 |---|---|
 | D01 | Přesné menu: Connect/Disconnect, oddělovač, Configuration Wizard, Communication Contracts, Edit Config, oddělovač, Show Info, Statistics, oddělovač, Exit. |
-| D02 | Bez souboru zůstávají aktivní Wizard, Communication Contracts, Edit Config a Exit. Edit Config a Communication Contracts zobrazí varování místo svého běžného okna. |
+| D02 | Bez souboru zůstávají aktivní Wizard, Communication Contracts, Edit Config a Exit. Contracts zobrazí varování, Edit Config nabídne Ano/Ne pro vytvoření výchozího souboru a po Ano jej vytvoří služba a otevře editor. |
 | D03 | Varování uvede skutečně vyhodnocenou absolutní očekávanou cestu a možnost spustit Wizard nebo ručně zkopírovat konfiguraci získanou například od administrátora. Doslovný nerozbalený text `%ProgramData%` nestačí. |
 | D04 | Instalace, start služby ani Connect nevytvářejí výchozí konfigurační soubor. |
-| D05 | Opravitelný soubor je jinak platná konfigurace, které chybí pouze `virtualIp`, `accessKey` nebo obě pole. Ostatní neplatnosti, nesprávné typy, prázdná/neplatná IP, chybný klíč, neznámá pole, poškozený JSON a nečitelnost vyžadují Reset. |
-| D06 | Reset zahodí celý koncept a přejde na nové výchozí nastavení, včetně TLS, CIDR, limitů a původních kontraktů. Disk se nemění. Původní revize pro kontrolu konfliktu se Resetem nezruší. |
+| D05 | Opravitelný soubor pro Wizard je jinak platná konfigurace, které chybí pouze `virtualIp`, `accessKey` nebo obě pole. Ostatní neplatnosti vyžadují ve Wizardu Reset. Každý čitelný soubor, včetně syntakticky chybného JSON, však lze otevřít a opravit přes Edit Config. Nečitelnost je samostatná chyba přístupu. |
+| D06 | Reset Wizardu zahodí celý koncept a přejde na nové výchozí nastavení, včetně TLS, CIDR, limitů a původních kontraktů. Disk se nemění. Zastaralá uložená revize neblokuje pozdější Finish. Reset editoru má vlastní pravidla D24. |
 | D07 | Běžná editace platné nebo opravitelné konfigurace mění pouze URL, `serverSecret`, `virtualIp` a `accessKey`. Ostatní hodnoty a kontrakty se zachovají. |
 | D08 | Na nultý krok se nelze vracet. Server URL nikdy nemá Back, ani po dokončeném odpojení. |
 | D09 | Ověřovací polling předem upozorní na možné nenávratné odebrání čekajících zpráv. Ověří strukturu a autentizační MAC celé odpovědi, zprávy zahodí bez dešifrování, uchovávání a doručení do tunelu. |
@@ -34,8 +34,16 @@ Implementace zůstává C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové
 | D16 | Nový default je přesně `CHANGE_THIS_SERVER_SECRET`. Pouze nulová délka se normalizuje na tento default. Každý neprázdný secret, včetně 32 nebo 64 ASCII nul, zůstane doslova zachován. |
 | D17 | Nezavádí se automatická migrace ani zkoušení historických secretů. Nové příkazy rozšíří IPC v1, původních sedm příkazů se zachová. Wizard potřebuje novou službu. |
 | D18 | Pokud soubor zmizí nebo se poškodí za běhu VPN, aktivní spojení pokračuje s již načteným snímkem. Disconnect zůstane dostupné. Nový Connect, Show Info a Statistics jsou zakázané. |
+| D19 | Bezpečné rušení HTTP je společné pro probe přerušený Connectem, globální Disconnect, stop služby i Cancel/Reset/Escape/X Wizardu. Má krátkou konečnou dobu a potvrzený terminální stav před nahrazením requestu nebo uvolněním jeho prostředků. |
+| D20 | Každý HTTP request má jediný absolutní monotónní deadline zahrnující DNS, spojení, TLS, odeslání, hlavičky i celé tělo. Dílčí přenos jej neobnovuje. Timeout využije bezpečné rušení D19. |
+| D21 | `get-info` zůstane mimo hlavní VPN síťové vlákno, s vlastním dočasným transportem a kontextem. Nejvýše jedna diagnostika běží současně. Wizard může sdílet tuto oddělenou řídicí cestu. Tři VPN pracovní role se nemění. |
+| D22 | Poslední úspěšné uložení vyhrává mezi všemi editory a Wizard relacemi v obou směrech. Save/Finish ukládá celý validovaný dokument, bez automatického slučování, revizního odmítnutí nebo potvrzení přepsání mezitím uloženého obsahu. |
+| D23 | Jeden Next spustí jeden logický síťový pokus. Tray ani služba automaticky neopakují start ani kontrolu, ani po 401 nebo ztrátě IPC odpovědi. Úspěch je platný pro UI až po doručení a ověření aktuálního výsledku. Nový pokus vyžaduje další Next. Pravidla idempotence Finish se nemění. |
+| D24 | Edit Config načte skutečný čitelný obsah bez ohledu na validitu. Vytvoření chybějícího souboru po Ano zapisuje ihned. Reset editoru po Ano mění pouze koncept a ukládá se až přes Save. Obě cesty používají jedinou platnou šablonu podle 5.6. |
+| D25 | IPC přijímá i odesílá asynchronně, odděluje dlouhou diagnostiku od krátkého řízení a má omezená spojení, paměť i fronty a absolutní I/O deadline. Stop služby má vlastní cestu nezávislou na pipe. Konkrétní limity a cíle odezvy určí implementační návrh. |
+| D26 | Wizard relace používá obnovovaný monotónní pronájem, výchozí potvrzení každých 15 s a expirace po 60 s bez kontaktu. Expirace bezpečně uklidí pouze danou relaci, neodpojí VPN a nezruší již provedený commit ani jeho potvrzení. |
 
-Poslední rozhodnutí mají přednost před původním požadavkem na vždy přesně 13 kontraktů, rozporným umístěním položky Communication Contracts pod Edit Config, podmíněným Back na prvním kroku a obecně povolenými citlivými výpisy chyb.
+Poslední rozhodnutí mají přednost i před historickými požadavky na revizně podmíněný Finish, sdílení VPN síťového vlákna s diagnostikou, automatické obnovení síťového pokusu a zákaz otevření nevalidního souboru v editoru. Ostatní dosavadní rozhodnutí zůstávají v platnosti.
 
 ## 3. Zjištěný výchozí stav a dopady
 
@@ -43,12 +51,14 @@ Poslední rozhodnutí mají přednost před původním požadavkem na vždy pře
 |---|---|---|
 | `client/apps/service/service_host.cpp` | `ServiceRuntime::start` volá `ensureDefaultConfigFile`. | Odstranit automatické vytvoření, zachovat vytvoření chráněného adresáře a běh služby bez konfigurace. |
 | `client/src/platform/windows/paths_win.*` | Obsahuje atomický create defaultu a adresář `PHPVPN`. | Odstranit odpovědnost za default, zachovat autoritativní vyhodnocení cesty. Velikost písmen existujícího adresáře nemigrovat. |
-| `client/src/core/config/config.h` | Celý default JSON obsahuje starou placeholder URL a dokonce 64 ASCII nul v secretu. | Nahradit továrnou na koncept a jedinou konstantou nového secretu. 64 nul není totéž jako starý protokolový default 32 nul. |
+| `client/src/core/config/config.h` | Celý default JSON obsahuje starou placeholder URL a dokonce 64 ASCII nul v secretu. | Nahradit společnými konstantami, továrnou na Wizard koncept a jedinou platnou šablonou pro vytvoření/Reset editoru. 64 nul není totéž jako starý protokolový default 32 nul. |
 | `config_validator.cpp` | Úplný validátor správně odmítá chybějící IP/klíč, neznámá pole a kontrakt na vlastní IP. | Zachovat striktní běhovou validaci, přidat oddělenou analýzu opravitelnosti. |
 | `vpn_engine.cpp` | `storedConfigJson` vrací cache. `loadStoredConfig` při chybě nemaže starou cache. `setConfigJson` zapisuje sdílené `.tmp` před uzamčením cache. | Centralizovat disk, dostupnost, revize, serializaci všech zápisů a publikaci cache do ConfigStore. |
 | `vpn_engine.cpp` | Connect někdy čte soubor pouze při prázdné cache. Bootstrap pak přebírá uložený snímek. | Každý nový logický Connect musí přijmout aktuální plně validní diskový snímek. Aktivní snímek a recovery stejného spojení se nepřepínají externí editací. |
 | `ipc_protocol.*`, `ipc_dispatcher.*` | Uzavřených sedm příkazů, IPC v1, 4MiB limit zprávy. | Přidat konkrétní schémata Wizard příkazů a jejich parsery. Nezavádět obecný HTTP ani souborový příkaz. |
 | `ipc_pipe.cpp` | Server obsluhuje jedno spojení po druhém. `get-info` provádí synchronní síť uvnitř handleru. Zápis odpovědi a flush mohou čekat neomezeně. | Oddělit dlouhé operace, zajistit omezenou souběžnou obsluhu a přerušitelné I/O. |
+| `transport_winhttp.cpp` | Synchronní WinHTTP ruší zavřením handle z jiného vlákna. Přes komentář o deadline používá jen dílčí timeouty, nekontroluje převod sekund ani výsledek `WinHttpSetTimeouts`. | Společná oprava životnosti a rušení pomocí asynchronního WinHTTP a absolutního monotónního deadline podle 4.4. |
+| `VpnEngine::getInfo` | Vytváří vlastní dočasný transport a NetworkWorker mimo hlavní VPN síťové vlákno. | Zachovat izolaci, omezit diagnostiku na jednu operaci a přesunout její čekání mimo kapacitu krátkých IPC příkazů. |
 | `network_worker.cpp` | `configure` vyžaduje plnou konfiguraci a odvozuje také klíč pro data. | Pro neúplný koncept zavést specializovaný ProbeClient bez umělých platných IP/klíčů. |
 | `NetworkWorker::performHealth` | Po vytvoření časového snímku staví `auth-semi` pro health. | Při společném refaktoringu opravit na vždy čerstvý `auth-none`, který vyžaduje protokol. Zabránit přenosu této chyby do opakovaných kontrol průvodce. |
 | `response_parser.cpp` | Health spojuje syntaktickou a kryptografickou validaci. Info dosud neparsuje `clients` do typovaných hodnot. | Rozdělit health parse/verify, doplnit důslednou validaci `clients`. |
@@ -70,13 +80,13 @@ Historické plány nejsou důkazem současné implementace. Například v nich z
 |---|---|
 | `client/src/core/config/config_document.*` | Analýza platného/opravitelného dokumentu, zachování DOM a změna pouze povolených hodnot. |
 | `client/src/core/config/config_defaults.*` | Nový koncept, sdílené defaulty a politika generování kontraktů. |
-| `client/src/core/config/config_store.*` | Autoritativní snímek diskové konfigurace, revize, porovnání a serializace uložené generace. |
-| `client/src/platform/iface/config_files.h` | Testovatelné rozhraní čtení a podmíněného atomického zápisu bez Win32 typů. |
+| `client/src/core/config/config_store.*` | Autoritativní snímek disku, revize pro čerstvost a receipts, serializované úplné zápisy podle D22 a create-if-missing editoru. |
+| `client/src/platform/iface/config_files.h` | Testovatelné rozhraní čtení, atomické publikace a vytvoření bez přepsání existujícího cíle, bez Win32 typů. |
 | `client/src/platform/windows/config_files_win.*` | Windows souborové operace, ACL, identita souboru, flush, publish a obnova po chybě zápisu. |
 | `client/src/core/wizard/wizard_types.h` | Koncept, pole, typované výsledky, identifikátory a stavy. |
 | `client/src/core/wizard/wizard_model.*` | Přenositelné UI přechody, validace polí, invalidace kroků a výsledné prezentační instrukce. |
 | `client/src/core/wizard/wizard_defaults.*` | Výběr navržené IP, odvození Access Key, číselné řazení IP pro SHA-256 kontraktů. |
-| `client/src/core/wizard/wizard_service.*` | Omezená správa rozpracovaných relací, vazby důkazů na vstupy, revizi konfigurace a epochu spojení. |
+| `client/src/core/wizard/wizard_service.*` | Omezená správa relací a jejich pronájmů, vazby důkazů na vstupy, generaci konceptu a epochu spojení, samostatná životnost commit receipts. |
 | `client/src/core/wizard/probe_client.*` | Jednorázové health/info/data operace nad dočasnými parametry a vlastním TimeSync. |
 | `client/src/core/ipc/wizard_ipc.*` | Striktní stavitelé a parsery nových schémat, obálky odpovědí a oddělená diagnostika Wizardu. |
 | `client/apps/tray/menu_model.*` | Pořadí položek, dostupnost a akce při neplatné konfiguraci bez Win32 závislosti. |
@@ -90,7 +100,7 @@ Existující `layout.*`, `window_utils.h`, `status_reader.*`, `resource.h`, `mai
 ### 4.2 Hranice dat
 
 - ConfigStore vlastní uložený dokument a jeho revizi. Aktivní VPN vlastní svůj neměnný `ClientConfigPtr`, přijatý při novém logickém Connect.
-- WizardService vlastní originální dokument, očekávanou revizi a síťové důkazy. Dočasné koncepty ani ověřené info se nepersistují.
+- WizardService vlastní originální dokument, neměnný kontext konceptu a síťové důkazy. Uložená revize slouží pro čerstvost, není podmínkou Finish. Dočasné koncepty ani ověřené info se nepersistují.
 - WizardModel vlastní právě zobrazený krok, lokálně editované texty a stav prezentace. Jeho lokální validace pomáhá uživateli, nikdy nenahrazuje validaci služby.
 - ProbeClient nesmí mít referenci na `TrafficCounters`, fronty, `TunnelSession`, aktivní NetworkWorker ani publikované bootstrap kontrolní body.
 - Služba vrací pouze potřebné typované výsledky. Celé HTTP requesty, ciphertext ani odvozené klíče neposílá do UI.
@@ -98,15 +108,29 @@ Existující `layout.*`, `window_utils.h`, `status_reader.*`, `resource.h`, `mai
 
 ### 4.3 Vlákna a plánování
 
-Síťové operace Wizardu se vykonávají na existujícím jediném síťovém vlákně služby jako nové typované řídicí úlohy. Mají samostatný ProbeClient a transport. Tunelová vlákna se kvůli nim nespouštějí. Nebude přidána čtvrtá VPN pracovní role.
+Hlavní VPN síťové vlákno je vyhrazené pro bootstrap, recovery, časovou synchronizaci a datový provoz VPN. `get-info` zůstane mimo něj, s vlastním dočasným transportem a časovým kontextem jako dnes. Diagnostika nesmí sdílet proměnný TimeSync VPN, fronty ani provozní čítače. Původní přímý formát odpovědi get-info se zachová.
 
-Požadavek na kontrolu se zařadí a IPC ihned vrátí `operationId`. Klient výsledek periodicky čte. V jednu chvíli poběží nejvýše jedna Wizard síťová operace globálně, další dostane `busy`, nikoli neomezenou frontu. Na jednu Wizard relaci připadá nejvýše jedna rozpracovaná operace.
+Wizard probe použije stejnou oddělenou omezenou řídicí síťovou obsluhu s vlastním ProbeClient. Zvolený návrh připouští nejvýše jednu dlouhou řídicí síťovou operaci celkem, tedy get-info nebo Wizard kontrolu. Obsazená kapacita vrátí `busy`, nevytváří neomezenou frontu. Na jednu Wizard relaci připadá nejvýše jedna rozpracovaná kontrola. IPC start kontroly rychle vrátí `operationId`, tray dále pouze čte její stav. Tunelová vlákna se kvůli diagnostice ani probe nespouštějí. Omezená obsluha řízení a platformní I/O callbacky nejsou čtvrtou VPN pracovní rolí.
 
-`connect`, `disconnect` a stop mají přednost. Příchod nového Connect zruší probíhající Wizard transport, počká na jeho skutečné ukončení a až potom zahájí bootstrap. Nesmějí běžet dva data requesty současně. Totéž platí pro stop služby. Síťový zámek nesmí držet `stateMutex_` ani zámek souborového úložiště při HTTP nebo kryptografii.
+Příchod nového Connect přeruší Wizard probe, bezpečně zruší jeho request a před bootstrapem počká na potvrzené ukončení práce. Nikdy nesmějí běžet dva data requesty současně, ani Wizard polling proti VPN bootstrapu/provozu. Samostatné diagnostické health/info smějí souběžně běžet s VPN datovým provozem. Čekání na ukončení podle D19 se vztahuje na rušený request před jeho nahrazením nebo uvolněním, nezavádí globální zákaz souběhu těchto izolovaných cest. `stateMutex_` ani zámek ConfigStore nesmějí být drženy při HTTP nebo kryptografii.
 
-Také jednorázový `get-info` se přesměruje na síťovou řídicí úlohu s vlastním kontextem. Původní formát jeho IPC odpovědi se zachová. Jeho čekající IPC obsluha nesmí obsadit jedinou cestu pro get-status a disconnect. V síťovém plánovači má provozní spojení přednost a dotazy get-info se nesmí hromadit bez limitu.
+IPC příjem, čtení neúplné zprávy a odesílání odpovědi implementovat asynchronně. Teprve po úplném načtení a validaci se příkaz předá odpovídající obsluze. Čekání na další bajty nebo na odběr odpovědi nesmí držet pracovníka vykonávajícího krátké řízení. Pro get-status a Disconnect zajistit kapacitu nezávislou na dlouhé diagnostice. Přijetí Disconnectu jen předá požadavek VPN části služby. Dokončení lze potvrdit až po teardown, Wizard nadále čeká na skutečné `disconnected` a `idle`. Datové pakety se přes řídicí IPC nepřenášejí.
 
-Pipe server dostane omezenou souběžnou obsluhu, například čtyři řídicí workery, s odděleným limitem dlouhého get-info na jednu operaci. Veškeré čtení a zápis pipe mají konečný deadline a reagují na stop. Odstranit neomezený `FlushFileBuffers(pipe)` nebo jej nahradit framingem, který už má dokončené odeslání. Limit workerů nenahrazuje časové limity klienta.
+Omezit počet přijatých spojení, velikosti zpráv, celkovou paměť a fronty práce. Čtení i zápis mají vlastní absolutní monotónní I/O deadline, který dílčí přenos neobnoví. Přebytečná spojení nebo práci řízeně odmítat. Samotné navýšení počtu synchronních workerů ani priorita dosud nerozpoznaného příkazu nestačí. Odstranit neomezený `FlushFileBuffers(pipe)` a garantovat bezpečnou životnost overlapped I/O až do potvrzeného dokončení či zrušení. Stop přes Windows Service Manager má vlastní cestu nezávislou na pipe a ukončí čekající IPC i HTTP operace.
+
+Před implementací v etapě A stanovit konkrétní limity, podporovaný profil zatížení a měřitelné meze pro odezvu get-status, přijetí Disconnectu, dokončení teardown a stop služby. Při podporovaném zatížení nesmějí pomalí IPC klienti vyčerpat obsluhu řízení. Při přetížení zůstane spotřeba omezená a stop proveditelný. Nejde o absolutní dostupnost při libovolném zahlcení veřejné pipe. Počet obslužných vláken se odvodí od návrhu, není pevně určen číslem čtyři.
+
+### 4.4 Společný HTTP transport: rušení a celkový deadline
+
+Opravit rozhraní Transport i Windows implementaci jako společnou součást VPN, get-info a Wizard probe. Použít asynchronní WinHTTP s explicitním vlastníkem requestu, bufferů a callback kontextu. Rušení synchronního volání zavřením handle z jiného vlákna není přípustné. Návrat `WinHttpCloseHandle` sám neznamená, že skončily callbacky. Kontext držet do závěrečného `WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING` a dokončení všech jeho uživatelů. Callbacky nesmějí čekáním na sebe navzájem vytvořit deadlock. Podklad: [Microsoft: WinHttpCloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpclosehandle).
+
+Tentýž mechanismus musí pokrýt Connect během probe, globální Disconnect s aktivním provozním requestem, stop služby při restartu/aktualizaci/odinstalaci i Cancel, Reset, Escape a X Wizardu. Souběh dokončení, timeoutu a více rušicích událostí vybere právě jeden konečný výsledek a právě jedno zavření. Náhrada requestu, rekonfigurace transportu a uvolnění jeho objektů počkají na potvrzený terminální stav. Rušení má krátkou konečnou dobu podle měřitelné brány 12.1, není slibována nulová prodleva. Zabránit použití zavřeného handle, dvojímu dokončení a dvojímu účtování přečtených bajtů.
+
+Každý request dostane při zahájení jediný absolutní deadline z monotónních hodin a `responseTimeoutSeconds`, výchozí hodnota je 30 s. Jeden rozpočet zahrnuje DNS, spojení, TLS handshake, odeslání requestu, příjem hlaviček i celé tělo. Dílčí bloky ani přechod do další transportní fáze jej neposouvají. Dílčí WinHTTP timeouty jsou doplňkové, samy celkový deadline nezajišťují. Podklad: [Microsoft: WINHTTP_OPTION_RECEIVE_TIMEOUT](https://learn.microsoft.com/en-us/windows/win32/winhttp/option-flags#winhttp_option_receive_timeout).
+
+Po vypršení deadline ihned zahájit bezpečné rušení, počkat na potvrzené ukončení a vrátit timeout, nikoli pozdní úspěch. Úklid nesmí dál spotřebovávat celý původní HTTP timeout. Zkontrolovat převody sekund, násobení i součet s monotónním časem a všechny návratové hodnoty nastavení timeoutů. Velké podporované hodnoty obsloužit bezpečným dělením platformních čekání, nebo nereprezentovatelnou hodnotu explicitně odmítnout před HTTP. Nikdy ji nepřetočit na záporný či nekonečný timeout ani tiše změnit význam konfigurace. Limity převodů zaznamenat v normativní dokumentaci.
+
+Po timeoutu a cancel musí být transport bezpečně znovu použitelný. VPN nadále účtuje přesně jednou i částečné tělo a blok přes limit, před dokončeným Disconnectem účetnictví uzavře. Diagnostika a probe do VPN čítačů nevstupují. Oprava asynchronního transportu nemění tři sériové VPN role ani jejich ownership.
 
 ## 5. Konfigurace, dostupnost a revize
 
@@ -114,7 +138,7 @@ Pipe server dostane omezenou souběžnou obsluhu, například čtyři řídicí 
 
 Zavést `ConfigAvailability = missing | unreadable | invalid | repairable | valid`. Nedostupná služba je samostatný UI stav, nesmí se vydávat za missing.
 
-`StoredConfigSnapshot` obsahuje dostupnost, bezpečný kód důvodu, neprůhledný `revisionToken`, interní identitu souboru a SHA-256 přesných bajtů. Pro valid/repairable obsahuje původní DOM a originální dokument. Token se nesmí odvozovat pouze z mtime, velikosti nebo současného `ClientConfig::generation`.
+`StoredConfigSnapshot` obsahuje dostupnost, bezpečný kód důvodu, neprůhledný `revisionToken`, interní identitu souboru a SHA-256 přesných bajtů. Pro každý čitelný soubor uchová skutečný text pro editor i při nevalidním JSON, pro valid/repairable navíc DOM pro Wizard. Token slouží k detekci čerstvosti a identifikaci potvrzené publikace, nikoli k odmítání zastaralého Save/Finish. Nesmí se odvozovat pouze z mtime, velikosti nebo `ClientConfig::generation`.
 
 Navržená interní rozhraní:
 
@@ -127,10 +151,12 @@ Result<std::string> buildWizardDocument(
     WizardMode mode,
     const WizardFields& fields,
     bool createDefaultContracts);
-Result<CommitReceipt> ConfigStore::commitIfUnchanged(
-    const RevisionToken& expected,
+Result<CommitReceipt> ConfigStore::commit(
     std::string_view completeValidatedJson,
     const CommitId& commitId);
+Result<EditorDocument> ConfigStore::readForEditing();
+Result<EditorDocument> ConfigStore::createDefaultIfMissing();
+std::string makeDefaultEditorDocument();
 ```
 
 `CommitReceipt` obsahuje `commitId`, novou revizi a stav confirmed. Souborový backend nesmí při neurčitém výsledku operačního systému tvrdit ani úspěch, ani bezpečné nezapsání bez ověření skutečného stavu.
@@ -147,47 +173,79 @@ Platná existující IP nebo platný existující klíč se zachová samostatně
 
 V režimu edit/repair provést patch pouze čtyř pojmenovaných členů `masterSetup` v původním DOM. Nezrekonstruovat dokument z `ClientConfig`, protože by se ztratilo například rozlišení vynechaných defaultů a explicitních hodnot. Povolená je změna whitespace a formátování JSON. Hodnoty, typy a přítomnost nezobrazených členů se zachovají.
 
-Reset vytvoří nový dokument s URL `http://MODIFY-THIS-URL/phpvpn.php`, secretem `CHANGE_THIS_SERVER_SECRET`, `trustAnyTlsCertificate=true`, `vpnCidr=10.99.99.0/24`, současnými runtime defaulty a nově rozhodnutou sadou kontraktů. Runtime lze v JSON vynechat a využít sdílené defaulty. Původní dokument zůstává pouze jako baseline pro detekci konfliktu až do zrušení nebo commitu.
+Reset Wizardu vytvoří nový koncept s URL `http://MODIFY-THIS-URL/phpvpn.php`, secretem `CHANGE_THIS_SERVER_SECRET`, `trustAnyTlsCertificate=true`, `vpnCidr=10.99.99.0/24`, současnými runtime defaulty a nově rozhodnutou sadou kontraktů. Runtime lze v JSON vynechat a využít sdílené defaulty. Původní obsah se po Resetu nepoužije pro slučování ani jako podmínka zápisu. Odlišný úplný default editoru je definován v 5.6.
 
-Při unreadable se může po Resetu vyplňovat nový koncept, ale Finish nesmí obejít nemožnost bezpečně určit původní revizi. Pokud služba stále nemůže soubor přečíst a získat stabilní snímek, zápis odmítne a navede na opravu přístupu. Reset neopravuje ACL ani nepřesměrovává cestu.
+Při unreadable se může po Resetu vyplňovat nový koncept, ale Finish nesmí obejít souborovou chybu přístupu. Pokud služba při publikaci stále nemůže bezpečně pracovat s aktuálním cílem a obnovou po chybě, zápis odmítne a navede na opravu přístupu. Nevyžaduje shodu s revizí při otevření. Reset neopravuje ACL ani nepřesměrovává cestu.
 
 ### 5.4 Čerstvost a reakce menu
 
 Při startu načíst dostupnost. Nový `get-config-state` provede omezenou diskovou kontrolu, zatímco původní `get-status` zůstane pouze paměťový. Tray požádá o config-state po úvodním get-status, na svém nezávislém pětisekundovém cyklu, při otevření menu a po uložení. Stav nesmí určovat tray přímým `exists` na ProgramData.
 
-Před otevřením editoru/placeholderu a před novým Connect služba znovu ověří aktuální konfiguraci. Mezi otevřením menu a kliknutím se mohla změnit. `get-config` a get-info nesmějí po zjištění neplatného disku vracet nebo používat starou uloženou cache. Aktivní spojení si svůj již přijatý snímek ponechá.
+Před otevřením editoru/placeholderu a před novým Connect služba znovu načte aktuální dostupnost. Mezi otevřením menu a kliknutím se mohla změnit. Editor smí načíst nevalidní text, Connect a get-info vyžadují úplně platný diskový snímek. `get-config` a get-info nesmějí po zjištění neplatného disku vracet nebo používat starou uloženou cache. Aktivní spojení si svůj již přijatý snímek ponechá.
 
-| Stav konfigurace/služby | Connect při neaktivní VPN | Disconnect při aktivní VPN | Wizard | Edit Config / Contracts | Show Info / Statistics |
-|---|---|---|---|---|---|
-| valid | dostupné | dostupné | dostupné | běžné okno | dostupné |
-| repairable / invalid / unreadable / missing | zakázané | dostupné podle D18 | dostupné | aktivní položka, vysvětlující hláška, bez běžného okna | zakázané |
-| služba nedostupná nebo stav dosud neznámý | zakázané | nelze bezpečně odeslat | otevře vysvětlení nedostupnosti, bez kontrol a Finish | vysvětlení nedostupnosti | zakázané |
+| Stav konfigurace/služby | Connect při neaktivní VPN | Disconnect při aktivní VPN | Wizard | Edit Config | Contracts | Show Info / Statistics |
+|---|---|---|---|---|---|---|
+| valid | dostupné | dostupné | dostupné | skutečný obsah | běžné okno | dostupné |
+| repairable / čitelný invalid | zakázané | dostupné podle D18 | dostupné | skutečný obsah včetně chybného JSON | vysvětlení bez okna | zakázané |
+| unreadable | zakázané | dostupné podle D18 | dostupné | chyba přístupu, bez náhradního dokumentu | vysvětlení bez okna | zakázané |
+| missing | zakázané | dostupné podle D18 | dostupné | Ano/Ne k vytvoření, po Ano zápis a editor | varování bez okna | zakázané |
+| služba nedostupná nebo stav dosud neznámý | zakázané | nelze bezpečně odeslat | vysvětlení, bez kontrol a Finish | vysvětlení nedostupnosti | vysvětlení nedostupnosti | zakázané |
 
-Exit zůstává dostupné vždy. Otevřené Statistics po změně souboru přestanou prezentovat nový provoz jako dostupnou funkci a zobrazí stav nedostupné konfigurace bez vynulování cache. Čtení get-status samo se nezakazuje. Otevřený editor nesmí svým starým obsahem obcházet kontrolu aktuální dostupnosti při Save.
+Exit zůstává dostupné vždy. Otevřené Statistics po změně souboru přestanou prezentovat nový provoz jako dostupnou funkci a zobrazí stav nedostupné konfigurace bez vynulování cache. Čtení get-status samo se nezakazuje. Save úplně validuje odeslaný dokument a bezpečnost publikace, nikoli obsahovou platnost nebo revizní shodu dosavadního souboru. Smí tak opravit nevalidní obsah i uložit starší koncept podle D22. Rozšíření Edit Config automaticky nepovoluje ostatní položky menu.
 
-### 5.5 Podmíněný atomický zápis
+### 5.5 Atomický zápis: poslední úspěšné uložení vyhrává
 
-Všechny zápisy služby, včetně původního set-config, musejí procházet jediným ConfigStore a stejnou serializační branou. Úspěšný set-config zvýší revizi a zneplatní baseline všech dříve otevřených Wizard relací. Wizard po konfliktu nikdy automaticky nesloučí cizí změny ani nepřejde na novější baseline. Nabídne znovu otevřít průvodce nad aktuálním souborem.
+Všechny zápisy služby, včetně set-config, Finish a potvrzeného vytvoření výchozího souboru z editoru, procházejí jediným ConfigStore a stejnou serializační branou. Mezi Save a Finish rozhoduje pořadí úspěšné publikace celých dokumentů. Pozdější Save starého editoru smí přepsat Finish a pozdější Finish otevřeného Wizardu smí přepsat Save, stejně tak dvě relace stejného typu. Stará revize sama nezpůsobí konflikt, nové otevření, potvrzení přepsání ani automatické slučování. Cizí uložení nezneplatňuje koncept a jeho důkazy jen kvůli změně uložené revize. Wizard sestaví celý dokument ze svého originálu a konceptu podle edit/repair/reset, nikoli z mezitím uloženého cizího dokumentu.
 
 Postup Finish:
 
 1. Ověřit živou relaci, shodu instance služby, connection epoch, síťové důkazy a přesné čtyři hodnoty. Sestavit výsledný dokument a spustit úplný validátor ještě před vytvořením temp souboru.
-2. Vstoupit do serializační brány zápisu. Znovu získat skutečný diskový snímek a porovnat revizi, existenci, identitu a hash bajtů s baseline. Změna obsahu stejné délky nebo s vráceným mtime je stále konflikt.
-3. Nový soubor i dočasné soubory smějí vzniknout jen v autoritativním chráněném adresáři a až po Finish. Dočasný název obsahuje náhodné ID, vzniká přes CREATE_NEW, nikdy sdíleným `config.json.tmp` s truncation. Zakázat reparse přesměrování cíle a neočekávanou identitu adresáře. Nastavit ochranu SYSTEM/Administrators dříve, než se zapíší tajné bajty.
+2. Vstoupit do serializační brány zápisu. Zjistit aktuální existenci a bezpečnou identitu cíle a adresáře pro publikaci a obnovu po chybě. Nevyžadovat obsah, existenci ani revizi shodnou s otevřením okna. Save/Finish mohou uložit i po ruční editaci či běžném delete/recreate cíle, pokud je aktuální publikační operace bezpečná.
+3. Nový soubor i dočasné soubory smějí vzniknout jen v autoritativním chráněném adresáři při schválené ukládací operaci: Finish, validovaný set-config/Save nebo potvrzené create-if-missing editoru. Dočasný název obsahuje náhodné ID, vzniká přes CREATE_NEW, nikdy sdíleným `config.json.tmp` s truncation. Zakázat reparse přesměrování cíle a neočekávanou identitu adresáře. Nastavit ochranu SYSTEM/Administrators dříve, než se zapíší tajné bajty.
 4. Zapsat celé tělo, ověřit počet bajtů a provést `FlushFileBuffers` nad skutečným file handle. Samotné `ostream::flush` nestačí pro tento účel. Viz [Microsoft: FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).
-5. Bez síťové práce znovu ověřit baseline a publikační podmínky. Pro původně chybějící soubor provést rename bez přepsání existujícího cíle. Pokud cíl mezitím vznikl, vrátit konflikt. Pro existující cíl použít platformní replace se zálohou v témže adresáři, s kontrolou ACL a skutečného výsledku. `REPLACEFILE_WRITE_THROUGH` nepoužívat jako záruku, protože není podporován. Viz [Microsoft: ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew).
+5. Bez síťové práce ověřit aktuální publikační podmínky. Save/Finish nemají create-only podmínku odvozenou od otevření okna. Zvolit atomickou publikaci pro aktuální stav cíle a bezpečně vyřešit změnu jeho existence během publikace. Jen výslovné `createDefaultIfMissing` nesmí přepsat mezitím vzniklý soubor, v tom případě načte skutečný aktuální obsah nebo vrátí konkrétní chybu. Pro existující cíl použít platformní replace se zálohou v témže adresáři, s kontrolou ACL a skutečného výsledku. `REPLACEFILE_WRITE_THROUGH` nepoužívat jako záruku, protože není podporován. Viz [Microsoft: ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew).
 6. Úspěch publikace je commit point. Teprve potom publikovat novou uloženou generaci v paměti a receipt. Aktivní konfigurace se tím nemění. Po commitu se již nesmí vrátit běžné cancelled, jako by disk zůstal nezměněný.
 7. Při chybě odstranit pouze vlastní temp soubor, nikdy cizí `config.json`. U částečných chyb replacement API ověřit polohu původního souboru a zálohy, případně bezpečně obnovit původní cíl. Neprovádět slepé mazání zálohy ani cizího nového souboru. Restart musí umět rozpoznat vlastní nedokončený commit z minimálního záznamu bez klíčů a nesmí automaticky dokončit dosud neprovedený Finish.
 
-Atomické nahrazení a porovnání revize jsou dvě odlišné vlastnosti. Samotná dvojice přečtení hashe a `ReplaceFileW` není atomické compare-and-swap vůči libovolnému procesu zapisujícímu mimo službu. Souběh všech podporovaných IPC zapisovatelů musí být plně serializovaný. Ruční změny během editace a před publikační sekcí se povinně rozpoznají. Přímý souběžný zásah administrátora do souboru během samotné publikační sekce musí Windows backend pokrýt samostatným testem a ochranou přístupu, nesmí se za vyřešený považovat jen přidáním druhého hashe. Je to první technická ověřovací brána etapy, podrobně v části 12.1.
+Atomická publikace a ochrana před přepsáním staršího obsahu jsou odlišné vlastnosti. Druhá není požadována, poslední uložení smí mezitím provedené obsahové změny nahradit. Zůstává povinná serializace podporovaných IPC zapisovatelů a bezpečnost souborových operací i při přímém zásahu administrátora během publikační sekce. Testy musí prokázat, že nedojde k truncation způsobené službou, chybnému ACL, smazání nesprávného cíle při rollbacku nebo falešnému tvrzení, že se nic nezapsalo. Nevyžadovat compare-and-swap proti původnímu obsahu ani oplock pouze pro zabránění schválenému přepsání. Podrobnosti technické brány jsou v 12.1.
 
-Zálohy mají stejná omezení přístupu jako konfigurace. Ponechat nejvýše poslední vlastní známou verzi, nevytvářet neomezenou historii secretů. Detekce konfliktu se neřeší zálohou až po tichém přepsání. Výpadek napájení a selhání média mají vlastní recovery výsledek, nelze slibovat obnovu na fyzicky nefunkčním disku.
+Zálohy mají stejná omezení přístupu jako konfigurace. Ponechat nejvýše poslední vlastní známou verzi, nevytvářet neomezenou historii secretů. Záloha slouží k bezpečné obnově po chybě, ne k reviznímu blokování Save/Finish. Výpadek napájení a selhání média mají vlastní recovery výsledek, nelze slibovat obnovu na fyzicky nefunkčním disku.
+
+### 5.6 Edit Config: skutečný obsah, vytvoření a Reset
+
+Nový `get-config-document` vrátí skutečný text čitelného souboru i při chybějících povinných polích, jiné konfigurační chybě nebo syntakticky chybném JSON. Nevalidní obsah nenahradí defaultem ani starou cache. Služba stále výhradně čte pevnou cestu. Původní přímý `get-config` zůstane pro platný konfigurační JSON, nevalidní dokument zpřístupní jen nová textová obálka. Nečitelnost existujícího souboru je chyba přístupu a nikdy nespustí vytvoření náhrady.
+
+Při skutečné neexistenci zobrazí Edit Config Ano/Ne se skutečně vyhodnocenou absolutní cestou. Ano pošle `create-default-config`, služba společnou šablonu úplně zvaliduje a atomicky vytvoří chybějící soubor podle 5.5. Editor otevře skutečný výsledek operace. Pokud cíl mezitím vznikl, nesmí být přepsán šablonou. Ne soubor nevytvoří a neotevře nový dokument. Cancel editoru po potvrzeném vytvoření již vzniklý soubor nemaže.
+
+Tlačítko Reset v editoru vyžádá Ano/Ne k obnovení výchozí konfigurace. Ano nahradí pouze rozpracovaný text a označí jej jako změněný, Ne zachová dosavadní text. Disk se změní až po úspěšném Save se stejnou úplnou validací jako Connect. Cancel zahodí neuložené úpravy. Tato pravidla editoru nenahrazují Reset Wizardu.
+
+Vytvoření i Reset editoru používají jedinou továrnu `makeDefaultEditorDocument` ve společném klientském kódu. Služba poskytne tutéž šablonu přes `get-default-config`, tray nedrží vlastní kopii JSON. Wizard sdílí konstanty a algoritmus odvození klíčů, ale zachová svůj placeholder URL a volitelné generování 13/14 kontraktů. Úplná šablona editoru je:
+
+```json
+{
+  "masterSetup": {
+    "serverUrl": "http://127.0.0.1/phpvpn.php",
+    "trustAnyTlsCertificate": true,
+    "serverSecret": "CHANGE_THIS_SERVER_SECRET",
+    "vpnCidr": "10.99.99.0/24",
+    "virtualIp": "10.99.99.2",
+    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202"
+  },
+  "communicationContracts": {
+    "10.99.99.3": {
+      "payloadKey": "918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d"
+    }
+  }
+}
+```
+
+Sekce runtime je vynechána a používá sdílené defaulty včetně 30s timeoutu. Šablona musí projít syntaktickou i úplnou konfigurační validací bez výjimek. Loopback URL označuje relay na stejném počítači, nikoli ověřenou dostupnost serveru. Úspěšné vytvoření ani Save nenahrazují síťové ověření při Connect. Předvídatelné hodnoty a jeden kontrakt odpovídají schválené šabloně z nálezu 6.
 
 ## 6. Přenosný model průvodce
 
 ### 6.1 Stavy
 
-`WizardMode = create | edit | repair | reset`. Kroky jsou `disconnectGate`, `serverUrl`, `serverSecret`, `identity`, `contracts`. Vedle kroku model vede `loading`, `editing`, `checking`, `waitingDisconnect`, `interruptedByConnect`, `conflict`, `committing`, `commitUnknown`, `completed` nebo `closed`.
+`WizardMode = create | edit | repair | reset`. Kroky jsou `disconnectGate`, `serverUrl`, `serverSecret`, `identity`, `contracts`. Vedle kroku model vede `loading`, `editing`, `checking`, `waitingDisconnect`, `interruptedByConnect`, `sessionExpired`, `committing`, `commitUnknown`, `completed` nebo `closed`. Zastaralá uložená revize nemá vlastní chybový stav.
 
 Každý síťový krok má výsledek `pending | success | failed`. Výsledky jsou svázané s přesnými vstupy, ne s tím, že uživatel již jednou stiskl Next. První krok nemá Back. Sidebar je informativní, neslouží k přeskočení neověřeného kroku.
 
@@ -202,14 +260,17 @@ Každý síťový krok má výsledek `pending | success | failed`. Výsledky jso
 | změna URL | zneplatnit všechny síťové výsledky, ověřený čas, info a návrhy závislé na starém serveru. Ručně zadané hodnoty nezahodit. |
 | změna secretu/default checkboxu | zneplatnit secret a access výsledky, čas a info. |
 | změna IP/Access Key | zneplatnit access výsledek, znovu spočítat kolize a náhled počtu kontraktů. |
-| Reset | zrušit vlastní kontrolu, vytvořit nový koncept, vyčistit výsledky, zachovat původní baseline pro konflikt. Žádné diskové operace. |
+| Reset | bezpečně zrušit vlastní kontrolu, po ukončení práce vytvořit nový koncept a vyčistit výsledky. Žádné diskové operace ani revizní podmínka pozdějšího Finish. |
 | Cancel / Escape / X | mimo commit zrušit vlastní operaci a relaci, zavřít okno, vymazat koncept. Neodesílat Connect ani dodatečný Disconnect. |
-| Finish | úplná službová validace a podmíněný zápis, bez dalšího data pollingu. Během krátkého commitu nelze předstírat úspěšný Cancel. |
+| Finish | úplná službová validace a atomický zápis podle D22, bez dalšího data pollingu. Během krátkého commitu nelze předstírat úspěšný Cancel. |
 | úspěšný Finish | receipt confirmed, zavřít Wizard, obnovit config-state a otevřít placeholder jednou. |
-| chyba Finish | zůstat na contracts, zachovat koncept a zobrazit konkrétní nápravu. Při konfliktu žádné tlačítko pro tiché vynucené přepsání. |
+| chyba Finish | zůstat na contracts, zachovat koncept a zobrazit konkrétní nápravu. Samotná zastaralá revize není chybou a nevyvolá potvrzení přepsání. |
 | ztracená odpověď Finish | commitUnknown, ověřit receipt, slepě neopakovat zápis ani netvrdit, že soubor nebyl změněn. |
+| expirace pronájmu | sessionExpired, zastavit kontroly i Finish, oznámit zánik relace a nabídnout nové otevření. Neobnovovat starou relaci opožděným potvrzením, výsledek rozpracovaného commitu ověřit samostatně. |
 
-Pokud selže Next, uživatel zůstává na právě aktivním kroku. Chyba sítě není důvod k automatickému postupu ani k tichému používání starého zeleného výsledku. Reset a Cancel jsou dostupné i při chybě načtení, kromě krátké nerozhodnuté commit sekce.
+Každý Next založí jeden aktuální pokus. Zelený výsledek a postup jsou dovoleny až po doručení a ověření úspěchu tohoto pokusu v tray. Chyba kdekoli v řetězci tray → služba → server → služba → tray pokus ukončí, zobrazí červenou hlášku na stejném kroku a zachová texty. Nedodání v konečném časovém limitu je timeout, ostatní chyby mají skutečnou příčinu. Nepoužívat dřívější úspěch, automaticky neopakovat start ani žádnou část kontroly, včetně health/info a retry po 401. Další pokus vznikne výhradně novým Next a může znovu spotřebovat zprávy, i když předchozí na serveru uspěl.
+
+Po chybě nebo timeoutu tray označí pokus lokálně za uzavřený a pozdní úspěch ignoruje. Pokud práce ve službě ještě běží, vyžádá její zrušení, je-li operace známa. Při ztraceném start acknowledgement použije korelaci aktuálního pokusu a rušení podle 8.2, start znovu neodesílá. Další Next může začít až po potvrzeném ukončení předchozí práce, nebo obdrží busy. Průběžné čtení dosud běžící operace není nový pokus. Reset a Cancel jsou dostupné i při chybě načtení, kromě krátké nerozhodnuté commit sekce.
 
 ### 6.2 Cizí Connect a epochy
 
@@ -219,7 +280,7 @@ Wizard zaznamená epochu při otevření a po potvrzeném odpojení. Každá kon
 
 Text informace: `Another application or user started a VPN connection while this wizard was open. Previous checks are no longer valid. To continue, choose Next to disconnect the VPN for everyone.` Neuvádět vymyšleného uživatele ani proces, veřejné IPC identitu nesleduje.
 
-Při přerušení zachovat vyplněné texty, ukončit vlastní probe, označit síťové výsledky pending a nabídnout odpojovací bránu. Pokud je v době obsluhy již opět disconnected, stále zobrazit informaci o proběhlém Connect a vyžadovat opakování kontrol od serverUrl, ale další zbytečný Disconnect není nutný. Po výslovném odpojení a převzetí nové epochy opakovat všechny kontroly. Předchozí disková baseline se nezmění.
+Při přerušení zachovat vyplněné texty, ukončit vlastní probe, označit síťové výsledky pending a nabídnout odpojovací bránu. Pokud je v době obsluhy již opět disconnected, stále zobrazit informaci o proběhlém Connect a vyžadovat opakování kontrol od serverUrl, ale další zbytečný Disconnect není nutný. Po výslovném odpojení a převzetí nové epochy provést všechny kontroly znovu až jednotlivými ručními Next. Originální dokument konceptu se cizím uložením nepřepíná a jeho revize Finish neblokuje.
 
 Guard commitu a přijetí Connect mají jednoznačné pořadí. Connect přijatý před commitem zneplatní uložení. Connect přijatý až po commitu načte nově uloženou konfiguraci. Žádné z těchto pořadí nesmí vyžadovat blokování Connect po celou dobu průvodce.
 
@@ -251,9 +312,9 @@ Z ověřených clients vybrat nejnižší adresu kandidátní množiny, která c
 
 Access Key se navrhne jako `hex2(lastOctet)` opakované 32krát. U automaticky odvozeného dosud ručně nezměněného klíče lze při změně IP návrh přepočítat. Ručně zadaný nebo existující klíč se nikdy bez výslovné volby nepřepíše. UI uvede, zda klíč právě tvoří návrh, nebo vlastní hodnotu.
 
-Před provedením kontroly je trvale viditelné upozornění: `This check may remove waiting messages for this IP address from the server. The messages will be discarded and will not be delivered to the VPN.` Tlačítko Next je výslovný souhlas s tímto jedním pokusem, bez dalšího povinného modálního potvrzení.
+Před provedením kontroly je trvale viditelné upozornění: `This check may remove waiting messages for this IP address from the server. The messages will be discarded and will not be delivered to the VPN. If the result does not reach this window, the check may still have removed messages. Each new click on Next starts a new check and may remove more messages. Checks are not retried automatically.` Tlačítko Next je výslovný souhlas s tímto jedním pokusem, bez dalšího povinného modálního potvrzení.
 
-Každý pokus check-access získá čerstvý ověřený health a info ve vlastním kontextu, aby dlouhé vyplňování a změna systémového času nepoužily starý odhad či serverové limity. Potom provede nejvýše jeden prázdný data request. Všechny health používají auth-none. Žádný automatický retry data, ani při 401. Další pokus je nové stisknutí Next a znovu začíná čerstvým health. Tím se splní požadavek synchronizace po možné časové chybě bez tichého opakovaného odebírání fronty.
+Každý pokus check-access získá čerstvý ověřený health a info ve vlastním kontextu, aby dlouhé vyplňování a změna systémového času nepoužily starý odhad či serverové limity. Potom provede nejvýše jeden prázdný data request. Všechny health používají auth-none. Žádný automatický retry žádného kroku sekvence, ani po 401. Další pokus je nové stisknutí Next a znovu začíná čerstvým health. Normativní pravidla obnovy času po 401 se podle kapitoly 11 zpřesní tak, aby se ve Wizardu obnova odložila do tohoto nového výslovného pokusu. Recovery běžné VPN se tím nemění.
 
 Prázdný request má pouze auth-full a LF. Vyžadovat HTTP úspěch, úplnou strukturu NDJSON, limity těla/řádku/počtu, správný requestId v data-result i data-mac, kanoničnost všech záznamů a správný HMAC. Pro prázdný odeslaný seznam navíc vyžadovat prázdné accepted/deferred ID seznamy a nulové acceptedRecords/acceptedBytes. Ověřovat shodu cílové IP a přípustnost směrovacích polí vrácených dat, nevydávat MAC za důkaz platného payload plaintextu.
 
@@ -296,38 +357,58 @@ Každý řádek uvádí další request pole nad povinnou trojicí. Relace je v�
 | Příkaz | Další request pole | Úspěšný result |
 |---|---|---|
 | `get-config-state` | žádná | `availability`, `reasonCode` nebo null, `configPath`, `revisionToken` nebo null, `serviceInstanceId`, `connectionEpoch`, `vpnState`, `vpnPhase` |
+| `get-config-document` | žádná | `configPath`, `availability`, `reasonCode` nebo null, `document` jako string nebo null, `revisionToken` nebo null |
+| `get-default-config` | žádná | `document` jako string se společnou validní šablonou editoru |
+| `create-default-config` | žádná, odeslat jen po Ano | `created` jako bool, `configPath`, `availability`, `document` jako string, `revisionToken` |
 | `wizard-open` | žádná | `sessionId`, `serviceInstanceId`, `revisionToken`, `availability`, `mode`, `fields` nebo null, `context` nebo null, `contractCount`, `connectionEpoch`, `vpnState`, `vpnPhase` |
-| `wizard-reset` | relace | stejný stav relace jako open, mode reset, nové defaulty, zachovaná baseline |
-| `wizard-check-url` | relace, `clientAttemptId`, `serverUrl` | `operationId`, `operationState:"pending"` |
-| `wizard-check-secret` | relace, `clientAttemptId`, `serverUrl`, `serverSecret` | `operationId`, `operationState:"pending"` |
-| `wizard-check-access` | relace, `clientAttemptId`, `fields` | `operationId`, `operationState:"pending"` |
+| `wizard-reset` | relace | stejný stav relace jako open, mode reset, nové defaulty, bez revizní podmínky Finish |
+| `wizard-keepalive` | relace | `alive:true`, `leaseDurationMs:60000` |
+| `wizard-check-url` | relace, `clientAttemptId`, `attemptSequence`, `serverUrl` | `operationId`, `operationState:"pending"` |
+| `wizard-check-secret` | relace, `clientAttemptId`, `attemptSequence`, `serverUrl`, `serverSecret` | `operationId`, `operationState:"pending"` |
+| `wizard-check-access` | relace, `clientAttemptId`, `attemptSequence`, `fields` | `operationId`, `operationState:"pending"` |
 | `wizard-get-operation` | relace, `operationId` | aktuální typovaný OperationResult |
 | `wizard-cancel-operation` | relace, `operationId` | `operationId`, stav cancelling/cancelled nebo již terminální stav |
+| `wizard-cancel-attempt` | relace, `clientAttemptId`, `attemptSequence` | `attemptSequence`, `attemptState` z cancelling/cancelled/closed |
 | `wizard-resume` | relace, `connectionEpoch` | aktuální relace po potvrzeném odpojení, všechny důkazy pending |
 | `wizard-finish` | relace, `commitId`, `fields`, `createDefaultContracts` | `operationId`, `operationState:"pending"`, dokončení se čte stejným get-operation |
+| `wizard-get-commit` | relace, `commitId` | `commitState` z pending/confirmed/failed/unknown, `receipt` nebo null, `error` nebo null |
 | `wizard-close` | relace | `closed:true`, bez dopadu na VPN |
 
-`fields` obsahuje právě čtyři stringy `serverUrl`, `serverSecret`, `virtualIp`, `accessKey`. `context` obsahuje efektivní `vpnCidr`, `trustAnyTlsCertificate` a všech osm runtime limitů. Služba je odvodí z vlastní baseline, nesmí věřit klientem podstrčenému TLS nebo CIDR. `contractCount` je nezáporné celé číslo. `revisionToken` je neprůhledný náhodný identifikátor revize v rámci instance služby, nikoli zveřejněný hash secretu.
+`fields` obsahuje právě čtyři stringy `serverUrl`, `serverSecret`, `virtualIp`, `accessKey`. `context` obsahuje efektivní `vpnCidr`, `trustAnyTlsCertificate` a všech osm runtime limitů. Služba je odvodí z vlastního originálu nebo resetovaného konceptu, nesmí věřit klientem podstrčenému TLS nebo CIDR. `contractCount` je nezáporné celé číslo. `revisionToken` je neprůhledný náhodný identifikátor revize v rámci instance služby, nikoli zveřejněný hash secretu ani očekávaná revize commitu.
 
-`clientAttemptId` je UUIDv4 logického stisku Next. Opakování stejného ID se shodnými parametry vrátí stejnou operaci, s jinými parametry chybu. Brání to dvojímu data pollingu při ztrátě IPC odpovědi. Nové vědomé opakování Next má nové ID. Stejné pravidlo platí pro commitId a opakované Finish.
+`get-config-document` pro missing vrátí document/revisionToken null, pro každý čitelný soubor skutečný text a dostupnost, pro nečitelnost konkrétní chybu přístupu. Textový string v obálce dovoluje i syntakticky chybný JSON, neznamená oslabení validace IPC. `create-default-config` nepřijímá cestu ani obsah. Při souběžném vzniku souboru vrátí `created:false` a jeho skutečný čitelný obsah, případně konkrétní chybu. Na validitu tohoto cizího obsahu se neváže jeho otevření. Po úspěchu vytvoření vrací `created:true`. Save dále používá původní set-config s úplným dokumentem a jeho službovou validací. Při nepodporovaných nových příkazech tray oznámí nutnost nové služby a nepoužije starou cache ani vytvoření přes fallback.
 
-`OperationResult` obsahuje `operationId`, `kind` z pevného výčtu url/secret/access/finish, `operationState` z pending/running/cancelling/succeeded/failed/cancelled/interrupted, `connectionEpoch`, `error` nebo null a `payload` nebo null. Payload je uzavřený podle kind: URL jen výsledek kontroly, secret navíc případný návrh IP, access jen výsledek a počet zahozených záznamů, finish receipt s commitId a novou revizí. Text klíče odvozeného z IP může UI spočítat společnou čistou funkcí, služba jej vždy nezávisle ověří jako vstup check-access.
+`clientAttemptId` je UUIDv4 jednoho stisku Next a slouží ke korelaci, nikoli k automatickému obnovování startu. Každý ze tří wizard-check requestů navíc obsahuje `attemptSequence`, kladné 64bitové pořadové číslo pokusu v relaci. Tray ho zvýší při každém novém ručním Next, nikdy při pollingu výsledku. Služba drží pouze nejvyšší přijaté pořadí a aktuální pokus. Start se stejným nebo nižším pořadím se odmítne bez sítě, nikdy znovu neprovede vyřazený pokus. Vyšší pořadí během dosud běžící operace dostane busy a samo se později nespustí. I takto uzavřený validní start posune nejvyšší pořadí, aniž by změnil dosud běžící operaci. Reset a přerušení Connectem nemažou nejvyšší pořadí, nové sessionId začíná novou řadu. Přetečení se odmítne. Nevzniká historie UUID ani důvod nutit uživatele znovu otevřít Wizard po běžném počtu pokusů.
 
-Každý kontrolní důkaz uložený službou váže přesné relevantní hodnoty, revizi baseline, TLS/runtime kontext, serviceInstanceId a connectionEpoch. Finish vyžaduje shodu se všemi potřebnými důkazy. Po návratu Back a změně textu tedy nelze přes IPC uložit jiné hodnoty než ty, které byly ověřené. `createDefaultContracts` nemění platnost přístupového ověření, ale služba při Finish ověří jeho přípustnost pro daný režim/CIDR.
+Tray start posílá právě jednou. Při ztracené odpovědi jej neopakuje. `wizard-cancel-attempt` umožní uzavřít pokus i bez doručeného operationId: služba zapamatuje jeho pořadí, zruší odpovídající práci a odmítne opožděný start tohoto či nižšího pořadí. Staré rušení nesmí zasáhnout novější pokus a neshodné ID stejného aktuálního pořadí se odmítne. Pokud zrušení nelze doručit, HTTP deadline a pronájem dál omezují životnost práce. Nový Next respektuje busy a čekání na potvrzené ukončení. Úspěšně doručené průběžné get-operation pouze čte stav již známé operace a nespouští novou kontrolu.
+
+Finish má samostatná nezměněná pravidla idempotence: stejné commitId se shodným úplným vstupem vrací stejný výsledek, změněný vstup se odmítne a zápis se neopakuje. Ztracené potvrzení se čte přes get-operation nebo wizard-get-commit, nikoli novým zápisem. Toto pravidlo se nesmí zaměnit za zrušenou obnovu síťových pokusů.
+
+`OperationResult` obsahuje `operationId`, `kind` z pevného výčtu url/secret/access/finish, `operationState` z pending/running/cancelling/succeeded/failed/cancelled/interrupted, `connectionEpoch`, `clientAttemptId` a `attemptSequence` pro kontroly (pro finish null), `error` nebo null a `payload` nebo null. Payload je uzavřený podle kind: URL jen výsledek kontroly, secret navíc případný návrh IP, access jen výsledek a počet zahozených záznamů, finish receipt s commitId a novou revizí. Text klíče odvozeného z IP může UI spočítat společnou čistou funkcí, služba jej vždy nezávisle ověří jako vstup check-access.
+
+Každý kontrolní důkaz uložený službou váže přesné relevantní hodnoty, generaci konceptu, TLS/runtime kontext, serviceInstanceId, connectionEpoch a aktuální pokus. Finish vyžaduje shodu se všemi potřebnými důkazy. Po návratu Back a změně textu tedy nelze přes IPC uložit jiné hodnoty než ty, které byly ověřené. Změna uložené revize cizím Save/Finish sama důkaz nezneplatňuje. `createDefaultContracts` nemění platnost přístupového ověření, ale služba při Finish ověří jeho přípustnost pro daný režim/CIDR.
 
 `wizard-resume` nesmí odpojit sám od sebe ani přijmout klientem tvrzený disconnected. Služba ověří aktuální stav, fázi a nepřítomnost čekajícího Connect. Samotné globální odpojení zůstává původním příkazem disconnect.
 
 ### 8.3 Životnost a limity
 
-Nejvýše osm rozpracovaných Wizard relací na službu, každá jeden koncept a jedna aktuální operace. Neaktivní relaci ukončit po 30 minutách bez Wizard IPC, nikoli při pravidelných čteních její aktivní operace. Na expiraci se koncept a odvozené hodnoty zahodí. Doba jedné síťové operace je omezená transportními timeouty a lze ji kdykoli zrušit.
+Nejvýše osm rozpracovaných Wizard relací na službu, každá jeden koncept a jedna aktuální kontrola. Každá otevřená relace má obnovovaný pronájem, výchozí potvrzení každých 15 s a expiraci po 60 s bez platného kontaktu. Služba porovnává uplynulý monotónní čas, ne počet zmeškaných pingů. Platný požadavek k dané živé relaci smí kontakt obnovit. Při pouhém vyplňování tray odešle krátký wizard-keepalive. Obecné get-status/get-config-state ani provoz jiné relace její pronájem neobnovují.
 
-Dokončený commit receipt se ponechá minimálně po zbývající životnost relace, aby šlo řešit ztracenou odpověď. Pád služby ruší relace a síťové důkazy. Při restartu během nejasného Finish klient načte nový config-state a zobrazí výslovné ověření výsledku, nezačne automaticky nový zápis. Trvalý commit recovery záznam identifikuje pouze publikaci a revizi, neobsahuje další kopii secretů.
+Heartbeat je pouze lokální IPC, nespouští HTTP, nic nepersistuje a není retry Next. Neprodlužuje HTTP deadline ani limit doručení výsledku do tray. Použít existující správu relací a službový časovač, nezavádět kvůli pronájmu nové vlákno nebo sledování PID. Intervaly lze při implementaci odůvodněně doladit a současně aktualizovat dokumentaci a testy, princip zůstává závazný.
+
+Po expiraci nejprve relaci označit za neplatnou, poté bezpečně zrušit rozpracovanou kontrolu a po jejím terminálním stavu uvolnit koncept i prostředky. Objekt používaný callbackem nebo vláknem se neuvolní předčasně. Místo v limitu zůstane započítané do dokončení úklidu. Opožděný request relaci neoživí. Normální zavření vyžádá úklid ihned, při pádu/zamrznutí tray, odhlášení nebo výpadku IPC nastane nejpozději po době pronájmu plus stanovené toleranci časovače a konečné době rušení. Po resume služba vyhodnotí uplynulou dobu před dalším obnovením pronájmu, použitý časový zdroj musí zohlednit dobu uspání. Expirace není důkazem smrti procesu a neodpojí globální VPN ani jiný Wizard.
+
+Čekání tray na výsledek jednoho Next má samostatný konečný monotónní rozpočet od stisku, zahrnující IPC start, maximálně 1/2/3 HTTP requesty pro url/secret/access, konečný rozpočet lokálního zpracování a doručení výsledku. Konkrétní IPC a lokální rozpočty stanovit v etapě A, pro výchozí HTTP hodnoty vycházet z nejvýše 30/60/90 s síťové části. Celkový součet a převody kontrolovat na přetečení. Polling ani keepalive konečný termín neobnovují. Timeout nebo jiná chyba kteréhokoli IPC volání kontroly ukončí aktuální Next v UI, zruší další čtení jeho výsledku a vyžádá bezpečné ukončení práce. Pozdní succeeded už krok nezmění. Nový Next je vždy ruční, může získat nová data a spotřebovat další zprávy.
+
+Commit a jeho receipt mají bezpečnou životnost oddělenou od pronájmu editace. Expirace ani zavření nesmějí vrátit již publikovaný zápis nebo jej označit za neprovedený. Před publikační sekcí rezervovat místo pro záznam výsledku. Registry receipts musí mít konečný limit a retenční dobu stanovené v etapě A, při zaplnění nový commit odmítnout před zápisem, nikoli vyřadit potřebné potvrzení. Receipt zachovat alespoň po zbytek živé relace a po stanovenou dobu řešení nejasného Finish i po její expiraci. wizard-get-commit může pouze přečíst existující záznam pod původní trojicí serviceInstanceId/sessionId/commitId, neobnoví pronájem ani nepovolí další zápis. Terminální potvrzení je neměnné, dokládá konkrétní publikaci, i když ji pozdější Save již přepsal. Vyřazené či expirované relace se přes opakovaný Finish nikdy nezaloží znovu.
+
+Pád služby ruší relace a síťové důkazy. Při restartu během nejasného Finish klient načte nový config-state a zobrazí výslovné ověření výsledku, nezačne automaticky nový zápis. Trvalý commit recovery záznam identifikuje pouze publikaci a revizi, neobsahuje další kopii secretů. Nezjištěný výsledek zůstane unknown, nikdy se z něj neodvodí automatický retry. Tato pravidla zachovávají idempotenci Finish a řešení nejasného zápisu, změna D23 se týká pouze síťových kontrol.
 
 Limit zprávy zahrnuje JSON escaping. Dokument, který se s obálkou nevejde do v1, odmítnout před kontrolou a zápisem s informací o velikosti, nerozdělovat jej na nezdokumentované kusy. Doplnit testy horních hranic a UTF-8. Limity responseTimeoutSeconds se při převodu do WinHTTP nesmějí násobením přetočit na záporný nebo nekonečný timeout.
 
 ### 8.4 Chyby a bezpečnost
 
-Přidat stabilní kódy například `config_conflict`, `config_unreadable`, `wizard_session_expired`, `wizard_prerequisite_failed`, `wizard_connection_interrupted`, `wizard_commit_unknown`, `wizard_contract_self_conflict` a `wizard_unsupported`. Původní chyby neměnit na raw systémové výpisy.
+Přidat stabilní kódy například `config_unreadable`, `wizard_session_expired`, `wizard_prerequisite_failed`, `wizard_attempt_closed`, `wizard_connection_interrupted`, `wizard_commit_unknown`, `wizard_contract_self_conflict` a `wizard_unsupported`, dále rozlišit busy, timeout a chybu souborové publikace. Nezavádět config_conflict pro zastaralou uloženou revizi. Původní chyby neměnit na raw systémové výpisy.
 
 Wizard chyba má strukturované `code`, hotové anglické `description`, `recoverable`, `field` nebo null, `httpStatus` nebo null, `suggestedAction` a případně povolené `serverUrl`/`configPath`. URL a cesta pocházejí z konceptu a pevného úložiště, ne z neověřeného serverového těla. Síťovou příčinu mapovat na DNS, connect, TLS, timeout, odmítnutou autentizaci, neplatný formát a neplatné kryptografické ověření. Neočekávanou HTML odpověď nespouštět ani nezobrazovat jako HTML.
 
@@ -337,7 +418,7 @@ Zachovat vědomě veřejný přístup pro lokální aplikace, bez impersonace a 
 
 ## 9. Win32 UI a texty pro začátečníka
 
-UI zůstane anglické jako současné menu. Texty budou soustředěné a testovatelné, bez čísel řádků v PHP souboru. Jedno Wizard okno na tray relaci. Opakované otevření existující okno aktivuje, nezahodí koncept ani nevytvoří druhý sessionId. Jiná interaktivní relace může mít vlastní průvodce nad stejnou baseline.
+UI zůstane anglické jako současné menu. Texty budou soustředěné a testovatelné, bez čísel řádků v PHP souboru. Jedno Wizard okno na tray relaci. Opakované otevření existující okno aktivuje, nezahodí koncept ani nevytvoří druhý sessionId. Jiná interaktivní relace může mít vlastní průvodce, každý ukládá svůj úplný koncept podle D22.
 
 Výchozí klientská plocha přibližně `1000 × 680` při 96 DPI, levý seznam kroků přibližně 230 DIP, pravá obsahová část a samostatný dolní pás tlačítek. Okno se vystředí na pracovní ploše aktivního monitoru a zmenší na dostupnou plochu. Při malé ploše se posouvá obsah, nikoli dostupnost Cancel/Next/Finish. Finální geometrie vychází z naměřených textů, ne z předpokladu, že se nápověda vždy vejde na dva řádky.
 
@@ -356,11 +437,17 @@ Aktivní krok je tučný a označený, úspěšný má zelenou značku a textov�
 
 Příklad chybějícího souboru: `The configuration file does not exist at: {absolutePath}. Run Configuration Wizard to create it after you successfully finish all steps. If you already have a config.json from your administrator, you can copy it to this location.` Nečitelnost a neplatnost mají vlastní pravdivý úvod, nikdy text „does not exist“, pokud soubor existuje.
 
+Edit Config má místo tohoto varování vlastní potvrzení s tlačítky Yes/No: `This application uses the configuration file at: {absolutePath}. The file does not exist. Create it now from the default template?` Nečitelnost otevře konkrétní chybu přístupu, čitelný nevalidní dokument se otevře k opravě bez náhrady obsahu. Potvrzené vytvoření proběhne na disku již před otevřením editoru, Cancel soubor neodstraní.
+
+Editor doplnit o Reset v dolním pásu vedle Save a Cancel. Potvrzení Yes/No: `Restore the default configuration in this editor? The file will change only after you choose Save.` Ano načte stejnou šablonu služby jako create-default-config a označí obsah za změněný. Ne ani chyba získání šablony nesmějí ztratit rozpracovaný text. Zachovat výchozí plochu `1080 × 560` při 100% DPI, oba posuvníky a škálování. Při resize a změně DPI musejí zůstat viditelná a funkční všechna tři tlačítka, bez původního artefaktu vedle Cancel. Uložení nevyžaduje souhlas s přepsáním mezitím uložených změn.
+
+Příklad timeoutu Next: `The check did not complete in time. Your entries have been kept. Choose Next to start a new check.` Příklad zániku relace: `This wizard session expired because contact with the service was lost. Open Configuration Wizard again to continue.` Probíhající nejasný Finish se místo tvrzení o neuložení řídí vlastním potvrzením commitu.
+
 Příklad kolize: `This IP address is already used by an existing communication contract. A contract cannot point to this computer itself. Choose another IP address, or cancel the wizard and use Edit Config to correct the conflicting contract before trying again.` Zobrazit konkrétní kolizní virtuální IP, žádný payloadKey. Hláška je vysvětlení, nikoli dodatečné schvalování automatického odstranění.
 
 Placeholder má titul `Communication Contracts`, běžné záhlaví, možnost zavřít a prázdnou obsahovou plochu. Neobsahuje zatím falešné editační prvky. Jeho otevření z menu provede aktuální kontrolu dostupnosti. Automatické otevření po Finish není podmínkou úspěšnosti uložené konfigurace, selhání vytvoření HWND nesmí změnit confirmed commit na neúspěšný zápis.
 
-Wizard může mít vlastní 500ms polling stavu operace a epochy pouze po dobu otevření. Původní pětisekundový tray timer i 500ms timer Connecting progress window zůstávají nezávislé. Zavření Wizardu ukončí jeho polling. Opožděná odpověď musí projít kontrolou windowGeneration, serviceInstanceId, sessionId, operationId a clientAttemptId, než smí změnit UI.
+Wizard může mít vlastní 500ms polling stavu dosud běžící operace a epochy pouze po dobu otevření. Když žádnou kontrolu neprovádí, jeho pronájem udržuje 15s keepalive, případně jiný platný požadavek dané relace. Původní pětisekundový tray timer i 500ms timer Connecting progress window zůstávají nezávislé. Zavření Wizardu ukončí jeho polling i keepalive. Odpověď smí změnit UI jen při shodě windowGeneration, serviceInstanceId, sessionId, operationId, clientAttemptId a attemptSequence, a pokud pokus ještě neskončil a nevypršel jeho konečný termín. Staré potvrzení ani úspěch nesmějí ovlivnit nový pokus.
 
 ## 10. Server, defaulty a kompatibilita
 
@@ -374,14 +461,14 @@ Původní drátové formáty, kryptografické domény a serverVersion negotiatio
 
 Nová tray při `ipc_unknown_command` na get-config-state nebo wizard-open zobrazí, že Wizard vyžaduje aktualizovanou službu, a nic nevytváří. Původní příkazy zůstanou dostupné podle původní smlouvy, pokud je kompatibilní stav služby známý. Žádné hledání alternativní pipe ani automatický downgrade nové operace na set-config. Starý klient nové příkazy nepotřebuje, původních sedm příkazů na nové službě musí stále fungovat.
 
-Projekt nemá nasazené uživatele, proto není potřeba migrační utilita, dlouhodobá dvojí IPC verze ani složitý rollout. Novou službu a tray distribuovat společně. Instalační skripty nesmějí zapisovat ani nepřímo vyvolat vznik configu a musí po instalaci správně popsat, že soubor vytvoří Wizard. Existující config se při reinstalaci zachová.
+Projekt nemá nasazené uživatele, proto není potřeba migrační utilita, dlouhodobá dvojí IPC verze ani složitý rollout. Novou službu a tray distribuovat společně. Instalační skripty nesmějí zapisovat ani nepřímo vyvolat vznik configu a musí po instalaci správně popsat obě cesty: úspěšný Finish Wizardu nebo výslovně potvrzené vytvoření přes Edit Config. Existující config se při reinstalaci zachová.
 
 ## 11. Aktualizace dokumentace a testovací infrastruktury
 
 | Soubor | Konkrétní změna |
 |---|---|
-| `protocol.md` | 3.2 default a normalizace, 5.1 veřejné varování, související scénáře 16.3. Výslovně zachovat povahu best-effort clients a at-most-once pollingu. |
-| `client.md` | konfigurace bez auto-create, opravitelnost a Reset, menu tabulka s výjimkou Disconnect, Wizard kroky a UI, výjimka diagnostiky, nové IPC schéma, plánování dočasných kontrol, pravidla čítačů, kontrakty 13/14/0, akceptační scénáře. |
+| `protocol.md` | Konzistentně změnit default a normalizaci v 3.2, odkazech 7.2, příkladu PHP v 15, testech 16.1/16.3 a checklistu 17, veřejné varování v 5.1 a výchozí mapu klíčů v souvisejících příkladech. V 5.2, 11.2 a 13 vymezit explicitní Wizard kontrolu bez automatického retry podle následující tabulky. Zachovat wire formáty, best-effort clients a at-most-once polling. |
+| `client.md` | Promítnout D01–D26 do konfigurace, tří VPN rolí a oddělené diagnostiky, transportu, obnovy, IPC, menu, editoru, Wizardu, čítačů a lifecycle testů. Konkrétní normativní zásahy jsou v následující tabulce, nestačí připojit obecný odkaz na plán. |
 | `plan_client.md`, `plan2_client.md` | krátký odkaz na novější plán pro překonané části, případně označit historické defaulty jako historické. Nemíchat staré instalační požadavky s aktuálním stavem. |
 | `client/src/CMakeLists.txt` | nové core/config/wizard/IPC a Windows file backend zdroje. |
 | `client/apps/CMakeLists.txt` | nové tray modely, čtečky a okna. |
@@ -395,33 +482,48 @@ Projekt nemá nasazené uživatele, proto není potřeba migrační utilita, dlo
 | `tests-integration/README.md` | postup testování defaultu a variant secretů na oddělených testovacích instancích. |
 | `client/tools/package/install.ps1`, `client/tools/dev-install.ps1` | oprava hlášek a regresní ověření čisté instalace bez souboru. |
 
+Následující normativní změny jsou povinnou součástí budoucí implementace. V této plánovací úpravě se samotné `client.md` ani `protocol.md` ještě nepřepisují. Před změnou kódu se musí aktualizovat i původní rozporné věty a jejich testy, nikoli jen doplnit nová podkapitola vedle nich.
+
+| Nález | Místo normativní změny | Závazný obsah a vazba na plán |
+|---|---|---|
+| 1 | `client.md`: Architektura/Transport, Běhový model, Disconnect, upgrade a rollback, Windows lifecycle testy | Společná bezpečná životnost a rušení všech HTTP cest podle 4.4, krátká konečná doba, terminální stav před nahrazením/uvolněním, žádné dvojí zavření či callback po uvolnění kontextu. Zahrnout Connect proti probe, globální Disconnect, všechny důvody stopu služby a zavření/Reset Wizardu. Zachovat jednorázové účtování částečných VPN odpovědí. |
+| 2 | `client.md`: Konfigurační soubor/responseTimeoutSeconds, Příjem dat, Transport a povinné testy. `protocol.md` 11.2 | Upřesnit celkový absolutní monotónní deadline DNS až konec těla bez obnovy dílčím blokem, kontrolované časové převody a kontrolu nastavení timeoutů. V protokolu ponechat obecné doporučení 15 s jako doporučení, uvést, že nativní klient používá vlastní normativní konfigurovatelný default 30 s. Timeout vyvolá bezpečné zrušení a nesmí skončit pozdním úspěchem. Recovery se určuje podle provozní či Wizard cesty. |
+| 3 | `client.md`: Účel, Architektura/Runtime, Běhový model, Synchronizace času, veřejné IPC/get-info | Formulace „právě tři vlákna“ vztáhnout na tři VPN pracovní role, ne na všechny platformní a řídicí činnosti procesu. Jediné vlastnictví health/info/data a TimeSync vztáhnout na VPN kontext. Explicitně povolit oddělenou omezenou diagnostiku get-info s vlastním transportem/časem souběžně s VPN daty. Probe používá oddělenou cestu, ale nesmí překrýt VPN data request. Žádné proměnné VPN kontexty, fronty ani čítače v diagnostice. |
+| 4 | `client.md`: Konfigurační soubor, set-config, Wizard Finish a souběhové testy | Úplná validace a atomická serializovaná publikace celého dokumentu podle posledního úspěšného uložení. Zastaralý editor i Wizard smí přepsat mezitím uložený obsah bez nové výzvy nebo sloučení. Cizí revize nezneplatňuje důkazy. Epochy, validace vstupů, ACL, bezpečné chyby a idempotence Finish zůstávají povinné. |
+| 5 | `client.md`: Stavový automat připojení/Obnova, responseTimeoutSeconds, Wizard kontroly, IPC a UI. `protocol.md` 5.2, 11.2 a tabulka chyb 13 | Výslovně oddělit provozní recovery od jednorázového Wizard Next. Ve Wizardu chyba v libovolném úseku včetně IPC a HTTP 401 ukončí pokus, žádný automatický start/retry health/info/data. Povinnost obnovy ověřeného času po možné odchylce se vykoná až na začátku dalšího ručně vyžádaného autentizovaného pokusu. Obecný backoff/recovery VPN zůstane. Definovat konečné doručení do tray, korelaci a ignorování pozdního úspěchu, nový Next může znovu odebrat zprávy. Průběžné čtení operace neprovádí síť. Finish má oddělenou idempotenci. Lokální attemptSequence není wire replay cache podle 6.3 protokolu. |
+| 6 | `client.md`: Konfigurační soubor, get-config/set-config a whitelist nových IPC příkazů, Edit Config/menu, distribuce a testy editoru | Skutečný čitelný text i při nevalidním JSON přes novou textovou obálku, bez změny původního přímého formátu get-config pro platný JSON. Potvrzené create-if-missing s absolutní cestou, okamžitý validovaný atomický zápis a bez přepsání mezitím vzniklého cíle. Nečitelnost není missing. Reset editoru potvrzením mění jen text, Cancel neodstraní již vytvořený soubor. Jediná šablona přesně podle 5.6, všechna tři tlačítka v layoutu a regresích. Omezit tvrzení „soubor vzniká až při Finish“ na Wizard, instalace/start/Connect dál nic nevytvářejí. Ostatní menu položky nezískávají výjimku editoru. |
+| 7 | `client.md`: Veřejné lokální IPC, get-info, disconnect, Windows Service stop a lifecycle testy | Asynchronní příjem/čtení/zápis, dispatch až po úplné validaci, dostupná kapacita krátkého řízení nezávislá na diagnostice, limity spojení/zpráv/paměti/front a absolutní I/O deadline. Rozlišit přijetí Disconnectu a jeho skutečné dokončení bez změny požadavku na potvrzený teardown. Stop služby nezávisí na pipe. Uvést konkrétní implementačně ověřené meze a profil zatížení, nikoli slib neomezené odolnosti vůči zahlcení. |
+| 8 | `client.md`: Windows Service, konzole a tray, Wizard IPC/životnost a lifecycle testy | Odlišit autonomní životnost globální VPN od dočasných Wizard relací. Pronájem 15/60 s z monotónního času, platný kontakt jen dané relace, bezpečné zrušení a úklid po expiraci, bez nového vlákna/PID. Pozdní kontakt neobnovuje relaci, heartbeat neprodlužuje pokus. Samostatná životnost rozpracovaného commitu a receipts. Upřesnit, že odpojení jednorázové pipe není důkaz pádu tray. |
+
+Ve společných scénářích `client.md` zachovat plné ověření a doručení bootstrap payloadu VPN. Samostatně normativně popsat Wizard polling, který po úplném ověření struktury a data-mac vše zahodí a neúčtuje do VPN statistik. Doplnit celý konkrétní whitelist a uzavřená schémata kapitoly 8, omezenou výjimku configPath/URL jen v určených konfiguračních odpovědích a UI, nikoli v get-status, statistikách a logu. Nálezy 9–12 nevyvolávají další změny požadavků.
+
 Serverový deployment pro testy dnes používá vlastní secret a klíče. Jeho existující fixture nesmí být potichu nahrazena defaulty. Pro ověření defaultního Wizard scénáře zavést samostatný fixture profil s `.2–.15`. Generovaný `tests-integration/server.json` není normativní dokument a nemá se ručně přepisovat jako součást změny defaultu.
 
 ## 12. Pořadí implementace a kontrolní brány
 
-### 12.1 Etapa A: smlouvy a souborová technická ověřovací brána
+### 12.1 Etapa A: smlouvy a technické ověřovací brány
 
-1. Aktualizovat normativní dokumenty podle D01–D18 a schema IPC.
-2. Definovat rozhraní ConfigFiles, ConfigStore a testovací backend s deterministickými bariérami před čtením, kontrolou revize, flush a publish.
-3. Na cílových Windows ověřit náhradu existujícího souboru, všechny relevantní chyby replacement API, ochranu ACL a souběžný externí writer. Praktický výsledek musí splnit: úplné staré nebo nové JSON, žádná truncation, žádná ztracená detekovaná cizí změna, zachování předchozího obsahu při hlášeném bezpečném selhání.
-4. Pro externí write/rename mezi poslední kontrolou a publish ověřit vhodný krátkodobý Windows guard, případně oplock s korektním zpracováním break/ack. Oplock není prostý mutex a vlastní replacement nesmí způsobit deadlock. Chování je potřeba ověřit vůči skutečnému filesystemu. Podklad: [Microsoft: Opportunistic Locks](https://learn.microsoft.com/en-us/windows/win32/fileio/opportunistic-locks).
-5. Pokud zvolený backend pro tento úzký souběh neumí požadovanou garanci, neoznačit běžné hash+replace za hotové řešení a nepokračovat k vydání s tichým oslabením požadavku. Vyřešit publikační mechanismus v této etapě, nebo před změnou rozsahu garance vrátit konkrétní technický nález zadavateli. Nejde o otevřenou volbu chování UI, ale o ověření splnitelnosti přesné bezpečnostní vlastnosti.
+1. Aktualizovat normativní dokumenty podle D01–D26 a matice v kapitole 11, včetně konkrétních schémat IPC. Zkontrolovat všechny původní věty o vlastnictví HTTP, recovery, vzniku konfigurace a počtu vláken.
+2. Definovat ConfigFiles/ConfigStore a testovací backend s bariérami před čtením, flush a publish. Na cílových Windows ověřit atomické Save/Finish i create-if-missing, chyby replacement API, ACL a externí write/rename/delete v publikačním okně. Při běžné publikaci služby je vidět celý starý nebo nový dokument. Při chybě nesmí vzniknout truncation, smazání nesprávného cíle, únik temp tajemství ani falešný úspěch/nezapsání. Přepsání cizího dříve uloženého obsahu je podle D22 dovolené a nepovažuje se za selhání brány.
+3. Navrhnout a na Windows ověřit asynchronní WinHTTP request lifecycle, krátkou konečnou mez rušení, potvrzení posledního callbacku, jediné dokončení a absolutní deadline. Ověřit opětovné použití transportu, timeout ve všech fázích i hraniční převody. Bez tohoto důkazu nepoužít starý synchronní cancel pro nové probe ani pro provozní VPN.
+4. Pro IPC zapsat číselné limity spojení, paměti a front, deadline čtení/zápisu, rozpočet lokální části Next, toleranci lease časovače a limity/retenci commit receipts. Popsat podporované zatížení a měřitelné cíle odezvy get-status, přijetí a dokončení Disconnectu a stopu. Zátěžový test s neúplnými požadavky, neodebíranými odpověďmi a pomalým get-info musí prokázat oddělení řízení od čekajícího I/O a časově omezené zastavení při přetížení.
+5. Výsledky bran zaznamenat do implementačního návrhu a příslušných normativních částí. Pokud se požadovanou bezpečnost či meze nepodaří splnit, vyřešit konkrétní mechanismus před vydáním a popsat nevyřešený technický nález. Nevracet jako povinné opravy odmítnutou ochranu před zastaralým uložením nebo automatickou obnovu Next.
 
 ### 12.2 Etapa B: konfigurace a defaulty
 
-Implementovat ConfigStore, analýzu opravitelnosti, patch dokumentu, továrnu nového konceptu, revize a zrušení auto-create. Provést související server/C++/Python změnu defaultu a serverové mapy ve stejné sadě změn. Upravit deployment fixture. Gate: kompletní lokální konfigurační a kryptografické testy.
+Implementovat ConfigStore se serializací posledního úspěšného uložení, analýzu opravitelnosti, patch dokumentu a továrnu Wizard konceptu. Přidat čtení nevalidního textu, jedinou validní šablonu editoru a create-if-missing bez přepsání. Revize ponechat pro čerstvost/receipts a odstranit auto-create při instalaci/startu/Connect. Provést související server/C++/Python změnu defaultu a serverové mapy ve stejné sadě změn. Upravit deployment fixture. Gate: konfigurační, souborové a kryptografické testy včetně shodné šablony vytvoření/Reset.
 
 ### 12.3 Etapa C: protokolové pomocné funkce a ProbeClient
 
-Rozdělit health parse/verify, doplnit clients, implementovat čerstvý time context a přesně jeden data probe bez front a účetnictví. Opravit auth-none při opakovaném health ve sdílené cestě. Gate: řízené odpovědi i nezávislé serverové kontraktní testy, bez spuštění tunelu.
+Dokončit společnou opravu bezpečného cancel a absolutního HTTP deadline z etapy A. Rozdělit health parse/verify, doplnit clients, implementovat čerstvý time context a přesně jeden data probe bez front a účetnictví. Žádný automatický retry celé kontroly ani jejího health/info/data. Opravit auth-none při opakovaném health ve sdílené cestě. Gate: transportní závody, pomalé i neukončené odpovědi, řízené parsery a nezávislé serverové kontraktní testy, bez spuštění tunelu.
 
 ### 12.4 Etapa D: služba a IPC
 
-Implementovat omezené Wizard relace, operace a důkazy, epochy, priority zrušení, krátké IPC odpovědi, striktní schémata a souběžnou pipe obsluhu. Původní set-config přesměrovat do ConfigStore. Gate: souběžné get-status/disconnect během zablokovaného probe, ztracené odpovědi, restart a stale IDs.
+Implementovat oddělenou omezenou diagnostickou/probe cestu, asynchronní pipe I/O a nezávislou kapacitu krátkého řízení. Přidat Wizard pronájmy, aktuální pokusy bez historie a automatického retry, důkazy, epochy, rušení a oddělené receipts. Původní set-config přesměrovat do ConfigStore. Gate: neblokovaný VPN provoz během pomalého get-info, odezva řízení při obsazených IPC spojeních podle etapy A, ztracené odpovědi, lease cleanup, restart a stale IDs.
 
 ### 12.5 Etapa E: model a UI
 
-Nejprve čistý WizardModel, menu a layout s testy. Pak Win32 Wizard, placeholder a integrace do tray. Zachovat generace oken a nezávislé pollingové intervaly. Gate: žádný síťový nebo diskový zápis v tray, přesné menu a testy všech přechodů.
+Nejprve čistý WizardModel, menu a layout s testy. Pak Win32 Wizard, placeholder, oprava Edit Config pro nevalidní obsah a vytvoření/Reset s potvrzením a integrace do tray. Zachovat generace oken, konečné čekání Next, ignorování pozdního výsledku, keepalive a nezávislé pollingové intervaly. Gate: žádný přímý HTTP nebo diskový zápis v tray, přesné menu a testy všech přechodů včetně editoru.
 
 ### 12.6 Etapa F: integrační a ruční ověření
 
@@ -433,23 +535,28 @@ Debug/Release/ASan, testy PHP a Python, test Windows souborů a pipe, čistá in
 
 | Soubor | Smysluplné scénáře |
 |---|---|
-| `client/tests/unit/test_wizard_document.cpp` | valid/repairable/invalid/unreadable klasifikace, více současných chyb, zachování nezobrazených hodnot a absence polí, UTF-8/BOM, duplicitní JSON, žádný disk před Finish. |
-| `client/tests/unit/test_config_store.cpp` | stejné baseline ze dvou relací, vítěz a konflikt, set-config proti Finish, ruční změna stejné délky/mtime, delete/recreate, chybějící soubor nově vznikne, selhání zápisu/flush/publish, cache až po commitu. |
+| `client/tests/unit/test_wizard_document.cpp` | valid/repairable/invalid/unreadable klasifikace, více současných chyb, zachování nezobrazených hodnot a absence polí, UTF-8/BOM, duplicitní JSON, žádný zápis Wizardu před Finish. |
+| `client/tests/unit/test_config_store.cpp` | dva starší koncepty a poslední úspěšná publikace, editor → Finish i Finish → starý editor, dva editory/Wizardy, zachování důkazů po cizím uložení, ruční změna stejné délky/mtime a delete/recreate bez revizního odmítnutí, selhání zápisu/flush/publish, cache až po commitu. |
+| `client/tests/unit/test_config_editor.cpp` | otevření přesného čitelného nevalidního či syntakticky chybného JSON, žádná stará cache, unreadable není missing, vytvoření Yes/No a okamžitý zápis, souběžný vznik cíle bez přepsání, Cancel nemaže vytvořený soubor, Reset Yes/No/Cancel mění pouze editor, totožná validní šablona a úplná validace Save. |
 | `client/tests/unit/test_config_files_win.cpp` | skutečné dočasné soubory, ACL, unikátní temp názvy, locked/unreadable cíle, reparse odmítnutí, externí writer v publikačním okně, recovery a invariant starý/nový úplný soubor. |
 | `client/tests/unit/test_wizard_defaults.cpp` | výběr chybějící/nejstarší/shodné IP, prázdné clients, všech 14 přítomných, budoucí lastSeen, nevhodný CIDR, zachování ručního klíče a numerické pořadí `.2` proti `.10`. |
 | `client/tests/unit/test_wizard_model.cpp` | všechny přechody, bez Back na prvním kroku, invalidace závislostí, Reset, Cancel, chyby bez postupu, cizí Connect, rychlý Connect/Disconnect, Finish unknown, stale výsledky. |
 | `client/tests/unit/test_wizard_probe.cpp` | health syntax bez přijetí času, chybný tag, requestId, clients, GCM info, timeout každé části, 401/503, poškozené NDJSON/MAC, neočekávaný accepted výsledek, maximálně jeden data request. |
-| `client/tests/unit/test_wizard_service.cpp` | chybějící předpoklady, podstrčené změněné vstupy při Finish, session/epoch mismatch, explicitní resume, cancel/preemption, limity relací a idempotence attempt/commit ID. |
+| `client/tests/unit/test_wizard_service.cpp` | chybějící předpoklady, podstrčené vstupy při Finish, session/epoch mismatch, explicitní resume, cancel/preemption, limit relací, monotónní pronájem a bezpečný úklid, odmítnutí opakovaného pořadí pokusu bez historie, Reset/Connect pořadí nemažou, oddělená idempotence commitId a dostupný receipt po expiraci. |
 | `client/tests/unit/test_wizard_ipc.cpp` | úplná schémata obou směrů, neznámá/duplicitní pole, typy, UUID, integer overflow, escape overhead 4MiB, korelace výsledků a filtr citlivých údajů. |
 | `client/tests/unit/test_tray_menu.cpp` | přesné pořadí a separátory, tabulka dostupnosti, výjimka Disconnect, akce warning místo okna, neznámý stav není missing. |
 | `client/tests/unit/test_wizard_layout.cpp` | velikosti monitorů, DPI 100/125/150/200 %, dlouhé texty, stabilní dolní tlačítka, žádné překryvy, scroll obsahové části. |
+| `client/tests/unit/test_winhttp_lifecycle.cpp` | řízený souběh cancel/deadline/success/callback, opakované rušení, Connect proti probe, globální Disconnect, stop služby a všechny způsoby zrušení Wizardu, žádné použití zavřeného handle ani dvojí dokončení, transport znovu použitelný. |
+| `client/tests/unit/test_winhttp_deadline.cpp` | pomalé DNS/spojení/TLS, zdržení hlaviček, pomalé bloky těla, tělo bez konce, absolutní deadline bez obnovy, chyby nastavení timeoutů, hraniční sekundové hodnoty a součty, korektní timeout i částečné účetnictví. |
+| `client/tests/unit/test_ipc_availability.cpp` | pomalý get-info souběžně s VPN daty, nejvýše jedna diagnostika, neúplné IPC requesty a neodebírané odpovědi bez obsazení krátkého řízení, limity a přetížení, měřené get-status, přijetí i dokončení Disconnectu a stop nezávislý na pipe. |
+| `client/tests/unit/test_wizard_reader.cpp` | ztracené start acknowledgement i finální výsledky, timeout ve všech úsecích řetězce, žádný automatický resend, červený stejný krok a zachované hodnoty, pozdní úspěch po timeoutu a během dalšího Next, polling a keepalive neprodlužují termín, samostatné řešení Finish unknown. |
 | `client/tests/contract/test_server_contract.cpp` | skutečný PHP relay: URL, secret, info.clients, `.2–.15`, polling s čekajícími zprávami, potvrzení jejich spotřeby bez tunelu a default kompatibilita. |
 
-Testy modelů nemají jen zrcadlit implementaci. Použít tabulkové scénáře odvozené z D01–D18 a explicitní invarianty. Kryptografické vektory porovnat s nezávislým PHP/Python výpočtem, ne s druhým voláním stejné C++ funkce. Pro souběh používat bariéry a kontrolované dokončení, nikoli náhodné čekání a naději, že se race projeví.
+Testy modelů nemají jen zrcadlit implementaci. Použít tabulkové scénáře odvozené z D01–D26 a explicitní invarianty. Kryptografické vektory porovnat s nezávislým PHP/Python výpočtem, ne s druhým voláním stejné C++ funkce. Pro souběh používat bariéry a kontrolované dokončení, nikoli náhodné čekání a naději, že se race projeví. Transportní a IPC garance kromě řízených jednotkových testů ověřit přes skutečný Windows transport a pipe. Pro DNS/TLS a přetížení popsat reprodukovatelný fixture a měřené limity, samotný mock není důkazem platformní životnosti.
 
 ### 13.2 Povinné regrese
 
-- Přepsat `test_default_config.cpp`: po startu služby a neúspěšném Connect soubor nevznikne. Platný dokument vzniká továrnou pro Finish, nikoli `ensureDefaultConfigFile`.
+- Přepsat `test_default_config.cpp`: po startu služby a neúspěšném Connect soubor nevznikne. Soubor vytvoří Finish nebo výslovně potvrzené create-if-missing editoru, nikoli automatické `ensureDefaultConfigFile`. Editor create/Reset mají jedinou shodnou validní šablonu, Wizard zachová vlastní 13/14 kontraktů.
 - Rozšířit `test_crypto.cpp`, `tests.php` a `test_crypto_vectors.py`: empty → nový default, `0`, 32/64 ASCII nul, NUL bajty a neprázdný custom secret beze změny. Ověřit všechny relevantní odvozené klíče a veřejné varování.
 - Zachovat `test_runtime_status.cpp`, `test_status_contract.cpp`, `test_traffic_counters.cpp` a `test_winhttp_accounting.cpp`. Před a po každém probe porovnat všechny globální kontrolní body, čítače a aktivní stav. Výslovné disconnect a cizí Connect mají své původní legitimní resetovací účinky, nesmějí se zaměnit za vedlejší efekt probe.
 - Ověřit, že normal Connect stále dešifruje a doručuje payload z bootstrap pollingu. Wizard režim zahození se nesmí stát defaultem společného parseru nebo NetworkWorker.
@@ -457,6 +564,8 @@ Testy modelů nemají jen zrcadlit implementaci. Použít tabulkové scénáře 
 - Ověřit původních sedm IPC příkazů, přesný formát get-info/get-config, nezměněný status parser a intervaly tray/progress.
 - Pro data probe s platným MAC a payloadem, který nelze dešifrovat neexistujícím kontraktem, očekávat úspěšné ověření přístupu a zahození. Pro chybné MAC očekávat neúspěch bez jakéhokoli doručení.
 - Simulovat změnu systémových hodin, dlouhé vyplňování, návrat Back a jiný server. Čas ani ověřené clients se nesmějí přenášet mezi odlišnými důkazy.
+- Pro všechny Wizard síťové kroky vynutit 401, timeout HTTP i IPC a chybu zpracování/doručení. Bez nového Next neproběhne žádné opakování. Další ruční Next smí znovu odebrat serverová data, pozdní odpověď předchozího pokusu nesmí změnit jeho stav.
+- Pronájem ověřit při pádu tray, vyplňování bez síťových kontrol, opožděném keepalive, dvou nezávislých relacích, expiraci během probe i Finish, změně wall clock a sleep/resume. Úklid je omezený, potvrzení commitu se neztratí a globální VPN pokračuje.
 
 ### 13.3 Spuštění při budoucí implementaci
 
@@ -487,11 +596,13 @@ ARM64 nepovažovat za ověřené jen proto, že existuje preset. Dřívější r
 
 ### 13.4 Ruční scénáře
 
-Čistá instalace a start služby bez souboru. Všechny čtyři aktivní položky bez konfigurace. Varování ukazuje skutečnou cestu i při nestandardním ProgramData. Ruční kopie configu se projeví bez restartu služby. Neplatná a nečitelná konfigurace mají odlišné hlášky.
+Čistá instalace a start služby bez souboru. Všechny čtyři aktivní položky bez konfigurace. Contracts zobrazí varování, Edit Config potvrzení vytvoření se skutečnou cestou i při nestandardním ProgramData. Yes vytvoří soubor před editací, No neotevře nový dokument, Cancel následně soubor nemaže. Otevřít čitelný poškozený JSON i repairable, ověřit Reset Yes/No a Cancel. Nečitelnost nesmí být zaměněna za missing. Ruční kopie configu se projeví bez restartu služby.
 
 Průchod novým, existujícím i resetovaným konceptem. Zrušení na každém kroku a během čekající kontroly. Zavření a znovuotevření při opožděné odpovědi. Selhání Finish bez zavření okna. Úspěšný Finish otevře placeholder právě jednou a nevytvoří tunel. Opakované otevření Wizardu nezahodí koncept.
 
 Dva interaktivní uživatelé, jedna služba. Cizí Connect v každém kroku i těsně před Finish, rychlý Connect/Disconnect, současný Save editoru a Finish druhé relace. Viditelná informace o cizím Connect a žádné automatické opětovné připojení. Zmizelý/poškozený config při connected zachová provoz a dostupné Disconnect.
+
+Ověřit obě pořadí posledního úspěšného uložení včetně editoru otevřeného před Wizardem a Wizardu otevřeného před Save. Žádné revizní potvrzení přepsání ani vynucené nové otevření. Pomalá diagnostika během provozu nesmí zastavit polling VPN. Ztratit IPC odpověď po úspěšném data probe, ověřit červený krok a až dalším Next nový pokus. Ukončit tray bez close, ověřit úklid po vypršení pronájmu, nezávislost druhé relace, sleep/resume a Finish s nejasným potvrzením.
 
 Změny velikosti ze všech hran a rohů, malé pracovní plochy, taskbar na různých stranách, DPI 100/125/150/200 %, přesun mezi monitory, tabulátor, čitelnost vysvětlení a návrat fokusu po chybě. Stejná kontrola resize regresí editoru jako v plan2. Evidence výsledků obsahuje OS, build, DPI, scénář, výsledek a testera, žádné klíče ani screenshoty v repozitáři.
 
@@ -500,11 +611,11 @@ Změny velikosti ze všech hran a rohů, malé pracovní plochy, taskbar na růz
 | ID | Požadovaný pozorovatelný výsledek |
 |---|---|
 | A01 | Čistá instalace, start služby a Connect bez configu nevytvoří `config.json`. Služba poskytuje IPC a zůstane provozuschopná pro konfiguraci. |
-| A02 | Menu má přesně pořadí D01. Bez konfigurace jsou aktivní Wizard, Contracts, Edit Config, Exit. Obě konfigurační položky zobrazí správné varování a neotevřou běžné okno. |
-| A03 | Warning obsahuje absolutní cestu získanou službou, instrukci Wizard → úspěšný Finish a možnost zkopírovat existující config. Chybějící služba není hlášena jako chybějící soubor. |
-| A04 | Invalid/unreadable/repairable blokují běžné funkce. Běžící VPN pokračuje na aktivním snímku a Disconnect zůstává dostupné. Samotná detekce disku VPN neodpojí. |
+| A02 | Menu má přesně pořadí D01. Bez konfigurace jsou aktivní Wizard, Contracts, Edit Config, Exit. Contracts zobrazí varování bez okna, Edit Config nabídne vytvoření Yes/No, až po Yes a úspěšném výsledku otevře editor. |
+| A03 | Varování Contracts obsahuje absolutní cestu získanou službou, instrukci Wizard → Finish a možnost zkopírovat existující config. Potvrzení editoru obsahuje stejnou skutečnou cestu, její účel a otázku na vytvoření ze šablony. Chybějící služba ani chyba přístupu nejsou missing. |
+| A04 | Invalid/unreadable/repairable blokují Connect, Show Info, Statistics a běžné okno Contracts podle tabulky 5.4. Edit Config otevře každý čitelný obsah včetně chybného JSON, unreadable zobrazí chybu bez náhrady. Běžící VPN pokračuje na aktivním snímku a Disconnect zůstává dostupné. |
 | A05 | Wizard nepíše konfiguraci, zálohu ani temp JSON před Finish. Cancel a Reset před Finish nezmění původní soubor bajtově. |
-| A06 | Opravitelnost je pouze absence IP/klíče při jinak platném dokumentu. Nesprávné typy nebo další chyby vyžadují Reset. Úplný validátor nepřijme neúplnou konfiguraci pro Connect. |
+| A06 | Opravitelnost Wizardu je pouze absence IP/klíče při jinak platném dokumentu. Nesprávné typy nebo další chyby vyžadují Reset Wizardu nebo opravu čitelného obsahu přes Edit Config. Úplný validátor nepřijme neúplnou konfiguraci pro Connect ani Save. |
 | A07 | Edit/repair zachová všechny nezobrazené hodnoty a kontrakty, včetně explicitních TLS/runtime hodnot a vynechaných volitelných polí. Reset je vědomě nahradí novými defaulty až při Finish. |
 | A08 | Odpojovací Next čeká na skutečné dokončení. Server URL nemá Back. Zrušení a dokončení Wizardu neobnoví VPN. |
 | A09 | Krok URL uspěje na syntakticky platném running health i s nesouhlasným GCM tagem, ale nepublikuje čas ani kryptografické ověření. Chybný formát a requestId neprojdou. |
@@ -513,30 +624,36 @@ Změny velikosti ze všech hran a rohů, malé pracovní plochy, taskbar na růz
 | A12 | Navržená IP je nejnižší chybějící kandidát, jinak nejstarší lastSeen s číselným tie-break. clients není prezentováno jako rezervace IP. Při prázdné kandidátní množině je vyžádána ruční IP. |
 | A13 | Access Key má přesně požadovaný formát. Návrh z posledního oktetu dává například 32×02 pro `.2` a 32×0a pro `.10`. Ruční a existující klíč se automaticky nepřepíše. |
 | A14 | Kolizní vlastní IP se odmítne před data kontrolou. Hláška vysvětlí příčinu a možnosti nápravy. Existující kontrakt zůstane beze změny. |
-| A15 | Před data kontrolou je viditelné upozornění na spotřebování zpráv. Jeden logický pokus provede nejvýše jeden prázdný data request, včetně ztracené IPC odpovědi. |
+| A15 | Upozornění vysvětluje spotřebování zpráv i možnost serverového úspěchu bez doručeného výsledku. Jeden Next spustí jednu sekvenci bez automatického retry jakéhokoli HTTP nebo IPC startu, ani po 401. Obsahuje nejvýše jeden prázdný data request. Ztracená odpověď nebo jiná chyba ukončí pokus červeně na stejném kroku se zachováním hodnot. Nový ruční Next smí znovu odebrat zprávy, žádná historie pokusů nevynucuje znovuotevření Wizardu. |
 | A16 | Access kontrola přijme pouze úplnou syntakticky správnou a MAC ověřenou odpověď se správným requestId a nulovým výsledkem pro prázdný request. Obsah datových zpráv nedešifruje, nedoručí a neuchová. |
 | A17 | Žádný probe nezmění aktivní VPN, bootstrap body, runtime čas, fronty ani devět provozních čítačů. Neotevře Wintun a nevytvoří route. |
 | A18 | Create/reset s `10.A.B.0/24` vytvoří přesně 13 nebo 14 kontraktů podle vlastní IP, správné klíče mapy a uvedené SHA-256 vektory. Jiný CIDR nebo odškrtnutá volba vytvoří prázdný objekt a UI vysvětlí výsledek. |
 | A19 | Finish přijme jen poslední prokázané čtyři hodnoty a kompletně validní výsledný JSON. Změna vstupu po úspěšném Next bez nového ověření přes IPC neprojde. |
-| A20 | Souběžný set-config, Finish druhé relace, ruční změna nebo nově vzniklý/smazaný soubor vedou u zastaralé baseline na konflikt. Není provedeno tiché přepsání ani automatické přebázování po Resetu. |
+| A20 | Poslední úspěšná publikace vyhrává pro editor → Finish, Finish → starý editor, dva editory i dva Wizardy. Každý uloží celý svůj validovaný dokument. Zastaralá revize, ruční obsahová změna ani běžný vznik/smazání cíle samy nevyvolají odmítnutí, potvrzení přepsání, sloučení, invalidaci důkazů ani nové otevření. Souborová bezpečnost zůstává povinná. Create-if-missing je zvláštní operace, která existující cíl nepřepíše. |
 | A21 | Čtenář při běžné atomické publikaci uvidí celý původní nebo celý nový JSON. Simulované chyby zápisu/flush/replacement nezanechají truncation, veřejně čitelné temp tajemství ani falešný úspěch. Souborová brána 12.1 je doložená. |
-| A22 | Opakování commitId nepíše znovu. Ztracená odpověď se řeší receipt, restart služby zneplatní staré relace a nevede k automatickému opakování Finish. |
+| A22 | Opakování commitId nepíše znovu a změněný vstup se odmítne. Ztracená odpověď se řeší receipt i po expiraci editace v definované retenční době. Expirace nevrátí publikovaný zápis, pozdější Save nezmění historický výsledek commitu. Limit registru se řeší před publikací. Restart služby zneplatní staré relace a nevede k automatickému opakování Finish. |
 | A23 | Cizí Connect vyvolá informaci, pozastavení a invalidaci kontrol, i když se spojení mezi pollingy opět odpojilo. Uživatel může výslovně globálně odpojit a zopakovat kontroly. |
 | A24 | Connect není blokovaný životností okna. Předchozí probe se skutečně ukončí před začátkem bootstrapu a nikdy nevzniknou paralelní data requesty. |
-| A25 | Chyby rozlišují timeout, transport, autentizaci, špatný formát, tag/MAC, konflikt a zápis. Obsahují pouze povolené údaje, žádné klíče, requesty, ciphertext a tagy v UI chybách nebo logu. |
-| A26 | get-status zůstává paměťový, konzistentní a citlivá data neobsahuje. Během pomalého probe funguje get-status, disconnect a zrušení UI bez čekání na HTTP timeout. |
+| A25 | Chyby rozlišují timeout, transport, autentizaci, špatný formát, tag/MAC, konflikt kontraktu, expiraci a zápis. Stará revize není chyba. Obsahují pouze povolené údaje, žádné klíče, requesty, ciphertext a tagy v UI chybách nebo logu. |
+| A26 | get-status zůstává paměťový, konzistentní a bez citlivých dat. Během pomalého probe/get-info a podporovaného zatížení IPC funguje krátké řízení v mezích etapy A. Asynchronní čekání na neúplné requesty a neodebírané odpovědi nedrží kapacitu pro příkazy. Změřit get-status, přijetí i dokončení Disconnectu a nezávislý stop služby, při přetížení prostředky zůstanou omezené. |
 | A27 | Nové IPC schéma je uzavřené a otestované. Neplatná operace, nadbytečné pole, cizí session/operation nebo nesprávná epocha nemají vedlejší efekt. Původních sedm příkazů projde regresí. |
 | A28 | Nová tray se starou službou pravdivě oznámí chybějící podporu Wizardu. Nevytvoří config fallbackem ani nezkouší jinou pipe nebo starý secret. |
 | A29 | Default je konzistentní v PHP, C++, Python testovacím klientu a normativních dokumentech. Veřejná stránka varuje i při novém defaultu a prázdném secretu, endpointy zůstávají funkční. |
 | A30 | Výchozí server autentizuje všechny `.2–.15` s odpovídajícími klíči. Testovací deploy skript stále vytvoří přesně svůj deklarovaný profil a odmítne neočekávanou hlavičku. |
 | A31 | Úspěšný Finish zavře Wizard a otevře placeholder právě jednou. Okno je prázdné, zavíratelné a neprovádí úpravy kontraktů. Samo nezpůsobí Connect. |
 | A32 | UI je čitelné a ovladatelné na malé ploše a všech testovaných DPI, bez ořezání tlačítek a resize artefaktů. Čisté unit testy nenahrazují doloženou ruční kontrolu. |
-| A33 | Ukončení tray, odhlášení a pád okna ruší pouze jeho dočasný koncept/operace. Služba a případné spojení jiné relace pokračují. Opožděné výsledky neovlivní nově otevřené okno. |
+| A33 | Normální close vyžádá okamžitý úklid. Pád/zamrznutí tray, odhlášení nebo výpadek IPC ukončí relaci po 60 s bez platného kontaktu plus definovaná tolerance časovače a konečná doba bezpečného rušení. Vyplňování udržuje relaci 15s keepalive bez HTTP, wall clock nemění lhůtu, sleep/resume a pozdní kontakt expirovanou relaci neoživí. Jiná relace i globální VPN pokračují, commit má samostatné potvrzení. |
+| A34 | Všechny rušicí události D19 i souběh cancel/timeout/success/callback skončí v krátké konečné době, bez dvojího zavření, use-after-free, deadlocku a paralelních data requestů. Před nahrazením nebo uvolněním je potvrzen terminální stav a transport lze znovu použít. |
+| A35 | Jediný monotónní HTTP deadline zahrne DNS, spojení, TLS, odeslání, hlavičky a celé tělo. Pomalé dílčí bloky ani neukončené tělo jej neposunou. Testy hraničních hodnot a chyby nastavení timeoutů nevytvoří záporný/nekonečný timeout. Po bezpečném úklidu se vrátí timeout a transport i síťová obsluha zůstanou použitelné. |
+| A36 | Pomalý diagnostický health/info běží s vlastním transportem a časem mimo hlavní VPN síťové vlákno a nezastaví datový polling. Druhý get-info dostane busy, nevznikne neomezená fronta nebo počet vláken. Tři VPN role, fronty a provozní čítače zůstávají oddělené. |
+| A37 | Edit Config po Yes vytvoří validní soubor ihned, pozdější Cancel jej nemaže. No nic nevytvoří ani neotevře nový dokument. Cíl vzniklý během potvrzení se nepřepíše, editor načte skutečný obsah nebo konkrétní chybu. Reset Yes mění jen editor, No zachová koncept a Cancel zahodí neuložené změny. Vytvoření a Reset mají stejnou šablonu 5.6 s jedním kontraktem a všemi povinnými hodnotami, Save i vytvoření projdou úplným validátorem. |
+| A38 | Tray zobrazí zelený krok a pokračuje jen po doručení ověřeného úspěchu aktuálního Next před konečným termínem. Polling ani keepalive termín neobnoví. Pozdní úspěch po chybě/timeoutu a během nového pokusu UI nezmění. Nový pokus počká na bezpečné ukončení předchozí práce nebo dostane busy. Opakované či nižší attemptSequence nevykoná síť ani po Resetu/Connectu. |
+| A39 | Normativní dokumenty před implementací výslovně obsahují změny matice kapitoly 11. Nezůstane obecné pravidlo, které zakazuje oddělenou diagnostiku, nutí Wizard automaticky opakovat kontrolu po 401, brání editaci nevalidního textu nebo dovoluje vytvoření souboru jen přes Finish. Výsledné schéma IPC, meze a testy odpovídají implementaci. |
 
 ## 15. Dokončení a praktická omezení
 
-Produktová rozhodnutí D01–D18 jsou vyřešená. Technické ověření konkrétní Windows publikace, ručního souběhu a crash scénářů je povinná součást implementace, nikoli deklarovaný hotový výsledek tohoto plánu. Bez splnění souborové brány 12.1 nelze označit požadavek na atomický zápis a ochranu proti konfliktům za dokončený.
+Produktová rozhodnutí D01–D26 jsou vyřešená. Technické ověření Windows publikace, transportní životnosti, absolutních timeoutů, dostupnosti IPC, pronájmů a crash scénářů je povinná součást implementace, nikoli deklarovaný hotový výsledek tohoto plánu. Bez splnění bran 12.1 nelze tyto vlastnosti označit za dokončené. Ochrana před přepsáním zastaralého obsahu není požadavkem, rozhoduje poslední úspěšná publikace.
 
 Výstup implementace musí obsahovat aktualizované normativní dokumenty, zdroje, testy a report s přesnými provedenými/neprovedenými kontrolami. Commit, nasazení, restart instalované služby ani změna skutečného ProgramData nejsou součástí přípravy tohoto plánu.
 
-Při přípravě plánu byl prostudován relevantní zdrojový kód a testy a nezávisle vypočteny SHA-256 příklady. Nebyla provedena implementace, překlad, test nové funkce ani vizuální validace neexistujícího Wizardu. Jediný nově vytvořený projektový soubor této plánovací etapy je `plan3_client.md`.
+Při přípravě a aktualizaci plánu byly prostudovány normativní dokumenty, rozhodnutí z revize, relevantní zdrojový kód a testovací infrastruktura. SHA-256 příklady jsou podkladem testů. Nebyla provedena implementace, překlad, test nové funkce ani vizuální validace neexistujícího Wizardu. Tato aktualizace mění pouze `plan3_client.md`.
