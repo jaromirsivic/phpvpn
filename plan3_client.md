@@ -2,7 +2,7 @@
 
 Stav: plán realizace, bez provedené implementace. Zpracováno 5. září 2026 nad revizí `9f25f1333834596e46394f67f0a056a2595506da` v `C:\git\phpvpn`. Projekt zatím není nikde nasazený. Tento dokument zahrnuje rozhodnutí zadavatele z navazujícího rozhovoru a nahrazuje rozporné formulace původního zadání v rozsahu této etapy.
 
-Výchozí podklady jsou `protocol.md`, `client.md`, `notes/2026-09-05-09-53-11_notes.processed.md`, skutečný zdrojový kód, existující testy a konvence z `plan_client.md` a `plan2_client.md`. Aktualizace z 5. září 2026 zapracovává schválená rozhodnutí u nálezů 1–8 z `plan3_client_problems.md`, která nahrazují jejich původní doporučení i rozporné části tohoto plánu. Nálezy 9–12 jsou přijatá rizika bez nových implementačních požadavků. Cesty souborů níže jsou relativní ke kořeni `C:\git\phpvpn`. Při realizaci se nejprve společně aktualizují normativní dokumenty podle kapitoly 11. Historické poznámky se zpětně nepřepisují.
+Výchozí podklady jsou `protocol.md`, `client.md`, skutečný zdrojový kód, existující testy a konvence z `plan_client.md` a `plan2_client.md`. Cesty souborů níže jsou relativní ke kořeni `C:\git\phpvpn`. Při realizaci se nejprve společně aktualizují normativní dokumenty podle kapitoly 11. Historické poznámky se zpětně nepřepisují.
 
 ## 1. Výsledek a hranice etapy
 

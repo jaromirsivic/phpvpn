@@ -1,297 +1,175 @@
-# Nálezy z revize klientského plánu 3
+# Nálezy z revize `plan3_client.md`
 
-Datum revize: 5. září 2026.
+Datum revize: 6. září 2026.
 
-Předmět: `plan3_client.md`, související části `client.md`, `protocol.md` a relevantní implementace klienta.
+Předmět revize: `plan3_client.md`, porovnání s `protocol.md`, `client.md` a relevantními částmi současné implementace klienta.
 
-Revize obsahuje 8 technických nedostatků a 4 významná přijatá rizika. Rozlišuje konkrétní rozpory od míst, kde plán zatím neposkytuje dostatečnou garanci. Jde o statickou revizi návrhu a relevantního kódu, nikoli o výsledky provedených zátěžových nebo souběhových testů. Čísla řádků odkazují na stav souborů při revizi.
+Jde o statickou revizi návrhu a kódu. Nejde o výsledek implementace, překladu, zátěžových testů ani bezpečnostního auditu běžícího systému. Čísla řádků odkazují na stav souborů při této revizi.
 
-## 1. Rušení síťových operací spoléhá na nebezpečný mechanismus
+## 1. Výchozí klíče ruší deklarované bezpečnostní předpoklady protokolu
 
-Závažnost: vysoká. Kategorie: stabilita, souběh.
+Závažnost: vysoká. Kategorie: důvěrnost, autentizace, rozpor se specifikací.
 
-Místo: `plan3_client.md`, řádek 105. Implementace: `client/src/platform/windows/transport_winhttp.cpp`, řádky 112–113 a 207–217.
+Místo: `plan3_client.md`, řádky 313, 331 a 341. Související specifikace: `protocol.md`, řádky 74–75.
 
-Plán vyžaduje okamžité zrušení probe před Connect nebo stopem. Současný transport používá synchronní WinHTTP a ruší požadavek zavřením handle z jiného vlákna. Microsoft před zavíráním handle během probíhajícího synchronního volání výslovně varuje kvůli souběhovému závodu.
+Plán odvozuje výchozí Access Key z posledního oktetu IP adresy a výchozí payload klíč pouze z veřejné dvojice VPN adres. Protokol naproti tomu popisuje Access Key jako náhodný klíč unikátní pro klienta a payload klíč jako tajemství známé pouze komunikujícím klientům.
 
-Dopad: hrozí nestabilita právě při Cancel, Disconnect nebo ukončování služby.
+Kdokoli včetně relay serveru si výchozí payload klíče může vypočítat. Relay nebo pozorovatel se zachyceným ciphertextem pak může dešifrovat provoz používající tyto výchozí klíče. Držitel společného server secretu si také může vypočítat výchozí Access Key libovolné podporované adresy a vydávat se za tento klient.
 
-Doporučení: plán by měl výslovně zahrnout opravu transportu, například pomocí asynchronního WinHTTP s korektním řízením životnosti.
+Plán předvídatelnost přiznává jako produktové rozhodnutí. Dokumentační matice ale dostatečně neřeší rozpor s bezpečnostními cíli a tvrzením o utajení klíčů v `protocol.md`.
 
-Rozhodnutí pro budoucí implementaci: tento bod se vyřeší čistě jako obecný mechanismus bezpečného rušení HTTP operací, nikoli jako lokální oprava jediného kroku Wizardu. Mechanismus musí pokrýt všechny následující události:
+Doporučení: v `protocol.md` a `client.md` výslovně vymezit demonstrační výchozí profil a uvést, že u něj neplatí deklarovaná důvěrnost vůči relay ani výlučná znalost klíčů. Pro bezpečný profil vyžadovat náhodně vytvořené a bezpečně distribuované klíče. Samotná změna `SERVER_SECRET` veřejně odvoditelné payload klíče neopraví.
 
-- příchod globálního Connectu během Wizard probe, kdy se probe bezpečně zruší, potvrdí se jeho skutečné ukončení a teprve potom začne bootstrap VPN;
-- běžný globální Disconnect aktivní VPN, aby se ukončil případný provozní HTTP request a mohl proběhnout teardown;
-- stop Windows Service při restartu, aktualizaci, odinstalaci nebo běžném ukončení;
-- Cancel, Reset, Escape nebo zavření Wizardu během jeho síťové kontroly.
+Rozhodnutí zadavatele: bod se nebude technicky řešit a zadavatel s popsaným bezpečnostním rizikem výslovně souhlasí. Zachovají se předvídatelné výchozí Access Keys i algoritmus odvození payload klíčů z dvojice VPN adres. Kvůli tomuto nálezu se nezavedou povinné náhodné klíče, jejich automatická distribuce, rotace ani nový bezpečný profil.
 
-Požadovaná vlastnost není nulová prodleva. Zrušení musí mít krátkou a konečnou dobu, jednoznačné vlastnictví requestu a potvrzený terminální stav. Další síťová operace nesmí začít, dokud předchozí request nemůže být používán žádným vláknem ani callbackem. Řešení musí zabránit dvojímu zavření, použití handle po zavření, deadlocku a souběžným datovým requestům.
+Zůstává vědomě přijaté riziko, že výchozí payload klíče může vypočítat kdokoli včetně relay serveru a že držitel společného server secretu může vypočítat výchozí Access Key podporované adresy. Dokumentace musí tento dopad popisovat pravdivě a nesmí výchozí klíče označit za tajné nebo bezpečně náhodné. Bod se při implementaci nemá vykazovat jako povinná technická oprava.
 
-Zdroj: [Microsoft: WinHttpCloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpclosehandle).
+## 2. Pomalé Show Info může v tray zabránit odeslání Disconnectu
 
-## 2. Předpokládaný celkový timeout ve skutečnosti chybí
+Závažnost: střední až vysoká. Kategorie: dostupnost řízení, stabilita uživatelského rozhraní.
 
-Závažnost: vysoká. Kategorie: dostupnost, latence.
+Místo: `plan3_client.md`, řádky 117, 121, 491, 495 a 522. Současná implementace: `client/apps/tray/main.cpp`, řádky 187–196, a `client/apps/tray/status_reader.cpp`, řádky 111–125.
 
-Místo: `plan3_client.md`, řádek 322. Implementace: `client/src/platform/windows/transport_winhttp.cpp`, řádky 118–123 a 270–289.
+Plán správně odděluje dlouhou diagnostiku od krátkého řízení ve službě. Nevyžaduje však stejně jednoznačně oddělení na straně tray. Současná tray používá pro Show Info, Connect, Disconnect i další příkazy jediný `CommandReader`. Pokud již příkaz běží, `startCommand` další požadavek neodešle.
 
-Plán spoléhá na transportní timeouty. Implementace ale pouze nastavuje `WinHttpSetTimeouts` a potom čte odpověď v cyklu bez celkového deadline. Receive timeout omezuje čekání na část odpovědi, nikoli automaticky celou dobu stahování.
+Scénář: uživatel spustí Show Info, server odpovídá pomalu a uživatel následně zvolí Disconnect. Požadavek Disconnect se vůbec nedostane ke službě, přestože služba má mít nezávislou kapacitu pro krátké řízení.
 
-Dopad: server posílající data dostatečně pomalu může obsadit jedinou globální Wizard operaci podstatně déle než deklarovaných 30 sekund.
+Doporučení: v plánu výslovně oddělit diagnostický kanál nebo čtečku tray od Connect/Disconnect a ostatního krátkého řízení. Doplnit regresní test, který během čekajícího Show Info ověří skutečné odeslání a dokončení Disconnectu.
 
-Doporučení: doplnit monotónní deadline celého requestu a test pomalu dávkované odpovědi.
+Rozhodnutí zadavatele: službová část oddělení dlouhé diagnostiky od krátkého řízení se považuje za již vyřešenou v aktuálním plánu. Zbývající povinná oprava se musí provést v tray aplikaci. Tray musí umožnit odeslat Disconnect i v době, kdy čeká na dokončení Show Info nebo jiné dlouhé diagnostické operace. Společný obsazený `CommandReader` nesmí takový požadavek tiše zahodit ani zabránit jeho předání službě.
 
-Rozhodnutí pro budoucí implementaci: toto řešení je schválené a musí se dokončit společně s obecným mechanismem bezpečného rušení z bodu 1. Každý HTTP request dostane jediný absolutní deadline odvozený z monotónních hodin. Jeden časový rozpočet musí zahrnout DNS, navázání spojení, TLS handshake, odeslání requestu, přijetí hlaviček i celé čtení těla. Přijetí dílčího bloku dat nesmí deadline obnovit ani posunout.
+Implementace má pro Disconnect zajistit nezávislou řídicí cestu nebo ekvivalentní oddělení od diagnostického požadavku. Uživatelská akce musí skončit buď skutečným předáním Disconnectu službě, nebo viditelnou konkrétní chybou. Nesmí vzniknout stav, kdy kliknutí nemá žádný účinek a uživatel o tom není informován. Regresní test musí během čekajícího Show Info ověřit přijetí Disconnectu službou a jeho dokončení, ne pouze zpracování kliknutí v UI.
 
-Po dosažení deadline se request bezpečně zruší, počká se na potvrzený terminální stav a operace skončí jako timeout. Převod nakonfigurovaných sekund na časové typy WinHTTP musí být kontrolovaný, bez přetečení na zápornou nebo nekonečnou hodnotu, a chyba při nastavení timeoutů nesmí být ignorována. Testy musí zahrnout pomalé DNS, spojení a TLS, zdržení hlaviček, pomalu dávkované tělo, tělo bez korektního ukončení a hraniční konfigurační hodnoty. Po timeoutu musí být transport i síťové vlákno znovu bezpečně použitelné.
+## 3. Časový rozpočet původního get-info není sladěný s tray
 
-Zdroj: [Microsoft: WINHTTP_OPTION_RECEIVE_TIMEOUT](https://learn.microsoft.com/en-us/windows/win32/winhttp/option-flags#winhttp_option_receive_timeout).
+Závažnost: střední. Kategorie: latence, falešný timeout, nekonzistentní stav UI.
 
-## 3. Přesun get-info na jediné síťové vlákno může zastavit přenos VPN
+Místo: `plan3_client.md`, řádky 67, 111, 129 a 462. Současná implementace: `client/apps/tray/status_reader.cpp`, řádek 118.
 
-Závažnost: vysoká. Kategorie: latence, dostupnost.
+Původní `get-info` má zachovat přímý formát odpovědi a provádí sekvenci health a info. Každý HTTP request může mít podle plánu vlastní celkový timeout 30 sekund. Současná tray ale čeká na celý IPC příkaz pouze 30 sekund.
 
-Místo: `plan3_client.md`, řádky 101–107. Implementace: `client/src/core/runtime/vpn_engine.cpp`, řádky 210–222.
+Například health trvající 20 sekund a info trvající dalších 20 sekund jsou oba jednotlivě v limitu, ale tray oznámí timeout před dokončením platné operace. Pozdější výsledek může být zahozen a dočasná diagnostická kapacita služby zůstane obsazená déle, než UI očekává.
 
-Plán sdílí síťové vlákno mezi provozem a diagnostikou. Současný `get-info` provádí health a následně info. Jakmile taková synchronní úloha začne, samotná „přednost provozního spojení“ ji nepřeruší. I po opravě celkových timeoutů mohou dvě pomalé odpovědi zabrat přibližně 60 sekund.
+Doporučení: definovat jeden konečný rozpočet celého `get-info`, který zahrnuje oba HTTP requesty, lokální zpracování a doručení přes IPC. S tímto rozpočtem sladit tray i službu. Prodloužení timeoutu musí být spojeno s nápravou nálezu 2, jinak se prodlouží doba, po kterou tray blokuje další příkazy.
 
-Dopad: mezitím se hromadí odchozí pakety a nevybírá příchozí fronta.
+Rozhodnutí zadavatele: bod se nebude technicky řešit. Timeout příkazu Show Info v tray zůstane 30 sekund a kvůli tomuto nálezu se nebude měnit služba, zavádět delší zvláštní timeout ani předávat dynamický časový rozpočet. Přijímá se předpoklad, že health, info, lokální zpracování a doručení výsledku službou v běžném provozu skončí výrazně rychleji a celý výsledek se do tray dostane do 30 sekund.
 
-Původní doporučení revize: definovat konkrétní pravidlo přerušování diagnostiky a maximální zdržení datového pollingu, včetně testu při zatížené VPN. Následující rozhodnutí zadavatele určuje výslednou architekturu a má přednost před variantou sdíleného VPN síťového vlákna.
+Zůstává vědomě přijaté riziko, že pomalý, ale z pohledu jednotlivých HTTP deadline stále platný průběh může být v tray označen jako timeout a jeho pozdější výsledek nebude použit. Tento bod se při implementaci nemá vykazovat jako povinná oprava. Rozhodnutí nemění povinnou opravu bodu 2, tedy možnost odeslat Disconnect nezávisle na probíhajícím Show Info.
 
-Schválené rozhodnutí zadavatele pro budoucí implementaci: zachovat `get-info` mimo hlavní VPN síťové vlákno, s vlastním dočasným transportem a vlastním kontextem, jako v současné implementaci. Navržený přesun na hlavní VPN síťové vlákno se odmítá. Oprava se zaměří na IPC obsluhu, aby dlouhý diagnostický request neblokoval ostatní řídicí příkazy.
+## 4. Změna vlastní IP při zachování kontraktů může rozbít komunikaci s peery
 
-- Hlavní VPN síťové vlákno zůstane vyhrazené pro bootstrap, recovery, časovou synchronizaci a datový provoz VPN. Diagnostika nesmí sdílet jeho proměnný časový kontext, fronty ani provozní čítače.
-- IPC obsluha umožní souběžně obsloužit krátké řídicí příkazy i během pomalého `get-info`. Musí zůstat dostupné `get-status` a Disconnect a nesmí být blokováno zastavení služby.
-- Nejvýše jedna diagnostická operace `get-info` smí probíhat současně. Nevznikne neomezená fronta ani neomezený počet vláken pro síťovou diagnostiku.
-- Diagnostický transport bude používat bezpečné rušení podle bodu 1 a celkový deadline každého HTTP requestu podle bodu 2.
-- Stejnou oddělenou řídicí síťovou cestu může používat Wizard probe. Connect a stop služby musí umět probe bezpečně zrušit. Před bootstrapem po přerušení Wizardu se potvrdí skutečné ukončení jeho requestu, aby se jeho data polling nepřekryl s VPN data requestem.
+Závažnost: střední. Kategorie: funkční stabilita, konfigurace klíčů.
 
-Upřesnění vazby na bod 1: čekání na potvrzené ukončení se vztahuje na rušený request před jeho nahrazením nebo uvolněním jeho prostředků. Nezavádí globální zákaz souběhu samostatného diagnostického health/info a VPN datového provozu. Tři VPN pracovní role se tímto rozhodnutím nemění.
+Místo: `plan3_client.md`, řádky 25, 174, 327 a 389. Související specifikace: `client.md`, řádek 73, a `protocol.md`, řádky 402–427.
 
-Ověření při implementaci: řízeně pomalý diagnostický health/info během aktivního VPN provozu nesmí zablokovat datové vlákno. Test současně ověří dostupnost krátkých IPC příkazů, omezení souběžné diagnostiky, timeout a bezpečné ukončení služby. Toto je záznam schváleného rozhodnutí, implementace zatím nebyla provedena.
+V režimu edit nebo repair smí Wizard změnit vlastní IP, ale existující komunikační kontrakty zachová. Kontrola Access Key ověří pouze schopnost autentizace vůči relay. Neověří, zda protistrany používají pro novou dvojici adres odpovídající payload klíče.
 
-## 4. Starý editor může přepsat právě dokončený Wizard
+Příklad: klient změní vlastní adresu z `.2` na `.4` a zachová kontrakt pro peer `.3`. Lokální kontrakt může stále obsahovat klíč odvozený nebo distribuovaný pro původní dvojici `.2/.3`. Kontrola přístupu projde, ale peer `.3` může pro adresu `.4` používat jiný klíč nebo vůbec nemít odpovídající kontrakt.
 
-Závažnost: vysoká. Kategorie: ztráta změn konfigurace, souběh.
+Doporučení: při změně vlastní IP výrazně upozornit, že všechny kontrakty a konfigurace protistran musí být koordinovaně aktualizovány. Pokud se zachová rozhodnutí neměnit kontrakty automaticky, musí být tento důsledek součástí UI, dokumentace a integračních testů.
 
-Místo: `plan3_client.md`, řádek 170. Související smlouva: `client.md`, příkazy `get-config` a `set-config`.
+Rozhodnutí zadavatele: bod se nebude technicky ani uživatelsky řešit a zadavatel s popsaným funkčním rizikem výslovně souhlasí. Při změně vlastní IP se zachovají existující komunikační kontrakty podle plánu. Kvůli tomuto nálezu se nebudou kontrakty automaticky přepočítávat nebo odstraňovat, nepřidá se další povinné varování a nevznikne nová síťová kontrola shody s konfiguracemi protistran.
 
-Plán zavádí společnou serializaci zápisů a invalidaci Wizard baseline po `set-config`. Opačný směr ale chráněný není: editor načte konfiguraci A, Wizard uloží B a editor následně odešle upravenou A přes původní `set-config`, který neobsahuje očekávanou revizi.
+Zůstává vědomě přijaté riziko, že kontrola Access Key úspěšně ověří přístup k relay, přestože komunikace s některými peery následně nebude fungovat kvůli neshodným payload klíčům nebo chybějícím kontraktům pro novou IP. Bod se při implementaci nemá vykazovat jako povinná oprava.
 
-Dopad: oba zápisy proběhnou korektně za sebou, přesto se změny B ztratí. Serializace není ochrana proti zastaralému obsahu.
+## 5. Pravidelná kontrola konfigurace nemá konkrétní limit diskového zpracování
 
-Původní doporučení revize: nový editor potřebuje podmíněné uložení s revizí, případně musí dokument jasně přiznat omezení původního příkazu. Následující rozhodnutí zadavatele tento požadavek na ochranu proti zastaralému obsahu nahrazuje.
+Závažnost: střední. Kategorie: paměť, I/O latence, dostupnost služby.
 
-Schválené rozhodnutí zadavatele pro budoucí implementaci: použít pravidlo „poslední úspěšné uložení vyhrává“. Zadavatel výslovně přijímá přepsání změn provedených od otevření editoru nebo Wizardu, a to v obou směrech:
+Místo: `plan3_client.md`, řádky 141, 182–184 a 407. Současná implementace: `client/src/core/runtime/vpn_engine.cpp`, řádky 20–33.
 
-- editor uloží konfiguraci a pozdější Finish otevřeného Wizardu ji může přepsat svým výsledným dokumentem;
-- Wizard provede Finish a pozdější Save dříve otevřeného editoru může jeho výsledek přepsat;
-- stejné pravidlo platí mezi více souběžně otevřenými editory nebo Wizard relacemi. Rozhoduje pořadí úspěšné publikace souboru, nikoli pořadí otevření oken.
+ConfigStore má pro každý čitelný soubor uchovat přesný text, vypočítat SHA-256 a u platného nebo opravitelného dokumentu vytvořit DOM. Tray žádá kontrolu při startu, každých pět sekund, při otevření menu a po uložení. Více tray relací může požadavky násobit.
 
-Ztráta mezitím uložených změn v těchto scénářích je přijaté chování, nikoli závada vyžadující opravu. Zastaralá revize sama nesmí způsobit odmítnutí Save nebo Finish, vynucené znovuotevření průvodce ani dodatečné potvrzení přepsání. Neprovádí se automatické slučování. Wizard ukládá úplný dokument sestavený ze svého konceptu podle pravidel edit/repair/reset, editor svůj úplný zvalidovaný dokument.
+Limit 4 MiB IPC zprávy neurčuje, kolik dat smí služba načíst z disku před odmítnutím. Současné `readWholeFile` načte celý soubor bez předběžného velikostního omezení. Omylem zkopírovaný nebo úmyslně vytvořený velmi velký soubor tak může vyvolávat opakované velké alokace, hashování a parsování.
 
-Nadále zůstává povinná úplná validace výsledného dokumentu, serializace všech zápisů služby, atomická publikace, správné ACL, bezpečné ošetření chyb a publikace cache až po úspěšném zápisu. Toto rozhodnutí neruší pravidla rušení, connection epoch, ověření vstupů ani idempotence Finish. Samotná změna uložené revize však nesmí nepřímo blokovat Finish například zneplatněním důkazů pouze kvůli cizímu uložení.
+Doporučení: stanovit maximální velikost konfiguračního souboru a vynutit ji během omezeného čtení, ne až při serializaci IPC. Sloučit souběžné refresh požadavky, cacheovat výsledek podle bezpečně zjištěné identity a změny souboru a zajistit, aby pomalé diskové zpracování neblokovalo `get-status`, Disconnect ani stop služby.
 
-Při následné úpravě plánu je nutné sladit podmíněný commit, invalidaci relací po `set-config`, kontrolu baseline a konfliktní akceptační scénáře s tímto rozhodnutím. Ochrana proti tichému přepsání cizí obsahové změny již není požadovanou vlastností. Bezpečnost souborových operací a konzistence při chybě nebo pádu zůstávají samostatnými požadavky. Bod 4 je tímto uzavřen rozhodnutím o požadovaném chování, nikoli provedenou implementací.
+Rozhodnutí zadavatele: odstranit pravidelný pětisekundový `get-config-state` i načtení stavu konfigurace při pouhém otevření tray menu. Položky menu závislé na konfiguraci zůstanou kliknutelné. Aktuální stav souboru načte služba až poté, co uživatel zvolí konkrétní položku, a před provedením této akce. Chybějící, nečitelná, opravitelná nebo neplatná konfigurace vyvolá odpovídající zprávu nebo nabídku nápravy až po kliknutí.
 
-## 5. Idempotence požadavků nemá vyřešenou historii a její limity
+Pro jednu akci se nemá nejprve provést kontrola při otevření menu a následně druhá kontrola před jejím vykonáním. Zůstane pouze druhá, autoritativní kontrola bezprostředně vyvolaná konkrétní akcí. Pravidlo posledního úspěšného zápisu se nemění a uložená revize nadále neblokuje Save ani Finish. Disconnect se řídí paměťovým stavem aktivní VPN a musí zůstat dostupný bez ohledu na stav konfiguračního souboru.
 
-Závažnost: vysoká. Kategorie: opakované vedlejší efekty, paměťové limity.
+Toto rozhodnutí nahrazuje části D02, tabulky 5.4 a akceptačních kritérií, které podle předem známé dostupnosti konfigurace zakazují Connect, Show Info, Statistics nebo Contracts. Tyto položky musí být možné zvolit a teprve jejich obsluha načte aktuální stav konfigurace a případně zobrazí chybu nebo návod. Configuration Wizard, Edit Config a Exit zůstávají dostupné podle svých dosavadních pravidel.
 
-Místo: `plan3_client.md`, řádky 312 a 322.
+Odstraněním periodické a menu kontroly odpadá hlavní opakovaná I/O zátěž popsaná v tomto bodu. Jednorázové čtení po zvolení akce přesto musí mít rozumný velikostní limit, aby nepřiměřeně velký soubor nezpůsobil vyčerpání paměti nebo dlouhé blokování služby. Tato ochrana se týká jedné autoritativní kontroly, ne periodického pollingu.
 
-Plán slibuje, že stejné `clientAttemptId` vždy vrátí stejnou operaci. Stanovuje ale pouze jednu aktuální operaci a neomezuje počet pokusů během relace.
+## 6. Výjimka z ověřování payload GCM není dotažená do protocol.md
 
-Dopad: pokud se staré identifikátory zapomenou, opožděné opakování může znovu spotřebovat serverovou frontu. Pokud se všechny uchovají, dlouhodobě aktivní relace může neomezeně zvětšovat historii.
+Závažnost: střední. Kategorie: normativní rozpor.
 
-Původní doporučení revize: definovat omezený registr pokusů a pravidlo, že vyřazený pokus se odmítne, nikdy znovu nevykoná. Zahrnout Reset i přerušení přes Connect. Pro síťové kontroly následující rozhodnutí zadavatele toto doporučení nahrazuje.
+Místo: `plan3_client.md`, řádky 319–321, 470 a 498. Související specifikace: `protocol.md`, řádky 498–500.
 
-Schválené rozhodnutí zadavatele pro budoucí implementaci, upřesněné v navazujícím rozhovoru: jedno stisknutí Next spustí jeden logický pokus o kontrolu. Tray předá pokus službě, služba provede předepsanou síťovou sekvenci a vrátí výsledek. Zelený výsledek a postup do dalšího kroku jsou dovoleny pouze po doručení a ověření úspěšného výsledku aktuálního pokusu v tray aplikaci.
+Wizard má po ověření struktury a `data-mac` přijaté záznamy zahodit bez ověření payload GCM. Obecné pravidlo protokolu ale po úspěšném ověření `data-mac` požaduje ověřit každý datový řádek pomocí AES-GCM.
 
-Selhání kdekoli v řetězci tray → služba → server → služba → tray ukončí pokus chybou. Nedodaná odpověď v příslušném časovém limitu se zobrazí jako timeout, ostatní chyby podle skutečné příčiny. Wizard zobrazí červenou hlášku, zůstane na stejném kroku a zachová vyplněné hodnoty. Tray ani služba nesmějí automaticky znovu odeslat start operace nebo zopakovat síťovou kontrolu, včetně automatického retry po HTTP 401 nebo ztrátě IPC odpovědi. Nový pokus smí vzniknout až dalším výslovným stisknutím Next.
+Navržené chování Wizardu dává smysl, protože Wizard nezná nebo nepotřebuje všechny per-peer payload klíče a nesmí data doručovat. Stále však jde o výjimku z dosavadní normativní formulace. Matice změn jmenuje zejména kapitoly 5.2, 11.2 a 13, ale povinnost v kapitole 9.5 výslovně neřeší.
 
-Zadavatel přijímá, že po tomto novém ručním pokusu se síťová operace vykoná znovu, získá nová data a u ověřovacího data pollingu může odebrat a zahodit další zprávy. Předchozí pokus totiž mohl na serveru uspět i tehdy, když se výsledek nedostal do tray. Není požadována historie všech pokusů sloužící k automatickému obnovování po ztrátě odpovědi ani nucené znovuotevření Wizardu po zaplnění takové historie.
+Doporučení: doplnit do `protocol.md` omezený diagnostický režim. Musí být jasné, že ověření `data-mac` dokládá autentizaci serverové odpovědi a integritu uspořádaného seznamu, ale bez GCM ověření nedokládá autenticitu ani čitelnost payload plaintextu. Normální Connect a provoz musí nadále každý payload plně ověřit.
 
-Zachovat omezený počet současných operací, korelaci odpovědí, odmítání neplatných nebo expirovaných relací, bezpečné rušení podle bodu 1 a celkový deadline podle bodu 2. Po timeoutu nebo chybě nesmí opožděný úspěch původního pokusu změnit krok na zelený ani ovlivnit nový pokus. Pokud předchozí operace dosud běží, další pokus musí respektovat omezení souběhu a bezpečné ukončení předchozí práce. Průběžné čtení stavu dosud běžící operace v navrženém asynchronním IPC nevyvolává nový síťový pokus. Čekání na doručení výsledku do tray však musí být konečné, aby se pokus nezasekl při výpadku IPC ani po úspěšné odpovědi serveru.
+Rozhodnutí zadavatele: `protocol.md` nesmí zmiňovat tray aplikaci, Configuration Wizard, IPC příkaz ani ovládací prvky uživatelského rozhraní. Doplní pouze krátkou a úzce vymezenou obecnou možnost jednorázové diagnostické kontroly přístupu prováděné klientem. V této operaci klient odešle nejvýše jeden prázdný request `data`, který obsahuje pouze `auth-full` a LF. Po úplném ověření HTTP úspěchu, struktury NDJSON, korelace `requestId`, všech velikostních a početních limitů, nulového výsledku pro prázdný request a platného závěrečného `data-mac` smí diagnostická operace všechny přijaté datové záznamy zahodit bez ověření jejich payload GCM a bez dešifrování.
 
-Při následné úpravě plánu sladit pravidlo `clientAttemptId`, zpracování timeoutu IPC, text souhlasu s ověřovací kontrolou a akceptační kritérium A15 s pravidlem „žádný automatický retry, nový pokus pouze novým stisknutím Next“. Rozhodnutí se výslovně týká síťových kontrol. Pravidla opakování Finish, potvrzení zápisu a řešení nejasného výsledku commitu tímto záznamem změněna nejsou. Implementace zatím nebyla provedena.
+Protokol tuto možnost nepovolí pro normální bootstrap připojení, recovery ani pravidelný provozní polling `data`. Diagnostická kontrola nesmí žádný přijatý payload uložit, doručit síťové vrstvě, zařadit do provozní fronty, předat jiné části klienta ani jinak použít. Nesmí ani odstranit položku z provozní odchozí fronty nebo změnit provozní stav klienta.
 
-## 6. Doporučená oprava kontraktu je pro opravitelnou konfiguraci nedostupná
+Text protokolu současně uvede, že taková kontrola ověřuje Access Key a autentizovanou strukturu serverové odpovědi, ale neprokazuje autenticitu, integritu nebo čitelnost plaintextu jednotlivých payloadů. Normální bootstrap, recovery a běžný VPN provoz musí nadále po ověření `data-mac` provést úplné GCM ověření každého zpracovávaného datového záznamu a platné payloady zpracovat podle běžných pravidel.
 
-Závažnost: střední. Kategorie: rozpor v uživatelském postupu.
+Konkrétní vazba této obecné protokolové možnosti na `wizard-check-access`, `ProbeClient`, stisknutí Next a krok IP Address a Access Key Configuration patří výhradně do `client.md` a `plan3_client.md`. Tyto dokumenty stanoví, že právě tato Wizard operace používá obecný diagnostický režim, provede nejvýše jeden prázdný polling a nesmí ovlivnit tunel, fronty, čítače, kontrolní body ani aktivní stav VPN.
 
-Místo: `plan3_client.md`, řádky 31, 163 a 359.
+## 7. Ruční opakování Wizard kontroly nemá pravidlo pro Retry-After
 
-D13 a chybová hláška doporučují opravit konflikt přes Edit Config. Tabulka dostupnosti však editor pro `repairable` zakazuje. Například konfiguraci bez Access Key lze ve Wizardu opravovat, ale konfliktní kontrakt doporučenou cestou upravit nelze.
+Závažnost: střední. Kategorie: zatížení serveru, protokolová shoda.
 
-Dopad: uživatel dostává návod na nedostupnou funkci a nemůže doporučenou cestou dokončit opravu.
+Místo: `plan3_client.md`, řádky 271, 317 a 401. Související specifikace: `protocol.md`, řádek 611.
 
-Původní doporučení revize: povolit editor pro čitelnou opravitelnou konfiguraci s úplnou validací při Save, nebo změnit návod na skutečně dostupný postup. Následující rozhodnutí zadavatele rozšiřuje přístup do editoru a nahrazuje původní omezení Edit Config v plánu.
+Protokol požaduje respektovat `Retry-After` jako dolní hranici čekání. Plán zakazuje automatické retry, ale dovoluje založit nový pokus dalším stisknutím Next. Neříká, zda a jak se `Retry-After` uplatní na tento nový ruční pokus.
 
-Schválené rozhodnutí zadavatele pro budoucí implementaci:
+Uživatel tak může po odpovědi `503` okamžitě opakovaně spouštět health, info a případně data sekvenci proti již přetíženému serveru.
 
-1. Pokud `config.json` existuje a lze jej přečíst, Edit Config otevře editor s jeho skutečným obsahem i tehdy, když je konfigurace nevalidní, opravitelná nebo obsahuje syntakticky chybný JSON. Platnost konfigurace není podmínkou jejího otevření k opravě. Při načtení se nesmí nevalidní obsah nahradit defaultem nebo starou cache.
-2. Pokud soubor skutečně neexistuje, Edit Config zobrazí potvrzení Ano/Ne. Hláška obsahuje skutečně vyhodnocenou absolutní očekávanou cestu, vysvětlení, že aplikace používá tento konfigurační soubor, a otázku, zda jej vytvořit z výchozí šablony. Nerozbalené `%ProgramData%` nestačí.
-3. Po Ano služba vytvoří chybějící soubor z výchozí šablony a editor jej otevře k úpravám. Jde o výslovně potvrzené vytvoření na disku už v tomto kroku, nikoli pouze o koncept čekající na Save. Pozdější Cancel editoru tento nově vytvořený soubor nemaže. Po Ne soubor nevznikne a editor pro něj neotevře nový dokument.
-4. Editor dostane dole vedle Save a Cancel tlačítko Reset. Po jeho stisknutí se zobrazí potvrzení Ano/Ne s otázkou, zda obnovit výchozí konfiguraci. Ano nahradí pouze obsah editoru výchozí šablonou a označí dokument jako změněný. Disk se při Resetu nemění, změna se uloží až přes Save. Ne zachová rozpracovaný obsah. Cancel po Resetu zahodí neuložené úpravy.
-5. Vytvoření i Reset použijí jednu společnou výchozí šablonu konfigurace definovanou v klientském kódu, například prostřednictvím konfiguračního hlavičkového souboru a společné továrny na defaulty. Nedržet rozdílné kopie defaultního JSON pro vytvoření a Reset. Hodnoty musí odpovídat schváleným projektovým defaultům.
+Doporučení: po ověřeném a syntakticky platném `Retry-After` stanovit nejbližší povolený čas nového ručního pokusu. UI má zbývající čekání pravdivě zobrazit a Next do té doby zakázat. Neautentizovanou chybovou odpověď nelze použít jako bezpečnostní důkaz, lze ji však použít jako konzervativní omezení zatížení. Automatický retry se tím nezavádí.
 
-Technické důsledky při implementaci: služba nadále vlastní čtení i zápis pevné konfigurační cesty. IPC musí umožnit načíst čitelný nevalidní dokument k editaci a výslovně vyžádat vytvoření chybějícího souboru ze službou definované šablony. Nevzniká obecný příkaz pro libovolné souborové cesty. Nečitelnost existujícího souboru se hlásí jako chyba přístupu, nesmí se zaměnit za neexistenci ani spustit vytvoření náhrady. Pokud soubor mezi potvrzením a vytvořením vznikne, operace vytvoření jej nesmí přepsat, editor načte jeho aktuální obsah nebo zobrazí konkrétní chybu.
+Rozhodnutí zadavatele: bod se nebude technicky ani uživatelsky řešit a zadavatel s popsaným rizikem výslovně souhlasí. Wizard nebude mezi dvěma ručně vyvolanými pokusy vynucovat hodnotu `Retry-After`, dočasně zakazovat Next, zobrazovat odpočet ani plánovat nejbližší povolený čas dalšího pokusu.
 
-Save i vytvoření výchozího souboru nadále vyžadují úplnou validaci dokumentu a atomický zápis podle bodu 4. Následující zpřesněná šablona obsahuje všechna povinná pole a konkrétní hodnoty správného formátu. Její syntaktická a konfigurační platnost nedokládá dostupnost relay ani shodu se skutečným serverovým nastavením. Síťové ověření při Connect zůstává povinné. Původně zvažovaná výjimka umožňující vytvořit konfiguračně nevalidní šablonu není pro tento návrh potřebná.
+Každé nové stisknutí Next nadále okamžitě založí nový samostatný pokus, i když předchozí odpověď `503` obsahovala `Retry-After`. Zůstává vědomě přijaté riziko dalšího zatížení již přetíženého serveru a odchylky od obecného doporučení protokolu. Automatické opakování se nezavádí. Bod se při implementaci nemá vykazovat jako povinná oprava.
 
-Zpřesněný návrh výchozí šablony Edit Config podle příkladu dodaného zadavatelem:
+## 8. „Každý čitelný soubor“ nelze beze změny přenést jako UTF-8 JSON string
 
-```json
-{
-  "masterSetup": {
-    "serverUrl": "http://127.0.0.1/phpvpn.php",
-    "trustAnyTlsCertificate": true,
-    "serverSecret": "CHANGE_THIS_SERVER_SECRET",
-    "vpnCidr": "10.99.99.0/24",
-    "virtualIp": "10.99.99.2",
-    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202"
-  },
-  "communicationContracts": {
-    "10.99.99.3": {
-      "payloadKey": "918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d"
-    }
-  }
-}
-```
+Závažnost: nižší až střední. Kategorie: datová věrnost, editor, IPC kontrakt.
 
-Upřesnění návrhu:
+Místo: `plan3_client.md`, řádky 141, 216, 347 a 379.
 
-- URL obsahuje prostý text bez Markdown odkazu. Loopback adresa označuje relay na stejném počítači, uživatel ji může v editoru změnit.
-- `serverSecret` používá již schválený společný default `CHANGE_THIS_SERVER_SECRET` podle D16. Náčrt s `PLEASE_CHANGE_THIS_SERVER_SECRET` není zaveden jako druhý, odlišný default. Pokud bude požadována změna této konstanty, musí se provést společně na serveru, klientu a v dokumentaci.
-- `accessKey` má 64 malých hexadecimálních znaků, tedy dvojici `02` opakovanou 32krát. Délka dodaného příkladu byla ověřena.
-- `payloadKey` byl nezávisle vypočten jako SHA-256 přesných ASCII bajtů `10.99.99.2_10.99.99.3`, bez konce řádku, v souladu s dohodnutým algoritmem výchozích kontraktů.
-- Sekce `runtime` je záměrně vynechána. Použijí se sdílené běhové defaulty, včetně timeoutu 30 sekund. Editor ji umožňuje ručně doplnit.
-- Šablona pro vytvoření a Reset v Edit Config obsahuje podle příkladu jeden kontrakt. Tím se automaticky nemění pravidlo Wizardu pro volitelné generování 13 nebo 14 kontraktů. Obě cesty sdílejí základní konstanty a funkce pro odvození klíčů.
-- Jde o předvídatelnou výchozí konfiguraci. Platnost formátu neznamená náhodnost nebo utajení klíčů.
+Plán slibuje vrácení skutečného textu každého čitelného konfiguračního souboru, včetně syntakticky chybného JSON. IPC je přitom UTF-8 JSON a obsah dokumentu se přenáší jako JSON string.
 
-Při následné úpravě plánu aktualizovat dostupnost Edit Config, chybové hlášky, IPC, rozložení editoru a akceptační testy. Novou výjimku promítnout do tvrzení, že soubor smí vzniknout pouze přes Finish Wizardu. Instalace, start služby ani samotný Connect nadále nesmějí automaticky vytvářet konfiguraci. Rozhodnutí upravuje Edit Config a jeho Reset, automaticky nerozšiřuje dostupnost ostatních položek menu. Toto je záznam rozhodnutí, implementace zatím nebyla provedena.
+Soubor může být na úrovni filesystemu čitelný, ale obsahovat neplatné UTF-8 nebo jiné kódování. Přímé vložení těchto bajtů poruší IPC. Náhrada neplatných sekvencí zase změní obsah a může způsobit, že editor při uložení poškodí původní data jiným způsobem.
 
-## 7. Omezený počet IPC workerů nezaručuje dostupný Disconnect
+Doporučení: přesně definovat podporované kódování. Nejjednodušší varianta je rozlišit `readable` a `text-editable`: soubor s neplatným UTF-8 je čitelný jako bajty, ale editor jej odmítne s konkrétní chybou kódování. Pokud je nutné přenášet libovolné bajty, musí IPC použít explicitní binární kódování a editor musí mít definovanou konverzi.
 
-Závažnost: střední. Kategorie: dostupnost řízení služby.
+Rozhodnutí zadavatele: konfigurační soubor musí být platný a jednoznačně dekódovatelný text v UTF-8. Samotná možnost načíst jeho bajty z filesystému nestačí. Obsah v jiném kódování nebo s neplatnou UTF-8 sekvencí služba odmítne konkrétní chybou kódování a nepokusí se neplatné bajty nahrazovat, odhadovat jiné kódování ani je přenášet přes IPC pomocí base64.
 
-Místo: `plan3_client.md`, řádek 109.
+Současná implementace přijímá volitelný UTF-8 BOM na úplném začátku konfiguračního souboru a před parsováním ho odstraní. Toto chování lze zachovat jako jedinou výslovně popsanou vstupní normalizaci. BOM nemění požadované kódování UTF-8 a nesmí být přijat uprostřed dokumentu. `client.md`, plán, klasifikace dostupnosti a testy musí rozlišit chybu přístupu od čitelného souboru s nepodporovaným nebo poškozeným kódováním.
 
-Plán navrhuje například čtyři workery a limit jednoho dlouhého `get-info`. Čtyři klienti ale mohou obsadit všechny workery neúplnými requesty nebo neodebíranými odpověďmi.
+Edit Config otevře syntakticky chybný JSON pouze tehdy, když je jeho obsah platný UTF-8 text. Testy musí zahrnout validní vícebajtové znaky, neplatné pokračovací bajty, zkrácené sekvence, jiné běžné kódování a pravidla BOM. Tím se odstraní rozpor mezi požadavkem na skutečný text dokumentu a UTF-8 JSON obálkou IPC.
 
-Dopad: konečný deadline jednotlivého spojení pomůže s úklidem, nezaručuje však včasnou obsluhu nového řídicího příkazu.
+## Významné přijaté důsledky návrhu
 
-Doporučení: doplnit pravidla přijímání spojení, absolutní I/O deadline a zátěžový test dostupnosti řízení při obsazených workerech.
+Následující body nejsou přehlédnuté kontradikce, protože je plán výslovně přiznává. Jejich praktický dopad je ale významný a musí zůstat viditelný v dokumentaci a testech.
 
-Schválené rozhodnutí zadavatele pro budoucí implementaci: oddělit práci podle účelu a použít asynchronní příjem a odesílání IPC. Samotné přidání několika synchronních workerů není dostačující řešení. Přesný počet obslužných vláken není tímto rozhodnutím pevně stanoven.
+### A. Hladký průchod Wizardem provede šest HTTP requestů
 
-- Zachovat tři existující VPN pracovní role. Hlavní síťový pracovník zajišťuje VPN provoz, bootstrap, recovery a potřebnou časovou synchronizaci. Datové pakety se nepřenášejí přes řídicí IPC.
-- Dlouhá síťová diagnostika má vlastní omezenou obsluhu mimo hlavní VPN síťové vlákno podle bodu 3, s vlastním transportem, bezpečným rušením a timeouty podle bodů 1 a 2.
-- Pro úplné a ověřené krátké řídicí příkazy, zejména `get-status` a Disconnect, zajistit dostupnou obslužnou kapacitu nezávislou na dlouhé diagnostice. Přijetí Disconnectu předá požadavek příslušné části služby, samo ještě neznamená dokončený teardown. Wizard nadále čeká na skutečný odpojený stav.
-- Čtení neúplného požadavku a čekání na odběr odpovědi realizovat asynchronně, aby tyto fáze nedržely pracovníka vyhrazeného pro vykonávání řídicích příkazů. Příkaz směrovat k příslušné obsluze až po úplném načtení a validaci. Priorita příkazu sama neřeší spojení, ze kterého ještě nelze příkaz rozpoznat.
-- Omezit počet současných spojení, velikosti zpráv, paměť i fronty práce. Stanovit konečné absolutní časové limity IPC čtení a zápisu, které dílčí přenos bajtů neobnovuje. Při přetížení přebytečná spojení nebo práci řízeně odmítat, nevytvářet neomezený počet vláken či čekajících požadavků.
-- Zastavení Windows Service musí mít vlastní cestu nezávislou na dostupnosti řídicí pipe a bezpečně ukončit čekající IPC i síťové operace.
+Krok URL provede jeden health, krok secret nový health a info, krok access další health, info a jeden data polling. Při výchozím 30sekundovém deadline každého requestu představuje samotná síťová část teoreticky až 180 sekund.
 
-Garance a ověření: při podporovaném zatížení nesmějí pomalí nebo zaseknutí IPC klienti vyčerpat obsluhu potřebnou pro řízení. Při přetížení musí služba zachovat omezenou spotřebu prostředků a řízené ukončení. Nejde o slib absolutní dostupnosti při libovolném zahlcení veřejného IPC. Testy obsadí spojení neúplnými požadavky a neodebíranými odpověďmi, souběžně spustí pomalou diagnostiku a změří odezvu `get-status`, přijetí i dokončení Disconnectu a zastavení služby. Konkrétní limity a měřitelné cíle odezvy se stanoví v implementačním návrhu. Toto je záznam schváleného rozhodnutí, implementace zatím nebyla provedena.
+Opakování má bezpečnostní důvod, protože každý krok váže důkaz k aktuálním vstupům a access kontrola potřebuje čerstvý časový kontext. Cena musí být zahrnuta do očekávané odezvy UI a testů. Neměla by zvyšovat latenci běžného VPN provozu, pokud bude správně dodrženo oddělení a preempce popsaná v plánu.
 
-## 8. Pád tray nemá mechanismus pro deklarované zrušení relace
+### B. Návrh nejstarší IP může vybrat stále aktivní počítač
 
-Závažnost: střední. Kategorie: životní cyklus, dostupnost.
+Pokud jsou všechny kandidátní adresy přítomné v best-effort seznamu `clients`, plán vybere nejstarší `lastSeen`. Tato adresa může stále patřit aktivnímu klientovi. Následná access kontrola může odebrat jeho čekající zprávy a pozdější připojení může vytvořit dva klienty se stejnou VPN identitou.
 
-Místo: `plan3_client.md`, řádky 286, 322 a 534, kritérium A33.
+Bez serverové rezervace nebo autoritativní alokace nelze kolizi vyloučit. Plán riziko uživateli oznamuje a výslovně je přijímá.
 
-A33 slibuje zrušení konceptu a operací při pádu okna nebo ukončení tray. IPC ale používá jednorázová spojení, takže odpojení pipe nerozlišuje běžně dokončený příkaz od pádu aplikace. Popsaná expirace nastává až po 30 minutách.
+### C. Veřejné lokální IPC a důvěra libovolnému TLS certifikátu jsou již přijatá rizika
 
-Dopad: opuštěné relace mohou vyčerpat limit osmi průvodců.
+Plán zachovává veřejné lokální IPC, přes které může každá lokální aplikace číst a měnit konfiguraci nebo globálně odpojit VPN. Zachovává také výchozí `trustAnyTlsCertificate=true`. Obě vlastnosti jsou již výslovně popsané v `client.md` a nejsou nově zavedenými chybami plánu 3.
 
-Doporučení: definovat obnovovaný časový pronájem relace a lhůtu úklidu po ztrátě klienta, nebo odpovídajícím způsobem oslabit A33.
+## Celkové hodnocení
 
-Schválené rozhodnutí zadavatele pro budoucí implementaci: zavést jednoduchý obnovovaný časový pronájem každé otevřené Wizard relace. Tray službě pravidelně potvrzuje používání dané relace. Pokud potvrzení dostatečně dlouho nepřijde, služba relaci považuje za neaktivní a provede bezpečný úklid. Nejde o důkaz ukončení procesu tray, stejný stav může způsobit zamrznutí, uspání nebo výpadek IPC.
+Plán řadu dřívějších rizik řeší důkladně, zejména životnost WinHTTP callbacků, absolutní deadline, serializovanou atomickou publikaci konfigurace, konečné pronájmy Wizard relací, omezené IPC a nejasný výsledek Finish.
 
-- Výchozí návrh časování je potvrzení každých 15 sekund a expirace po 60 sekundách bez kontaktu. Intervaly vycházejí z projednaného příkladu, případné doladění při implementaci nemění schválený princip. Měřit uplynulý čas monotónními hodinami, nikoli počítat zmeškané pingy.
-- Potvrzování se týká konkrétní otevřené Wizard relace. Platný běžný požadavek k této relaci může obnovit její lhůtu a nahradit samostatné potvrzení. Když uživatel jen vyplňuje formulář, tray odešle krátké potvrzení přes lokální IPC. Obecné dotazy na stav služby nesmějí udržovat cizí opuštěné relace.
-- Potvrzení nezahajuje síťovou kontrolu, neposílá nic VPN serveru a nic nepersistuje. Není automatickým opakováním neúspěšného Next podle bodu 5. Samostatný heartbeat nesmí prodlužovat deadline síťového requestu ani čekání na výsledek kontroly v tray.
-- Využít existující správu relací a vhodný časovač služby. Kvůli potvrzování nezavádět nové vlákno ani sledování PID. Počet relací a spotřeba prostředků zůstávají omezené.
-- Po expiraci relaci označit za neplatnou, bezpečně zrušit její rozpracovanou kontrolu podle bodu 1 a po ukončení práce uvolnit její koncept a prostředky. Úklid nesmí uvolnit objekt stále používaný vláknem nebo callbackem. Opožděný požadavek expirovanou relaci neoživí.
-- Normální zavření Wizardu nadále vyžádá úklid bez čekání na expiraci. Obnovená komunikace po delším výpadku nebo uspání zobrazí srozumitelnou informaci, pokud relace mezitím zanikla. Expirace jedné relace neodpojuje globální VPN a neovlivní ostatní Wizard relace.
-- Probíhající commit a potvrzení zápisu mají vlastní bezpečnou životnost. Expirace nesmí vracet již provedený zápis ani úspěšný commit vydávat za neprovedený. Potřebný záznam výsledku commitu se uchová podle pravidel řešení nejasného Finish.
+Významné odchylky od současných `protocol.md` a `client.md` jsou převážně plánované. Patří sem změna normalizace prázdného secretu, rozšíření IPC v1, oddělená diagnostická cesta, jednorázové Wizard kontroly bez automatického recovery a nový způsob správy konfigurace. Před implementací musí být normativní dokumenty aktualizovány společně s přesnými schématy a testy.
 
-Při následné úpravě plánu nahradit původní třicetiminutovou neaktivní expiraci tímto mechanismem a upravit A33 na úklid v omezené lhůtě od ztráty potvrzování. Testy ověří pád tray, vyplňování bez síťových kontrol, opožděné potvrzení, nezávislost dvou relací, souběh expirace s kontrolou a Finish, změnu systémových hodin a chování při uspání a probuzení. Toto je záznam schváleného rozhodnutí, implementace zatím nebyla provedena.
-
-## Přijatá rizika
-
-Následující rizika plán většinou přiznává. Nejde tedy o přehlédnuté požadavky, jejich praktické dopady jsou ale zásadní.
-
-## 9. Kolize IP může poškodit komunikaci jiného počítače
-
-Kategorie: přijaté riziko kolize identity a ztráty zpráv.
-
-Místo: `plan3_client.md`, řádky 250–256.
-
-Výběr podle `clients` při obsazení všech adres automaticky nabídne nejstarší záznam. Ten může patřit stále aktivnímu klientovi. Dva souběžné průvodce také mohou nabídnout stejnou chybějící adresu.
-
-Dopad: následný test přístupu uspěje i pro sdílenou identitu a může odebrat cizí zprávy. Úspěšný check-access neprokazuje jedinečnost IP.
-
-Původní doporučení revize: bez rezervací nelze kolize vyloučit. Při zaplněném rozsahu alespoň automaticky nevybírat potenciálně obsazenou adresu. Zadavatel toto doporučení nepožaduje realizovat.
-
-Rozhodnutí zadavatele: riziko kolize virtuálních IP adres a možného poškození komunikace jiného počítače výslovně bere na vědomí a přijímá. Bod 9 je uzavřen jako přijaté riziko bez požadavku na opravu. Zachovat navržený výběr IP včetně volby podle nejstaršího `lastSeen`, pokud jsou všechny kandidátní adresy přítomné. Nezavádět kvůli tomuto nálezu rezervace IP, novou detekci obsazenosti ani blokování tohoto návrhu adresy.
-
-Dosavadní upozornění, že návrh IP není rezervací a kontrola může odebrat čekající zprávy, zůstávají podle plánu. Toto rozhodnutí nemění validaci formátu IP, příslušnosti do CIDR ani zákaz kontraktu na vlastní IP. Přijaté riziko se při realizaci nemá vykazovat jako nevyřešená povinná oprava.
-
-## 10. Výchozí payload klíče nejsou tajné
-
-Závažnost: kritická pro důvěrnost. Kategorie: přijaté bezpečnostní riziko výchozích klíčů.
-
-Místo: `plan3_client.md`, řádky 252 a 270–280.
-
-SHA-256 dvojice IP umožní klíč vypočítat komukoli včetně relay serveru. U zachyceného provozu tak neplatí předpoklad, že server ani pozorovatel nedokážou payload dešifrovat. Předvídatelné Access Keys navíc umožňují držiteli společného server secretu vystupovat za ostatní výchozí IP.
-
-Dopad: změna samotného `SERVER_SECRET` neopraví veřejně odvoditelné payload klíče.
-
-Původní doporučení revize: bezpečný profil vyžaduje skutečně tajné distribuované klíče. Zadavatel toto doporučení nepožaduje realizovat.
-
-Rozhodnutí zadavatele: předvídatelnost výchozích payload klíčů a Access Keys i uvedené dopady výslovně přijímá. Bod 10 je uzavřen jako vědomě přijaté bezpečnostní riziko bez požadavku na opravu. Zachovat dosavadní algoritmy výchozích klíčů a dohodnutou šablonu. Kvůli tomuto nálezu nezavádět povinné náhodné klíče, jejich distribuci, rotaci ani další schvalování.
-
-Dosavadní pravdivé označení výchozích klíčů jako veřejně odvoditelných zůstává. Rozhodnutí nemění validaci formátu klíčů ani předepsané kryptografické ověřování protokolu. Přijaté riziko se při realizaci nemá vykazovat jako nevyřešená povinná oprava.
-
-## 11. Reset může zhoršit dosavadní bezpečnost konfigurace
-
-Kategorie: přijaté bezpečnostní riziko výchozí konfigurace, srozumitelnost UI.
-
-Místo: `plan3_client.md`, řádky 24 a 150.
-
-Reset obnoví HTTP URL, veřejný secret a `trustAnyTlsCertificate=true`. Uživatel může následně zadat HTTPS URL a vlastní secret, ale vypnuté ověřování certifikátu zůstane skryté mezi nezobrazenými hodnotami.
-
-Dopad: resetovaná konfigurace může mít slabší bezpečnostní politiku než původní konfigurace. Jde o výslovně přijaté rozhodnutí D06.
-
-Původní doporučení revize: přímo před Finish viditelně uvést výslednou TLS politiku a její změnu oproti původní konfiguraci. Zadavatel toto doporučení nepožaduje realizovat.
-
-Rozhodnutí zadavatele: bod 11 je uzavřen jako vědomě přijaté riziko bez požadavku na opravu. Zadavatel výslovně potvrzuje `trustAnyTlsCertificate=true` jako výchozí nastavení konfigurace vytvářené Wizardem. Stejná hodnota platí po Resetu Wizardu a ve společné výchozí šabloně pro vytvoření a Reset v Edit Config. Kvůli tomuto nálezu se nepřidává nové zobrazení změny TLS politiky před Finish ani další bezpečnostní schvalování.
-
-Jde o výchozí hodnotu pro novou nebo resetovanou konfiguraci. Při běžné úpravě platné nebo opravitelné existující konfigurace nadále platí zachování nezobrazených hodnot podle D07. Existující explicitní `trustAnyTlsCertificate=false` se samotným průchodem Wizardem nepřepne na true. Při vynechaném poli se použije sdílený default true. Přijaté riziko se při realizaci nemá vykazovat jako nevyřešená povinná oprava.
-
-## 12. Veřejné IPC ruší izolaci konfigurace mezi lokálními uživateli a aplikacemi
-
-Kategorie: přijaté bezpečnostní omezení celého klienta.
-
-Místo: `plan3_client.md`, řádek 336. Související smlouva: `client.md`, veřejné IPC a příkazy `get-config` a `set-config`.
-
-Plán zachovává přístup bez autorizace. Libovolná lokální aplikace tak prostřednictvím původních příkazů může získat všechny klíče, změnit konfiguraci nebo globálně odpojit VPN.
-
-Dopad: ACL konfiguračního souboru tuto cestu nechrání a náhodná UUID nejsou autorizace.
-
-Doporučení: zachovat toto omezení výslovně uvedené v bezpečnostním modelu. Jde o vědomě přijaté bezpečnostní omezení celého klienta, nikoli o ochranu, kterou by vyřešila přísnější validace nových Wizard příkazů.
-
-Rozhodnutí zadavatele: bod 12 je uzavřen jako vědomě přijaté bezpečnostní riziko bez požadavku na opravu. Zachovat veřejný lokální přístup k IPC podle dosavadní smlouvy. Kvůli tomuto nálezu nezavádět autorizaci uživatelů nebo aplikací, impersonaci, kontrolu PID ani omezení přístupu ke konfiguraci podle identity klienta.
-
-Toto rozhodnutí nemění odmítání vzdálených IPC klientů, striktní validaci zpráv, pevnou konfigurační cestu ani schválené limity a dostupnost obsluhy podle bodu 7. Přijaté riziko se při realizaci nemá vykazovat jako nevyřešená povinná oprava.
-
-## Podklady pro závěr sezení a aktualizaci plánu 3
-
-Výslovný požadavek zadavatele: schválená rozhodnutí z tohoto sezení zahrnout do závěru a následně konzistentně promítnout do `plan3_client.md`, včetně souvisejících pravidel, textů UI, testů a akceptačních kritérií. Záznam v tomto souboru je podkladem pro tuto aktualizaci, sám neznamená, že plán nebo implementace již byly změněny. Původní doporučení revize, která zadavatel odmítl, se nesmějí znovu zavést jako povinné opravy.
-
-Výslovně zahrnout rozhodnutí z bodu 11: `trustAnyTlsCertificate=true` je společný výchozí stav pro novou konfiguraci Wizardu a pro Reset i vytvoření podle výchozí šablony Edit Config. Běžná editace existující konfigurace nadále zachovává její explicitní TLS hodnotu. Bod 11 je přijaté riziko bez dodatečné opravy nebo nového schvalování.
-
-Body 9, 10, 11 a 12 zadavatel výslovně uzavřel jako vědomě přijatá rizika bez požadavku na opravu. Aktualizace plánu musí respektovat jejich jednotlivá rozhodnutí uvedená výše.
+Nad rámec již uvedené dokumentační matice je nutné vyřešit zejména bezpečnostní výjimku pro veřejně odvoditelné klíče, výjimku z payload GCM ověřování, odesílání Disconnectu během diagnostiky v tray a úplný časový rozpočet původního `get-info`.
