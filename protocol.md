@@ -304,7 +304,7 @@ Do `canonical` vstupují přesné ASCII bajty validovaného `timestamp` beze zm�
 Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 
 ```json
-{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":983040,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":3200}}
 ```
 
 `generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`. Kvůli 30sekundovému omezení aktualizací a best-effort povaze statistik jde pouze o přibližný provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
@@ -584,14 +584,14 @@ Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `BUFFER_D
 |---|---:|---|
 | `MAX_DATA_RECORDS_PER_REQUEST` | 16 | Počet záznamů `data` v jednom requestu. |
 | `MAX_AUTH_RECORD_BYTES` | 4096 B | První řádek včetně LF. |
-| `MAX_REQUEST_BODY_BYTES` | 4198400 B | Celé NDJSON tělo požadavku včetně všech LF. |
+| `MAX_REQUEST_BODY_BYTES` | 983040 B | Celé NDJSON tělo požadavku včetně všech LF. `983040 B` znamená 960 kB. Hodnota je záměrně nižší než výchozí limit 1 MiB serverů Nginx a Tengine. |
 | `MAX_INFO_PLAINTEXT_BYTES` | 262144 B | Plaintext šifrované odpovědi `info`. |
 | `MAX_QUEUE_BYTES_PER_CLIENT` | 16777216 B | 16 MiB logické persistentní fronty. |
 | `AUTH_TIMESTAMP_SKEW_SECONDS` | 60 s | Nejvyšší absolutní odchylka autentizačního timestampu od času serveru. |
 | `QUEUE_TTL_SECONDS` | 60 s | Nejvyšší věk čekající dávky. |
 | `LOCK_TIMEOUT_MS` | 200 ms | Nejvyšší čekání PHP workeru na storage zámek. |
-| `MIN_DATA_POLL_INTERVAL_MS` | 80 ms | Doporučený nejkratší interval mezi voláními `data`. |
-| `MAX_DATA_POLL_INTERVAL_MS` | 1000 ms | Doporučený nejdelší interval mezi voláními `data`. |
+| `MIN_DATA_POLL_INTERVAL_MS` | 50 ms | Doporučený nejkratší interval mezi voláními `data`. |
+| `MAX_DATA_POLL_INTERVAL_MS` | 3200 ms | Doporučený nejdelší interval mezi voláními `data`. |
 
 Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů a že `MIN_DATA_POLL_INTERVAL_MS` je kladné a není větší než `MAX_DATA_POLL_INTERVAL_MS`. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a závěrečný `data-mac`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
 

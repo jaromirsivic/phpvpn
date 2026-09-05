@@ -60,14 +60,14 @@ const VPN_HOST_MAX = 254;
 /** Protocol limits, see chapter 11.1 of protocol.md. */
 const MAX_DATA_RECORDS_PER_REQUEST = 16;
 const MAX_AUTH_RECORD_BYTES = 4096;
-const MAX_REQUEST_BODY_BYTES = 4198400;
+const MAX_REQUEST_BODY_BYTES = 950000;
 const MAX_INFO_PLAINTEXT_BYTES = 262144;
 const MAX_QUEUE_BYTES_PER_CLIENT = 16777216;
 const AUTH_TIMESTAMP_SKEW_SECONDS = 60;
 const QUEUE_TTL_SECONDS = 60;
 const LOCK_TIMEOUT_MS = 200;
-const MIN_DATA_POLL_INTERVAL_MS = 80;
-const MAX_DATA_POLL_INTERVAL_MS = 1000;
+const MIN_DATA_POLL_INTERVAL_MS = 50;
+const MAX_DATA_POLL_INTERVAL_MS = 3200;
 
 /** Best effort lastSeen marker is refreshed only when it is older than this. */
 const CLIENT_STATS_MIN_UPDATE_SECONDS = 30;
