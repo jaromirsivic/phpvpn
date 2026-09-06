@@ -649,7 +649,7 @@ Baseline první verze je oficiální předkompilovaný a digitálně podepsaný 
 
 Podepsaný release manifest MUSÍ pro každou podporovanou architekturu uvést verzi Wintunu, očekávanou architekturu a SHA-256 přesných bajtů dodané `wintun.dll`. `install.bat` nebo jeho podepsaný pomocný instalátor MUSÍ před registrací služby a před jakoukoli změnou sítě ověřit podpis manifestu, shodu SHA-256, platný digitální podpis DLL a shodu architektury DLL s instalovanou službou a operačním systémem. Jakákoli neshoda je neobnovitelná chyba daného balíčku; instalace selže uzavřeně a NESMÍ vytvořit adaptér, nainstalovat službu ani změnit adresy, DNS nebo routy.
 
-Oficiální ZIP Wintun (nejnovější stabilní verze) má publikovaný SHA-256 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`. Tato hodnota ověřuje výhradně původní ZIP archiv při přípravě vydání; NENÍ hashem žádné jednotlivé `wintun.dll` a NESMÍ nahradit per-DLL hashe v podepsaném release manifestu distribuční složky `dist`.
+Oficiální ZIP Wintun (nejnovější stabilní verze) má publikovaný SHA-256 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`. Tato hodnota ověřuje výhradně původní ZIP archiv při přípravě vydání; NENÍ hashem žádné jednotlivé `wintun.dll` a NESMÍ nahradit per-DLL hashe v podepsaném release manifestu klientského balíčku.
 
 `wintun.dll` MUSÍ být uložena v instalačním adresáři chráněném proti zápisu neprivilegovaným uživatelem. Služba ji načítá pouze absolutní kanonickou cestou pomocí `LoadLibraryExW` s příznaky `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`. NESMÍ ji načíst přes `PATH`, aktuální pracovní adresář, relativní cestu, uživatelský profil, dočasný adresář ani jiné zapisovatelné umístění.
 
@@ -809,7 +809,7 @@ Bootstrap po volbě **Connect** zůstává v přesném pořadí `health`, `info`
 
 #### Distribuce a instalace ve Windows
 
-Distribuce pro Windows je složka `dist`. Obsahuje binární soubory služby, tray aplikace, konzolového správce, všechny nezbytné knihovny, nepřejmenované architekturní `wintun.dll`, upstream licenční text, podepsaný release manifest s per-DLL SHA-256 a skripty `install.bat` a `uninstall.bat`. Neobsahuje samostatné Wintun `.sys`, `.cat` ani `.inf`. Složka `dist` je kompletní předatelná distribuční jednotka; instalační postup NESMÍ stahovat nebo přijímat neověřenou náhradu některé její součásti.
+Autoritativní a závaznou metodiku sestavení distribuce, její strukturu, úplnost a ověření stanoví [distribution.md](distribution.md). Následující pravidla určují chování instalace a provozu klienta, požadavky na Wintun a integritu zůstávají v části Wintun baseline a integrita distribuce tohoto dokumentu.
 
 Instalace ani start služby nevytvoří `config.json`, existující soubor se při reinstalaci zachová. Po instalaci nápověda uvede obě cesty vytvoření: úspěšný Finish Wizardu a výslovně potvrzené vytvoření přes Edit Config.
 
@@ -819,7 +819,7 @@ Instalace ani start služby nevytvoří `config.json`, existující soubor se p�
 
 Každé podporované vydání a architektura MUSÍ před publikací projít alespoň těmito scénáři:
 
-1. čistá instalace z úplné složky `dist`, první bootstrap a vytvoření právě jednoho adaptéru `phpvpn` a jedné session s 4MiB ringem;
+1. čistá instalace z úplné distribuční složky Windows x64 podle [distribution.md](distribution.md), první bootstrap a vytvoření právě jednoho adaptéru `phpvpn` a jedné session s 4MiB ringem;
 2. instalace a běh na systému, kde Wintun současně používá WireGuard nebo jiná aplikace, bez změny či odstranění jejího adaptéru a ovladače;
 3. fail-closed odmítnutí po změně hashe DLL, neplatném podpisu manifestu nebo DLL, nesprávné architektuře, chybějícím povinném API a nepodporované běžící verzi, vždy bez nové služby a síťové změny;
 4. opakované connect/disconnect cykly, částečné selhání každé inicializační a teardown fáze a kontrola, že nezůstala vlastní adresa, routa, druhý adaptér ani session;
