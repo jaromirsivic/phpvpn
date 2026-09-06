@@ -8,7 +8,8 @@ namespace phpvpn {
 // Returning false simulates failure at the named boundary, without weakening ACLs.
 enum class ConfigFileStage {
     readChunk, stageWritten, beforeStageFlush, beforeJournalFlush,
-    journalFlushed, beforePublish, afterPublish, beforeRecoveryCleanup
+    journalFlushed, beforePublish, afterPublish, beforeRecoveryCleanup,
+    beforeDirectorySecurityRead
 };
 struct ConfigFileHooks {
     std::function<bool(ConfigFileStage)> proceed;

@@ -308,8 +308,11 @@ void TrayApplication::finishConfigAction() {
     if (!response->reply || response->reply->error) {
         const auto failure = response->reply ? *response->reply->error : WizardIpc::safeError(response->reply.error());
         std::wstring text = widen(failure.description) + L"\n" + widen(failure.suggestedAction);
-        if (failure.configPath) text += L"\nExpected configuration: " + widen(*failure.configPath) +
-            L"\nOpen Configuration Wizard or copy a configuration supplied by your administrator to this path.";
+        if (failure.configPath) {
+            text += L"\nExpected configuration: " + widen(*failure.configPath);
+            if (failure.code != "config_directory_security_invalid")
+                text += L"\nOpen Configuration Wizard or copy a configuration supplied by your administrator to this path.";
+        }
         showError(text.c_str()); return;
     }
     const auto& result = response->reply->result;

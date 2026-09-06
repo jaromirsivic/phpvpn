@@ -35,6 +35,7 @@ enum class ErrorCode {
     config_not_found,
     config_read_failed,
     config_write_failed,
+    config_directory_security_invalid,
     config_invalid_json,
     config_invalid_value,
     config_invalid_url,

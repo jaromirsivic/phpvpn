@@ -654,6 +654,20 @@ PHPVPN_TEST(runtime, actions_read_current_file_and_disconnect_never_reads_it) {
     PHPVPN_CHECK_EQ(fixture.files->writes, 0u);
 }
 
+PHPVPN_TEST(wizard_service, create_default_preserves_directory_security_error_and_config_path) {
+    WizardServiceFixture fixture;
+    fixture.runtime.files->bytes.reset();
+    fixture.runtime.files->publishError = ErrorCode::config_directory_security_invalid;
+    const auto reply = fixture.call(WizardCommand::create_default_config);
+    PHPVPN_CHECK(reply.error.has_value());
+    PHPVPN_CHECK_EQ(reply.error->code, std::string("config_directory_security_invalid"));
+    PHPVPN_CHECK_EQ(*reply.error->configPath, fixture.runtime.files->fixed.generic_string());
+    PHPVPN_CHECK(reply.error->suggestedAction.find("Next") == std::string::npos);
+    PHPVPN_CHECK(reply.error->description.find("PRIVATE") == std::string::npos);
+    PHPVPN_CHECK(!fixture.runtime.files->bytes);
+    PHPVPN_CHECK_EQ(fixture.httpCalls, 0u);
+}
+
 PHPVPN_TEST(wizard_service, leases_expire_without_disk_http_or_global_disconnect) {
     WizardServiceFixture fixture;
     const auto reads = fixture.runtime.files->reads;

@@ -65,26 +65,28 @@ bool safeType(HANDLE handle, bool directory) {
         !(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
         ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) == directory;
 }
-bool restricted(HANDLE handle, bool directory) {
+Result<bool> inspectRestricted(HANDLE handle, bool directory) {
     PSID owner = nullptr;
     PACL acl = nullptr;
-    PSECURITY_DESCRIPTOR sd = nullptr;
+    Descriptor descriptor;
     if (GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION |
-        DACL_SECURITY_INFORMATION, &owner, nullptr, &acl, nullptr, &sd) != ERROR_SUCCESS) return false;
+        DACL_SECURITY_INFORMATION, &owner, nullptr, &acl, nullptr, &descriptor.value) != ERROR_SUCCESS)
+        return readError();
     std::array<unsigned char, SECURITY_MAX_SID_SIZE> system{}, admins{};
     DWORD systemSize = static_cast<DWORD>(system.size()), adminsSize = static_cast<DWORD>(admins.size());
-    bool good = CreateWellKnownSid(WinLocalSystemSid, nullptr, system.data(), &systemSize) &&
-        CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins.data(), &adminsSize);
+    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, system.data(), &systemSize) ||
+        !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins.data(), &adminsSize))
+        return readError();
     SECURITY_DESCRIPTOR_CONTROL control = 0;
     DWORD revision = 0;
-    good = good && owner && (EqualSid(owner, system.data()) || EqualSid(owner, admins.data())) &&
-        GetSecurityDescriptorControl(sd, &control, &revision) &&
+    if (!GetSecurityDescriptorControl(descriptor.value, &control, &revision)) return readError();
+    bool good = owner && (EqualSid(owner, system.data()) || EqualSid(owner, admins.data())) &&
         (!directory || (control & SE_DACL_PROTECTED)) && acl && acl->AceCount == 2;
     unsigned seen = 0;
     if (good) {
         for (DWORD i = 0; i < acl->AceCount; ++i) {
             void* entry = nullptr;
-            if (!GetAce(acl, i, &entry)) { good = false; break; }
+            if (!GetAce(acl, i, &entry)) return readError();
             const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(entry);
             if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE ||
                 (ace->Header.AceFlags & INHERIT_ONLY_ACE) ||
@@ -95,8 +97,20 @@ bool restricted(HANDLE handle, bool directory) {
             else { good = false; break; }
         }
     }
-    LocalFree(sd);
     return good && seen == 3;
+}
+bool restricted(HANDLE handle, bool directory) {
+    return inspectRestricted(handle, directory).valueOr(false);
+}
+Status checkDirectorySecurity(HANDLE handle, const ConfigFileHooks& hooks) {
+    // Exercise the actual descriptor API failure path with an invalid handle
+    // when the test barrier injects a failed read. Production has no hook.
+    if (hooks.proceed && !hooks.proceed(ConfigFileStage::beforeDirectorySecurityRead))
+        handle = nullptr;
+    auto result = inspectRestricted(handle, true);
+    if (!result) return result.error();
+    if (!result.value()) return Error(ErrorCode::config_directory_security_invalid);
+    return ok();
 }
 Handle openFile(const std::filesystem::path& path, DWORD access = GENERIC_READ | READ_CONTROL) {
     return Handle(CreateFileW(path.c_str(), access,
@@ -244,7 +258,7 @@ public:
             return ConfigFilePublication{ConfigPublishState::confirmed, std::string(commitId),
                 previous->identity, previous->sha256};
         }
-        if (!restricted(directories_.back().value, true)) return writeError();
+        PHPVPN_TRY(checkDirectorySecurity(directories_.back().value, hooks_));
         Handle original = openFile(path_);
         if (!original && !missing(GetLastError())) return writeError();
         if (original && (!safeType(original.value, false) || !restricted(original.value, false))) return writeError();
@@ -378,7 +392,7 @@ private:
         return writeError();
     }
     Result<ConfigFileRecovery> recoverLocked() {
-        if (!restricted(directories_.back().value, true)) return writeError();
+        PHPVPN_TRY(checkDirectorySecurity(directories_.back().value, hooks_));
         Handle journal = openFile(journalPath(), GENERIC_READ | READ_CONTROL | DELETE);
         if (!journal) {
             if (missing(GetLastError())) return ConfigFileRecovery{};
@@ -465,7 +479,7 @@ Result<std::unique_ptr<ConfigFiles>> createWindowsConfigFiles(
         accumulated /= part;
         if (!openDirectory(accumulated)) return readError();
     }
-    if (!restricted(directories.back().value, true)) return readError();
+    PHPVPN_TRY(checkDirectorySecurity(directories.back().value, hooks));
     auto crypto = createPlatformCryptoProvider();
     if (!crypto) return crypto.error();
     return std::unique_ptr<ConfigFiles>(new WindowsConfigFiles(fixedPath,

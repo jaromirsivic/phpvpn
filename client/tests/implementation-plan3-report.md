@@ -1,5 +1,7 @@
 # Implementace plan3_client.md
 
+Navazující opravu Edit Config ze 6. září 2026, 68 cílených testů a novou distribuci v `C:/git/phpvpn/dist` dokládá [report plan3_fix](implementation-plan3-fix-report.md). Následující historické výsledky včetně původních distribučních cest zůstávají zachovány.
+
 Zdroje byly 6. září 2026 přeneseny do `C:/git/phpvpn`. Tento report zachovává výsledky běhů v původním worktree. Odkazy na pracovní logy vedou do tohoto původního umístění, odkazy na distribuci vedou na novou kopii v hlavním projektu. Podrobnosti přenosu uvádí [předávací report](implementation-plan3-handoff.md).
 
 Stav k 6. září 2026. Implementace průvodce, služby, editoru, protokolu a souvisejících testů je v pracovním stromu `C:/Users/User/.codex/worktrees/d6c8/phpvpn`. Původní `C:/git/phpvpn` sloužil pouze jako zdroj kontextu. Cílem je výhradně Windows AMD64. ARM64 ani 32bit x86 nebyly sestavovány.

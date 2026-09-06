@@ -162,6 +162,9 @@ PHPVPN_TEST(config_files_probe, replacement_of_target_link_does_not_modify_refer
 #include <sddl.h>
 #include "platform/windows/config_files_win.h"
 #include "core/config/config_document.h"
+#include "core/config/config_store.h"
+#include "core/config/config_defaults.h"
+#include "platform/windows/paths_win.h"
 
 namespace phpvpn {
 namespace {
@@ -198,11 +201,84 @@ struct SecureFixture {
 
 PHPVPN_TEST(config_files, rejects_unsafe_directory_and_nonfixed_paths_without_writing) {
     ProbeDirectory fixture;
-    PHPVPN_REQUIRE_ERROR(createWindowsConfigFiles(fixture.path / "config.json"), ErrorCode::config_unreadable);
+    PHPVPN_REQUIRE_ERROR(createWindowsConfigFiles(fixture.path / "config.json"), ErrorCode::config_directory_security_invalid);
     PHPVPN_REQUIRE_ERROR(createWindowsConfigFiles("config.json"), ErrorCode::invalid_argument);
     PHPVPN_REQUIRE_ERROR(createWindowsConfigFiles(fixture.path / "other.json"), ErrorCode::invalid_argument);
     PHPVPN_CHECK(!std::filesystem::exists(fixture.path / "config.json"));
     PHPVPN_CHECK(!std::filesystem::exists(fixture.path / "config.publish-journal"));
+}
+
+PHPVPN_TEST(config_files, deleted_default_recreated_with_same_backend_and_confirmed_receipt) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    auto crypto = createPlatformCryptoProvider();
+    PHPVPN_REQUIRE_OK(crypto);
+    auto backend = createWindowsConfigFiles(fixture.path());
+    PHPVPN_REQUIRE_OK(backend);
+    ConfigStore store(*crypto.value(), std::move(backend).value());
+    PHPVPN_REQUIRE_OK(store.createDefault());
+    PHPVPN_REQUIRE_OK(store.save(makeDefaultEditorDocument() + "\n", kCommitA));
+    PHPVPN_CHECK(std::filesystem::exists(fixture.directory / "config.previous"));
+    PHPVPN_CHECK(std::filesystem::exists(fixture.directory / "config.publish-journal"));
+    PHPVPN_CHECK(DeleteFileW(fixture.path().c_str()) != FALSE);
+    PHPVPN_CHECK_EQ(store.read()->availability, ConfigAvailability::missing);
+    auto recreated = store.createDefault();
+    PHPVPN_REQUIRE_OK(recreated);
+    PHPVPN_CHECK(recreated->created && recreated->snapshot.config != nullptr);
+    PHPVPN_CHECK_EQ(*recreated->snapshot.document, makeDefaultEditorDocument());
+    const auto reread = store.read();
+    PHPVPN_REQUIRE_OK(reread);
+    PHPVPN_CHECK_EQ(*reread->document, makeDefaultEditorDocument());
+    std::cout << "[ EVIDENCE ] same backend: delete/recreate with confirmed journal and backup ran on NTFS\n";
+}
+
+PHPVPN_TEST(config_files, changed_directory_acl_blocks_create_until_explicit_administrator_repair) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    auto crypto = createPlatformCryptoProvider();
+    PHPVPN_REQUIRE_OK(crypto);
+    auto backend = createWindowsConfigFiles(fixture.path());
+    PHPVPN_REQUIRE_OK(backend);
+    auto* files = backend.value().get();
+    ConfigStore store(*crypto.value(), std::move(backend).value());
+    PHPVPN_REQUIRE_OK(store.createDefault());
+    PHPVPN_REQUIRE_OK(store.save(makeDefaultEditorDocument() + "\n", kCommitA));
+    PHPVPN_CHECK(DeleteFileW(fixture.path().c_str()) != FALSE);
+    PHPVPN_CHECK_EQ(store.read()->availability, ConfigAvailability::missing);
+
+    // Add the current test user's explicit full-control ACE after the read,
+    // representing a permissions change while the confirmation dialog is open.
+    HANDLE token = nullptr;
+    PHPVPN_CHECK(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
+    ProbeHandle tokenHandle(token);
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<unsigned char> user(size);
+    PHPVPN_CHECK(GetTokenInformation(token, TokenUser, user.data(), size, &size));
+    LPWSTR sid = nullptr;
+    PHPVPN_CHECK(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, &sid));
+    const std::wstring sddl = std::wstring(L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FA;;;") + sid + L")";
+    LocalFree(sid);
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PHPVPN_CHECK(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr));
+    const BOOL changed = SetFileSecurityW(fixture.directory.c_str(),
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, descriptor);
+    LocalFree(descriptor);
+    PHPVPN_CHECK(changed);
+    const auto journal = probeRead(fixture.directory / "config.publish-journal");
+    const auto backup = probeRead(fixture.directory / "config.previous");
+    PHPVPN_CHECK_EQ(store.read()->availability, ConfigAvailability::missing);
+    PHPVPN_REQUIRE_ERROR(store.createDefault(), ErrorCode::config_directory_security_invalid);
+    PHPVPN_REQUIRE_ERROR(files->recover(), ErrorCode::config_directory_security_invalid);
+    PHPVPN_REQUIRE_ERROR(createWindowsConfigFiles(fixture.path()), ErrorCode::config_directory_security_invalid);
+    PHPVPN_CHECK(!std::filesystem::exists(fixture.path()));
+    PHPVPN_CHECK_EQ(probeRead(fixture.directory / "config.publish-journal"), journal);
+    PHPVPN_CHECK_EQ(probeRead(fixture.directory / "config.previous"), backup);
+    PHPVPN_REQUIRE_OK(restrictDirectoryToAdministrators(fixture.directory));
+    auto repaired = store.createDefault();
+    PHPVPN_REQUIRE_OK(repaired);
+    PHPVPN_CHECK(repaired->created && repaired->snapshot.config != nullptr);
+    std::cout << "[ EVIDENCE ] live third ACE rejected without writing; production ACL repair and explicit create succeeded\n";
 }
 
 PHPVPN_TEST(config_files, bounded_read_exact_hash_and_replace_create_only) {
@@ -231,6 +307,44 @@ PHPVPN_TEST(config_files, bounded_read_exact_hash_and_replace_create_only) {
     PHPVPN_CHECK(second->state == ConfigPublishState::confirmed);
     PHPVPN_CHECK_EQ(probeRead(fixture.path()), std::string("new"));
     PHPVPN_CHECK_EQ(probeRead(fixture.directory / "config.previous"), std::string("abc"));
+}
+
+PHPVPN_TEST(config_files, directory_descriptor_api_failure_is_not_a_policy_mismatch) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    for (unsigned failureAt : {1u, 2u, 3u}) {
+        unsigned reads = 0;
+        auto backend = createWindowsConfigFiles(fixture.path(), ConfigFileHooks{[&](ConfigFileStage stage) {
+            return stage != ConfigFileStage::beforeDirectorySecurityRead || ++reads != failureAt;
+        }});
+        if (failureAt == 1) {
+            PHPVPN_REQUIRE_ERROR(backend, ErrorCode::config_unreadable);
+        } else {
+            PHPVPN_REQUIRE_OK(backend);
+            PHPVPN_REQUIRE_ERROR(backend.value()->publish("template", ConfigPublishMode::createIfMissing, kCommitA),
+                ErrorCode::config_unreadable);
+        }
+        PHPVPN_CHECK_EQ(reads, failureAt);
+        PHPVPN_CHECK(!std::filesystem::exists(fixture.path()));
+        PHPVPN_CHECK(!std::filesystem::exists(fixture.directory / "config.publish-journal"));
+    }
+    std::cout << "[ EVIDENCE ] descriptor API failure at factory/recovery/publication remains config_unreadable\n";
+}
+
+PHPVPN_TEST(config_files, corrupt_publication_journal_keeps_its_error_after_target_deletion) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    auto backend = createWindowsConfigFiles(fixture.path());
+    PHPVPN_REQUIRE_OK(backend);
+    PHPVPN_REQUIRE_OK(backend.value()->publish("original", ConfigPublishMode::replace, kCommitA));
+    PHPVPN_CHECK(DeleteFileW(fixture.path().c_str()));
+    const auto journal = fixture.directory / "config.publish-journal";
+    probeWrite(journal, "UNKNOWN JOURNAL VERSION\n");
+    PHPVPN_REQUIRE_ERROR(backend.value()->recover(), ErrorCode::journal_corrupt);
+    PHPVPN_REQUIRE_ERROR(backend.value()->publish("default", ConfigPublishMode::createIfMissing, kCommitB),
+        ErrorCode::journal_corrupt);
+    PHPVPN_CHECK(!std::filesystem::exists(fixture.path()));
+    PHPVPN_CHECK_EQ(probeRead(journal), std::string("UNKNOWN JOURNAL VERSION\n"));
 }
 
 PHPVPN_TEST(config_files, exact_file_limit_and_no_full_read_for_oversize) {

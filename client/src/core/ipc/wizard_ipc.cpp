@@ -300,7 +300,13 @@ Result<WizardView> WizardIpc::parseView(const J& value) {
 WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     std::optional<std::string> field, std::optional<std::string> url, std::optional<std::string> path) {
     std::string action = "Correct the reported issue, then choose Next for a new check.";
-    if (error.code == ErrorCode::server_unauthorized)
+    if (error.code == ErrorCode::config_directory_security_invalid)
+        action = "Ask an administrator to restart the PHPVPN service to restore the folder permissions, then choose Edit Config again. Restarting the service disconnects the VPN.";
+    else if ((std::string_view(error.name()).starts_with("config_") && (!field || *field == "configuration")) ||
+        error.code == ErrorCode::journal_corrupt || error.code == ErrorCode::journal_ambiguous ||
+        error.code == ErrorCode::journal_missing)
+        action = "Check the reported issue and the configuration file state, then invoke the action again when resolved. Contact an administrator if needed.";
+    else if (error.code == ErrorCode::server_unauthorized)
         action = "Check SERVER_SECRET and ACCESS_KEYS for this virtual IP in the server file using your hosting control panel, or contact its administrator.";
     else if (error.code == ErrorCode::busy) action = "Wait for the current operation to finish, then try again.";
     else if (error.code == ErrorCode::wizard_session_expired) action = "Open a new Configuration Wizard.";

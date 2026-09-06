@@ -8,7 +8,7 @@ __pycache__/
 /phpvpn/
 
 # Client build output and the distribution folder produced by make-dist.ps1
-/work/build/
+/work/
 /dist/
 /dist_old_do_not_use/
 

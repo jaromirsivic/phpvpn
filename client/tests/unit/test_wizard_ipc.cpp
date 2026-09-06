@@ -119,6 +119,34 @@ PHPVPN_TEST(wizard_ipc, errors_omit_raw_details_and_enforce_allowlisted_fields) 
     value.objectValue().emplace_back("ciphertext", JsonValue::makeString("hidden"));
     PHPVPN_CHECK(!WizardIpc::parseError(value));
 }
+
+PHPVPN_TEST(wizard_ipc, configuration_errors_have_safe_action_and_authoritative_path) {
+    for (const auto code : {ErrorCode::config_directory_security_invalid, ErrorCode::config_write_failed,
+        ErrorCode::config_unreadable, ErrorCode::config_read_failed, ErrorCode::config_too_large,
+        ErrorCode::config_encoding_error, ErrorCode::journal_corrupt, ErrorCode::journal_ambiguous}) {
+        const std::string path = "C:/ProgramData/PHPVPN/config.json";
+        const auto error = WizardIpc::safeError(Error(code, "PRIVATE-KEY-AND-RAW-JOURNAL"), {}, {}, {}, path);
+        const auto encoded = WizardIpc::buildError(id, error);
+        PHPVPN_CHECK(encoded.find("PRIVATE-KEY-AND-RAW-JOURNAL") == std::string::npos);
+        PHPVPN_CHECK(encoded.find("Next") == std::string::npos);
+        auto parsed = WizardIpc::parseReply(WizardCommand::create_default_config, id, encoded);
+        PHPVPN_REQUIRE_OK(parsed);
+        PHPVPN_CHECK(parsed->error.has_value());
+        PHPVPN_CHECK_EQ(parsed->error->code, std::string(errorCodeName(code)));
+        PHPVPN_CHECK_EQ(*parsed->error->configPath, path);
+        if (code == ErrorCode::config_directory_security_invalid) {
+            PHPVPN_CHECK(error.description.find("folder permissions") != std::string::npos);
+            PHPVPN_CHECK(error.suggestedAction.find("administrator to restart") != std::string::npos);
+            PHPVPN_CHECK(error.suggestedAction.find("Edit Config") != std::string::npos);
+            PHPVPN_CHECK(error.suggestedAction.find("disconnects the VPN") != std::string::npos);
+        } else {
+            PHPVPN_CHECK(error.suggestedAction.find("restart") == std::string::npos);
+        }
+    }
+    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::transport_connect_failed)).suggestedAction.find("Next") != std::string::npos);
+    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::config_invalid_url), {}, "serverUrl").suggestedAction.find("Next") != std::string::npos);
+    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::wizard_connection_interrupted)).suggestedAction.find("Next") != std::string::npos);
+}
 PHPVPN_TEST(wizard_ipc, maximum_document_escaping_and_message_limit) {
     const std::string control(kMaxConfigFileBytes, '\x01');
     const auto response = WizardIpc::buildResult(id, JsonValue::makeObject({{"document", JsonValue::makeString(control)}}));

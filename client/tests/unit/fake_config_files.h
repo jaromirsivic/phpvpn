@@ -10,6 +10,7 @@ public:
     std::filesystem::path fixed = "C:/test/config.json";
     std::optional<std::string> bytes;
     std::optional<ErrorCode> readError;
+    std::optional<ErrorCode> publishError;
     ConfigPublishState outcome = ConfigPublishState::confirmed;
     std::uint64_t identity = 1;
     unsigned reads = 0, writes = 0;
@@ -27,6 +28,7 @@ public:
     Result<ConfigFilePublication> publish(std::string_view text, ConfigPublishMode mode, std::string_view id) override {
         ++writes;
         if (beforePublish) beforePublish();
+        if (publishError) return Error(*publishError, "PRIVATE-KEY-AND-RAW-JOURNAL");
         if (mode == ConfigPublishMode::createIfMissing && bytes)
             return ConfigFilePublication{ConfigPublishState::alreadyExists, std::string(id), {}, {}};
         if (outcome != ConfigPublishState::confirmed)

@@ -111,6 +111,17 @@ PHPVPN_TEST(config_store, concurrent_complete_saves_remain_serialized) {
     PHPVPN_CHECK_EQ(fixture.files->writes, 2u);
     PHPVPN_REQUIRE_OK(fixture.store->readValid());
 }
+
+PHPVPN_TEST(config_store, directory_security_failure_propagates_without_default_or_save) {
+    StoreFixture fixture;
+    fixture.files->publishError = ErrorCode::config_directory_security_invalid;
+    PHPVPN_REQUIRE_ERROR(fixture.store->createDefault(), ErrorCode::config_directory_security_invalid);
+    PHPVPN_CHECK(!fixture.files->bytes);
+    fixture.files->bytes = makeDefaultEditorDocument();
+    PHPVPN_REQUIRE_ERROR(fixture.store->save(makeDefaultEditorDocument() + "\n", idA),
+        ErrorCode::config_directory_security_invalid);
+    PHPVPN_CHECK_EQ(*fixture.files->bytes, makeDefaultEditorDocument());
+}
 PHPVPN_TEST(config_store, exactly_one_bom_is_removed_per_input_boundary) {
     StoreFixture fixture;
     const auto normal = makeDefaultEditorDocument();
