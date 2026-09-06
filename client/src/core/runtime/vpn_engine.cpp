@@ -1,6 +1,7 @@
 #include "core/runtime/vpn_engine.h"
 
 #include <algorithm>
+#include <limits>
 #include <fstream>
 #include <system_error>
 #include <utility>
@@ -17,47 +18,6 @@ constexpr const char* kComponent = "engine";
 constexpr std::int64_t kBackoffLadderMs[] = {1000, 2000, 4000, 8000, 16000, 32000, 60000};
 constexpr int kBackoffLadderSize = static_cast<int>(sizeof(kBackoffLadderMs) / sizeof(kBackoffLadderMs[0]));
 
-Result<std::string> readWholeFile(const std::filesystem::path& path) {
-    std::error_code code;
-    if (!std::filesystem::exists(path, code)) {
-        return Error(ErrorCode::config_not_found, "the configuration file does not exist");
-    }
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) {
-        return Error(ErrorCode::config_read_failed, "the configuration file could not be opened");
-    }
-    std::string content((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-    if (!stream.eof() && stream.fail()) {
-        return Error(ErrorCode::config_read_failed, "the configuration file could not be read");
-    }
-    return content;
-}
-
-Status writeWholeFile(const std::filesystem::path& path, std::string_view content) {
-    std::error_code code;
-    std::filesystem::create_directories(path.parent_path(), code);
-
-    std::filesystem::path temporary = path;
-    temporary += ".tmp";
-    {
-        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        if (!stream) {
-            return Error(ErrorCode::config_write_failed, "the configuration could not be written");
-        }
-        stream.write(content.data(), static_cast<std::streamsize>(content.size()));
-        stream.flush();
-        if (!stream) {
-            return Error(ErrorCode::config_write_failed, "the configuration could not be written");
-        }
-    }
-    std::filesystem::rename(temporary, path, code);
-    if (code) {
-        std::filesystem::remove(temporary, code);
-        return Error(ErrorCode::config_write_failed, "the configuration could not be replaced");
-    }
-    return Status::success();
-}
-
 }  // namespace
 
 VpnEngine::VpnEngine(CryptoProvider& crypto,
@@ -65,13 +25,15 @@ VpnEngine::VpnEngine(CryptoProvider& crypto,
                      Clock& clock,
                      TunnelDriver& tunnelDriver,
                      NetConfig& netConfig,
-                     EnginePaths paths)
+                     EnginePaths paths,
+                     ConfigStore& configStore)
     : crypto_(crypto),
       transport_(transport),
       clock_(clock),
       tunnelDriver_(tunnelDriver),
       netConfig_(netConfig),
       paths_(std::move(paths)),
+      configStore_(configStore),
       network_(crypto, transport, clock),
       tunnelSession_(tunnelDriver, netConfig) {}
 
@@ -90,21 +52,18 @@ Status VpnEngine::start() {
         stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
     }
 
-    // A configuration that is missing at start is not an error; the user can
-    // still store one over IPC before the first connect.
-    auto loaded = loadStoredConfig();
-    if (!loaded.ok() && loaded.error().code != ErrorCode::config_not_found) {
-        PHPVPN_LOG_WARN(kComponent, loaded.error().message());
-    }
-
     // Leftovers of an abnormally terminated run are removed before anything
     // else touches the network configuration.
     TunnelSessionSettings settings;
+    settings.adapterName = paths_.adapterName;
+    settings.requestedGuid = paths_.adapterGuid;
     settings.journalPath = paths_.journalFile;
     settings.installDirectory = paths_.installDirectory;
     auto recovered = tunnelSession_.recoverPreviousRun(settings);
     if (!recovered.ok()) {
         PHPVPN_LOG_ERROR(kComponent, recovered.error().message());
+        running_.store(false);
+        return recovered.error();
     }
 
     thread_ = std::thread([this] { runNetworkThread(); });
@@ -112,7 +71,10 @@ Status VpnEngine::start() {
 }
 
 void VpnEngine::shutdown() {
-    if (!running_.exchange(false)) {
+    controlGeneration_.fetch_add(1);
+    const bool wasRunning = running_.exchange(false);
+    cancelDiagnostics();
+    if (!wasRunning) {
         if (thread_.joinable()) {
             thread_.join();
         }
@@ -147,44 +109,22 @@ VpnEngine::Command VpnEngine::takeCommand(std::int64_t waitMs) {
     return command;
 }
 
-Status VpnEngine::loadStoredConfig() {
-    std::string content;
-    PHPVPN_TRY_ASSIGN(content, readWholeFile(paths_.configFile));
-
-    ConfigWarnings warnings;
-    ClientConfigPtr config;
-    PHPVPN_TRY_ASSIGN(config, parseAndValidateConfig(content, warnings));
-
-    std::lock_guard<std::mutex> lock(configMutex_);
-    storedConfig_ = std::move(config);
-    storedWarnings_ = warnings;
-    return Status::success();
-}
-
 Result<std::string> VpnEngine::storedConfigJson() const {
-    std::lock_guard<std::mutex> lock(configMutex_);
-    if (!storedConfig_) {
-        return Error(ErrorCode::config_not_found, "no configuration is stored");
-    }
-    return storedConfig_->rawJson;
+    auto snapshot = configStore_.read();
+    if (!snapshot) return snapshot.error();
+    if (!snapshot->document) return Error(snapshot->reasonCode.value_or(ErrorCode::config_not_found));
+    return *snapshot->document;
 }
 
 Status VpnEngine::setConfigJson(std::string_view json) {
-    ConfigWarnings warnings;
-    ClientConfigPtr config;
-    PHPVPN_TRY_ASSIGN(config, parseAndValidateConfig(json, warnings));
-
-    PHPVPN_TRY(writeWholeFile(paths_.configFile, json));
-
-    std::lock_guard<std::mutex> lock(configMutex_);
-    const std::uint64_t generation = storedConfig_ ? storedConfig_->generation + 1 : 1;
-    auto stored = std::make_shared<ClientConfig>(*config);
-    stored->generation = generation;
-    storedConfig_ = std::move(stored);
-    storedWarnings_ = warnings;
-
+    std::string commitId;
+    PHPVPN_TRY_ASSIGN(commitId, crypto_.randomUuidV4());
+    auto commit = configStore_.save(json, commitId);
+    if (!commit) return commit.error();
+    if (commit->state != ConfigPublishState::confirmed)
+        return Error(ErrorCode::config_write_failed, "the publication is not confirmed");
     PHPVPN_LOG_INFO(kComponent, "a new configuration was stored");
-    return Status::success();
+    return ok();
 }
 
 Result<std::string> VpnEngine::lastInfoPlaintext() const {
@@ -196,22 +136,28 @@ Result<std::string> VpnEngine::lastInfoPlaintext() const {
 }
 
 Result<std::string> VpnEngine::fetchInfoOnce() {
-    std::lock_guard<std::mutex> lock(infoMutex_);
-
+    std::unique_lock lock(infoMutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return Error(ErrorCode::busy);
+    const auto generation = diagnosticGeneration_.load();
     ClientConfigPtr config;
+    PHPVPN_TRY_ASSIGN(config, configStore_.readValid());
+
+    std::unique_ptr<Transport> created;
+    PHPVPN_TRY_ASSIGN(created, createPlatformTransport());
+    std::shared_ptr<Transport> transport(std::move(created));
     {
-        std::lock_guard<std::mutex> configLock(configMutex_);
-        config = storedConfig_;
+        std::lock_guard diagnosticLock(diagnosticMutex_);
+        if (!running_.load() || generation != diagnosticGeneration_.load()) return Error(ErrorCode::cancelled);
+        diagnosticTransport_ = transport;
     }
-    if (!config) {
-        return Error(ErrorCode::config_missing, "no configuration is stored");
-    }
-
-    std::unique_ptr<Transport> transport;
-    PHPVPN_TRY_ASSIGN(transport, createPlatformTransport());
-
+    struct Cleanup {
+        VpnEngine& engine;
+        ~Cleanup() { std::lock_guard diagnosticLock(engine.diagnosticMutex_); engine.diagnosticTransport_.reset(); }
+    } cleanup{*this};
     NetworkWorker worker(crypto_, *transport, clock_);
-    PHPVPN_TRY(worker.configure(config));
+    PHPVPN_TRY(worker.configure(config, nullptr, [this, generation] {
+        return !running_.load() || generation != diagnosticGeneration_.load();
+    }));
 
     HealthResponse health;
     PHPVPN_TRY_ASSIGN(health, worker.performHealth());
@@ -224,54 +170,78 @@ Result<std::string> VpnEngine::fetchInfoOnce() {
 
 Status VpnEngine::connect() {
     if (!running_.load()) return Error(ErrorCode::service_not_running);
+    const auto generation = controlGeneration_.load();
     {
-        std::lock_guard<std::mutex> lock(configMutex_);
-        if (!storedConfig_) {
-            // A configuration may have appeared on disk since the service start.
-            auto loaded = Status::success();
-            {
-                // The mutex is already held, so the reload is done inline.
-                std::string content;
-                auto read = readWholeFile(paths_.configFile);
-                if (!read.ok()) {
-                    return read.error();
-                }
-                content = std::move(read).value();
-
-                ConfigWarnings warnings;
-                auto parsed = parseAndValidateConfig(content, warnings);
-                if (!parsed.ok()) {
-                    return parsed.error();
-                }
-                storedConfig_ = std::move(parsed).value();
-                storedWarnings_ = warnings;
-            }
-            (void)loaded;
+        std::unique_lock lock(stateMutex_);
+        if (state_ == ConnectionState::connecting || state_ == ConnectionState::connected ||
+            state_ == ConnectionState::recovering) return ok();
+        if (connectCommandPending_) {
+            stateSignal_.wait(lock, [this] { return !connectCommandPending_ || !running_.load(); });
+            return ok();
         }
     }
-
+    std::unique_lock transitionLock(transitionMutex_);
     {
-        std::unique_lock<std::mutex> lock(stateMutex_);
+        std::lock_guard lock(stateMutex_);
+        if (state_ == ConnectionState::connecting || state_ == ConnectionState::connected ||
+            state_ == ConnectionState::recovering) return ok();
+    }
+    // An action reads once, outside the state lock. Concurrent readers can
+    // share acceptance, but only the first accepted snapshot becomes active.
+    auto snapshot = configStore_.read();
+    if (!snapshot) return snapshot.error();
+    {
+        std::lock_guard lock(configMutex_);
+        configurationValid_ = snapshot->config != nullptr;
+        storedWarnings_ = snapshot->warnings;
+    }
+    if (!snapshot->config) return Error(snapshot->reasonCode.value_or(ErrorCode::config_invalid_value));
+    if (beforeConnect_) PHPVPN_TRY(beforeConnect_());
+    {
+        std::unique_lock lock(stateMutex_);
+        if (generation != controlGeneration_.load()) return Error(ErrorCode::cancelled);
+        if (!running_.load()) return Error(ErrorCode::service_not_running);
+        if (state_ == ConnectionState::connecting || state_ == ConnectionState::connected ||
+            state_ == ConnectionState::recovering) return ok();
+        if (!connectCommandPending_ && connectionEpoch_ == (std::numeric_limits<std::uint64_t>::max)()) return Error(ErrorCode::state_conflict);
         connectRequested_.store(true);
-        if (state_ == ConnectionState::connecting ||
-            state_ == ConnectionState::connected || state_ == ConnectionState::recovering)
-            return Status::success();
         if (!connectCommandPending_) {
+            {
+                std::lock_guard configLock(configMutex_);
+                pendingConfig_ = snapshot->config;
+            }
+            ++connectionEpoch_;
             connectCommandPending_ = true;
             pushCommand(Command::connect);
         }
-        // Wait only for the single network writer to publish acceptance and
-        // reset counters, never for bootstrap I/O. Concurrent callers share it.
         stateSignal_.wait(lock, [this] { return !connectCommandPending_ || !running_.load(); });
     }
     return Status::success();
 }
 
 Status VpnEngine::disconnect() {
+    controlGeneration_.fetch_add(1);
+    cancelDiagnostics();
     connectRequested_.store(false);
     pushCommand(Command::disconnect);
     transport_.cancelCurrentRequest();
     return Status::success();
+}
+
+ConnectionIdentity VpnEngine::connectionIdentity() const {
+    std::lock_guard lock(stateMutex_);
+    return {connectionEpoch_, state_, phase_, connectCommandPending_};
+}
+void VpnEngine::setDiagnosticHooks(std::function<Status()> beforeConnect, std::function<void()> cancelWizard) {
+    beforeConnect_ = std::move(beforeConnect);
+    cancelWizard_ = std::move(cancelWizard);
+}
+void VpnEngine::cancelDiagnostics() {
+    diagnosticGeneration_.fetch_add(1);
+    std::shared_ptr<Transport> transport;
+    { std::lock_guard lock(diagnosticMutex_); transport = diagnosticTransport_; }
+    if (transport) transport->cancelCurrentRequest();
+    if (cancelWizard_) cancelWizard_();
 }
 
 void VpnEngine::setState(ConnectionState state, ConnectionPhase phase) {
@@ -316,7 +286,8 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap) {
     ClientConfigPtr config;
     {
         std::lock_guard<std::mutex> lock(configMutex_);
-        config = storedConfig_;
+        if (initialBootstrap) activeConfig_ = std::move(pendingConfig_);
+        config = activeConfig_;
     }
     if (!config) {
         return Error(ErrorCode::config_missing, "no configuration is stored");
@@ -398,6 +369,8 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap) {
     setPhase(ConnectionPhase::starting_tunnel);
     if (!running_.load() || !connectRequested_.load()) return Error(ErrorCode::cancelled);
     TunnelSessionSettings settings;
+    settings.adapterName = paths_.adapterName;
+    settings.requestedGuid = paths_.adapterGuid;
     settings.journalPath = paths_.journalFile;
     settings.installDirectory = paths_.installDirectory;
 
@@ -690,7 +663,7 @@ DiagnosticsSnapshot VpnEngine::diagnostics() const {
 
     {
         std::lock_guard<std::mutex> lock(configMutex_);
-        snapshot.configurationValid = storedConfig_ != nullptr;
+        snapshot.configurationValid = configurationValid_;
         snapshot.configurationWarnings = storedWarnings_.messages();
     }
 

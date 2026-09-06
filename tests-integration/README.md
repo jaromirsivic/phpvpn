@@ -34,6 +34,15 @@ run, whether or not the tests pass.
 
 ## Prerequisites
 
+`tools/deploy-test.ps1 -Profile wizard-default` creates the separate default
+fixture with `CHANGE_THIS_SERVER_SECRET` and identities `.2` through `.15`.
+The default `integration` profile retains its original four custom access keys.
+Use `-WebRoot`, `-BufferDirectory`, `-BaseUrl`, `-LargeBodyBaseUrl` and
+`-ConfigurationPath` to isolate the fixture, then pass the generated file to
+pytest using `--server-config path/to/fixture.json`. Header replacement rejects
+anything other than exactly one expected secret, key-map and buffer block.
+`test_default_profile.py` verifies authentication for all fourteen defaults.
+
 - nginx and php-cgi are running. Start them with
   `powershell -ExecutionPolicy Bypass -File tools\start-test-server.ps1`.
 - After changing `phpvpn.php`, redeploy with
@@ -48,7 +57,7 @@ tests.
 ### The second endpoint for large bodies
 
 The nginx deployment keeps the default `client_max_body_size` of one mebibyte,
-which is far below `MAX_REQUEST_BODY_BYTES` of 4198400 bytes. A body above one
+which is above `MAX_REQUEST_BODY_BYTES` of 983040 bytes. A body above one
 mebibyte is therefore rejected by nginx before PHP runs. To exercise the real
 application limit, `tools/start-test-server.ps1` also starts the PHP built in
 server on `http://127.0.0.1:8081/phpvpn.php`, serving the same deployed file

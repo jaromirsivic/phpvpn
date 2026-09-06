@@ -23,6 +23,8 @@ PERFORMANCE_SAMPLES: list[tuple[str, float, str]] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--server-config", default=str(Path(__file__).with_name("server.json")),
+                     help="Path to an isolated deployment fixture JSON.")
     parser.addoption(
         "--large-body-url",
         action="store",
@@ -37,7 +39,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.fixture(scope="session")
 def configuration(pytestconfig: pytest.Config) -> Configuration:
     """Load the deployment description from `server.json`."""
-    path = Path(__file__).with_name("server.json")
+    path = Path(pytestconfig.getoption("--server-config"))
     assert path.is_file(), f"missing deployment description: {path}"
     return Configuration.load(path, large_body_url=pytestconfig.getoption("--large-body-url"))
 

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <future>
+#include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -23,7 +24,7 @@ using namespace std::chrono_literals;
 // external network, configuration files, adapters or routes.
 class BodyServer {
 public:
-    enum class Mode { complete, httpError, incomplete, truncated, reset };
+    enum class Mode { complete, httpError, incomplete, truncated, reset, slowBody, slowHeaders, tlsHandshake };
     explicit BodyServer(Mode mode, std::size_t bytes) : mode_(mode), body_(bytes, 'x') {
         WSADATA data{};
         if (WSAStartup(MAKEWORD(2, 2), &data) != 0) throw std::runtime_error("WSAStartup failed");
@@ -50,7 +51,7 @@ public:
         if (worker_.joinable()) worker_.join();
         WSACleanup();
     }
-    std::string url() const { return "http://127.0.0.1:" + std::to_string(port_) + "/phpvpn.php"; }
+    std::string url() const { return std::string(mode_ == Mode::tlsHandshake ? "https" : "http") + "://127.0.0.1:" + std::to_string(port_) + "/phpvpn.php"; }
     bool waitForBody() {
         std::unique_lock lock(mutex_);
         return wake_.wait_for(lock, 5s, [this] { return bodySent_; });
@@ -69,6 +70,14 @@ private:
     void serve() {
         const SOCKET peer = accept(listener_, nullptr, nullptr);
         if (peer == INVALID_SOCKET) return;
+        if (mode_ == Mode::tlsHandshake) {
+            std::unique_lock lock(mutex_);
+            bodySent_ = true;
+            wake_.notify_all();
+            wake_.wait_for(lock, 5s, [this] { return released_; });
+            closesocket(peer);
+            return;
+        }
         const DWORD timeout = 5000;
         setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
         std::string request;
@@ -85,7 +94,23 @@ private:
             (mode_ == Mode::httpError ? "503 Service Unavailable" : "200 OK") +
             "\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\nContent-Length: " +
             std::to_string(body_.size() + (incomplete ? 100 : 0)) + "\r\n\r\n";
-        if (sendAll(peer, response) && sendAll(peer, body_)) {
+        if (mode_ == Mode::slowHeaders) {
+            std::unique_lock lock(mutex_);
+            wake_.wait_for(lock, 3s, [this] { return released_; });
+        }
+        if (mode_ == Mode::slowBody) {
+            if (sendAll(peer, response)) {
+                // Deliver a complete WinHTTP internal read buffer before the
+                // trickle, making partial-byte evidence independent of its
+                // implementation-specific buffering of small socket writes.
+                if (!sendAll(peer, body_.substr(0, 8192))) { closesocket(peer); return; }
+                for (std::size_t i = 8192; i < body_.size(); i += 1024) {
+                    if (!sendAll(peer, body_.substr(i, 1024))) break;
+                    std::unique_lock lock(mutex_);
+                    if (wake_.wait_for(lock, 150ms, [this] { return released_; })) break;
+                }
+            }
+        } else if (sendAll(peer, response) && sendAll(peer, body_)) {
             std::unique_lock lock(mutex_);
             bodySent_ = true;
             wake_.notify_all();
@@ -189,4 +214,71 @@ PHPVPN_TEST(WinHttpAccounting, PartialBodySurvivesConnectionResetReadError) {
     auto response = transport->post(HttpAction::data, "{}");
     PHPVPN_CHECK(!response.ok());
     PHPVPN_CHECK_EQ(response.responseBodyBytesRead, 65536U);
+}
+
+PHPVPN_TEST(WinHttpDeadline, HeadersTlsAndTrickleBodyShareOneAbsoluteBudget) {
+    for (const auto mode : {BodyServer::Mode::slowHeaders, BodyServer::Mode::tlsHandshake, BodyServer::Mode::slowBody}) {
+        BodyServer server(mode, 65536);
+        auto transport = transportFor(server);
+        const auto start = std::chrono::steady_clock::now();
+        auto result = transport->post(HttpAction::data, "{}");
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        PHPVPN_CHECK(!result.ok());
+        if (!result.ok()) PHPVPN_CHECK_EQ(result.error().code, ErrorCode::transport_timeout);
+        // ERROR_WINHTTP_TIMEOUT may originate in TCP/IP independently of the
+        // configured WinHTTP intervals. The overall budget is an upper bound,
+        // not a requirement to delay an already reported native failure.
+        // https://learn.microsoft.com/en-us/windows/win32/winhttp/error-messages
+        std::cout << "    deadline mode=" << static_cast<int>(mode)
+                  << " elapsed=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+                  << " ms (native timeout may precede the absolute deadline)\n";
+        PHPVPN_CHECK(elapsed < 2500ms);
+        if (mode == BodyServer::Mode::slowBody) {
+            PHPVPN_CHECK(result.responseBodyBytesRead > 0);
+            PHPVPN_CHECK(result.responseBodyBytesRead < 65536);
+        }
+    }
+}
+
+PHPVPN_TEST(WinHttpDeadline, BoundarySettingsNeverBecomeInfinite) {
+    auto created = createPlatformTransport();
+    PHPVPN_REQUIRE_OK(created);
+    TransportSettings settings;
+    settings.serverUrl = "http://127.0.0.1/phpvpn.php";
+    for (const auto seconds : {0LL, -1LL, 2147484LL, 9223372036854775807LL}) {
+        settings.responseTimeoutSeconds = seconds;
+        PHPVPN_CHECK_EQ(created.value()->configure(settings).code(), ErrorCode::config_invalid_limit);
+    }
+    settings.responseTimeoutSeconds = 2147483;
+    PHPVPN_REQUIRE_OK(created.value()->configure(settings));
+}
+
+PHPVPN_TEST(WinHttpLifecycle, ConcurrentCancellationThenReuse) {
+    auto created = createPlatformTransport();
+    PHPVPN_REQUIRE_OK(created);
+    auto transport = std::move(created).value();
+    for (int i = 0; i < 5; ++i) {
+        BodyServer server(BodyServer::Mode::tlsHandshake, 0);
+        TransportSettings settings;
+        settings.serverUrl = server.url();
+        PHPVPN_REQUIRE_OK(transport->configure(settings));
+        auto pending = std::async(std::launch::async, [&] { return transport->post(HttpAction::health, "{}"); });
+        PHPVPN_CHECK(server.waitForBody());
+        const auto start = std::chrono::steady_clock::now();
+        std::thread first([&] { transport->cancelCurrentRequest(); });
+        std::thread second([&] { transport->cancelCurrentRequest(); });
+        first.join();
+        second.join();
+        auto result = pending.get();
+        PHPVPN_CHECK(std::chrono::steady_clock::now() - start < 2s);
+        PHPVPN_CHECK(!result.ok());
+        if (!result.ok()) PHPVPN_CHECK_EQ(result.error().code, ErrorCode::cancelled);
+    }
+    BodyServer server(BodyServer::Mode::complete, 42);
+    TransportSettings settings;
+    settings.serverUrl = server.url();
+    PHPVPN_REQUIRE_OK(transport->configure(settings));
+    auto response = transport->post(HttpAction::data, "{}");
+    PHPVPN_CHECK(response.ok());
+    PHPVPN_CHECK_EQ(response.responseBodyBytesRead, 42U);
 }

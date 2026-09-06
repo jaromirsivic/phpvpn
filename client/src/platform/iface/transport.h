@@ -32,6 +32,7 @@ struct TransportSettings {
 struct HttpResponse {
     int statusCode = 0;
     std::string body;
+    std::string contentType;
 };
 
 // Read accounting survives every failure, independently of the returned body.

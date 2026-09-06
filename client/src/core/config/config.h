@@ -19,7 +19,8 @@
 
 namespace phpvpn {
 
-// Defaults of plan_client.md chapter 8.1.
+// Shared defaults.
+inline constexpr std::string_view kDefaultServerSecret = "CHANGE_THIS_SERVER_SECRET";
 inline constexpr const char* kDefaultVpnCidr = "10.99.99.0/24";
 inline constexpr bool kDefaultTrustAnyTlsCertificate = true;
 inline constexpr std::int64_t kDefaultMaxOutboundQueueBytes = 67108864;
@@ -31,19 +32,21 @@ inline constexpr std::int64_t kDefaultMaxDataRecordsPerResponse = 65535;
 inline constexpr std::int64_t kDefaultResponseTimeoutSeconds = 30;
 inline constexpr std::int64_t kDefaultTimeSyncIntervalSeconds = 300;
 
-// First-start document written by the Windows Service when config.json is
-// absent. It is intentionally valid but points at a hostname that requires an
-// administrator edit before a real connection is attempted.
+// Shared editor template. Only an explicit approved save/create writes it.
 inline constexpr std::string_view kDefaultConfigDocument = R"json({
   "masterSetup": {
-    "serverUrl": "https://MODIFY-THIS/phpvpn.php",
+    "serverUrl": "http://127.0.0.1/phpvpn.php",
     "trustAnyTlsCertificate": true,
-    "serverSecret": "0000000000000000000000000000000000000000000000000000000000000000",
+    "serverSecret": "CHANGE_THIS_SERVER_SECRET",
     "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
     "accessKey": "0202020202020202020202020202020202020202020202020202020202020202"
   },
-  "communicationContracts": {}
+  "communicationContracts": {
+    "10.99.99.3": {
+      "payloadKey": "918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d"
+    }
+  }
 }
 )json";
 

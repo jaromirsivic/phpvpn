@@ -4,6 +4,13 @@ add_library(phpvpn-core STATIC
     core/base/logger.cpp
     core/base/secure_buffer.cpp
 
+    core/config/config_document.cpp
+    core/config/config_store.cpp
+    core/config/config_defaults.cpp
+    core/wizard/wizard_defaults.cpp
+    core/wizard/probe_client.cpp
+    core/wizard/wizard_service.cpp
+    core/wizard/wizard_model.cpp
     core/config/config.cpp
     core/config/config_parser.cpp
     core/config/config_validator.cpp
@@ -15,6 +22,7 @@ add_library(phpvpn-core STATIC
 
     core/ipc/ipc_dispatcher.cpp
     core/ipc/ipc_protocol.cpp
+    core/ipc/wizard_ipc.cpp
 
     core/protocol/base64url.cpp
     core/protocol/data_record.cpp
@@ -47,6 +55,7 @@ add_library(phpvpn-platform STATIC
     platform/iface/transport.cpp
 
     platform/windows/clock_win.cpp
+    platform/windows/config_files_win.cpp
     platform/windows/crypto_cng.cpp
     platform/windows/ipc_pipe.cpp
     platform/windows/netconfig_iphlpapi.cpp

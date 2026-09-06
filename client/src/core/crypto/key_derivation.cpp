@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "core/crypto/hkdf.h"
+#include "core/config/config.h"
 
 namespace phpvpn {
 namespace {
@@ -29,7 +30,7 @@ std::string joinWithNul(std::string_view domain, std::string_view value) {
 
 std::string normalizeServerSecret(std::string_view configured) {
     if (configured.size() == 0) {
-        return std::string(32, '0');
+        return std::string(kDefaultServerSecret);
     }
     return std::string(configured);
 }

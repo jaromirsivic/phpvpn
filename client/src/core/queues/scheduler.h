@@ -38,7 +38,7 @@ struct SchedulerLimits {
     // Reserve of 1 KiB above the expected serialisation overhead.
     static constexpr std::size_t kBodyReserveBytes = 1024;
 
-    std::int64_t maxRequestBodyBytes = 4198400;
+    std::int64_t maxRequestBodyBytes = 983040;
     std::int64_t maxDataRecordsPerRequest = 16;
 };
 

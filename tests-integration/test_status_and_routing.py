@@ -28,7 +28,8 @@ def test_status_page_reports_the_running_server(client: PhpVpnClient) -> None:
 def test_status_page_hides_the_configuration(client: PhpVpnClient) -> None:
     """Chapter 5.1, the public page must not disclose the configuration."""
     body = client.request("GET").text.lower()
-    for secret in ("accesskey", "server_secret", "buffer", "10.99.99.2"):
+    # The required predictable-secret warning legitimately names SERVER_SECRET.
+    for secret in ("accesskey", "buffer", "10.99.99.2"):
         assert secret not in body
 
 
@@ -37,11 +38,11 @@ def test_status_page_secret_warning_matches_the_configured_secret(
 ) -> None:
     """Chapter 5.1, the red warning appears only for a predictable secret."""
     secret = client.configuration.server_secret
-    predictable = secret == b"" or set(secret) <= {0x30} or set(secret) <= {0x00}
+    predictable = secret in (b"", b"CHANGE_THIS_SERVER_SECRET") or set(secret) <= {0x30} or set(secret) <= {0x00}
     body = client.request("GET").text
     warned = "Server is not secure" in body
     assert warned == predictable, (
-        "the warning must appear exactly for an empty, all zero byte or all ASCII "
+        "the warning must appear exactly for the default, empty, all zero byte or all ASCII "
         "zero server secret"
     )
 

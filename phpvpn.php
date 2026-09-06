@@ -31,9 +31,9 @@ const SERVER_VERSION = '1.0.0';
 /**
  * Single server secret shared with authorized clients.
  * Replace the default with a strong random value. An empty string is normalized
- * at runtime to 32 ASCII '0' characters and the status page warns about it.
+ * at runtime to CHANGE_THIS_SERVER_SECRET and the status page warns about it.
  */
-const SERVER_SECRET = '00000000000000000000000000000000';
+const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';
 
 /**
  * Per client access keys, keyed by the client VPN address.
@@ -44,6 +44,17 @@ const ACCESS_KEYS = [
     '10.99.99.2' => '0202020202020202020202020202020202020202020202020202020202020202',
     '10.99.99.3' => '0303030303030303030303030303030303030303030303030303030303030303',
     '10.99.99.4' => '0404040404040404040404040404040404040404040404040404040404040404',
+    '10.99.99.5' => '0505050505050505050505050505050505050505050505050505050505050505',
+    '10.99.99.6' => '0606060606060606060606060606060606060606060606060606060606060606',
+    '10.99.99.7' => '0707070707070707070707070707070707070707070707070707070707070707',
+    '10.99.99.8' => '0808080808080808080808080808080808080808080808080808080808080808',
+    '10.99.99.9' => '0909090909090909090909090909090909090909090909090909090909090909',
+    '10.99.99.10' => '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a',
+    '10.99.99.11' => '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b',
+    '10.99.99.12' => '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+    '10.99.99.13' => '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d',
+    '10.99.99.14' => '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+    '10.99.99.15' => '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f',
 ];
 
 /** Storage backend. Only 'disk' exists in v1. */
@@ -60,7 +71,7 @@ const VPN_HOST_MAX = 254;
 /** Protocol limits, see chapter 11.1 of protocol.md. */
 const MAX_DATA_RECORDS_PER_REQUEST = 16;
 const MAX_AUTH_RECORD_BYTES = 4096;
-const MAX_REQUEST_BODY_BYTES = 950000;
+const MAX_REQUEST_BODY_BYTES = 983040;
 const MAX_INFO_PLAINTEXT_BYTES = 262144;
 const MAX_QUEUE_BYTES_PER_CLIENT = 16777216;
 const AUTH_TIMESTAMP_SKEW_SECONDS = 60;
@@ -1102,7 +1113,7 @@ final class Config
         $configured = SERVER_SECRET;
         $secret = $configured;
         if ($secret === '') {
-            $secret = str_repeat('0', 32);
+            $secret = 'CHANGE_THIS_SERVER_SECRET';
         }
 
         if (PHP_INT_SIZE < 8) {
@@ -1149,7 +1160,7 @@ final class Config
 
     public function withSecret(string $configured): self
     {
-        $secret = $configured === '' ? str_repeat('0', 32) : $configured;
+        $secret = $configured === '' ? 'CHANGE_THIS_SERVER_SECRET' : $configured;
         return new self($configured, $secret, $this->accessKeys, $this->bufferDirectory);
     }
 
@@ -1184,7 +1195,7 @@ final class Config
             return true;
         }
         $secret = $this->serverSecret;
-        return $secret === str_repeat("\x00", strlen($secret)) || $secret === str_repeat('0', strlen($secret));
+        return $secret === 'CHANGE_THIS_SERVER_SECRET' || $secret === str_repeat("\x00", strlen($secret)) || $secret === str_repeat('0', strlen($secret));
     }
 
     private static function resolveBufferDirectory(string $path): string
@@ -1276,6 +1287,11 @@ final class ClaimedBatch
         public readonly array $pairs,
     ) {
     }
+}
+
+/** The storage lock wait expired, distinct from a full destination queue. */
+final class QueueBusy extends \RuntimeException
+{
 }
 
 interface Storage
@@ -1618,11 +1634,12 @@ final class DiskStorage implements Storage
             if (@flock($handle, LOCK_EX | LOCK_NB)) {
                 return $handle;
             }
-            if (microtime(true) >= $deadline) {
+            $remainingUs = (int) (($deadline - microtime(true)) * 1000000);
+            if ($remainingUs <= 0) {
                 @fclose($handle);
-                return null;
+                throw new QueueBusy();
             }
-            usleep($waitUs);
+            usleep(min($waitUs, $remainingUs));
             $waitUs = min($waitUs * 2, 25000);
         }
     }
@@ -2175,7 +2192,12 @@ final class DataHandler
         }
 
         $nowMs = $this->clock->nowMs();
-        [$accepted, $deferred, $acceptedBytes] = $this->publish($records, $src, $nowMs);
+        try {
+            [$accepted, $deferred, $acceptedBytes] = $this->publish($records, $src, $nowMs);
+        } catch (QueueBusy) {
+            Http::error($writer, 503, 'queue_busy');
+            return;
+        }
 
         // Best effort statistics, never able to change the protocol result, chapter 10.6.
         $this->storage->touchLastSeenBestEffort($src, $nowMs);
@@ -2435,7 +2457,7 @@ final class Application
         if ($configured === '') {
             return true;
         }
-        return $configured === str_repeat("\x00", strlen($configured))
+        return $configured === 'CHANGE_THIS_SERVER_SECRET' || $configured === str_repeat("\x00", strlen($configured))
             || $configured === str_repeat('0', strlen($configured));
     }
 

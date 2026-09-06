@@ -55,6 +55,10 @@ public:
         return ticks / kFileTimeTicksPerMillisecond;
     }
 
+    std::int64_t leaseMonotonicMs() override {
+        return static_cast<std::int64_t>(GetTickCount64());
+    }
+
 private:
     std::int64_t frequency_ = 1;
     std::int64_t origin_ = 0;

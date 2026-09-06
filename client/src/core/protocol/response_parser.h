@@ -16,6 +16,7 @@
 #include "core/base/secure_buffer.h"
 #include "core/crypto/crypto_provider.h"
 #include "core/crypto/key_derivation.h"
+#include "core/protocol/ipv4.h"
 
 namespace phpvpn {
 
@@ -27,14 +28,24 @@ struct HealthResponse {
     std::int64_t timestampMs = 0;
 };
 
+// Syntactically valid, explicitly unverified. Never publish this as a time sample.
+struct HealthSyntax {
+    HealthResponse fields;
+    std::string requestId;
+    std::string ivText;
+    std::vector<std::uint8_t> iv;
+    std::vector<std::uint8_t> tag;
+};
+struct SeenClient { Ipv4Address address; std::int64_t lastSeenMs = 0; };
+
 // Server limits taken from the verified `info` plaintext.
 struct ServerLimits {
     std::int64_t maxDataRecordsPerRequest = 16;
-    std::int64_t maxRequestBodyBytes = 4198400;
+    std::int64_t maxRequestBodyBytes = 983040;
     std::int64_t maxQueueBytesPerClient = 16777216;
     std::int64_t queueTtlSeconds = 60;
-    std::int64_t minDataPollIntervalMs = 80;
-    std::int64_t maxDataPollIntervalMs = 1000;
+    std::int64_t minDataPollIntervalMs = 50;
+    std::int64_t maxDataPollIntervalMs = 3200;
 };
 
 struct InfoResponse {
@@ -43,10 +54,15 @@ struct InfoResponse {
     ServerLimits limits;
     // Exact plaintext bytes, forwarded verbatim by the IPC command `get-info`.
     std::string plaintext;
+    std::vector<SeenClient> clients;
 };
 
 class ResponseParser {
 public:
+    static Result<HealthSyntax> parseHealthSyntax(std::string_view expectedRequestId, std::string_view body);
+    static Result<HealthResponse> verifyHealth(CryptoProvider& crypto, KeyDerivation& keys,
+        std::string_view serverSecret, const HealthSyntax& syntax);
+    static Result<InfoResponse> parseInfoPlaintext(std::string_view plaintext);
     // Validates the whole `health` object, derives the per requestId key and
     // verifies the 16 byte GMAC over the AAD with an empty plaintext.
     static Result<HealthResponse> parseHealth(CryptoProvider& crypto,

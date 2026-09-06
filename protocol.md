@@ -66,19 +66,23 @@ Přijetí rizika vychází z předpokladu, že klientská, transportní nebo apl
 
 Výchozí adresní prostor je `10.99.99.0/24`. Platné klientské adresy jsou `10.99.99.2` až `10.99.99.254`, zapsané bez vodicích nul. Jiný adresní prostor vyžaduje společnou konfiguraci všech účastníků, nikoli změnu wire formátu.
 
+Různé klientské počítače SMĚJÍ používat stejnou virtuální IP. phpvpn jedinečnost adres mezi počítači nevynucuje ani nerezervuje. Systém kolizi připouští, její náprava je odpovědností provozovatele a jde o chybu jeho konfigurace. Jedna položka `ACCESS_KEYS` autorizuje adresu, ne identitu konkrétního počítače.
+
 ### 3.2 Klíče
 
 Server a klienti používají tři oddělené třídy klíčů:
 
-1. `SERVER_SECRET`: právě jedna konstanta v konfigurační hlavičce PHP souboru, kterou znají server a oprávnění klienti. Výchozí hodnota je řetězec `"00000000000000000000000000000000"`, tedy přesně 32 ASCII znaků `0`, a správce ji má nahradit bezpečnou náhodnou hodnotou. Slouží pro `auth-semi`, šifrování `info` a odvození autentizačního klíče `auth-full`.
-2. `ACCESS_KEY`: právě jeden 32bajtový náhodný klíč unikátní pro jednoho klienta. Zná jej pouze server a daný klient a používá se jako vstupní tajemství při odvození autentizačního klíče `auth-full`. Server jej vyhledá v mapě `ACCESS_KEYS` podle VPN adresy `src`; samotný klíč ani jeho identifikátor se nikdy nepřenáší.
+1. `SERVER_SECRET`: právě jedna konstanta v konfigurační hlavičce PHP souboru, kterou znají server a oprávnění klienti. Výchozí hodnota je řetězec `"CHANGE_THIS_SERVER_SECRET"`, a správce ji má nahradit bezpečnou náhodnou hodnotou. Slouží pro `auth-semi`, šifrování `info` a odvození autentizačního klíče `auth-full`.
+2. `ACCESS_KEY`: právě jeden 32bajtový klíč pro danou VPN adresu. Pro neveřejné nastavení má být náhodný a znát jej mají pouze server a oprávnění klienti této adresy. Používá se jako vstupní tajemství při odvození autentizačního klíče `auth-full`. Server jej vyhledá v mapě `ACCESS_KEYS` podle VPN adresy `src`; samotný klíč ani jeho identifikátor se nikdy nepřenáší.
 3. `PAYLOAD_KEY`: právě jeden pevný 32bajtový end-to-end klíč pro každou uspořádanou dvojici VPN adres (`src`, `dst`). Znají jej pouze klienti daného směru komunikace; relay server jej NESMÍ mít. Distribuce je mimo protokol.
 
-Každá implementace serveru i klienta při startu normalizuje `SERVER_SECRET` ještě před validací konfigurace a před první kryptografickou operací. Je-li nakonfigurovaná hodnota přesně prázdný řetězec o délce nula bajtů, implementace ji za běhu nahradí řetězcem `"00000000000000000000000000000000"`, tedy 32 bajty `0x30`. Všude dále v tomto dokumentu označuje `SERVER_SECRET` tuto efektivní normalizovanou hodnotu. Jakákoli neprázdná hodnota se ponechá beze změny; zejména řetězec `"0"` ani hodnota tvořená nulovými bajty `0x00` se nenormalizují.
+Každá implementace serveru i klienta při startu normalizuje `SERVER_SECRET` ještě před validací konfigurace a před první kryptografickou operací. Je-li nakonfigurovaná hodnota přesně prázdný řetězec o délce nula bajtů, implementace ji za běhu nahradí řetězcem `"CHANGE_THIS_SERVER_SECRET"`. Všude dále v tomto dokumentu označuje `SERVER_SECRET` tuto efektivní normalizovanou hodnotu. Jakákoli neprázdná hodnota se ponechá beze změny; zejména řetězec `"0"`, 32 nebo 64 ASCII znaků `0` ani hodnota tvořená nulovými bajty `0x00` se nenormalizují.
 
 Kryptografické operace používají přesné bajty efektivního `SERVER_SECRET` bez implicitního hex nebo base64 dekódování. Prázdný nakonfigurovaný řetězec, hodnota tvořená pouze nulovými bajty `0x00` i řetězec tvořený pouze ASCII znaky `0` jsou platné vstupy a autentizované endpointy je nesmí odmítnout jen kvůli jejich obsahu; taková konfigurace však neposkytuje praktické utajení a veřejná stránka na ni upozorňuje. Každý `ACCESS_KEY` se zapisuje jako přesně 64 malých hexadecimálních znaků a pro kryptografii se dekóduje na 32 bajtů. Klienti vedou lokální mapu `PAYLOAD_KEYS[src][dst]`; každá její hodnota se pro AES-256-GCM dekóduje na přesně 32 bajtů.
 
 `SERVER_SECRET`, `ACCESS_KEY` ani `PAYLOAD_KEY` nemají identifikátor přenášený v protokolu. Klient zvolí jediný `PAYLOAD_KEY` výhradně podle přesné uspořádané dvojice `src` a `dst`.
+
+Výchozí mapa `ACCESS_KEYS` obsahuje adresy `10.99.99.2` až `10.99.99.15`. Klíčem je přesně dvouznakový malý hexadecimální zápis posledního oktetu opakovaný 32krát, například 32×`02` pro `.2`, 32×`0a` pro `.10` a 32×`0f` pro `.15`. Tyto veřejně odvoditelné defaulty nejsou náhodná tajemství. Jiný adresní prostor vyžaduje výslovnou změnu serverové konfigurace. Neexistuje automatická migrace, přepis neprázdných secretů ani zkoušení historických hodnot.
 
 ## 4. Transport HTTP, HTTPS a proxy
 
@@ -124,9 +128,9 @@ Jiné metody vrací `405 method_not_allowed` s hlavičkou `Allow`. Neznámá akc
 
 ### 5.1 Provozní stránka
 
-`GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Byla-li nakonfigurovaná hodnota `SERVER_SECRET` prázdná nebo je-li jeho efektivní hodnota tvořena pouze nulovými bajty `0x00` či pouze ASCII znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
+`GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Byla-li nakonfigurovaná hodnota `SERVER_SECRET` prázdná nebo je-li jeho efektivní hodnota přesně `CHANGE_THIS_SERVER_SECRET` nebo tvořena pouze nulovými bajty `0x00` či pouze ASCII znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
 
-Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: prázdný nebo nulový `SERVER_SECRET` neblokuje `health`, `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`. Protože je však taková hodnota veřejně předvídatelná, neposkytuje tag odpovědi `health` praktický důkaz identity serveru.
+Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: výchozí, prázdný nebo nulový `SERVER_SECRET` neblokuje `health`, `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`. Protože je však taková hodnota veřejně předvídatelná, neposkytuje tag odpovědi `health` praktický důkaz identity serveru.
 
 ### 5.2 `health`
 
@@ -157,7 +161,7 @@ Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfigu
 
 Pořadí členů JSON objektu není sémantické. Klient znalý `SERVER_SECRET` MUSÍ před použitím `timestamp` ověřit, že jde o platný 24znakový UTC čas ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`, dále ověřit `requestId`, délku IV, odvodit klíč a ověřit GCM tag. Do úspěšného ověření nesmí změnit svůj časový offset ani vytvořit autentizovaný požadavek založený na přijatém čase. Při chybějícím nebo neplatném tagu, neshodném `requestId` či jiném neplatném poli celou odpověď zahodí.
 
-Klient musí před prvním autentizovaným požadavkem získat a ověřit čas serveru přes `health`; stejný postup zopakuje po `401`, pokud může být příčinou odchylka hodin. Server neověřuje znalost `SERVER_SECRET` u požadavku, ale platná odpověď dokazuje tuto znalost klientovi, který umí tag nezávisle ověřit.
+Klient musí před prvním autentizovaným požadavkem získat a ověřit čas serveru přes `health`. V provozní recovery stejný postup zopakuje po `401`, pokud může být příčinou odchylka hodin. Jednorázová diagnostická kontrola po chybě včetně `401` skončí bez automatického retry. Nová samostatně vyžádaná autentizovaná kontrola začne novým ověřeným `health`. Server neověřuje znalost `SERVER_SECRET` u požadavku, ale platná odpověď dokazuje tuto znalost klientovi, který umí tag nezávisle ověřit.
 
 ## 6. Společný wire formát
 
@@ -229,7 +233,7 @@ fullAuthKey          = HKDF-SHA-256(ACCESS_KEY, authFullSalt, authFullInfo, 32)
 
 `authFullSaltDomain` a `authFullKeyDomain` jsou veřejné konstantní doménové řetězce pro oddělení kontextu: první označuje vstup odvození saltu a druhý hodnotu HKDF `info`. `NUL` je jediný bajt `0x00` a `src` jsou přesné ASCII bajty validované VPN adresy bez vodicích nul. Doménové řetězce, oddělovač, pořadí argumentů i výstupní délka jsou normativní. Na rozdíl od veřejně konstantního `authSemiSalt` je `authFullSalt` klientsky specifický a odvozuje se ze `SERVER_SECRET` a `src`; klientův jediný `ACCESS_KEY` je poté vstupním tajemstvím HKDF. Bez obou tajemství nelze vypočítat správný `fullAuthKey` ani HMAC tag. `fullAuthKey` se nepřenáší, neukládá do protokolového stavu a nemá identifikátor.
 
-Prázdný nakonfigurovaný `SERVER_SECRET` se podle kapitoly 3.2 před tímto odvozením normalizuje na 32 ASCII znaků `0`. Prázdný nebo nulový vstup tak zůstává platnou konfigurací, ale jako veřejně předvídatelná hodnota neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
+Prázdný nakonfigurovaný `SERVER_SECRET` se podle kapitoly 3.2 před tímto odvozením normalizuje na řetězec `CHANGE_THIS_SERVER_SECRET`. Prázdný nebo nulový vstup tak zůstává platnou konfigurací, ale jako veřejně předvídatelná hodnota neposkytuje druhé praktické tajemství; proto na něj provozní stránka povinně upozorňuje.
 
 ### 7.3 Autentizace odpovědi `health`
 
@@ -497,7 +501,13 @@ Jeho `requestId` se musí shodovat s aktuálním požadavkem i s `data-result`. 
 
 Klient MUSÍ přijmout úplné NDJSON tělo s uvedeným pořadím a přesně jedním závěrečným `data-mac`. Z přijatých datových řádků ve stejném pořadí sestaví `canonical`, použije přesné přijaté bajty `dataResultLine`, vypočte HMAC a porovná jej konstantním časem. Chybějící nebo neplatný `data-mac`, neshodný `requestId`, jiný počet či pořadí dvojic nebo změněný `data-result` zneplatní celou odpověď. V takovém případě klient NESMÍ odstranit žádnou položku ze své odchozí fronty ani předat žádný přijatý payload a odpověď zahodí.
 
-Teprve po úspěšném ověření `data-mac` klient použije `acceptedMessageIds` a každý datový řádek samostatně ověří podle AES-GCM pravidel v kapitole 9.4. Řádek s neplatným GCM tagem zahodí a ostatní platné payloady může zpracovat. GCM ověření chrání pole a ciphertext jednotlivého záznamu; HMAC nad uspořádanými dvojicemi chrání jeho přítomnost a pozici v odpovědi. Protokol neposílá žádné následné potvrzení.
+Při normálním bootstrapu, recovery a provozním pollingu teprve po úspěšném ověření `data-mac` klient použije `acceptedMessageIds` a každý datový řádek samostatně ověří podle AES-GCM pravidel v kapitole 9.4. Řádek s neplatným GCM tagem zahodí a ostatní platné payloady může zpracovat. GCM ověření chrání pole a ciphertext jednotlivého záznamu; HMAC nad uspořádanými dvojicemi chrání jeho přítomnost a pozici v odpovědi. Protokol neposílá žádné následné potvrzení.
+
+Klient smí provést jednorázovou diagnostickou kontrolu přístupu s nejvýše jedním prázdným requestem `data`, jehož tělo obsahuje pouze `auth-full` a LF. Před úspěšným ukončením musí úplně ověřit HTTP úspěch, strukturu NDJSON, korelaci `requestId` v `data-result` i `data-mac`, všechny velikostní a početní limity, kanoničnost a směrovací pravidla záznamů včetně shody `dst` s kontrolovanou adresou, nulový výsledek prázdného requestu (prázdné seznamy accepted/deferred, nulové acceptedRecords/acceptedBytes) a platný závěrečný `data-mac`. Poté smí všechny přijaté datové záznamy zahodit bez ověření payload GCM a bez dešifrování. Žádný přijatý payload nesmí uložit, doručit síťové vrstvě, zařadit do provozní fronty, předat jiné části klienta ani jinak použít. Nesmí odstranit položku z provozní odchozí fronty nebo změnit provozní stav klienta.
+
+Kontrola ověřuje Access Key a autentizovanou strukturu serverové odpovědi. Neprokazuje autenticitu, integritu ani čitelnost plaintextu jednotlivých payloadů. Tato výjimka se nevztahuje na normální bootstrap připojení, recovery ani pravidelný provozní polling `data`. Tyto cesty musí po ověření `data-mac` nadále provést úplné GCM ověření každého zpracovávaného datového záznamu a platné payloady zpracovat podle běžných pravidel.
+
+Diagnostický request má stejné at-most-once důsledky jako jiný polling. Může nenávratně odebrat čekající zprávy i tehdy, když se jeho výsledek klientovi nedoručí. Zadavatel kontroly MUSÍ být o tomto účinku předem informován. Automatické opakování kterékoli části jednorázové diagnostiky po chybě včetně `401` je zakázáno. Další samostatně vyžádaná autentizovaná kontrola začne čerstvým ověřeným časem a smí znovu odebrat další zprávy.
 
 Jakmile worker atomicky převezme konkrétní soubor dávky k odeslání, nesmí jej žádný jiný worker vydat. Pokud worker selže před odesláním odpovědi, odpověď nedorazí, je neúplná, má neplatný `data-mac` nebo ji klient nezpracuje, již převzaté dávky se neobnovují. Jde o vědomě přijaté optimistické at-most-once chování na úrovni jednotlivé dávky. `data-mac` zajišťuje autenticitu výsledku a detekci změny počtu či pořadí datových řádků, ale nezajišťuje doručení.
 
@@ -606,9 +616,13 @@ Doporučené výchozí hodnoty klienta:
 - connect timeout 5 s;
 - celkový timeout requestu 15 s;
 - exponenciální backoff po síťové chybě nebo `503`, počínaje 250 ms, nejvýše 30 s, vždy s jitterem;
-- interval mezi voláními `data` může klient omezit podle aktivních hodnot `minDataPollIntervalMs` a `maxDataPollIntervalMs` z odpovědi `info`; výchozí doporučené rozmezí je 80 až 1 000 ms.
+- interval mezi voláními `data` může klient omezit podle aktivních hodnot `minDataPollIntervalMs` a `maxDataPollIntervalMs` z odpovědi `info`; výchozí doporučené rozmezí je 50 až 3 200 ms.
 
-Server může u `503` poslat `Retry-After`. Klient jej respektuje jako dolní hranici čekání. Položky uvedené v `deferredMessageIds` klient ponechá ve své odchozí frontě pro pozdější pokus, ale nadále pokračuje v pollingu, aby nedostupný cíl neblokoval jeho příchozí provoz.
+Celkový timeout je jediný absolutní monotónní deadline od zahájení requestu zahrnující DNS, spojení, TLS, odeslání, hlavičky a celé tělo odpovědi. Dílčí přenos ani změna fáze jej neobnoví. Uvedených 15 s je obecné doporučení. Nativní klient podle `client.md` má vlastní normativní konfigurovatelný default `responseTimeoutSeconds=30`. Převody časových jednotek a součet s monotónním časem musí být kontrolované. Nereprezentovatelná hodnota ani selhání nastavení timeoutu nesmějí vést k zápornému, nekonečnému nebo tiše změněnému timeoutu. Expirace vyvolá bezpečné zrušení s krátkou konečnou dobou úklidu a potvrzeným terminálním stavem před nahrazením requestu nebo uvolněním prostředků. Výsledkem zůstane timeout, nikoli pozdní úspěch.
+
+Backoff a automatická obnova se vztahují na provozní komunikaci. Jednorázová diagnostika po chybě skončí bez automatického retry včetně `401`. Nová samostatně vyžádaná autentizovaná kontrola začne čerstvým ověřeným `health`.
+
+Server může u `503` poslat `Retry-After`. Při provozním opakování jej klient respektuje jako dolní hranici čekání. Položky uvedené v `deferredMessageIds` klient ponechá ve své odchozí frontě pro pozdější pokus, ale nadále pokračuje v pollingu, aby nedostupný cíl neblokoval jeho příchozí provoz.
 
 ## 12. Stavy a přechody
 
@@ -643,7 +657,7 @@ Chybové tělo je malý obecný JSON objekt:
 | HTTP | `code` | Význam | Reakce klienta |
 |---:|---|---|---|
 | 400 | `bad_request` | Neplatný JSON/NDJSON, pořadí, pole, hodnota, formát UTC timestampu, kódování či délka HMAC tagu nebo duplicitní klíč. | Opravit request; neopakovat beze změny. |
-| 401 | `unauthorized` | Neplatný autentizační HMAC tag, `src`, konfigurace `SERVER_SECRET` nebo `ACCESS_KEY`, podvržené `src` v datovém záznamu nebo timestamp mimo povolené okno. | Obnovit čas pouze přes platně ověřený `health`, ověřit obě tajemství; nemaž data. |
+| 401 | `unauthorized` | Neplatný autentizační HMAC tag, `src`, konfigurace `SERVER_SECRET` nebo `ACCESS_KEY`, podvržené `src` v datovém záznamu nebo timestamp mimo povolené okno. | V provozní recovery obnovit čas přes ověřený `health` a ověřit tajemství. Jednorázovou diagnostiku ukončit bez retry, další vyžádanou kontrolu začít novým ověřeným časem. Nemaž data. |
 | 404 | `not_found` | Neznámá akce. | Opravit URL. |
 | 405 | `method_not_allowed` | Nepovolená metoda. | Řídit se `Allow`. |
 | 413 | `payload_too_large` | Překročen limit těla nebo počtu záznamů. | Zmenšit request. |
@@ -652,6 +666,8 @@ Chybové tělo je malý obecný JSON objekt:
 | 503 | `queue_unavailable` | Backend nelze bezpečně použít. | Backoff; administrátorská kontrola. |
 | 503 | `server_misconfigured` | Nekonzistentní limity nebo jiná neplatná serverová konfigurace. | Neopakovat rychle; opravit server. |
 | 500 | `internal_error` | Neočekávaná interní chyba. | Ponechat data, backoff. |
+
+Reakce s backoffem v tabulce platí pro provozní obnovu. Jednorázová diagnostika při každé chybě skončí bez automatického opakování podle 5.2 a 11.2.
 
 Chybová odpověď není autentizovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
 
@@ -688,13 +704,13 @@ Normalizace z kapitoly 3.2 musí proběhnout při startu ještě před předán�
 ```php
 $serverSecret = SERVER_SECRET;
 if ($serverSecret === '') {
-    $serverSecret = str_repeat('0', 32);
+    $serverSecret = 'CHANGE_THIS_SERVER_SECRET';
 }
 ```
 
-Všechny následné kryptografické operace používají výhradně `$serverSecret`. Funkce `empty()` se pro tuto normalizaci NESMÍ použít, protože by chybně považovala platný neprázdný řetězec `"0"` za prázdný. Po normalizaci není vstupní klíč žádného zde předepsaného volání `hash_hkdf()` prázdný: původně prázdný `SERVER_SECRET` má 32 ASCII znaků `0`, každá jiná hodnota `SERVER_SECRET` je z definice neprázdná a odvození `auth-full` dostane validovaný 32bajtový `ACCESS_KEY`. Prázdný nakonfigurovaný `SERVER_SECRET` proto nesmí vyvolat `ValueError`, `500 internal_error` ani `503 server_misconfigured`.
+Všechny následné kryptografické operace používají výhradně `$serverSecret`. Funkce `empty()` se pro tuto normalizaci NESMÍ použít, protože by chybně považovala platný neprázdný řetězec `"0"` za prázdný. Po normalizaci není vstupní klíč žádného zde předepsaného volání `hash_hkdf()` prázdný: původně prázdný `SERVER_SECRET` má hodnotu `CHANGE_THIS_SERVER_SECRET`, každá jiná hodnota `SERVER_SECRET` je z definice neprázdná a odvození `auth-full` dostane validovaný 32bajtový `ACCESS_KEY`. Prázdný nakonfigurovaný `SERVER_SECRET` proto nesmí vyvolat `ValueError`, `500 internal_error` ani `503 server_misconfigured`.
 
-Tělo požadavku `data` může mít přibližně 4,00 MiB. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a `data-mac`. Server pro HMAC odpovědi zpracovává pouze uspořádaný seznam `messageId` a GCM tagů a malý hash `data-result`, nikoli celý ciphertext; výpočet lze provádět průběžně s konstantní dodatečnou pamětí. `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
+Výchozí horní mez těla požadavku `data` je `MAX_REQUEST_BODY_BYTES = 983040` bajtů. Implementace jej smí streamovat a průběžně hashovat, ale všechny změny storage musí odložit až po ověření `auth-full`. Odpověď může obsahovat celý buffer klienta, tedy až přibližně `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a `data-mac`. Server pro HMAC odpovědi zpracovává pouze uspořádaný seznam `messageId` a GCM tagů a malý hash `data-result`, nikoli celý ciphertext; výpočet lze provádět průběžně s konstantní dodatečnou pamětí. `memory_limit` musí mít dostatečnou rezervu pro request, celý seznam odpovědi a JSON struktury.
 
 Diskový driver musí používat cesty odvozené pouze z již validované VPN adresy, zamykání s timeoutem, atomickou publikaci a obranu proti zpřístupnění bufferů i statistických markerů přes webserver. Nemá používat neomezený globální zámek. Zákaz zámků pro `info.json` nemění zámková pravidla datového bufferu. Údržba po odpovědi musí mít časový a početní rozpočet.
 
@@ -707,7 +723,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 1. Stejný request přes HTTP, HTTPS, přímé spojení a proxy vede ke stejnému aplikačnímu výsledku.
 2. Podvržené `X-Forwarded-*` hlavičky neovlivní autentizaci, `src`, frontu ani odpověď.
 3. URL s neznámou akcí a nepovolená metoda vrátí správné obecné chyby.
-4. Root stránka zobrazí H1; při výchozích 32 ASCII znacích `0` i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `health`, `info` a `data` zůstávají funkční.
+4. Root stránka zobrazí H1; při výchozím `CHANGE_THIS_SERVER_SECRET` i při prázdném nebo jinak pouze nulovém `SERVER_SECRET` navíc zobrazí červený H2, přičemž `health`, `info` a `data` zůstávají funkční.
 5. `GET` a `HEAD` na akci `health` vrátí `405` s `Allow: POST`. Validní `POST` obsahuje právě `auth-none` s čerstvým UUIDv4 `requestId`, bez timestampu, tagu nebo jiného důkazu znalosti tajemství.
 6. Úspěšný `health` má přesně sedm povinných polí `serverVersion`, `status`, `description`, `timestamp`, původní `requestId`, 12bajtové `iv` a 16bajtový `tag`; status je `running`, description `OK` a timestamp má přesný UTC tvar `YYYY-MM-DDTHH:MM:SS.sssZ` s přesností na milisekundy.
 7. Klient před ověřením GCM tagu nezmění časový offset. Po úspěšném ověření pomocí efektivního `SERVER_SECRET` odvodí offset vůči serveru; změněná nebo podvržená odpověď offset neovlivní.
@@ -736,16 +752,16 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 7. Server přijme UTC časy s odchylkou přesně `-60.000`, `0.000` a `+60.000` s a odmítne `-60.001` a `+60.001` s; porovnání provádí s přesností na milisekundy a po zpracování nevytvoří timestamp ani nonce záznam.
 8. Autentizační pole `tag` v typech `auth-semi` a `auth-full` musí být base64url bez paddingu a dekódovat se na přesně 32 bajtů; porovnání probíhá konstantním časem. Typ `auth-none` pole `tag` NESMÍ obsahovat.
 9. `auth-full.src` vybere právě jeden `ACCESS_KEY` a je vstupem odvození i kanonizace; jeho změna změní `fullAuthKey` i tag. Neznámé `src` skončí obecným `401` po odvození s dummy klíčem a každý datový záznam musí mít stejné `src`.
-10. Příjemce zahodí řádek, jehož `dst` není jeho vlastní nakonfigurovaná VPN adresa, ještě před výběrem `PAYLOAD_KEY`; pro každou zbývající uspořádanou dvojici `src` a `dst` jednoznačně vybere právě jeden pevný `PAYLOAD_KEY`. Relay tuto mapu nemá.
+10. Příjemce zahodí řádek, jehož `dst` není jeho vlastní nakonfigurovaná VPN adresa, ještě před výběrem `PAYLOAD_KEY`; při provozním zpracování pro každou zbývající uspořádanou dvojici `src` a `dst` jednoznačně vybere právě jeden pevný `PAYLOAD_KEY`. Relay tuto mapu nemá.
 11. Změna `messageId`, směrovacího pole `src` nebo `dst`, IV, ciphertextu či tagu zneplatní GCM ověření, protože routingová pole zůstávají součástí AAD.
 12. `health` IV má 12 bajtů a GCM tag 16 bajtů. `info` salt má 32 bajtů, IV 12 bajtů a GCM tag 16 bajtů; dvě odpovědi mají nové náhodné hodnoty.
 13. Klient neparsuje plaintext `info` ani nepředá payload před úspěšným ověřením GCM tagu.
-14. Každý přímý datový řádek odpovědi se samostatně ověří pomocí AES-GCM; řádek s neplatným GCM tagem se zahodí bez ovlivnění ostatních platných řádků.
-15. Nakonfigurovaný `SERVER_SECRET` o délce nula bajtů se při startu serveru i klienta normalizuje na přesně 32 ASCII znaků `0`. Known-answer test pro prázdnou a explicitně zadanou hodnotu `"00000000000000000000000000000000"` musí dát shodný `semiKey`, klíč odpovědi `info`, `authFullSalt`, `fullAuthKey` i výsledné tagy a nesmí vyvolat `ValueError`. Neprázdný řetězec `"0"` a 32 nulových bajtů `0x00` se nenormalizují a musí dát výsledky odpovídající jejich vlastním přesným bajtům.
+14. Při normálním bootstrapu, recovery a provozním pollingu se každý zpracovávaný datový řádek samostatně ověří pomocí AES-GCM. Řádek s neplatným GCM tagem se zahodí bez ovlivnění ostatních platných řádků.
+15. Nakonfigurovaný `SERVER_SECRET` o délce nula bajtů se při startu serveru i klienta normalizuje na přesný řetězec `CHANGE_THIS_SERVER_SECRET`. Known-answer test pro prázdnou a explicitně zadanou hodnotu `"CHANGE_THIS_SERVER_SECRET"` musí dát shodný `semiKey`, klíč odpovědi `info`, `authFullSalt`, `fullAuthKey` i výsledné tagy a nesmí vyvolat `ValueError`. Neprázdný řetězec `"0"`, 32 i 64 ASCII znaků `0` a 32 nulových bajtů `0x00` se nenormalizují a musí dát výsledky odpovídající jejich vlastním přesným bajtům.
 16. PHP server i PHP klient používá softwarovou implementaci AES-256-GCM v čistém PHP bez ohledu na to, zda jsou OpenSSL, Sodium nebo jiná kryptografická rozšíření dostupná. Test s dostupnými i nedostupnými rozšířeními musí projít stejnou softwarovou cestou a vytvořit přesně stejné výstupy pro `health`, `info` i end-to-end payload.
 17. Pro pevný klíč, IV, AAD a plaintext vytvoří softwarová implementace přesně očekávaný ciphertext a 16bajtový tag podle known-answer vektoru AES-256-GCM. Správně dešifruje platný vektor, odmítne změnu jediného bitu klíče, IV, AAD, ciphertextu či tagu a před úspěšným ověřením tagu nezpřístupní žádný plaintext.
 18. Known-answer test `data-mac` sestaví `canonical` z doménového řetězce, akce, `requestId`, desítkového počtu záznamů, uspořádaných dvojic `messageId` a přesného base64url GCM tagu a `SHA256HEX` přesných bajtů `data-result` bez LF. Výsledkem je přesně 32bajtový `HMAC-SHA-256(fullAuthKey, canonical)`, jehož pole `tag` je base64url bez paddingu a dekóduje se na přesně 32 bajtů.
-19. Přidání, odstranění nebo přeuspořádání datového řádku, změna jeho `messageId` či GCM tagu, změna počtu záznamů nebo jediného bajtu `data-result` zneplatní `data-mac`. Změnu jiného pole datového řádku při zachovaném GCM tagu odhalí následné AES-GCM ověření. Chybějící, změněný nebo neplatný `data-mac` nesmí způsobit odstranění žádné položky z odchozí fronty ani předání payloadu.
+19. Přidání, odstranění nebo přeuspořádání datového řádku, změna jeho `messageId` či GCM tagu, změna počtu záznamů nebo jediného bajtu `data-result` zneplatní `data-mac`. Při provozním zpracování změnu jiného pole datového řádku při zachovaném GCM tagu odhalí následné AES-GCM ověření. Diagnostika podle 9.5 integritu payloadu neprokazuje. Chybějící, změněný nebo neplatný `data-mac` nesmí způsobit odstranění žádné položky z odchozí fronty ani předání payloadu.
 20. Known-answer test `health` pro pevný efektivní `SERVER_SECRET`, `requestId`, IV a veřejná pole ověří přesné `healthSaltMaterial`, `healthSalt`, `healthInfo`, `healthKey`, AAD a 16bajtový GMAC tag nad prázdným plaintextem podle kapitoly 7.3.
 21. Změna jediného znaku `serverVersion`, `status`, `description`, `timestamp`, `requestId` nebo base64url IV zneplatní tag `health`. Prázdný, zkrácený nebo prodloužený tag a tag vypočtený s jiným `SERVER_SECRET` jsou odmítnuty a nesmí změnit klientský časový offset.
 22. Odpověď s platným tagem pro starý nebo jiný `requestId` je odmítnuta. Replay stejného požadavku `auth-none` může vytvořit více platných serverových odpovědí se stejným `requestId`, ale klient přijme nejvýše odpověď k právě probíhajícímu pokusu a server kvůli tomu nevytvoří persistentní stav.
@@ -785,7 +801,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 
 1. Dvojí odeslání identického platného requestu uvnitř 60sekundového okna vytvoří dvě zpracování.
 2. Tentýž request se stářím 61 s server odmítne obecným `401`; timestamp se nepersistuje a nevznikne nonce ani replay databáze.
-3. Dvojí doručení stejné platné odpovědi vede k opětovnému ověření `data-mac` i jednotlivých GCM tagů a payload je předán dvakrát.
+3. Při provozním zpracování dvojí doručení stejné platné odpovědi vede k opětovnému ověření `data-mac` i jednotlivých GCM tagů a payload je předán dvakrát.
 4. Opakované `messageId`, IV a autentizační HMAC tag nejsou porovnávány s historií.
 5. Replay uvnitř okna může zaplnit frontu, ale nemůže bez klíče změnit chráněný obsah nebo vytvořit nový platný tag.
 6. Zdrojový strom a runtime storage po testech neobsahují adresář, tabulku ani soubor určený pro nonce/replay cache.
@@ -793,13 +809,23 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 8. Vyšší vrstva může po ztrátě vytvořit nové pakety a pokus opakovat, ale test nesmí předpokládat retransmisi pro každý typ provozu ani garantovat, že opakovaný pokus při pokračujícím útoku dorazí.
 9. Replay dřívější odpovědi `health` proti novému `auth-none` selže na neshodě `requestId`. Zdržení aktuální platné odpovědi může způsobit pouze starší ověřený čas nebo nedostupnost; bez znalosti `SERVER_SECRET` nelze vytvořit platný tag s budoucím timestampem.
 
+### 16.7 Jednorázová diagnostika a časový limit
+
+1. Platná diagnostická odpověď s více datovými záznamy a platným `data-mac` smí uspět i s neověřitelným payload GCM. Žádný payload se nedešifruje, nepředá, neuloží ani nepromítne do provozního stavu.
+2. Změna ciphertextu zachovávající kanonický formát a původní GCM tag není pro tuto diagnostiku důkazem integrity obsahu. Stejný poškozený payload se v normálním bootstrapu, recovery a provozu odmítne při GCM ověření.
+3. Chybný HTTP status, NDJSON, korelace, směrování, limit, nenulový výsledek prázdného requestu nebo závěrečný `data-mac` diagnostiku zneplatní. Samotný platný MAC neomlouvá ostatní chyby.
+4. Jedna vyžádaná kontrola odešle nejvýše jeden prázdný `data` request. `401`, `503`, transportní chyba i ztracená odpověď ukončí pokus bez retry. Nová vyžádaná autentizovaná kontrola začne novým ověřeným `health`.
+5. Předem je oznámené možné nenávratné odebrání zpráv. Po ztracené odpovědi je server neobnoví a další vyžádaný pokus může odebrat další zprávy.
+6. Pomalé DNS, TLS, hlavičky, průběžně přicházející bloky i neukončené tělo respektují jediný celkový deadline. Hraniční převody, selhání nastavení timeoutu a souběh timeout/cancel/success nesmějí vrátit pozdní úspěch nebo uvolnit dosud používaný kontext.
+7. Výchozí server autentizuje všech čtrnáct adres `.2` až `.15` jejich přesnými výchozími klíči. Dva počítače se stejnou adresou a odpovídajícími tajemstvími se neodmítají z důvodu duplicity IP.
+
 ## 17. Kontrolní seznam shody
 
 Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 
 - podporuje všechny čtyři endpointy a přesné typy zpráv;
 - přijímá `health` pouze metodou `POST` s neautentizovaným `auth-none`, vrací původní `requestId`, IV a GCM tag nad všemi provozními poli a klient použije serverový čas teprve po ověření tagu pomocí efektivního `SERVER_SECRET`;
-- při startu serveru i klienta normalizuje pouze přesně prázdný nakonfigurovaný `SERVER_SECRET` na 32 ASCII znaků `0` a pro všechny kryptografické operace používá tuto efektivní hodnotu;
+- při startu serveru i klienta normalizuje pouze přesně prázdný nakonfigurovaný `SERVER_SECRET` na řetězec `CHANGE_THIS_SERVER_SECRET` a pro všechny kryptografické operace používá tuto efektivní hodnotu;
 - je-li napsána v PHP, provádí všechny operace AES-256-GCM vždy jedinou přibalenou softwarovou implementací v čistém PHP a nepoužívá pro ně OpenSSL, Sodium ani jiné kryptografické rozšíření;
 - přijímá pouze kanonické base64url bez paddingu, ověřuje nulové nevyužité bity zpětným zakódováním nebo ekvivalentní kontrolou a nekanonický text nikdy nepoužije v AAD ani jiném kanonickém řetězci;
 - používá normativní kanonizaci, oddělené klíče a délky AES-GCM;
@@ -815,5 +841,6 @@ Implementace je kompatibilní s phpvpn v1 pouze tehdy, když:
 - mimo kontrolu stáří timestampu neimplementuje serverovou ani klientskou replay deduplikaci a nepersistuje timestamp ani nonce;
 - výslovně zachovává přijaté riziko, že replay odposlechnutého HTTP pollingu uvnitř platného okna může opakovaně vyprázdnit a nenávratně zničit příchozí frontu oběti;
 - udržuje jediný pevný payload klíč pro každou uspořádanou dvojici `src` a `dst` mimo relay server;
+- zachovává plné payload GCM a běžné zpracování platných dat při normálním bootstrapu, recovery i provozním pollingu. Pouze jednorázová diagnostika podle 9.5 smí po úplném ověření odpovědi všechny payloady zahodit bez GCM a bez jejich použití.
 - respektuje zveřejněné aktivní limity bez ohledu na použitý storage driver;
 - neprozrazuje tajemství ani interní cesty v odpovědích a logu.

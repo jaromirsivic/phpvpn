@@ -1,6 +1,9 @@
 #include "core/runtime/tunnel_session.h"
 
 #include <fstream>
+#include <algorithm>
+#include <chrono>
+#include <thread>
 #include <system_error>
 
 #include "core/base/logger.h"
@@ -164,9 +167,9 @@ TunnelSession::~TunnelSession() {
 
 Status TunnelSession::recoverPreviousRun(const TunnelSessionSettings& settings) {
     std::error_code code;
-    if (!std::filesystem::exists(settings.journalPath, code)) {
-        return Status::success();
-    }
+    const bool exists = std::filesystem::exists(settings.journalPath, code);
+    if (code) return Error(ErrorCode::journal_missing);
+    if (!exists) return Status::success();
 
     std::string content;
     PHPVPN_TRY_ASSIGN(content, readWholeFile(settings.journalPath));
@@ -179,15 +182,48 @@ Status TunnelSession::recoverPreviousRun(const TunnelSessionSettings& settings) 
         return parsed.error();
     }
 
-    PHPVPN_LOG_WARN(kComponent, "removing the leftovers of a previous run");
-    PHPVPN_TRY(removeApplied(parsed.value()));
+    auto lowerAscii = [](std::string text) {
+        for (auto& character : text) if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+        return text;
+    };
+    if (!parsed->interfaceLuid || parsed->adapterName != narrow(settings.adapterName) ||
+        lowerAscii(parsed->adapterGuid) != lowerAscii(narrow(settings.requestedGuid)))
+        return Error(ErrorCode::journal_ambiguous, "the ownership journal does not match this installation");
 
-    if (parsed.value().adapterCreated) {
-        auto opened = driver_.openAdapter(settings.adapterName);
-        if (opened.ok()) {
-            driver_.closeAdapter();
-        }
+    // Startup must not open/create a Wintun adapter before authentication.
+    // Normally process death already removes its driver-owned adapter. Only
+    // retire the journal after positively proving that exact LUID and all its
+    // rows are absent. A surviving/reused identity requires administrator
+    // reconciliation, never an unverified delete or loss of ownership proof.
+    bool present = false;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(std::clamp<std::int64_t>(settings.recoveryWaitMs, 0, 5000));
+    do {
+        PHPVPN_TRY_ASSIGN(present, netConfig_.interfaceExists(parsed->interfaceLuid));
+        if (!present) break;
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    } while (true);
+    if (present) {
+        // The platform may remove only a non-present Wintun PnP record after
+        // matching its actual GUID, alias and LUID. A live or ambiguous device
+        // remains untouched and the journal is retained for an administrator.
+        PHPVPN_TRY(netConfig_.removeOwnedPhantomInterface(settings.adapterName, settings.requestedGuid, parsed->interfaceLuid));
+        const auto removedDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
+        do {
+            PHPVPN_TRY_ASSIGN(present, netConfig_.interfaceExists(parsed->interfaceLuid));
+            if (!present) break;
+            if (std::chrono::steady_clock::now() >= removedDeadline)
+                return Error(ErrorCode::journal_ambiguous, "the removed phantom interface still has an OS identity");
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        } while (true);
     }
+    NetworkSnapshot snapshot;
+    PHPVPN_TRY_ASSIGN(snapshot, netConfig_.snapshot());
+    if (std::any_of(snapshot.addresses.begin(), snapshot.addresses.end(), [&](const auto& row) { return row.interfaceLuid == parsed->interfaceLuid; }) ||
+        std::any_of(snapshot.routes.begin(), snapshot.routes.end(), [&](const auto& row) { return row.interfaceLuid == parsed->interfaceLuid; }))
+        return Error(ErrorCode::journal_ambiguous, "recorded interface rows remain after identity disappearance");
+    PHPVPN_LOG_WARN(kComponent, "retiring the journal of a driver-owned interface already removed by the OS");
 
     std::filesystem::remove(settings.journalPath, code);
     if (code) {

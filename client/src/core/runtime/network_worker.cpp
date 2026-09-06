@@ -87,17 +87,8 @@ Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>&
     std::string requestId;
     PHPVPN_TRY_ASSIGN(requestId, newRequestId());
 
-    // The first exchange has no verified time yet, so it uses auth-none. Once a
-    // snapshot exists the client keeps proving liveness with auth-semi.
-    std::string body;
-    if (timeSync_.hasSnapshot()) {
-        std::string timestamp;
-        PHPVPN_TRY_ASSIGN(timestamp, currentTimestamp());
-        PHPVPN_TRY_ASSIGN(body,
-                          RequestBuilder::buildAuthSemi(crypto_, semiKey_, timestamp, requestId));
-    } else {
-        body = RequestBuilder::buildAuthNone(requestId);
-    }
+    // Every health request is auth-none, including refresh and recovery.
+    const std::string body = RequestBuilder::buildAuthNone(requestId);
 
     const std::int64_t sendMono = clock_.monotonicMs();
     if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);

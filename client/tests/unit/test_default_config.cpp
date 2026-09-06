@@ -1,4 +1,5 @@
 #include "core/config/config.h"
+#include "fake_config_files.h"
 #include "core/runtime/vpn_engine.h"
 #include "harness.h"
 #include "platform/windows/paths_win.h"
@@ -36,33 +37,11 @@ private:
     std::filesystem::path path_;
 };
 
-std::string readFile(const std::filesystem::path& path) {
-    std::ifstream stream(path, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
-}
-
-void writeExistingFile(const std::filesystem::path& path, std::string_view content) {
-    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
-}
-
 }  // namespace
 
-PHPVPN_TEST(default_config, missing_file_is_created_and_loaded) {
+PHPVPN_TEST(default_config, startup_and_connect_do_not_create_missing_file) {
     TemporaryDirectory directory;
     const std::filesystem::path path = directory.path() / "config.json";
-
-    PHPVPN_REQUIRE_OK(ensureDefaultConfigFile(path));
-    const std::string stored = readFile(path);
-    PHPVPN_CHECK_EQ(stored, std::string(kDefaultConfigDocument));
-
-    ConfigWarnings warnings;
-    auto loaded = parseAndValidateConfig(stored, warnings);
-    PHPVPN_REQUIRE_OK(loaded);
-    PHPVPN_CHECK_EQ(loaded.value()->rawJson, stored);
-    PHPVPN_CHECK_EQ(loaded.value()->serverUrl.original,
-                    std::string("https://MODIFY-THIS/phpvpn.php"));
-    PHPVPN_CHECK_EQ(loaded.value()->contracts.size(), std::size_t(0));
 
     auto cryptoResult = createPlatformCryptoProvider();
     PHPVPN_REQUIRE_OK(cryptoResult);
@@ -78,23 +57,18 @@ PHPVPN_TEST(default_config, missing_file_is_created_and_loaded) {
     paths.configFile = path;
     paths.journalFile = directory.path() / "ownership.json";
     paths.installDirectory = directory.path().wstring();
-    VpnEngine engine(*crypto, *transport, *clock, *tunnel, *netConfig, std::move(paths));
+    auto backend = std::make_unique<FakeConfigFiles>(*crypto);
+    auto* files = backend.get();
+    ConfigStore store(*crypto, std::move(backend));
+    VpnEngine engine(*crypto, *transport, *clock, *tunnel, *netConfig, std::move(paths), store);
     PHPVPN_REQUIRE_OK(engine.start());
 
-    auto storedConfig = engine.storedConfigJson();
-    PHPVPN_REQUIRE_OK(storedConfig);
-    PHPVPN_CHECK_EQ(storedConfig.value(), stored);
+    PHPVPN_CHECK_EQ(files->reads, 0u);
+    PHPVPN_REQUIRE_ERROR(engine.connect(), ErrorCode::config_not_found);
+    PHPVPN_CHECK_EQ(files->writes, 0u);
+    PHPVPN_REQUIRE_ERROR(engine.storedConfigJson(), ErrorCode::config_not_found);
+    PHPVPN_CHECK(!std::filesystem::exists(path));
     engine.shutdown();
-}
-
-PHPVPN_TEST(default_config, existing_file_is_never_replaced) {
-    TemporaryDirectory directory;
-    const std::filesystem::path path = directory.path() / "config.json";
-    const std::string existing = "this existing document is intentionally invalid\n";
-    writeExistingFile(path, existing);
-
-    PHPVPN_REQUIRE_OK(ensureDefaultConfigFile(path));
-    PHPVPN_CHECK_EQ(readFile(path), existing);
 }
 
 PHPVPN_TEST(default_config, document_passes_the_current_validator) {
@@ -106,7 +80,7 @@ PHPVPN_TEST(default_config, document_passes_the_current_validator) {
     PHPVPN_CHECK_EQ(parsed.value()->vpnCidr.toString(), std::string("10.99.99.0/24"));
     PHPVPN_CHECK_EQ(parsed.value()->virtualIp.toString(), std::string("10.99.99.2"));
     PHPVPN_CHECK_EQ(parsed.value()->serverSecret,
-                    std::string(64, '0'));
+                    std::string("CHANGE_THIS_SERVER_SECRET"));
     PHPVPN_CHECK_EQ(parsed.value()->accessKey.size(), std::size_t(32));
 }
 

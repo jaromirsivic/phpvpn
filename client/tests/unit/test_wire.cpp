@@ -242,6 +242,32 @@ PHPVPN_TEST(wire, ndjson_response_rejects_a_missing_or_misplaced_trailer) {
         !NdjsonResponseReader::parseAndVerify(provider(), fullAuthKey, kRequestId, "", limits).ok());
 }
 
+PHPVPN_TEST(wire, health_syntax_is_separate_from_gcm_and_keeps_correlation) {
+    const std::string body = std::string(R"({"serverVersion":"1.0","status":"running","description":"OK","timestamp":"2026-09-06T12:00:00.000Z","requestId":")") +
+        kRequestId + R"(","iv":"AAAAAAAAAAAAAAAA","tag":"AAAAAAAAAAAAAAAAAAAAAA"})";
+    auto syntax = ResponseParser::parseHealthSyntax(kRequestId, body);
+    PHPVPN_REQUIRE_OK(syntax);
+    KeyDerivation keys(provider());
+    PHPVPN_CHECK_EQ(ResponseParser::verifyHealth(provider(), keys, "secret", syntax.value()).code(), ErrorCode::crypto_tag_mismatch);
+    PHPVPN_CHECK(!ResponseParser::parseHealthSyntax("not-current", body));
+}
+
+PHPVPN_TEST(wire, info_clients_are_required_typed_unique_and_canonical) {
+    const auto withClients = [](const std::string& clients) {
+        return std::string(R"({"serverVersion":"1","generatedAt":"2026-09-06T12:00:00.000Z","futureField":true,"clients":)") + clients +
+            R"(,"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":950000,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":3200}})";
+    };
+    PHPVPN_REQUIRE_OK(ResponseParser::parseInfoPlaintext(withClients("[]")));
+    const std::string client = R"({"address":"10.99.99.2","lastSeen":"2099-09-06T12:00:00.000Z"})";
+    auto good = ResponseParser::parseInfoPlaintext(withClients("[" + client + "]"));
+    PHPVPN_REQUIRE_OK(good);
+    PHPVPN_CHECK_EQ(good->clients.size(), std::size_t(1));
+    for (const auto& clients : {"[" + client + "," + client + "]", std::string("{}"), std::string("[null]"),
+        std::string(R"([{"address":"10.99.99.02","lastSeen":"2026-09-06T12:00:00.000Z"}])"),
+        std::string(R"([{"address":"10.99.99.2","lastSeen":"2026-09-06T12:00:00Z"}])")})
+        PHPVPN_CHECK(!ResponseParser::parseInfoPlaintext(withClients(clients)));
+}
+
 PHPVPN_TEST(wire, server_errors_map_onto_stable_codes) {
     PHPVPN_CHECK_EQ(ResponseParser::mapServerError(400, ""), ErrorCode::server_bad_request);
     PHPVPN_CHECK_EQ(ResponseParser::mapServerError(401, ""), ErrorCode::server_unauthorized);

@@ -426,14 +426,17 @@ $runner->run('Key derivation separation and sensitivity', function (Runner $t): 
 
 $runner->run('SERVER_SECRET normalization', function (Runner $t): void {
     $empty = Config::fromConstants()->withSecret('');
-    $zeros = Config::fromConstants()->withSecret(str_repeat('0', 32));
-    $t->same($zeros->serverSecret, $empty->serverSecret, 'empty normalizes to 32 ASCII zeros');
+    $zeros = Config::fromConstants()->withSecret('CHANGE_THIS_SERVER_SECRET');
+    $t->same($zeros->serverSecret, $empty->serverSecret, 'empty normalizes to the current default');
     $t->same(
         KeyDerivation::semiKey($zeros->serverSecret),
         KeyDerivation::semiKey($empty->serverSecret),
         'same semiKey'
     );
 
+    foreach ([str_repeat('0', 32), str_repeat('0', 64)] as $original) {
+        $t->same($original, Config::fromConstants()->withSecret($original)->serverSecret, 'nonempty zeros preserved');
+    }
     $single = Config::fromConstants()->withSecret('0');
     $t->same('0', $single->serverSecret, 'the string "0" is not normalized');
     $nulls = Config::fromConstants()->withSecret(str_repeat("\x00", 32));
@@ -621,7 +624,7 @@ $runner->run('Insecure secret warning', function (Runner $t): void {
     try {
         $page = $harness->call('', 'GET', null, '');
         $t->ok(
-            str_contains($page->body, 'Server is not secure') === (\PhpVpn\SERVER_SECRET === str_repeat('0', 32)
+            str_contains($page->body, 'Server is not secure') === (\PhpVpn\SERVER_SECRET === 'CHANGE_THIS_SERVER_SECRET'
                 || \PhpVpn\SERVER_SECRET === ''),
             'warning matches the configured secret'
         );

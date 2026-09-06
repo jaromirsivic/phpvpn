@@ -38,12 +38,17 @@ PHPVPN_TEST(TrayLayout, RepeatedEdgeAndCornerResizesKeepControlsSeparateAndVisib
             const auto layout = computeEditorLayout(size, dpi, true);
             PHPVPN_CHECK(inside(layout.textArea, size));
             PHPVPN_CHECK(inside(layout.saveButton, size));
+            PHPVPN_CHECK(inside(layout.resetButton, size));
             PHPVPN_CHECK(inside(layout.cancelButton, size));
-            PHPVPN_CHECK(layout.saveButton.right < layout.cancelButton.left);
+            PHPVPN_CHECK(layout.saveButton.right < layout.resetButton.left);
+            PHPVPN_CHECK(layout.resetButton.right < layout.cancelButton.left);
+            PHPVPN_CHECK(layout.resetButton.right > layout.resetButton.left);
+            PHPVPN_CHECK(layout.resetButton.bottom > layout.resetButton.top);
             PHPVPN_CHECK(layout.saveButton.bottom > layout.saveButton.top);
             PHPVPN_CHECK(layout.textArea.bottom <= layout.saveButton.top);
             const auto readOnly = computeEditorLayout(size, dpi, false);
             PHPVPN_CHECK_EQ(readOnly.saveButton.right, 0);
+            PHPVPN_CHECK_EQ(readOnly.resetButton.right, 0);
             PHPVPN_CHECK_EQ(readOnly.cancelButton.right, 0);
             PHPVPN_CHECK(inside(readOnly.textArea, size));
         }
@@ -60,7 +65,8 @@ PHPVPN_TEST(TrayLayout, CancelVerticalArtifactRegressionLeavesNoUnpaintedPixel) 
         for (int y = 0; y < nextSize.height; ++y) {
             for (int x = 0; x < nextSize.width; ++x) {
                 if (!contains(exposed, x, y) && !contains(next.textArea, x, y) &&
-                    !contains(next.saveButton, x, y) && !contains(next.cancelButton, x, y)) covered = false;
+                    !contains(next.saveButton, x, y) && !contains(next.resetButton, x, y) &&
+                    !contains(next.cancelButton, x, y)) covered = false;
             }
         }
         PHPVPN_CHECK(covered);

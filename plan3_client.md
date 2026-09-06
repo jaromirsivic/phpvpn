@@ -1,5 +1,7 @@
 # Implementační plán 3: Configuration Wizard a Communication Contracts
 
+Aktualizace realizace 6. září 2026: zdroje, dokumentace a testy jsou implementované v pracovním stromu. Provedené testy, distribuční artefakty a dosud nedoložené akceptační brány uvádí [implementační report](client/tests/implementation-plan3-report.md) a [úplná matice B/A/D](client/tests/implementation-plan3-matrix.md). Následující původní stav i závěrečná poznámka o přípravě plánu jsou historické a nepopisují aktuální stav implementace.
+
 Stav: plán realizace, bez provedené implementace. Původně zpracováno 5. září 2026 nad revizí `9f25f1333834596e46394f67f0a056a2595506da` v `C:\git\phpvpn`, aktualizováno 6. září 2026 v pracovním stromu nad revizí `15d8c9abbc14f607ffcc47dbf845b7a374a9a364`. Projekt zatím není nikde nasazený. Tento dokument zahrnuje rozhodnutí zadavatele z navazujícího rozhovoru a nahrazuje rozporné formulace původního zadání v rozsahu této etapy.
 
 Výchozí podklady jsou `protocol.md`, `client.md`, skutečný zdrojový kód, existující testy a konvence z `plan_client.md` a `plan2_client.md`. Cesty souborů níže jsou relativní ke kořeni `C:\git\phpvpn`. Při realizaci se nejprve společně aktualizují normativní dokumenty podle kapitoly 11. Historické poznámky se zpětně nepřepisují.

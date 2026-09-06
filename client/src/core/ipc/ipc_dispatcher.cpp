@@ -1,6 +1,8 @@
 #include "core/ipc/ipc_dispatcher.h"
 
 #include "core/base/logger.h"
+#include "core/wizard/wizard_service.h"
+#include "core/protocol/uuid.h"
 
 namespace phpvpn {
 namespace {
@@ -10,6 +12,20 @@ constexpr const char* kComponent = "ipc";
 }  // namespace
 
 std::string IpcDispatcher::handle(std::string_view requestJson) {
+    if (requestJson.size() <= kIpcMaxMessageBytes) {
+        auto document = Json::parse(requestJson);
+        const auto* name = document ? document->find("command") : nullptr;
+        if (name && name->isString() && WizardIpc::command(name->stringValue())) {
+            auto request = WizardIpc::parseRequest(requestJson);
+            if (!request) {
+                const auto* id = document->find("requestId");
+                const auto correlation = id && id->isString() && Uuid::isValidV4(id->stringValue()) ? id->stringValue() : std::string{};
+                return WizardIpc::buildError(correlation, WizardIpc::safeError(request.error()));
+            }
+            if (!wizard_) return WizardIpc::buildError(request->requestId, WizardIpc::safeError(Error(ErrorCode::wizard_unsupported)));
+            return wizard_->handle(*request);
+        }
+    }
     auto parsed = IpcProtocol::parseRequest(requestJson);
     if (!parsed.ok()) {
         // A request that fails validation is answered without performing any

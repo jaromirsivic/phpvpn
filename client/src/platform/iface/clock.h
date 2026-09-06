@@ -18,6 +18,10 @@ public:
     // Milliseconds from an arbitrary but monotonic origin.
     virtual std::int64_t monotonicMs() = 0;
 
+    // Lease elapsed time includes suspension. Test clocks can use the same
+    // controlled monotonic source, platforms may provide a distinct uptime.
+    virtual std::int64_t leaseMonotonicMs() { return monotonicMs(); }
+
     // Milliseconds since the Unix epoch from the system wall clock.
     virtual std::int64_t systemUtcMs() = 0;
 };

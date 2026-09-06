@@ -38,7 +38,7 @@ HTML_CONTENT_TYPE = "text/html; charset=utf-8"
 
 DEFAULT_MAX_DATA_RECORDS_PER_REQUEST = 16
 DEFAULT_MAX_AUTH_RECORD_BYTES = 4096
-DEFAULT_MAX_REQUEST_BODY_BYTES = 4198400
+DEFAULT_MAX_REQUEST_BODY_BYTES = 983040
 DEFAULT_MAX_INFO_PLAINTEXT_BYTES = 262144
 DEFAULT_MAX_QUEUE_BYTES_PER_CLIENT = 16777216
 DEFAULT_AUTH_TIMESTAMP_SKEW_SECONDS = 60
@@ -183,7 +183,7 @@ def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
 def normalize_server_secret(configured: bytes) -> bytes:
     """Apply the chapter 3.2 normalization of an exactly empty server secret."""
     if len(configured) == 0:
-        return b"0" * 32
+        return b"CHANGE_THIS_SERVER_SECRET"
     return configured
 
 

@@ -46,9 +46,13 @@ add_executable(phpvpn-tray WIN32
     tray/progress_model.cpp
     tray/layout.cpp
     tray/status_reader.cpp
+    tray/wizard_reader.cpp
+    tray/wizard_window.cpp
+    tray/wizard_layout.cpp
     tray/progress_window.cpp
     tray/statistics_window.cpp
     tray/editor_window.cpp
+    tray/contracts_window.cpp
     tray/tray.rc
 )
 target_include_directories(phpvpn-tray PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tray)

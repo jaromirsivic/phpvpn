@@ -24,15 +24,17 @@ EditorLayout computeEditorLayout(Size client, int dpi, bool editable) {
     const int height = std::max(0, client.height);
     const int margin = std::min({scaleForDpi(12, dpi), width / 8, height / 8});
     const int gap = std::min(scaleForDpi(8, dpi), width / 8);
-    const int buttonWidth = std::min(scaleForDpi(92, dpi), std::max(0, (width - 2 * margin - gap) / 2));
+    const int buttonWidth = std::min(scaleForDpi(92, dpi), std::max(0, (width - 2 * margin - 2 * gap) / 3));
     const int buttonHeight = std::min(scaleForDpi(32, dpi), std::max(0, height - 2 * margin));
     EditorLayout layout;
     int textBottom = height - margin;
     if (editable) {
         layout.cancelButton = {width - margin - buttonWidth, height - margin - buttonHeight,
                                width - margin, height - margin};
-        layout.saveButton = {layout.cancelButton.left - gap - buttonWidth, layout.cancelButton.top,
+        layout.resetButton = {layout.cancelButton.left - gap - buttonWidth, layout.cancelButton.top,
                              layout.cancelButton.left - gap, layout.cancelButton.bottom};
+        layout.saveButton = {layout.resetButton.left - gap - buttonWidth, layout.resetButton.top,
+                             layout.resetButton.left - gap, layout.resetButton.bottom};
         textBottom = std::max(margin, layout.cancelButton.top - gap);
     }
     layout.textArea = {margin, margin, std::max(margin, width - margin), std::max(margin, textBottom)};

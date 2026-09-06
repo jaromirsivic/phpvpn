@@ -1,3 +1,7 @@
+#include "fake_config_files.h"
+#include "core/config/config_defaults.h"
+#include "core/wizard/probe_client.h"
+#include "core/wizard/wizard_service.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -82,6 +86,7 @@ public:
     std::unique_ptr<CryptoProvider> actual = std::move(createPlatformCryptoProvider()).value();
     std::function<void()> beforeHealthCrypto;
     bool failRandom = false;
+    unsigned opens = 0;
     Result<Sha256Digest> sha256(std::span<const std::uint8_t> data) override {
         if (beforeHealthCrypto && toString(data).find("health") != std::string::npos) beforeHealthCrypto();
         return actual->sha256(data);
@@ -104,6 +109,7 @@ public:
                                     std::span<const std::uint8_t> aad,
                                     std::span<const std::uint8_t> ciphertext,
                                     std::span<const std::uint8_t> tag) override {
+        ++opens;
         return actual->aesGcmOpen(key, iv, aad, ciphertext, tag);
     }
     Status randomBytes(std::span<std::uint8_t> out) override {
@@ -131,6 +137,7 @@ public:
     explicit ScriptedTransport(CryptoProvider& crypto) : crypto_(crypto), config_(fixtureConfig()) {}
     std::function<std::optional<HttpExchangeResult>(HttpAction, std::string_view, int)> hook;
     std::function<void()> cancel;
+    std::function<void(HttpResponse&)> mutateResponse;
     std::atomic<int> healthCalls{0}, infoCalls{0}, dataCalls{0};
     std::atomic<std::uint64_t> dataRequestBytes{0}, dataResponseBytes{0};
     bool badHealthTag = false, badInfo = false, badMac = false, badPacket = false, badPayloadTag = false;
@@ -149,11 +156,17 @@ public:
             }
         }
         const auto auth = Json::parse(request.substr(0, request.find('\n'))).value();
+        if (action == HttpAction::health) {
+            PHPVPN_CHECK_EQ(auth.find("type")->stringValue(), std::string("auth-none"));
+            PHPVPN_CHECK_EQ(auth.objectValue().size(), std::size_t(2));
+        }
         const auto id = auth.find("requestId")->stringValue();
         std::string body = action == HttpAction::health ? health(id) : action == HttpAction::info ? info(id) : data(id, request);
         const auto bytes = body.size();
         if (action == HttpAction::data) dataResponseBytes += bytes;
-        return {HttpResponse{200, std::move(body)}, bytes};
+        HttpResponse response{200, std::move(body), httpActionContentType(action)};
+        if (mutateResponse) mutateResponse(response);
+        return {std::move(response), bytes};
     }
 private:
     std::string health(const std::string& id) {
@@ -169,7 +182,7 @@ private:
                std::string(kTimestamp) + "\",\"requestId\":\"" + id + "\",\"iv\":\"" + ivText + "\",\"tag\":\"" + Base64Url::encode(tag) + "\"}";
     }
     std::string info(const std::string& id) {
-        const std::string plaintext = badInfo ? "{}" : R"({"serverVersion":"1.0","generatedAt":"2026-09-04T10:00:00.000Z","limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}})";
+        const std::string plaintext = badInfo ? "{}" : R"({"serverVersion":"1.0","generatedAt":"2026-09-04T10:00:00.000Z","clients":[],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}})";
         std::vector<std::uint8_t> salt(32, 4), iv(12, 5), ciphertext;
         KeyDerivation keys(crypto_);
         auto key = keys.infoKey(config_->serverSecret, salt, id).value();
@@ -245,10 +258,21 @@ private:
 class FakeDriver final : public TunnelDriver {
 public:
     std::atomic<int> starts{0};
+    std::atomic<int> loads{0}, opens{0};
+    bool loaded = false;
     ErrorCode failure = ErrorCode::none;
-    Status loadAndVerify(const std::wstring&) override { return failure == ErrorCode::none ? ok() : Status(Error(failure)); }
+    Status loadAndVerify(const std::wstring&) override {
+        ++loads;
+        if (failure != ErrorCode::none) return Error(failure);
+        loaded = true;
+        return ok();
+    }
     Result<TunnelAdapterInfo> createAdapter(const std::wstring&, const std::wstring&, const std::wstring&) override { return TunnelAdapterInfo{123, "fixture-adapter", true}; }
-    Result<TunnelAdapterInfo> openAdapter(const std::wstring&) override { return TunnelAdapterInfo{123, "fixture-adapter", false}; }
+    Result<TunnelAdapterInfo> openAdapter(const std::wstring&) override {
+        ++opens;
+        if (!loaded) return Error(ErrorCode::tunnel_library_missing);
+        return TunnelAdapterInfo{123, "fixture-adapter", false};
+    }
     Result<std::shared_ptr<Tunnel>> startSession(std::uint32_t) override { ++starts; return std::shared_ptr<Tunnel>(new IdleTunnel); }
     void endSession() override {}
     void closeAdapter() override {}
@@ -257,6 +281,20 @@ public:
 
 class FakeNetConfig final : public NetConfig {
 public:
+    bool recoveryInterfacePresent = false;
+    ErrorCode recoveryLookupFailure = ErrorCode::none;
+    bool allowOwnedPhantomRemoval = false;
+    int phantomRemovals = 0;
+    Result<bool> interfaceExists(std::uint64_t) override {
+        if (recoveryLookupFailure != ErrorCode::none) return Error(recoveryLookupFailure);
+        return recoveryInterfacePresent;
+    }
+    Status removeOwnedPhantomInterface(const std::wstring&, const std::wstring&, std::uint64_t) override {
+        if (!allowOwnedPhantomRemoval) return Error(ErrorCode::journal_ambiguous);
+        ++phantomRemovals;
+        recoveryInterfacePresent = false;
+        return ok();
+    }
     Result<NetworkSnapshot> snapshot() override { return NetworkSnapshot{}; }
     Status addUnicastAddress(const UnicastAddressEntry&) override { return ok(); }
     Status removeUnicastAddress(const UnicastAddressEntry&) override { return ok(); }
@@ -274,15 +312,81 @@ struct EngineFixture {
     FakeNetConfig net;
     std::filesystem::path directory = std::filesystem::temp_directory_path() /
         ("phpvpn-runtime-" + crypto.actual->randomUuidV4().value());
+    FakeConfigFiles* files = new FakeConfigFiles(*crypto.actual);
+    ConfigStore store{*crypto.actual, std::unique_ptr<ConfigFiles>(files)};
     VpnEngine engine{crypto, transport, clock, driver, net,
-                     EnginePaths{directory / "config.json", directory / "journal.json", directory.wstring()}};
+                     EnginePaths{directory / "config.json", directory / "journal.json", directory.wstring()}, store};
     EngineFixture() {
         std::filesystem::create_directories(directory);
-        std::ofstream(directory / "config.json") << kConfig;
+        files->bytes = kConfig;
     }
     ~EngineFixture() {
         engine.shutdown();
         std::filesystem::remove_all(directory);
+    }
+};
+
+struct WizardServiceFixture {
+    EngineFixture runtime;
+    std::function<void()> diagnosticTask;
+    std::deque<std::function<void()>> fileTasks;
+    std::unique_ptr<WizardService> service;
+    std::uint64_t sequence = 0;
+    unsigned httpCalls = 0;
+    WizardRequest request;
+    WizardServiceFixture() {
+        WizardScheduler scheduler;
+        scheduler.file = [&](std::function<void()> task) {
+            if (fileTasks.size() >= 4) return false;
+            fileTasks.push_back(std::move(task)); return true;
+        };
+        scheduler.diagnostic = [&](std::function<void()> task) {
+            if (diagnosticTask) return false;
+            diagnosticTask = std::move(task); return true;
+        };
+        scheduler.transport = [&]() -> Result<std::unique_ptr<Transport>> {
+            auto transport = std::make_unique<ScriptedTransport>(*runtime.crypto.actual);
+            transport->hook = [&](HttpAction, std::string_view, int) -> std::optional<HttpExchangeResult> { ++httpCalls; return {}; };
+            return std::unique_ptr<Transport>(std::move(transport));
+        };
+        request.requestId = runtime.crypto.actual->randomUuidV4().value();
+        request.serviceInstanceId = runtime.crypto.actual->randomUuidV4().value();
+        service = std::make_unique<WizardService>(runtime.crypto, runtime.clock, runtime.store, runtime.engine,
+            std::move(scheduler), request.serviceInstanceId);
+        request.command = WizardCommand::open;
+        const auto opened = ask(request);
+        const auto view = WizardIpc::parseView(opened.result).value();
+        request.sessionId = view.sessionId;
+        request.fields = *view.fields;
+    }
+    WizardReply ask(const WizardRequest& input) {
+        const auto encoded = WizardIpc::buildRequest(input).value();
+        const auto parsed = WizardIpc::parseRequest(encoded).value();
+        const auto response = service->handle(parsed);
+        auto reply = WizardIpc::parseReply(input.command, input.requestId, response);
+        if (!reply) throw std::runtime_error("Wizard reply failed strict schema validation: " + response);
+        return std::move(reply).value();
+    }
+    WizardReply call(WizardCommand command) { request.command = command; return ask(request); }
+    void runDiagnostic() { auto task = std::move(diagnosticTask); diagnosticTask = {}; if (task) task(); }
+    void runFile() { auto task = std::move(fileTasks.front()); fileTasks.pop_front(); task(); }
+    void check(WizardCommand command) {
+        request.command = command;
+        request.attemptSequence = ++sequence;
+        request.clientAttemptId = runtime.crypto.actual->randomUuidV4().value();
+        const auto started = ask(request);
+        if (started.error) throw std::runtime_error(started.error->code);
+        request.operationId = started.result.find("operationId")->stringValue();
+        runDiagnostic();
+        const auto completed = call(WizardCommand::get_operation);
+        if (completed.error || completed.result.find("operationState")->stringValue() != "succeeded")
+            throw std::runtime_error("probe did not succeed");
+    }
+    void allChecks() { check(WizardCommand::check_url); check(WizardCommand::check_secret); check(WizardCommand::check_access); }
+    WizardReply beginFinish() {
+        request.commitId = runtime.crypto.actual->randomUuidV4().value();
+        request.createDefaultContracts = false;
+        return call(WizardCommand::finish);
     }
 };
 
@@ -425,6 +529,322 @@ PHPVPN_TEST(runtime, simultaneous_pending_connects_share_acceptance_and_one_fail
     health.release();
     PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::recovering; }));
     PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 1);
+}
+
+PHPVPN_TEST(probe, url_requires_only_fresh_health_syntax_then_secret_verifies_cryptography) {
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    const auto document = analyzeWizardDocument(kConfig).value();
+    transport.badHealthTag = true;
+    ProbeClient url(crypto, transport, clock);
+    PHPVPN_REQUIRE_OK(url.checkUrl(document.context, document.fields));
+    PHPVPN_CHECK_EQ(crypto.opens, 0u);
+    PHPVPN_CHECK_EQ(transport.healthCalls.load(), 1);
+    PHPVPN_CHECK_EQ(transport.infoCalls.load(), 0);
+    ProbeClient secret(crypto, transport, clock);
+    PHPVPN_CHECK(!secret.checkSecret(document.context, document.fields));
+    PHPVPN_CHECK_EQ(transport.healthCalls.load(), 2);
+    PHPVPN_CHECK_EQ(transport.infoCalls.load(), 0);
+    auto fields = document.fields;
+    fields.serverUrl = std::string(kWizardPlaceholderUrl);
+    ProbeClient placeholder(crypto, transport, clock);
+    PHPVPN_REQUIRE_ERROR(placeholder.checkUrl(document.context, fields), ErrorCode::config_invalid_url);
+    PHPVPN_CHECK_EQ(transport.healthCalls.load(), 2);
+}
+
+PHPVPN_TEST(probe, access_discards_invalid_payload_without_opening_it_and_uses_one_empty_request) {
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    const auto document = analyzeWizardDocument(kConfig).value();
+    ProbeClient secret(crypto, transport, clock);
+    PHPVPN_REQUIRE_OK(secret.checkSecret(document.context, document.fields));
+    const auto opensForHealthInfo = crypto.opens;
+    crypto.opens = 0;
+    transport.incoming = {packet(100, true)};
+    transport.badPayloadTag = true;
+    transport.hook = [](HttpAction action, std::string_view body, int) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data) {
+            PHPVPN_CHECK(body.ends_with('\n'));
+            PHPVPN_CHECK(body.find('\n') == body.size() - 1);
+            PHPVPN_CHECK(Json::parse(body.substr(0, body.size() - 1))->find("type")->stringValue() == "auth-full");
+        }
+        return {};
+    };
+    ProbeClient access(crypto, transport, clock);
+    const auto result = access.checkAccess(document, document.fields);
+    PHPVPN_REQUIRE_OK(result);
+    PHPVPN_CHECK_EQ(result.value(), 1u);
+    PHPVPN_CHECK_EQ(crypto.opens, opensForHealthInfo);
+    PHPVPN_CHECK_EQ(transport.healthCalls.load(), 2);
+    PHPVPN_CHECK_EQ(transport.infoCalls.load(), 2);
+    PHPVPN_CHECK_EQ(transport.dataCalls.load(), 1);
+}
+
+PHPVPN_TEST(probe, access_never_retries_401_and_rejects_bad_mac_or_local_self_contract) {
+    for (const auto failing : {HttpAction::health, HttpAction::info, HttpAction::data}) {
+        ObservedCrypto crypto;
+        ScriptedTransport transport(*crypto.actual);
+        TestClock clock;
+        const auto document = analyzeWizardDocument(kConfig).value();
+        transport.hook = [failing](HttpAction action, std::string_view, int) -> std::optional<HttpExchangeResult> {
+            if (action == failing) return HttpExchangeResult{HttpResponse{401, "{}", httpActionContentType(action)}, 2};
+            return {};
+        };
+        ProbeClient probe(crypto, transport, clock);
+        PHPVPN_REQUIRE_ERROR(probe.checkAccess(document, document.fields), ErrorCode::server_unauthorized);
+        PHPVPN_CHECK_EQ(transport.healthCalls.load(), 1);
+        PHPVPN_CHECK_EQ(transport.infoCalls.load(), failing == HttpAction::health ? 0 : 1);
+        PHPVPN_CHECK_EQ(transport.dataCalls.load(), failing == HttpAction::data ? 1 : 0);
+    }
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    const auto document = analyzeWizardDocument(kConfig).value();
+    auto fields = document.fields;
+    fields.virtualIp = "10.99.99.3";
+    ProbeClient conflict(crypto, transport, clock);
+    PHPVPN_REQUIRE_ERROR(conflict.checkAccess(document, fields), ErrorCode::wizard_contract_self_conflict);
+    PHPVPN_CHECK_EQ(transport.healthCalls.load(), 0);
+    transport.badMac = true;
+    ProbeClient badMac(crypto, transport, clock);
+    PHPVPN_REQUIRE_ERROR(badMac.checkAccess(document, document.fields), ErrorCode::response_mac_invalid);
+}
+
+PHPVPN_TEST(probe, validates_content_type_routes_limits_and_cancellation) {
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    auto document = analyzeWizardDocument(kConfig).value();
+    transport.mutateResponse = [](HttpResponse& response) { response.contentType = "text/html"; };
+    ProbeClient wrongType(crypto, transport, clock);
+    PHPVPN_REQUIRE_ERROR(wrongType.checkUrl(document.context, document.fields), ErrorCode::response_invalid);
+    transport.mutateResponse = [](HttpResponse& response) {
+        const auto destination = response.body.find("\"dst\":\"10.99.99.2\"");
+        if (destination != std::string::npos) response.body.replace(destination, std::string_view("\"dst\":\"10.99.99.2\"").size(), "\"dst\":\"10.99.99.4\"");
+    };
+    transport.incoming = {packet(100, true)};
+    ProbeClient routes(crypto, transport, clock);
+    PHPVPN_REQUIRE_ERROR(routes.checkAccess(document, document.fields), ErrorCode::response_invalid);
+    transport.mutateResponse = {};
+    document.context.runtime.maxResponseBodyBytes = 1;
+    ProbeClient limit(crypto, transport, clock);
+    PHPVPN_REQUIRE_ERROR(limit.checkUrl(document.context, document.fields), ErrorCode::transport_response_too_large);
+    const auto calls = transport.healthCalls.load();
+    ProbeClient cancelled(crypto, transport, clock);
+    cancelled.cancel();
+    PHPVPN_REQUIRE_ERROR(cancelled.checkUrl(document.context, document.fields), ErrorCode::cancelled);
+    PHPVPN_CHECK_EQ(transport.healthCalls.load(), calls);
+}
+
+PHPVPN_TEST(runtime, actions_read_current_file_and_disconnect_never_reads_it) {
+    EngineFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_CHECK_EQ(fixture.files->reads, 0u);
+    PHPVPN_REQUIRE_OK(fixture.engine.storedConfigJson());
+    fixture.files->bytes = "{ broken external edit";
+    PHPVPN_REQUIRE_ERROR(fixture.engine.connect(), ErrorCode::config_invalid_json);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 0);
+    const auto before = fixture.files->reads;
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    PHPVPN_CHECK_EQ(fixture.files->reads, before);
+    fixture.files->bytes.reset();
+    PHPVPN_REQUIRE_ERROR(fixture.engine.connect(), ErrorCode::config_not_found);
+    PHPVPN_CHECK_EQ(fixture.files->writes, 0u);
+}
+
+PHPVPN_TEST(wizard_service, leases_expire_without_disk_http_or_global_disconnect) {
+    WizardServiceFixture fixture;
+    const auto reads = fixture.runtime.files->reads;
+    for (int i = 1; i < 8; ++i) PHPVPN_CHECK(!fixture.call(WizardCommand::open).error);
+    auto full = fixture.call(WizardCommand::open);
+    PHPVPN_CHECK(full.error && full.error->code == "busy");
+    fixture.runtime.clock.now = 59999;
+    PHPVPN_CHECK(!fixture.call(WizardCommand::keepalive).error);
+    fixture.runtime.clock.now = 60000;
+    fixture.service->tick();
+    PHPVPN_CHECK(!fixture.call(WizardCommand::keepalive).error);
+    fixture.runtime.clock.now = 120000;
+    fixture.service->tick();
+    const auto expired = fixture.call(WizardCommand::keepalive);
+    PHPVPN_CHECK(expired.error && expired.error->code == "wizard_session_expired");
+    PHPVPN_CHECK_EQ(fixture.httpCalls, 0u);
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+    PHPVPN_CHECK(fixture.runtime.files->reads >= reads);
+    PHPVPN_CHECK(fixture.runtime.engine.status().state == ConnectionState::disconnected);
+}
+PHPVPN_TEST(wizard_service, cancelled_attempt_prevents_delayed_start_and_busy_sequence_never_replays) {
+    WizardServiceFixture fixture;
+    fixture.request.attemptSequence = 4;
+    fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+    PHPVPN_CHECK(!fixture.call(WizardCommand::cancel_attempt).error);
+    auto delayed = fixture.call(WizardCommand::check_url);
+    PHPVPN_CHECK(delayed.error && delayed.error->code == "wizard_attempt_closed");
+    fixture.request.attemptSequence = 5;
+    auto first = fixture.call(WizardCommand::check_url);
+    PHPVPN_CHECK(!first.error);
+    fixture.request.operationId = first.result.find("operationId")->stringValue();
+    fixture.request.attemptSequence = 6;
+    auto busy = fixture.call(WizardCommand::check_url);
+    PHPVPN_CHECK(busy.error && busy.error->code == "busy");
+    fixture.runDiagnostic();
+    auto replay = fixture.call(WizardCommand::check_url);
+    PHPVPN_CHECK(replay.error && replay.error->code == "wizard_attempt_closed");
+    PHPVPN_CHECK_EQ(fixture.httpCalls, 1u);
+    PHPVPN_CHECK(!fixture.call(WizardCommand::reset).error);
+    auto afterReset = fixture.call(WizardCommand::check_url);
+    PHPVPN_CHECK(afterReset.error && afterReset.error->code == "wizard_attempt_closed");
+}
+PHPVPN_TEST(wizard_service, finish_requires_exact_evidence_is_idempotent_and_last_complete_save_wins) {
+    WizardServiceFixture fixture;
+    auto premature = fixture.beginFinish();
+    PHPVPN_CHECK(premature.error && premature.error->code == "wizard_prerequisite_failed");
+    fixture.allChecks();
+    auto original = fixture.request.fields;
+    fixture.request.fields.serverSecret += "changed";
+    auto changed = fixture.beginFinish();
+    PHPVPN_CHECK(changed.error && changed.error->code == "wizard_prerequisite_failed");
+    fixture.request.fields = original;
+    fixture.runtime.files->bytes = "external invalid replacement";
+    auto started = fixture.beginFinish();
+    PHPVPN_CHECK(!started.error);
+    fixture.request.operationId = started.result.find("operationId")->stringValue();
+    const auto commitId = fixture.request.commitId;
+    fixture.runFile();
+    auto committed = fixture.call(WizardCommand::get_commit);
+    PHPVPN_CHECK_EQ(committed.result.find("commitState")->stringValue(), "confirmed");
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+    auto stored = analyzeWizardDocument(*fixture.runtime.files->bytes);
+    PHPVPN_REQUIRE_OK(stored);
+    PHPVPN_CHECK_EQ(stored->fields, original);
+    PHPVPN_CHECK(!fixture.call(WizardCommand::finish).error);
+    PHPVPN_CHECK(fixture.fileTasks.empty());
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+    fixture.request.fields.accessKey[0] = 'f';
+    auto mismatch = fixture.call(WizardCommand::finish);
+    PHPVPN_CHECK(mismatch.error && mismatch.error->code == "invalid_argument");
+    fixture.request.fields = original;
+    PHPVPN_CHECK(!fixture.call(WizardCommand::close).error);
+    auto receiptAfterClose = fixture.call(WizardCommand::get_commit);
+    PHPVPN_CHECK_EQ(receiptAfterClose.result.find("receipt")->find("commitId")->stringValue(), commitId);
+    auto noResurrection = fixture.call(WizardCommand::finish);
+    PHPVPN_CHECK(noResurrection.error && noResurrection.error->code == "wizard_session_expired");
+}
+PHPVPN_TEST(wizard_service, cancelling_later_checkpoint_preserves_exact_earlier_evidence_for_manual_retry) {
+    WizardServiceFixture fixture;
+    fixture.check(WizardCommand::check_url);
+    fixture.check(WizardCommand::check_secret);
+    fixture.request.attemptSequence = ++fixture.sequence;
+    fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+    auto started = fixture.call(WizardCommand::check_access);
+    PHPVPN_CHECK(!started.error);
+    PHPVPN_CHECK(!fixture.call(WizardCommand::cancel_attempt).error);
+    fixture.runDiagnostic();
+    const auto calls = fixture.httpCalls;
+    fixture.check(WizardCommand::check_access);
+    PHPVPN_CHECK_EQ(fixture.httpCalls, calls + 3);
+    PHPVPN_CHECK(!fixture.beginFinish().error);
+    fixture.runFile();
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+}
+PHPVPN_TEST(wizard_service, idle_keepalive_detects_foreign_epoch_and_resume_accepts_acknowledged_epoch) {
+    WizardServiceFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.runtime.engine.start());
+    fixture.check(WizardCommand::check_url);
+    PHPVPN_REQUIRE_OK(fixture.runtime.engine.connect());
+    PHPVPN_REQUIRE_OK(fixture.runtime.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return fixture.runtime.engine.status().state == ConnectionState::disconnected; }));
+    const auto interrupted = fixture.call(WizardCommand::keepalive);
+    PHPVPN_CHECK(interrupted.error && interrupted.error->code == "wizard_connection_interrupted");
+    auto latest = fixture.call(WizardCommand::get_operation);
+    PHPVPN_CHECK_EQ(latest.result.find("operationState")->stringValue(), std::string("interrupted"));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(latest.result.find("connectionEpoch")), fixture.runtime.engine.connectionIdentity().epoch);
+    fixture.request.connectionEpoch = 900;
+    PHPVPN_CHECK(fixture.call(WizardCommand::resume).error.has_value());
+    fixture.request.connectionEpoch = 0;
+    auto resumed = fixture.call(WizardCommand::resume);
+    PHPVPN_CHECK(!resumed.error);
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(resumed.result.find("connectionEpoch")), fixture.runtime.engine.connectionIdentity().epoch);
+    auto noOldProof = fixture.beginFinish();
+    PHPVPN_CHECK(noOldProof.error && noOldProof.error->code == "wizard_prerequisite_failed");
+}
+PHPVPN_TEST(wizard_service, expiration_during_commit_keeps_confirmed_receipt_and_unknown_never_retries) {
+    WizardServiceFixture fixture;
+    fixture.allChecks();
+    fixture.runtime.files->beforePublish = [&] { fixture.runtime.clock.now += 60001; fixture.service->tick(); };
+    PHPVPN_CHECK(!fixture.beginFinish().error);
+    fixture.runFile();
+    auto receipt = fixture.call(WizardCommand::get_commit);
+    PHPVPN_CHECK_EQ(receipt.result.find("commitState")->stringValue(), "confirmed");
+    auto expired = fixture.call(WizardCommand::keepalive);
+    PHPVPN_CHECK(expired.error && expired.error->code == "wizard_session_expired");
+    WizardServiceFixture unknown;
+    unknown.allChecks();
+    unknown.runtime.files->outcome = ConfigPublishState::unknown;
+    PHPVPN_CHECK(!unknown.beginFinish().error);
+    unknown.runFile();
+    auto unresolved = unknown.call(WizardCommand::get_commit);
+    PHPVPN_CHECK_EQ(unresolved.result.find("commitState")->stringValue(), "unknown");
+    PHPVPN_CHECK(!unknown.call(WizardCommand::finish).error);
+    PHPVPN_CHECK(unknown.fileTasks.empty());
+    PHPVPN_CHECK_EQ(unknown.runtime.files->writes, 1u);
+}
+PHPVPN_TEST(wizard_service, receipt_capacity_rejects_before_write_and_retains_closed_session_results) {
+    WizardServiceFixture fixture;
+    fixture.allChecks();
+    for (std::size_t i = 0; i < kWizardMaxReceipts; ++i) {
+        PHPVPN_CHECK(!fixture.beginFinish().error);
+        fixture.runFile();
+    }
+    const auto full = fixture.beginFinish();
+    PHPVPN_CHECK(full.error && full.error->code == "busy");
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, static_cast<unsigned>(kWizardMaxReceipts));
+}
+PHPVPN_TEST(wizard_service, connect_before_queued_finish_invalidates_commit_even_after_disconnect) {
+    WizardServiceFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.runtime.engine.start());
+    fixture.allChecks();
+    PHPVPN_CHECK(!fixture.beginFinish().error);
+    PHPVPN_REQUIRE_OK(fixture.runtime.engine.connect());
+    PHPVPN_REQUIRE_OK(fixture.runtime.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return fixture.runtime.engine.status().state == ConnectionState::disconnected; }));
+    fixture.runFile();
+    auto failed = fixture.call(WizardCommand::get_commit);
+    PHPVPN_CHECK_EQ(failed.result.find("commitState")->stringValue(), "failed");
+    PHPVPN_CHECK_EQ(failed.result.find("error")->find("code")->stringValue(), "wizard_connection_interrupted");
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+    fixture.request.connectionEpoch = fixture.runtime.engine.connectionIdentity().epoch;
+    PHPVPN_CHECK(!fixture.call(WizardCommand::resume).error);
+    auto noOldProof = fixture.beginFinish();
+    PHPVPN_CHECK(noOldProof.error && noOldProof.error->code == "wizard_prerequisite_failed");
+}
+
+PHPVPN_TEST(runtime, recovery_retains_accepted_config_after_save_and_external_delete) {
+    EngineFixture fixture;
+    Gate data;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::health && call == 1)
+            return HttpExchangeResult{Error(ErrorCode::transport_timeout), 0};
+        if (action == HttpAction::data && call == 2) data.block();
+        return {};
+    };
+    fixture.transport.cancel = [&] { data.release(); };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::recovering; }));
+    PHPVPN_REQUIRE_OK(fixture.engine.setConfigJson(makeDefaultEditorDocument()));
+    fixture.files->bytes.reset();
+    fixture.clock.now += 10000;
+    PHPVPN_CHECK(data.await());
+    // Scripted relay still authenticates with the original secret and key.
+    PHPVPN_CHECK(fixture.engine.status().state == ConnectionState::connected);
+    const auto reads = fixture.files->reads;
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK_EQ(fixture.files->reads, reads);
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
+    PHPVPN_REQUIRE_ERROR(fixture.engine.connect(), ErrorCode::config_not_found);
 }
 
 PHPVPN_TEST(runtime, simultaneous_status_reads_do_not_block_live_verified_packet_traffic) {
@@ -644,5 +1064,49 @@ PHPVPN_TEST(runtime, disconnect_cancels_inflight_bootstrap_and_new_connect_reset
     PHPVPN_CHECK_EQ(fixture.engine.status().counters.dataPollsTotal, std::uint64_t(0));
     EngineFixture restarted;
     PHPVPN_CHECK_EQ(restarted.engine.status().counters.dataPollsTotal, std::uint64_t(0));
+}
+PHPVPN_TEST(runtime, ownership_recovery_never_opens_adapter_and_blocks_unresolved_identity) {
+    EngineFixture fixture;
+    TunnelSessionSettings settings;
+    settings.recoveryWaitMs = 0;
+    settings.journalPath = fixture.directory / "journal.json";
+    settings.installDirectory = fixture.directory.wstring();
+    OwnershipJournal journal;
+    journal.adapterName = "PHPVPN";
+    journal.adapterGuid = "{7d1b4d2f-1f34-4d0e-9a3e-2f6c9b5a41d8}";
+    journal.interfaceLuid = 123;
+    journal.adapterCreated = true;
+    journal.address = *Ipv4Address::parse("10.99.99.2");
+    journal.prefixLength = 24;
+    journal.routeDestination = *Ipv4Cidr::parse("10.99.99.0/24");
+    { std::ofstream file(settings.journalPath, std::ios::binary); file << journal.serialize(); }
+    TunnelSession session(fixture.driver, fixture.net);
+    fixture.driver.failure = ErrorCode::tunnel_library_missing;
+    fixture.net.recoveryInterfacePresent = true;
+    const auto failed = session.recoverPreviousRun(settings);
+    PHPVPN_CHECK(!failed && failed.error().code == ErrorCode::journal_ambiguous);
+    PHPVPN_CHECK(std::filesystem::exists(settings.journalPath));
+    PHPVPN_CHECK_EQ(fixture.driver.loads.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.opens.load(), 0);
+    fixture.net.recoveryLookupFailure = ErrorCode::journal_ambiguous;
+    const auto blockedStart = fixture.engine.start();
+    PHPVPN_CHECK(!blockedStart && blockedStart.error().code == ErrorCode::journal_ambiguous);
+    const auto blockedConnect = fixture.engine.connect();
+    PHPVPN_CHECK(!blockedConnect && blockedConnect.error().code == ErrorCode::service_not_running);
+    PHPVPN_CHECK(std::filesystem::exists(settings.journalPath));
+    fixture.net.recoveryInterfacePresent = false;
+    fixture.net.recoveryLookupFailure = ErrorCode::none;
+    settings.adapterName = L"different-installation";
+    const auto wrongIdentity = session.recoverPreviousRun(settings);
+    PHPVPN_CHECK(!wrongIdentity && wrongIdentity.error().code == ErrorCode::journal_ambiguous);
+    PHPVPN_CHECK(std::filesystem::exists(settings.journalPath));
+    settings.adapterName = L"PHPVPN";
+    fixture.net.recoveryInterfacePresent = true;
+    fixture.net.allowOwnedPhantomRemoval = true;
+    PHPVPN_REQUIRE_OK(session.recoverPreviousRun(settings));
+    PHPVPN_CHECK_EQ(fixture.net.phantomRemovals, 1);
+    PHPVPN_CHECK_EQ(fixture.driver.loads.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.opens.load(), 0);
+    PHPVPN_CHECK(!std::filesystem::exists(settings.journalPath));
 }
 }  // namespace phpvpn

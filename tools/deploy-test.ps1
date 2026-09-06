@@ -16,7 +16,9 @@ param(
     [string]$WebRoot = 'D:\nginx\html',
     [string]$BufferDirectory = 'D:/nginx/phpvpn-buffer',
     [string]$BaseUrl = 'http://127.0.0.1/phpvpn.php',
-    [string]$LargeBodyBaseUrl = 'http://127.0.0.1:8081/phpvpn.php'
+    [string]$LargeBodyBaseUrl = 'http://127.0.0.1:8081/phpvpn.php',
+    [ValidateSet('integration', 'wizard-default')][string]$Profile = 'integration',
+    [string]$ConfigurationPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,32 +32,28 @@ $keys = [ordered]@{
     '10.99.99.5' = 'd4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3'
 }
 
+if ($Profile -eq 'wizard-default') {
+    $secret = 'CHANGE_THIS_SERVER_SECRET'
+    $keys = [ordered]@{}
+    foreach ($octet in 2..15) { $keys["10.99.99.$octet"] = ('{0:x2}' -f $octet) * 32 }
+}
 $source = Join-Path $repository 'phpvpn.php'
-$content = [System.IO.File]::ReadAllText($source)
-
-$content = $content.Replace(
-    "const SERVER_SECRET = '00000000000000000000000000000000';",
-    "const SERVER_SECRET = '$secret';")
-
-$oldKeys = @"
-const ACCESS_KEYS = [
-    '10.99.99.2' => '0202020202020202020202020202020202020202020202020202020202020202',
-    '10.99.99.3' => '0303030303030303030303030303030303030303030303030303030303030303',
-    '10.99.99.4' => '0404040404040404040404040404040404040404040404040404040404040404',
-];
-"@ -replace "`r`n", "`n"
-
+$content = [System.IO.File]::ReadAllText($source).Replace("`r`n", "`n")
+function Replace-ExactlyOnce {
+    param([string]$Text, [string]$Expected, [string]$Replacement, [string]$Label)
+    if ([regex]::Matches($Text, [regex]::Escape($Expected)).Count -ne 1) {
+        throw "The $Label header does not match exactly one expected default."
+    }
+    return $Text.Replace($Expected, $Replacement)
+}
+$content = Replace-ExactlyOnce $content "const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';" "const SERVER_SECRET = '$secret';" 'SERVER_SECRET'
+$defaultKeyLines = (2..15 | ForEach-Object { "    '10.99.99.$_' => '$(('{0:x2}' -f $_) * 32)'," }) -join "`n"
+$oldKeys = "const ACCESS_KEYS = [`n$defaultKeyLines`n];"
 $newKeyLines = ($keys.Keys | ForEach-Object { "    '$_' => '$($keys[$_])'," }) -join "`n"
 $newKeys = "const ACCESS_KEYS = [`n$newKeyLines`n];"
-
-if (-not $content.Contains($oldKeys)) {
-    throw 'The ACCESS_KEYS block in phpvpn.php does not match the expected default.'
-}
-$content = $content.Replace($oldKeys, $newKeys)
-
-$content = $content.Replace(
-    "const BUFFER_DIRECTORY = './phpvpn';",
-    "const BUFFER_DIRECTORY = '$BufferDirectory';")
+$content = Replace-ExactlyOnce $content $oldKeys $newKeys 'ACCESS_KEYS'
+$escapedBuffer = $BufferDirectory.Replace('\', '/').Replace("'", "\'")
+$content = Replace-ExactlyOnce $content "const BUFFER_DIRECTORY = './phpvpn';" "const BUFFER_DIRECTORY = '$escapedBuffer';" 'BUFFER_DIRECTORY'
 
 $target = Join-Path $WebRoot 'phpvpn.php'
 [System.IO.File]::WriteAllText($target, $content, (New-Object System.Text.UTF8Encoding($false)))
@@ -75,7 +73,9 @@ $configuration = [ordered]@{
     bufferDirectory  = $BufferDirectory
     deployedFile     = $target
 }
-$configurationPath = Join-Path $repository 'tests-integration\server.json'
+if ([string]::IsNullOrEmpty($ConfigurationPath)) {
+    $ConfigurationPath = Join-Path $repository 'tests-integration\server.json'
+}
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configurationPath) | Out-Null
 # Windows PowerShell writes a byte order mark with -Encoding utf8, which breaks JSON parsers.
 [System.IO.File]::WriteAllText(

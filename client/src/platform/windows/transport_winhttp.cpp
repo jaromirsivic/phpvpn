@@ -1,315 +1,278 @@
-// WinHTTP transport.
-//
-// One session is reused for the whole connection so that the TLS handshake and
-// the TCP connection are amortised across the polling requests. Redirects are
-// disabled, no proxy is used and the response is read in bounded chunks with a
-// hard cap, so a hostile server cannot exhaust the client memory.
-//
-// The total deadline covers name resolution, the connect, the TLS handshake and
-// the whole read. When it expires the request handle is closed from the
-// cancellation path, which unblocks the synchronous calls immediately.
-
+// Asynchronous WinHTTP. Only post() invokes request APIs or closes the handle.
+// Callbacks signal completion and account bytes. Cancellation only signals the
+// owner, which waits for HANDLE_CLOSING before releasing callback state/buffers.
 #include <windows.h>
-
 #include <winhttp.h>
-
+#include <array>
 #include <atomic>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <vector>
-
-#include "core/base/logger.h"
-#include "core/config/config.h"
+#include "core/config/config_document.h"
 #include "platform/iface/transport.h"
-
-#pragma comment(lib, "winhttp.lib")
 
 namespace phpvpn {
 namespace {
-
-constexpr const char* kComponent = "transport";
-constexpr DWORD kReadChunkBytes = 64 * 1024;
-
 std::wstring widen(std::string_view text) {
-    if (text.empty()) {
-        return std::wstring();
-    }
-    const int required = MultiByteToWideChar(CP_UTF8, 0, text.data(),
-                                             static_cast<int>(text.size()), nullptr, 0);
-    if (required <= 0) {
-        return std::wstring();
-    }
-    std::wstring out(static_cast<std::size_t>(required), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(),
-                        required);
-    return out;
+    if (text.size() > INT_MAX) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0) return {};
+    std::wstring result(static_cast<std::size_t>(size), L'\0');
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), size)) return {};
+    return result;
 }
-
-ErrorCode mapWinHttpError(DWORD code) noexcept {
-    switch (code) {
-        case ERROR_WINHTTP_NAME_NOT_RESOLVED:
-            return ErrorCode::transport_dns_failed;
+ErrorCode mapError(DWORD error) {
+    switch (error) {
+        case ERROR_WINHTTP_NAME_NOT_RESOLVED: return ErrorCode::transport_dns_failed;
         case ERROR_WINHTTP_CANNOT_CONNECT:
-        case ERROR_WINHTTP_CONNECTION_ERROR:
-            return ErrorCode::transport_connect_failed;
+        case ERROR_WINHTTP_CONNECTION_ERROR: return ErrorCode::transport_connect_failed;
         case ERROR_WINHTTP_SECURE_FAILURE:
-        case ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED:
-            return ErrorCode::transport_tls_failed;
-        case ERROR_WINHTTP_TIMEOUT:
-            return ErrorCode::transport_timeout;
-        case ERROR_WINHTTP_OPERATION_CANCELLED:
-            return ErrorCode::cancelled;
-        default:
-            return ErrorCode::transport_receive_failed;
+        case ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED: return ErrorCode::transport_tls_failed;
+        case ERROR_WINHTTP_TIMEOUT: return ErrorCode::transport_timeout;
+        case ERROR_WINHTTP_OPERATION_CANCELLED: return ErrorCode::cancelled;
+        default: return ErrorCode::transport_receive_failed;
     }
 }
-
-class HandleGuard {
+class InternetHandle {
 public:
-    explicit HandleGuard(HINTERNET handle = nullptr) : handle_(handle) {}
-    ~HandleGuard() { reset(); }
-
-    HandleGuard(const HandleGuard&) = delete;
-    HandleGuard& operator=(const HandleGuard&) = delete;
-
-    HINTERNET get() const noexcept { return handle_; }
-    explicit operator bool() const noexcept { return handle_ != nullptr; }
-
-    void reset(HINTERNET handle = nullptr) noexcept {
-        if (handle_ != nullptr) {
-            WinHttpCloseHandle(handle_);
-        }
-        handle_ = handle;
-    }
-
-    HINTERNET release() noexcept {
-        HINTERNET handle = handle_;
-        handle_ = nullptr;
-        return handle;
-    }
-
-private:
-    HINTERNET handle_;
+    HINTERNET value = nullptr;
+    ~InternetHandle() { reset(); }
+    void reset(HINTERNET next = nullptr) { if (value) WinHttpCloseHandle(value); value = next; }
 };
-
+struct RequestState {
+    HANDLE changed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE closed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::mutex mutex;
+    DWORD event = 0, error = 0, read = 0, available = 0;
+    std::uint64_t bytes = 0;
+    bool cancelled = false, resultChosen = false;
+    std::array<char, 64 * 1024> buffer{};
+    ~RequestState() {
+        if (changed) CloseHandle(changed);
+        if (cancel) CloseHandle(cancel);
+        if (closed) CloseHandle(closed);
+    }
+};
+void CALLBACK statusCallback(HINTERNET, DWORD_PTR pointer, DWORD status, void* info, DWORD size) {
+    if (!pointer) return;
+    auto& state = *reinterpret_cast<RequestState*>(pointer);
+    // This lock also lets the owner wait for the last callback to return after
+    // observing the closing event. No callback invokes an API or waits for I/O.
+    std::lock_guard lock(state.mutex);
+    if (status == WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING) { SetEvent(state.closed); return; }
+    if (status == WINHTTP_CALLBACK_STATUS_READ_COMPLETE) {
+        state.read = size;
+        const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+        state.bytes = size > maximum - state.bytes ? maximum : state.bytes + size;
+    } else if (status == WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE) {
+        if (size != sizeof(DWORD) || !info) return;
+        state.available = *static_cast<DWORD*>(info);
+    } else if (status == WINHTTP_CALLBACK_STATUS_REQUEST_ERROR) {
+        state.error = static_cast<WINHTTP_ASYNC_RESULT*>(info)->dwError;
+    } else if (status != WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE && status != WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE) {
+        return;
+    }
+    state.event = status;
+    SetEvent(state.changed);
+}
 class WinHttpTransport final : public Transport {
 public:
-    ~WinHttpTransport() override { closeAll(); }
-
+    ~WinHttpTransport() override {
+        cancelCurrentRequest();
+        std::lock_guard lock(serial_);
+        connection_.reset();
+        session_.reset();
+    }
     Status configure(const TransportSettings& settings) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        closeAll();
-
-        auto parsed = parseServerUrl(settings.serverUrl);
-        if (!parsed.ok()) {
-            return parsed.error();
-        }
-        url_ = std::move(parsed).value();
+        cancelCurrentRequest();
+        std::lock_guard lock(serial_);
+        connection_.reset();
+        session_.reset();
+        if (settings.responseTimeoutSeconds < 1 || settings.responseTimeoutSeconds > kMaxHttpTimeoutSeconds || settings.maxResponseBodyBytes < 1)
+            return Error(ErrorCode::config_invalid_limit);
+        PHPVPN_TRY_ASSIGN(url_, parseServerUrl(settings.serverUrl));
         settings_ = settings;
-
-        session_.reset(WinHttpOpen(L"PHPVPN/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
-                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-        if (!session_) {
-            return Error(ErrorCode::transport_unavailable, "the HTTP session could not be created");
+        session_.reset(WinHttpOpen(L"PHPVPN/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+                                  WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC));
+        if (!session_.value) return Error(ErrorCode::transport_unavailable);
+        const int timeout = static_cast<int>(settings.responseTimeoutSeconds * 1000);
+        if (!WinHttpSetTimeouts(session_.value, timeout, timeout, timeout, timeout)) {
+            session_.reset();
+            return Error(ErrorCode::transport_unavailable, "HTTP timeout settings failed");
         }
-
-        const DWORD timeoutMs =
-            static_cast<DWORD>(settings.responseTimeoutSeconds > 0
-                                   ? settings.responseTimeoutSeconds * 1000
-                                   : 30000);
-        WinHttpSetTimeouts(session_.get(), static_cast<int>(timeoutMs), static_cast<int>(timeoutMs),
-                           static_cast<int>(timeoutMs), static_cast<int>(timeoutMs));
-
-        // TLS 1.2 and TLS 1.3 only; the older protocol versions are refused.
         DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
 #ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
         protocols |= WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
 #endif
-        WinHttpSetOption(session_.get(), WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols,
-                         sizeof(protocols));
-
-        connection_.reset(WinHttpConnect(session_.get(), widen(url_.host).c_str(),
-                                         static_cast<INTERNET_PORT>(url_.port), 0));
-        if (!connection_) {
-            return Error(ErrorCode::transport_connect_failed,
-                         "the HTTP connection could not be opened");
+        if (!WinHttpSetOption(session_.value, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols))) {
+            session_.reset();
+            return Error(ErrorCode::transport_tls_failed);
         }
-        return Status::success();
+        connection_.reset(WinHttpConnect(session_.value, widen(url_.host).c_str(), url_.port, 0));
+        if (!connection_.value) return Error(ErrorCode::transport_connect_failed);
+        return ok();
     }
-
-    HttpExchangeResult post(HttpAction action, std::string_view body) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!session_ || !connection_) {
-            return Error(ErrorCode::transport_unavailable, "the transport is not configured");
-        }
-        if (body.size() > 0x7FFFFFFFull) {
-            return Error(ErrorCode::wire_body_too_large, "the request body is too large to send");
-        }
-
-        std::wstring target = widen(url_.path);
-        target += L"?action=";
-        target += widen(httpActionName(action));
-
-        const DWORD flags = url_.secure ? WINHTTP_FLAG_SECURE : 0u;
-        HINTERNET request = WinHttpOpenRequest(connection_.get(), L"POST", target.c_str(), nullptr,
-                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                               flags);
-        if (request == nullptr) {
-            return Error(ErrorCode::transport_send_failed, "the HTTP request could not be created");
-        }
-
-        DWORD noRedirect = WINHTTP_DISABLE_REDIRECTS;
-        WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &noRedirect, sizeof(noRedirect));
-
-        if (url_.secure && settings_.trustAnyTlsCertificate) {
-            // The transport security of this protocol does not rest on the
-            // certificate: every message carries its own authentication tag.
-            // The relaxation is still an accepted risk reported by
-            // `get-diagnostics`.
-            DWORD securityFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA |
-                                  SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
-                                  SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
-                                  SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
-            WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &securityFlags,
-                             sizeof(securityFlags));
-        }
-
-        // The handle is published so that a cancellation from another role can
-        // close it. Ownership stays with exactly one of the two paths, which is
-        // decided under `currentMutex_`, so the handle is never closed twice.
-        {
-            std::lock_guard<std::mutex> currentLock(currentMutex_);
-            current_ = request;
-        }
-
-        const std::wstring headers =
-            std::wstring(L"Content-Type: ") + widen(httpActionContentType(action)) + L"\r\n";
-
-        std::uint64_t responseBodyBytesRead = 0;
-        auto outcome = performRequest(request, headers, body, responseBodyBytesRead);
-
-        bool ownsHandle = false;
-        {
-            std::lock_guard<std::mutex> currentLock(currentMutex_);
-            ownsHandle = current_ == request;
-            current_ = nullptr;
-        }
-        if (ownsHandle) {
-            WinHttpCloseHandle(request);
-        } else {
-            return {Error(ErrorCode::cancelled, "the request was cancelled"), responseBodyBytesRead};
-        }
-        return {std::move(outcome), responseBodyBytesRead};
-    }
-
     void cancelCurrentRequest() override {
-        HINTERNET request = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(currentMutex_);
-            request = current_;
-            current_ = nullptr;
+        cancellationEpoch_.fetch_add(1);
+        std::shared_ptr<RequestState> state;
+        { std::lock_guard lock(currentMutex_); state = current_; }
+        if (state) {
+            std::lock_guard lock(state->mutex);
+            if (!state->resultChosen) { state->cancelled = true; SetEvent(state->cancel); }
         }
-        if (request != nullptr) {
-            // Closing the handle unblocks every synchronous WinHTTP call that is
-            // waiting on it, which is the documented cancellation path.
+    }
+    HttpExchangeResult post(HttpAction action, std::string_view body) override {
+        const auto cancellationEpoch = cancellationEpoch_.load();
+        std::lock_guard lock(serial_);
+        const auto start = GetTickCount64();
+        if (!connection_.value) return Error(ErrorCode::transport_unavailable);
+        if (body.size() > INT_MAX) return Error(ErrorCode::wire_body_too_large);
+        const auto budget = static_cast<ULONGLONG>(settings_.responseTimeoutSeconds) * 1000;
+        if (start > (std::numeric_limits<ULONGLONG>::max)() - budget) return Error(ErrorCode::config_invalid_limit);
+        const auto deadline = start + budget;
+        auto state = std::make_shared<RequestState>();
+        if (!state->changed || !state->cancel || !state->closed) return Error(ErrorCode::transport_unavailable);
+        const auto target = widen(url_.path) + L"?action=" + widen(httpActionName(action));
+        HINTERNET request = WinHttpOpenRequest(connection_.value, L"POST", target.c_str(), nullptr,
+            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, url_.secure ? WINHTTP_FLAG_SECURE : 0);
+        if (!request) return Error(ErrorCode::transport_send_failed);
+        DWORD_PTR pointer = reinterpret_cast<DWORD_PTR>(state.get());
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_CONTEXT_VALUE, &pointer, sizeof(pointer)) ||
+            WinHttpSetStatusCallback(request, statusCallback, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES, 0)
+                == WINHTTP_INVALID_STATUS_CALLBACK) {
             WinHttpCloseHandle(request);
+            return Error(ErrorCode::transport_unavailable);
         }
+        {
+            std::lock_guard currentLock(currentMutex_);
+            current_ = state;
+            if (cancellationEpoch != cancellationEpoch_.load()) {
+                state->cancelled = true;
+                SetEvent(state->cancel);
+            }
+        }
+        auto result = exchange(request, *state, deadline, action, body);
+        {
+            std::lock_guard stateLock(state->mutex);
+            if (state->cancelled) result = Error(ErrorCode::cancelled);
+            else if (GetTickCount64() >= deadline) result = Error(ErrorCode::transport_timeout);
+            state->resultChosen = true;
+        }
+        // Exactly one closer. Closing is asynchronous internally, so return only
+        // after the documented final callback. The post owner still owns buffers.
+        WinHttpCloseHandle(request);
+        WaitForSingleObject(state->closed, INFINITE);
+        std::uint64_t bytes;
+        { std::lock_guard stateLock(state->mutex); bytes = state->bytes; }
+        { std::lock_guard currentLock(currentMutex_); current_.reset(); }
+        return {std::move(result), bytes};
     }
-
 private:
-    Result<HttpResponse> performRequest(HINTERNET request,
-                                        const std::wstring& headers,
-                                        std::string_view body,
-                                        std::uint64_t& responseBodyBytesRead) {
-        if (!WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
-                                const_cast<char*>(body.data()), static_cast<DWORD>(body.size()),
-                                static_cast<DWORD>(body.size()), 0)) {
-            return Error(mapWinHttpError(GetLastError()), "the request could not be sent");
-        }
-
-        if (!WinHttpReceiveResponse(request, nullptr)) {
-            return Error(mapWinHttpError(GetLastError()), "no response was received");
-        }
-
-        DWORD statusCode = 0;
-        DWORD statusSize = sizeof(statusCode);
-        if (!WinHttpQueryHeaders(request,
-                                 WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                 WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize,
-                                 WINHTTP_NO_HEADER_INDEX)) {
-            return Error(ErrorCode::transport_receive_failed,
-                         "the response status could not be read");
-        }
-
-        HttpResponse response;
-        response.statusCode = static_cast<int>(statusCode);
-        std::optional<std::uint64_t> contentLength;
-        wchar_t lengthText[32]{};
-        DWORD lengthSize = sizeof(lengthText);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH,
-                                WINHTTP_HEADER_NAME_BY_INDEX, lengthText, &lengthSize,
-                                WINHTTP_NO_HEADER_INDEX)) {
-            std::uint64_t length = 0;
-            const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
-            for (const wchar_t* digit = lengthText; *digit; ++digit) {
-                if (*digit < L'0' || *digit > L'9' || length > (maximum - (*digit - L'0')) / 10)
-                    return Error(ErrorCode::transport_receive_failed, "the response length is invalid");
-                length = length * 10 + (*digit - L'0');
-            }
-            contentLength = length;
-        } else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND) {
-            return Error(ErrorCode::transport_receive_failed, "the response length could not be read");
-        }
-
-        const std::size_t cap = settings_.maxResponseBodyBytes > 0
-                                    ? static_cast<std::size_t>(settings_.maxResponseBodyBytes)
-                                    : static_cast<std::size_t>(kDefaultMaxResponseBodyBytes);
-
-        std::vector<char> chunk(kReadChunkBytes);
+    Status wait(RequestState& state, ULONGLONG deadline, DWORD expected) {
         for (;;) {
-            DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), static_cast<DWORD>(chunk.size()), &read)) {
-                return Error(mapWinHttpError(GetLastError()), "the response could not be read");
-            }
-            if (read == 0) {
-                if (contentLength && responseBodyBytesRead != *contentLength)
-                    return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
-                break;
-            }
-            const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
-            responseBodyBytesRead = read > maximum - responseBodyBytesRead
-                ? maximum : responseBodyBytesRead + read;
-            if (response.body.size() + read > cap) {
-                return Error(ErrorCode::transport_response_too_large,
-                             "the response exceeds the configured limit");
-            }
-            response.body.append(chunk.data(), read);
+            const auto now = GetTickCount64();
+            if (now >= deadline) return Error(ErrorCode::transport_timeout);
+            const DWORD remaining = static_cast<DWORD>((std::min)(deadline - now, static_cast<ULONGLONG>(INT_MAX)));
+            HANDLE handles[] = {state.cancel, state.changed};
+            const auto result = WaitForMultipleObjects(2, handles, FALSE, remaining);
+            if (result == WAIT_OBJECT_0) return Error(ErrorCode::cancelled);
+            if (result == WAIT_TIMEOUT) continue;
+            if (result != WAIT_OBJECT_0 + 1) return Error(ErrorCode::transport_receive_failed);
+            std::lock_guard lock(state.mutex);
+            if (state.cancelled) return Error(ErrorCode::cancelled);
+            if (GetTickCount64() >= deadline) return Error(ErrorCode::transport_timeout);
+            if (state.error) return Error(mapError(state.error));
+            if (state.event != expected) return Error(ErrorCode::transport_receive_failed);
+            state.event = 0;
+            ResetEvent(state.changed);
+            return ok();
         }
-
-        return response;
     }
-
-    void closeAll() {
-        connection_.reset();
-        session_.reset();
+    Result<HttpResponse> exchange(HINTERNET request, RequestState& state, ULONGLONG deadline,
+                                   HttpAction action, std::string_view body) {
+        DWORD disabled = WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)))
+            return Error(ErrorCode::transport_unavailable);
+        DWORD autoLogon = WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_AUTOLOGON_POLICY, &autoLogon, sizeof(autoLogon)))
+            return Error(ErrorCode::transport_unavailable);
+        if (url_.secure && settings_.trustAnyTlsCertificate) {
+            DWORD flags = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
+                SECURITY_FLAG_IGNORE_CERT_CN_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+            if (!WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &flags, sizeof(flags))) return Error(ErrorCode::transport_tls_failed);
+        }
+        const auto headers = std::wstring(L"Content-Type: ") + widen(httpActionContentType(action)) + L"\r\n";
+        {
+            std::lock_guard lock(state.mutex);
+            if (state.cancelled) return Error(ErrorCode::cancelled);
+        }
+        if (GetTickCount64() >= deadline) return Error(ErrorCode::transport_timeout);
+        if (!WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
+            const_cast<char*>(body.data()), static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), reinterpret_cast<DWORD_PTR>(&state)))
+            return Error(mapError(GetLastError()));
+        PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE));
+        if (!WinHttpReceiveResponse(request, nullptr)) return Error(mapError(GetLastError()));
+        PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE));
+        DWORD status = 0, size = sizeof(status);
+        if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX)) return Error(ErrorCode::transport_receive_failed);
+        HttpResponse response;
+        response.statusCode = static_cast<int>(status);
+        wchar_t contentType[256]{};
+        size = sizeof(contentType);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX,
+            contentType, &size, WINHTTP_NO_HEADER_INDEX)) {
+            for (const wchar_t* character = contentType; *character; ++character) {
+                if (*character > 127) return Error(ErrorCode::transport_receive_failed);
+                response.contentType.push_back(static_cast<char>(*character));
+            }
+        } else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND) return Error(ErrorCode::transport_receive_failed);
+        std::optional<std::uint64_t> length;
+        wchar_t text[32]{};
+        size = sizeof(text);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, text, &size, WINHTTP_NO_HEADER_INDEX)) {
+            std::uint64_t parsed = 0;
+            for (const wchar_t* digit = text; *digit; ++digit) {
+                if (*digit < L'0' || *digit > L'9' || parsed > ((std::numeric_limits<std::uint64_t>::max)() - (*digit - L'0')) / 10)
+                    return Error(ErrorCode::transport_receive_failed);
+                parsed = parsed * 10 + (*digit - L'0');
+            }
+            length = parsed;
+        } else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND) return Error(ErrorCode::transport_receive_failed);
+        for (;;) {
+            if (!WinHttpQueryDataAvailable(request, nullptr)) return Error(mapError(GetLastError()));
+            PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE));
+            DWORD available;
+            { std::lock_guard lock(state.mutex); available = state.available; }
+            if (!available) {
+                if (length && response.body.size() != *length) return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
+                return response;
+            }
+            const auto requested = (std::min)(available, static_cast<DWORD>(state.buffer.size()));
+            if (!WinHttpReadData(request, state.buffer.data(), requested, nullptr))
+                return Error(mapError(GetLastError()));
+            PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_READ_COMPLETE));
+            DWORD read;
+            { std::lock_guard lock(state.mutex); read = state.read; }
+            if (!read) {
+                if (length && response.body.size() != *length) return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
+                return response;
+            }
+            if (read > static_cast<std::uint64_t>(settings_.maxResponseBodyBytes) - response.body.size())
+                return Error(ErrorCode::transport_response_too_large);
+            response.body.append(state.buffer.data(), read);
+        }
     }
-
-    std::mutex mutex_;
-    HandleGuard session_;
-    HandleGuard connection_;
-    TransportSettings settings_;
+    std::mutex serial_, currentMutex_;
+    InternetHandle session_, connection_;
+    std::shared_ptr<RequestState> current_;
+    std::atomic<std::uint64_t> cancellationEpoch_{0};
     ServerUrl url_;
-
-    std::mutex currentMutex_;
-    HINTERNET current_ = nullptr;
+    TransportSettings settings_;
 };
-
-}  // namespace
-
-Result<std::unique_ptr<Transport>> createPlatformTransport() {
-    return std::unique_ptr<Transport>(new WinHttpTransport());
 }
-
-}  // namespace phpvpn
+Result<std::unique_ptr<Transport>> createPlatformTransport() { return std::unique_ptr<Transport>(new WinHttpTransport); }
+}

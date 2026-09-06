@@ -1,5 +1,7 @@
 # Implementační plán klienta phpvpn v1 pro Windows
 
+Historický plán. Překonané požadavky této etapy, včetně defaultů a vytvoření konfigurace, nahrazuje [plan3_client.md](plan3_client.md). Aktuální normativní pravidla jsou v [client.md](client.md) a [protocol.md](protocol.md).
+
 Plán popisuje kompletní implementaci nativního klienta podle [client.md](client.md) proti drátovému protokolu [protocol.md](protocol.md), který je již implementován v serverovém souboru [phpvpn.php](phpvpn.php). Primární a jedinou dodávanou platformou v1 jsou Windows, jádro však zůstává platformně nezávislé, aby šlo později doplnit Linux a macOS.
 
 Audit [PROBLEM_CLIENT.md](PROBLEM_CLIENT.md) se v tomto plánu záměrně neřeší. Rizika, která popisuje, jsou vědomě přijatá rozhodnutí zadavatele, zejména veřejná lokální named pipe, podpora čistého HTTP, výchozí `trustAnyTlsCertificate` s hodnotou `true` a instalace řízená skriptem `install.bat`.

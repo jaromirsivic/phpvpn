@@ -7,7 +7,7 @@
 #include <limits>
 
 #include "core/base/hex.h"
-#include "core/config/config.h"
+#include "core/config/config_document.h"
 #include "core/protocol/json.h"
 
 namespace phpvpn {
@@ -84,7 +84,7 @@ Result<SecureBuffer> parseHexKey(std::string_view text, std::string_view what) {
 // value, a value made only of NUL bytes or only of ASCII `0`, matching the
 // warning of protocol.md chapter 5.1.
 bool isPredictableSecret(std::string_view configured) {
-    if (configured.empty()) {
+    if (configured.empty() || configured == kDefaultServerSecret) {
         return true;
     }
     bool allZeroBytes = true;
@@ -116,16 +116,12 @@ bool multiplyChecked(std::int64_t a, std::int64_t b, std::int64_t& out) noexcept
 
 }  // namespace
 
-Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarnings& warnings) {
+Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings& warnings, bool allowMissingIdentity) {
     warnings = ConfigWarnings{};
 
-    // A Windows text editor readily prefixes a UTF-8 byte order mark. It
-    // carries no meaning for JSON, so it is dropped before parsing and it is
-    // also kept out of the document `get-config` returns.
-    static constexpr std::string_view kUtf8Bom = "\xEF\xBB\xBF";
-    if (json.size() >= kUtf8Bom.size() && json.compare(0, kUtf8Bom.size(), kUtf8Bom) == 0) {
-        json.remove_prefix(kUtf8Bom.size());
-    }
+    std::string normalized;
+    PHPVPN_TRY_ASSIGN(normalized, normalizeConfigText(json));
+    json = normalized;
 
     JsonValue document;
     PHPVPN_TRY_ASSIGN(document, Json::parse(json));
@@ -150,7 +146,7 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
                                                           "accessKey"};
     PHPVPN_TRY(requireKnownMembers(*master, kMasterMembers, "masterSetup"));
 
-    auto config = std::make_shared<ClientConfig>();
+    auto config = std::make_shared<ConfigValues>();
     config->rawJson.assign(json);
 
     std::string serverUrlText;
@@ -168,7 +164,7 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
     }
 
     // A string of any length is valid, including the empty string, which the
-    // key derivation normalises to 32 ASCII characters `0`.
+    // key derivation normalises to CHANGE_THIS_SERVER_SECRET.
     PHPVPN_TRY_ASSIGN(config->serverSecret, requireString(*master, "serverSecret", "masterSetup"));
 
     std::string cidrText = kDefaultVpnCidr;
@@ -185,18 +181,21 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
     }
     config->vpnCidr = *parsedCidr;
 
-    std::string virtualIpText;
-    PHPVPN_TRY_ASSIGN(virtualIpText, requireString(*master, "virtualIp", "masterSetup"));
-    const auto virtualIp = Ipv4Address::parse(virtualIpText);
-    if (!virtualIp.has_value() || !config->vpnCidr.isValidClientAddress(*virtualIp)) {
-        return Error(ErrorCode::config_invalid_address,
-                     "virtualIp must be a valid client address inside vpnCidr");
+    if (master->find("virtualIp") || !allowMissingIdentity) {
+        std::string virtualIpText;
+        PHPVPN_TRY_ASSIGN(virtualIpText, requireString(*master, "virtualIp", "masterSetup"));
+        const auto virtualIp = Ipv4Address::parse(virtualIpText);
+        if (!virtualIp || !config->vpnCidr.isValidClientAddress(*virtualIp))
+            return Error(ErrorCode::config_invalid_address);
+        config->virtualIp = *virtualIp;
     }
-    config->virtualIp = *virtualIp;
-
-    std::string accessKeyText;
-    PHPVPN_TRY_ASSIGN(accessKeyText, requireString(*master, "accessKey", "masterSetup"));
-    PHPVPN_TRY_ASSIGN(config->accessKey, parseHexKey(accessKeyText, "accessKey"));
+    if (master->find("accessKey") || !allowMissingIdentity) {
+        std::string accessKeyText;
+        PHPVPN_TRY_ASSIGN(accessKeyText, requireString(*master, "accessKey", "masterSetup"));
+        SecureBuffer key;
+        PHPVPN_TRY_ASSIGN(key, parseHexKey(accessKeyText, "accessKey"));
+        config->accessKey = std::move(key);
+    }
 
     RuntimeLimits limits;
     if (const JsonValue* runtime = document.find("runtime")) {
@@ -243,6 +242,8 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
         return Error(ErrorCode::config_invalid_limit,
                      "maxNdjsonLineBytes must not exceed maxResponseBodyBytes");
     }
+    if (limits.responseTimeoutSeconds > kMaxHttpTimeoutSeconds)
+        return Error(ErrorCode::config_invalid_limit, "responseTimeoutSeconds exceeds 2147483 seconds");
     config->runtime = limits;
 
     if (const JsonValue* contracts = document.find("communicationContracts")) {
@@ -256,15 +257,9 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
                 return Error(ErrorCode::config_invalid_address,
                              "a communication contract key is not a valid client address");
             }
-            if (*peer == config->virtualIp) {
+            if (config->virtualIp && *peer == *config->virtualIp) {
                 return Error(ErrorCode::config_invalid_address,
                              "a communication contract must not target the local virtualIp");
-            }
-            if (config->findContract(*peer) != nullptr) {
-                // The strict JSON parser already rejects duplicate members; this
-                // guard keeps the invariant explicit for any future caller.
-                return Error(ErrorCode::config_invalid_address,
-                             "a communication contract address appears more than once");
             }
             if (!member.second.isObject()) {
                 return Error(ErrorCode::config_invalid_value,
@@ -288,7 +283,7 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
     // Admission invariant of client.md: every possible peer queue keeps a
     // logical reservation in both directions, so the global limit has to cover
     // maxRemotePeers * minPerPeerQueueBytes on each side.
-    const auto peers = static_cast<std::int64_t>(config->maxRemotePeers());
+    const auto peers = static_cast<std::int64_t>((config->vpnCidr.clientAddressCount() - 1));
     std::int64_t requiredBytes = 0;
     if (!multiplyChecked(peers, limits.minPerPeerQueueBytes, requiredBytes)) {
         return Error(ErrorCode::config_queue_budget,
@@ -307,6 +302,22 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
     warnings.usesPlainHttp = !config->serverUrl.secure;
     warnings.serverSecretPredictable = isPredictableSecret(config->serverSecret);
 
+    return std::move(*config);
+}
+
+Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarnings& warnings) {
+    auto values = validateConfigValues(json, warnings, false);
+    if (!values) return values.error();
+    auto config = std::make_shared<ClientConfig>();
+    config->serverUrl = std::move(values->serverUrl);
+    config->serverSecret = std::move(values->serverSecret);
+    config->trustAnyTlsCertificate = values->trustAnyTlsCertificate;
+    config->vpnCidr = values->vpnCidr;
+    config->virtualIp = *values->virtualIp;
+    config->accessKey = std::move(*values->accessKey);
+    config->runtime = values->runtime;
+    config->contracts = std::move(values->contracts);
+    config->rawJson = std::move(values->rawJson);
     return ClientConfigPtr(std::move(config));
 }
 

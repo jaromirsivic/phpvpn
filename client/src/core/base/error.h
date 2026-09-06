@@ -21,6 +21,16 @@ enum class ErrorCode {
     busy,
 
     // Configuration, client.md "Konfiguracni soubor"
+    config_unreadable,
+    config_encoding_error,
+    config_too_large,
+    wizard_contract_self_conflict,
+    wizard_session_expired,
+    wizard_prerequisite_failed,
+    wizard_attempt_closed,
+    wizard_connection_interrupted,
+    wizard_commit_unknown,
+    wizard_unsupported,
     config_missing,
     config_not_found,
     config_read_failed,

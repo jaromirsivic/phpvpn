@@ -1,5 +1,7 @@
 # Implementační plán 2: Windows Service a tray aplikace phpvpn
 
+Historický plán. Překonané požadavky této etapy, včetně defaultů a vytvoření konfigurace, nahrazuje [plan3_client.md](plan3_client.md). Aktuální normativní pravidla jsou v [client.md](client.md) a [protocol.md](protocol.md).
+
 Plán pokrývá změny Windows klienta zavedené commitem `11b2e29` a následná schválená upřesnění podle [formálního zadání](notes/2026-09-04-22-20-52_notes.processed.md). Navazuje na [plan_client.md](plan_client.md). Normativním zdrojem je vždy [client.md](client.md), oba plány jej konkretizují. Tento dokument popisuje požadovanou implementaci, nikoli potvrzení jejího dokončení.
 
 Cílem je doplnit pět funkčně oddělených celků, které commit zavádí, a to tak, aby tři z nich mohly být implementovány paralelně samostatnými agenty.

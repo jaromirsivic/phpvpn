@@ -22,11 +22,6 @@ std::filesystem::path configFilePath(const std::filesystem::path& dataDirectory)
 std::filesystem::path journalFilePath(const std::filesystem::path& dataDirectory);
 std::filesystem::path logDirectory(const std::filesystem::path& dataDirectory);
 
-// Atomically creates the documented first-start configuration if it is
-// missing. An existing path is never modified, even when another process wins
-// a concurrent create race.
-Status ensureDefaultConfigFile(const std::filesystem::path& path);
-
 // Restricts a directory to SYSTEM and the local Administrators group, so a
 // standard user cannot read the stored keys.
 Status restrictDirectoryToAdministrators(const std::filesystem::path& directory);

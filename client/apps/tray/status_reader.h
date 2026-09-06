@@ -14,6 +14,7 @@ namespace phpvpn::tray {
 // progress window. One in-flight read per reader, bounded independently of UI.
 class StatusReader {
 public:
+    explicit StatusReader(std::wstring pipeName = kIpcPipeNameW) : pipeName_(std::move(pipeName)) {}
     ~StatusReader() { stop(); }
     void request(HWND target, UINT message);
     std::optional<TrayStatus> take();
@@ -24,13 +25,15 @@ private:
     std::mutex mutex_;
     std::deque<TrayStatus> results_;
     ReadRequestQueue queue_;
+    const std::wstring pipeName_;
 };
 
 class CommandReader {
 public:
-    CommandReader();
+    explicit CommandReader(std::wstring pipeName = kIpcPipeNameW);
     ~CommandReader();
     bool request(IpcCommand command, const std::string& payload, HWND target, UINT message);
+    bool requestRaw(std::string request, DWORD timeoutMs, HWND target, UINT message);
     std::optional<std::string> take();
     void stop();
 private:
@@ -39,5 +42,6 @@ private:
     std::thread worker_;
     std::mutex mutex_;
     std::optional<std::string> result_;
+    const std::wstring pipeName_;
 };
 }  // namespace phpvpn::tray

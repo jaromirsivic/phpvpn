@@ -10,8 +10,10 @@
 #include "core/base/logger.h"
 #include "core/ipc/ipc_dispatcher.h"
 #include "core/runtime/vpn_engine.h"
+#include "core/wizard/wizard_service.h"
 #include "platform/windows/ipc_pipe.h"
 #include "platform/windows/paths_win.h"
+#include "platform/windows/config_files_win.h"
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -27,6 +29,7 @@ constexpr const wchar_t* kServiceDescription =
 SERVICE_STATUS_HANDLE g_statusHandle = nullptr;
 SERVICE_STATUS g_status{};
 HANDLE g_stopEvent = nullptr;
+ServiceHostEnvironment g_environment;
 
 void reportStatus(DWORD currentState, DWORD exitCode, DWORD waitHintMs) {
     static DWORD checkPoint = 1;
@@ -51,14 +54,20 @@ class ServiceRuntime {
 public:
     Status start() {
         std::filesystem::path data;
-        PHPVPN_TRY_ASSIGN(data, dataDirectory());
+        if (g_environment.dataDirectory.empty()) {
+            PHPVPN_TRY_ASSIGN(data, dataDirectory());
+        } else {
+            data = g_environment.dataDirectory;
+            std::error_code code;
+            std::filesystem::create_directories(data, code);
+            if (code) return Error(ErrorCode::config_write_failed);
+        }
 
         // The stored keys must not be readable by a standard user; the pipe
         // stays deliberately public, which is a separate, documented decision.
-        auto restricted = restrictDirectoryToAdministrators(data);
-        if (!restricted.ok()) {
-            PHPVPN_LOG_WARN(kComponent, "the data directory permissions could not be tightened");
-        }
+        PHPVPN_TRY(restrictDirectoryToAdministrators(data));
+        std::unique_ptr<ConfigFiles> files;
+        PHPVPN_TRY_ASSIGN(files, createWindowsConfigFiles(configFilePath(data)));
 
         Logger::instance().configureFile(logDirectory(data), "phpvpn-service");
         PHPVPN_LOG_INFO(kComponent, "the service is starting");
@@ -76,19 +85,52 @@ public:
         paths.configFile = configFilePath(data);
         paths.journalFile = journalFilePath(data);
         paths.installDirectory = installDirectory.wstring();
+        paths.adapterName = g_environment.adapterName;
+        paths.adapterGuid = g_environment.adapterGuid;
 
-        // The first IPC get-config must already see a valid document. This is
-        // an exclusive create: an administrator's existing file, valid or not,
-        // is never replaced automatically.
-        PHPVPN_TRY(ensureDefaultConfigFile(paths.configFile));
-
+        configStore_ = std::make_unique<ConfigStore>(*crypto_, std::move(files));
+        auto recoveredConfig = configStore_->recover();
+        if (!recoveredConfig) return recoveredConfig.error();
         engine_ = std::make_unique<VpnEngine>(*crypto_, *transport_, *clock_, *tunnelDriver_,
-                                              *netConfig_, std::move(paths));
+                                              *netConfig_, std::move(paths), *configStore_);
         PHPVPN_TRY(engine_->start());
 
-        dispatcher_ = std::make_unique<IpcDispatcher>(*engine_);
+        WizardScheduler scheduler;
+        scheduler.file = [this](std::function<void()> task) { return server_ && server_->tryPostFile(std::move(task)); };
+        scheduler.diagnostic = [this](std::function<void()> task) { return server_ && server_->tryPostDiagnostic(std::move(task)); };
+        std::string instanceId;
+        PHPVPN_TRY_ASSIGN(instanceId, crypto_->randomUuidV4());
+        wizard_ = std::make_unique<WizardService>(*crypto_, *clock_, *configStore_, *engine_, std::move(scheduler), std::move(instanceId));
+        dispatcher_ = std::make_unique<IpcDispatcher>(*engine_, wizard_.get());
+        IpcPipeServerOptions options;
+        if (!g_environment.pipeName.empty()) options.pipeName = g_environment.pipeName;
+        options.classify = [](std::string_view json) {
+            auto wizard = WizardIpc::parseRequest(json);
+            if (wizard) {
+                switch (wizard->command) {
+                    case WizardCommand::open: case WizardCommand::get_config_state:
+                    case WizardCommand::get_config_document: case WizardCommand::create_default_config:
+                        return IpcWorkClass::file;
+                    default: return IpcWorkClass::shortControl;
+                }
+            }
+            auto request = IpcProtocol::parseRequest(json);
+            if (!request) return IpcWorkClass::shortControl;
+            if (request->command == IpcCommand::get_info) return IpcWorkClass::diagnostic;
+            if (request->command == IpcCommand::connect || request->command == IpcCommand::get_config || request->command == IpcCommand::set_config)
+                return IpcWorkClass::file;
+            return IpcWorkClass::shortControl;
+        };
+        options.busyResponse = [](std::string_view json) {
+            auto wizard = WizardIpc::parseRequest(json);
+            if (wizard) return WizardIpc::buildError(wizard->requestId, WizardIpc::safeError(Error(ErrorCode::busy)));
+            auto request = IpcProtocol::parseRequest(json);
+            return IpcProtocol::buildError(request ? request->requestId : std::string{}, Error(ErrorCode::busy));
+        };
+        options.onTick = [this] { wizard_->tick(); };
+        options.cancelHandlers = [this] { wizard_->shutdown(); engine_->shutdown(); };
         server_ = std::make_unique<IpcPipeServer>(
-            [this](std::string_view request) { return dispatcher_->handle(request); });
+            [this](std::string_view request) { return dispatcher_->handle(request); }, std::move(options));
         PHPVPN_TRY(server_->start());
 
         PHPVPN_LOG_INFO(kComponent, "the service is ready");
@@ -102,6 +144,7 @@ public:
             server_.reset();
         }
         dispatcher_.reset();
+        wizard_.reset();
         if (engine_) {
             engine_->shutdown();
             engine_.reset();
@@ -110,6 +153,7 @@ public:
         tunnelDriver_.reset();
         transport_.reset();
         clock_.reset();
+        configStore_.reset();
         crypto_.reset();
         Logger::instance().flush();
     }
@@ -120,7 +164,9 @@ private:
     std::unique_ptr<Clock> clock_;
     std::unique_ptr<TunnelDriver> tunnelDriver_;
     std::unique_ptr<NetConfig> netConfig_;
+    std::unique_ptr<ConfigStore> configStore_;
     std::unique_ptr<VpnEngine> engine_;
+    std::unique_ptr<WizardService> wizard_;
     std::unique_ptr<IpcDispatcher> dispatcher_;
     std::unique_ptr<IpcPipeServer> server_;
 };
@@ -145,7 +191,7 @@ DWORD WINAPI serviceControlHandler(DWORD control, DWORD, LPVOID, LPVOID) {
 
 void WINAPI serviceMain(DWORD, LPWSTR*) {
     g_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-    g_statusHandle = RegisterServiceCtrlHandlerExW(kServiceName, serviceControlHandler, nullptr);
+    g_statusHandle = RegisterServiceCtrlHandlerExW(g_environment.serviceName.c_str(), serviceControlHandler, nullptr);
     if (g_statusHandle == nullptr) {
         return;
     }
@@ -187,7 +233,12 @@ BOOL WINAPI consoleControlHandler(DWORD control) {
 }  // namespace
 
 int runAsService() {
-    SERVICE_TABLE_ENTRYW table[] = {{const_cast<LPWSTR>(kServiceName), serviceMain},
+    return runAsService(ServiceHostEnvironment{});
+}
+
+int runAsService(const ServiceHostEnvironment& environment) {
+    g_environment = environment;
+    SERVICE_TABLE_ENTRYW table[] = {{g_environment.serviceName.data(), serviceMain},
                                     {nullptr, nullptr}};
     if (!StartServiceCtrlDispatcherW(table)) {
         return static_cast<int>(GetLastError());

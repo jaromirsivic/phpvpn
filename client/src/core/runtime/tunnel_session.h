@@ -49,6 +49,8 @@ struct TunnelSessionSettings {
     std::uint32_t routeMetric = 5;
     std::filesystem::path journalPath;
     std::wstring installDirectory;
+    // Bounded read-only grace for asynchronous OS cleanup after process death.
+    std::int64_t recoveryWaitMs = 5000;
 };
 
 class TunnelSession {

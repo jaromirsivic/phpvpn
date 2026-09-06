@@ -47,6 +47,22 @@ public:
 
     virtual Result<NetworkSnapshot> snapshot() = 0;
 
+    // Read-only existence of this exact OS identity. False means positively
+    // absent, lookup failure must remain an error. Never opens an adapter.
+    virtual Result<bool> interfaceExists(std::uint64_t interfaceLuid) = 0;
+
+    // Removes only the exact owned, non-present Wintun PnP instance, after
+    // matching its GUID, alias and LUID against OS metadata. Live devices and
+    // uncertain/mismatched identities fail closed. No Wintun API is invoked.
+    // Success means absent or removal accepted without a restart requirement;
+    // the caller must still verify disappearance of the LUID and owned rows.
+    // The caller serializes this instance's lifecycle. Native SetupAPI removal
+    // is synchronous, has no cancellation/deadline, and cannot atomically
+    // condition removal on IsPresent remaining false against another admin.
+    virtual Status removeOwnedPhantomInterface(const std::wstring& alias,
+                                               const std::wstring& expectedGuid,
+                                               std::uint64_t interfaceLuid) = 0;
+
     virtual Status addUnicastAddress(const UnicastAddressEntry& entry) = 0;
     virtual Status removeUnicastAddress(const UnicastAddressEntry& entry) = 0;
 

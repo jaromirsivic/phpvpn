@@ -14,6 +14,13 @@
 
 #include <iphlpapi.h>
 #include <netioapi.h>
+#include <objbase.h>
+#include <setupapi.h>
+#include <cfgmgr32.h>
+
+#include <initguid.h>
+#include <devguid.h>
+#include <devpkey.h>
 
 #include <algorithm>
 #include <vector>
@@ -22,9 +29,91 @@
 
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace phpvpn {
 namespace {
+
+struct DeviceInfoSet {
+    HDEVINFO value = INVALID_HANDLE_VALUE;
+    ~DeviceInfoSet() {
+        if (value != INVALID_HANDLE_VALUE) SetupDiDestroyDeviceInfoList(value);
+    }
+    DeviceInfoSet(const DeviceInfoSet&) = delete;
+    DeviceInfoSet& operator=(const DeviceInfoSet&) = delete;
+    explicit DeviceInfoSet(HDEVINFO handle) : value(handle) {}
+};
+
+Error phantomInspectionError(const char* operation, DWORD code) {
+    return Error(ErrorCode::netconfig_apply_failed,
+                 std::string(operation) + " failed (Windows " + std::to_string(code) + ")");
+}
+
+bool sameOsName(const wchar_t* left, const wchar_t* right) {
+    return CompareStringOrdinal(left, -1, right, -1, TRUE) == CSTR_EQUAL;
+}
+
+Status verifyRecordedInterface(const std::wstring& alias, const GUID& guid,
+                               std::uint64_t luid) {
+    MIB_IF_ROW2 row{};
+    row.InterfaceLuid.Value = luid;
+    const DWORD result = GetIfEntry2(&row);
+    if (result != NO_ERROR) return phantomInspectionError("interface recheck", result);
+    if (row.InterfaceLuid.Value != luid || !IsEqualGUID(row.InterfaceGuid, guid) ||
+        !sameOsName(row.Alias, alias.c_str())) {
+        return Error(ErrorCode::journal_ambiguous, "the recorded interface identity changed");
+    }
+    return Status::success();
+}
+
+Status verifyPhantomDevice(HDEVINFO set, SP_DEVINFO_DATA& device,
+                          const std::wstring& instanceId) {
+    if (!IsEqualGUID(device.ClassGuid, GUID_DEVCLASS_NET)) {
+        return Error(ErrorCode::journal_ambiguous, "the recorded device has a different class");
+    }
+    wchar_t actualId[MAX_DEVICE_ID_LEN]{};
+    if (!SetupDiGetDeviceInstanceIdW(set, &device, actualId, MAX_DEVICE_ID_LEN, nullptr)) {
+        return phantomInspectionError("device instance inspection", GetLastError());
+    }
+    if (!sameOsName(actualId, instanceId.c_str())) {
+        return Error(ErrorCode::journal_ambiguous, "the recorded device instance changed");
+    }
+    DEVPROPTYPE propertyType = 0;
+    DEVPROP_BOOLEAN present = DEVPROP_TRUE;
+    DWORD propertySize = 0;
+    if (!SetupDiGetDevicePropertyW(set, &device, &DEVPKEY_Device_IsPresent, &propertyType,
+                                  reinterpret_cast<PBYTE>(&present), sizeof(present),
+                                  &propertySize, 0)) {
+        return phantomInspectionError("device presence inspection", GetLastError());
+    }
+    if (propertyType != DEVPROP_TYPE_BOOLEAN || propertySize != sizeof(present) ||
+        present != DEVPROP_FALSE) {
+        return Error(ErrorCode::journal_ambiguous, "the recorded device is not proven phantom");
+    }
+    return Status::success();
+}
+
+Status verifyNoInterfaceIdentity(const std::wstring& alias, const GUID& guid,
+                                 std::uint64_t luid) {
+    MIB_IF_TABLE2* table = nullptr;
+    const DWORD result = GetIfTable2(&table);
+    if (result != NO_ERROR || !table) {
+        return phantomInspectionError("interface table inspection", result);
+    }
+    bool found = false;
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const auto& row = table->Table[i];
+        if (row.InterfaceLuid.Value == luid || IsEqualGUID(row.InterfaceGuid, guid) ||
+            sameOsName(row.Alias, alias.c_str())) {
+            found = true;
+            break;
+        }
+    }
+    FreeMibTable(table);
+    if (found) return Error(ErrorCode::journal_ambiguous, "the interface identity still exists");
+    return Status::success();
+}
 
 Ipv4Address fromSockaddr(const SOCKADDR_INET& address) noexcept {
     if (address.si_family != AF_INET) {
@@ -56,6 +145,115 @@ std::string narrow(const wchar_t* text) {
 
 class IpHelperNetConfig final : public NetConfig {
 public:
+    Status removeOwnedPhantomInterface(const std::wstring& alias,
+                                       const std::wstring& expectedGuid,
+                                       std::uint64_t interfaceLuid) override {
+        GUID guid{};
+        const GUID emptyGuid{};
+        if (alias.empty() || alias.size() > IF_MAX_STRING_SIZE ||
+            alias.find(L'\0') != std::wstring::npos || !interfaceLuid ||
+            expectedGuid.size() != 38 || expectedGuid.front() != L'{' ||
+            expectedGuid.back() != L'}' ||
+            CLSIDFromString(expectedGuid.c_str(), &guid) != S_OK ||
+            IsEqualGUID(guid, emptyGuid)) {
+            return Error(ErrorCode::journal_ambiguous, "the recorded interface identity is invalid");
+        }
+        wchar_t canonicalGuid[39]{};
+        if (!StringFromGUID2(guid, canonicalGuid, 39) ||
+            !sameOsName(canonicalGuid, expectedGuid.c_str())) {
+            return Error(ErrorCode::journal_ambiguous, "the recorded interface GUID is not canonical");
+        }
+        const std::wstring instanceId = std::wstring(L"SWD\\WINTUN\\") + canonicalGuid;
+
+        MIB_IF_ROW2 row{};
+        row.InterfaceLuid.Value = interfaceLuid;
+        const DWORD rowResult = GetIfEntry2(&row);
+        if (rowResult != NO_ERROR && rowResult != ERROR_FILE_NOT_FOUND) {
+            return phantomInspectionError("interface identity inspection", rowResult);
+        }
+        if (rowResult == NO_ERROR &&
+            (row.InterfaceLuid.Value != interfaceLuid || !IsEqualGUID(row.InterfaceGuid, guid) ||
+             !sameOsName(row.Alias, alias.c_str()))) {
+            return Error(ErrorCode::journal_ambiguous, "the recorded interface does not match");
+        }
+
+        // OpenFlags=0 does not cancel a pending removal. This opens only PnP
+        // metadata, including non-present devices, never an adapter/driver.
+        DeviceInfoSet set(SetupDiCreateDeviceInfoList(nullptr, nullptr));
+        if (set.value == INVALID_HANDLE_VALUE) {
+            return phantomInspectionError("device information set creation", GetLastError());
+        }
+        SP_DEVINFO_DATA device{};
+        device.cbSize = sizeof(device);
+        if (!SetupDiOpenDeviceInfoW(set.value, instanceId.c_str(), nullptr, 0, &device)) {
+            const DWORD error = GetLastError();
+            if (error == ERROR_NO_SUCH_DEVINST && rowResult == ERROR_FILE_NOT_FOUND) {
+                // A missing PnP node alone is insufficient: inspect all rows,
+                // including a GUID/alias that might now map to another LUID.
+                return verifyNoInterfaceIdentity(alias, guid, interfaceLuid);
+            }
+            if (error == ERROR_NO_SUCH_DEVINST) {
+                return Error(ErrorCode::journal_ambiguous, "the interface has no matching PnP identity");
+            }
+            return phantomInspectionError("device instance opening", error);
+        }
+        if (rowResult != NO_ERROR) {
+            return Error(ErrorCode::journal_ambiguous, "the PnP device has no matching interface identity");
+        }
+        PHPVPN_TRY(verifyPhantomDevice(set.value, device, instanceId));
+
+        SP_DEVINSTALL_PARAMS_W install{};
+        install.cbSize = sizeof(install);
+        if (!SetupDiGetDeviceInstallParamsW(set.value, &device, &install)) {
+            return phantomInspectionError("device installation parameters", GetLastError());
+        }
+        if (install.Flags & (DI_NEEDREBOOT | DI_NEEDRESTART)) {
+            return Error(ErrorCode::journal_ambiguous, "the device already requires an administrator restart");
+        }
+        install.Flags |= DI_QUIETINSTALL;
+        if (!SetupDiSetDeviceInstallParamsW(set.value, &device, &install)) {
+            return phantomInspectionError("quiet device removal setup", GetLastError());
+        }
+        SP_REMOVEDEVICE_PARAMS remove{};
+        remove.ClassInstallHeader.cbSize = sizeof(SP_CLASSINSTALL_HEADER);
+        remove.ClassInstallHeader.InstallFunction = DIF_REMOVE;
+        // GLOBAL refers to hardware profiles of this one instance. It does
+        // not select other devices, child devices or a driver package.
+        remove.Scope = DI_REMOVEDEVICE_GLOBAL;
+        if (!SetupDiSetClassInstallParamsW(set.value, &device, &remove.ClassInstallHeader,
+                                          sizeof(remove))) {
+            return phantomInspectionError("device removal parameters", GetLastError());
+        }
+
+        // SetupAPI has no atomic remove-if-phantom primitive. Recheck as late
+        // as possible and require callers to serialize this owned lifecycle.
+        PHPVPN_TRY(verifyRecordedInterface(alias, guid, interfaceLuid));
+        PHPVPN_TRY(verifyPhantomDevice(set.value, device, instanceId));
+        if (!SetupDiCallClassInstaller(DIF_REMOVE, set.value, &device)) {
+            return phantomInspectionError("owned phantom device removal", GetLastError());
+        }
+        install = {};
+        install.cbSize = sizeof(install);
+        if (!SetupDiGetDeviceInstallParamsW(set.value, &device, &install)) {
+            return phantomInspectionError("device removal result inspection", GetLastError());
+        }
+        if (install.Flags & (DI_NEEDREBOOT | DI_NEEDRESTART)) {
+            return Error(ErrorCode::journal_ambiguous, "phantom removal requires an administrator restart");
+        }
+        // Native success does not prove asynchronous OS metadata convergence.
+        // The owner must retain its journal until the postcondition is proven.
+        return Status::success();
+    }
+
+    Result<bool> interfaceExists(std::uint64_t interfaceLuid) override {
+        if (!interfaceLuid) return Error(ErrorCode::netconfig_apply_failed);
+        MIB_IF_ROW2 row{};
+        row.InterfaceLuid.Value = interfaceLuid;
+        const auto result = GetIfEntry2(&row);
+        if (result == NO_ERROR) return true;
+        if (result == ERROR_FILE_NOT_FOUND) return false;
+        return Error(ErrorCode::netconfig_apply_failed, "the recorded interface identity could not be inspected");
+    }
     Result<NetworkSnapshot> snapshot() override {
         NetworkSnapshot result;
 

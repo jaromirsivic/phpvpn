@@ -1,4 +1,5 @@
 #include "core/protocol/response_parser.h"
+#include <set>
 
 #include "core/crypto/canonical.h"
 #include "core/protocol/base64url.h"
@@ -33,12 +34,7 @@ Result<std::int64_t> requireInteger(const JsonValue& object, std::string_view ke
 
 }  // namespace
 
-Result<HealthResponse> ResponseParser::parseHealth(CryptoProvider& crypto,
-                                                   KeyDerivation& keys,
-                                                   std::string_view serverSecret,
-                                                   std::string_view expectedRequestId,
-                                                   std::string_view body,
-                                                   const std::function<void()>& onSyntaxUsable) {
+Result<HealthSyntax> ResponseParser::parseHealthSyntax(std::string_view expectedRequestId, std::string_view body) {
     FlatObjectFields fields;
     PHPVPN_TRY_ASSIGN(fields, JsonScanner::parseFlatStringObject(body, kHealthKeys));
 
@@ -79,37 +75,36 @@ Result<HealthResponse> ResponseParser::parseHealth(CryptoProvider& crypto,
         return Error(ErrorCode::wire_invalid_base64url, "health iv or tag is not canonical");
     }
 
-    // client.md: publish usable syntax before key derivation or GMAC work.
-    if (onSyntaxUsable) onSyntaxUsable();
-    SecureBuffer healthKey;
-    PHPVPN_TRY_ASSIGN(healthKey, keys.healthKey(serverSecret, requestId));
+    HealthSyntax syntax;
+    syntax.fields = {std::string(serverVersion), std::string(status), std::string(description), std::string(timestamp), *timestampMs};
+    syntax.requestId = requestId;
+    syntax.ivText = ivText;
+    syntax.iv = std::move(iv);
+    syntax.tag = std::move(tag);
+    return syntax;
+}
 
-    const std::string aad =
-        healthAad(requestId, serverVersion, status, description, timestamp, ivText);
-
-    // GMAC: AES-256-GCM over an empty plaintext, so the ciphertext is empty and
-    // the tag authenticates the IV and every public field.
+Result<HealthResponse> ResponseParser::verifyHealth(CryptoProvider& crypto, KeyDerivation& keys,
+    std::string_view serverSecret, const HealthSyntax& syntax) {
+    SecureBuffer key;
+    PHPVPN_TRY_ASSIGN(key, keys.healthKey(serverSecret, syntax.requestId));
+    const auto& fields = syntax.fields;
+    const auto aad = healthAad(syntax.requestId, fields.serverVersion, fields.status,
+                              fields.description, fields.timestamp, syntax.ivText);
     std::vector<std::uint8_t> ciphertext;
     GcmTag computed{};
-    PHPVPN_TRY(crypto.aesGcmSeal(healthKey.span(),
-                                 iv,
-                                 asBytes(aad),
-                                 std::span<const std::uint8_t>(),
-                                 ciphertext,
-                                 computed));
+    PHPVPN_TRY(crypto.aesGcmSeal(key.span(), syntax.iv, asBytes(aad), {}, ciphertext, computed));
+    if (!constantTimeEquals(computed, syntax.tag)) return Error(ErrorCode::crypto_tag_mismatch, "health tag did not verify");
+    return syntax.fields;
+}
 
-    if (!constantTimeEquals(std::span<const std::uint8_t>(computed.data(), computed.size()),
-                            std::span<const std::uint8_t>(tag.data(), tag.size()))) {
-        return Error(ErrorCode::crypto_tag_mismatch, "health tag did not verify");
-    }
-
-    HealthResponse response;
-    response.serverVersion.assign(serverVersion);
-    response.status.assign(status);
-    response.description.assign(description);
-    response.timestamp.assign(timestamp);
-    response.timestampMs = *timestampMs;
-    return response;
+Result<HealthResponse> ResponseParser::parseHealth(CryptoProvider& crypto, KeyDerivation& keys,
+    std::string_view serverSecret, std::string_view expectedRequestId, std::string_view body,
+    const std::function<void()>& onSyntaxUsable) {
+    HealthSyntax syntax;
+    PHPVPN_TRY_ASSIGN(syntax, parseHealthSyntax(expectedRequestId, body));
+    if (onSyntaxUsable) onSyntaxUsable();
+    return verifyHealth(crypto, keys, serverSecret, syntax);
 }
 
 Result<InfoResponse> ResponseParser::parseInfo(CryptoProvider& crypto,
@@ -167,7 +162,10 @@ Result<InfoResponse> ResponseParser::parseInfo(CryptoProvider& crypto,
     PHPVPN_TRY_ASSIGN(plaintext,
                       crypto.aesGcmOpen(infoKey.span(), iv, asBytes(aad), ciphertext, tag));
 
-    const std::string plaintextText = toString(plaintext.span());
+    return parseInfoPlaintext(toString(plaintext.span()));
+}
+
+Result<InfoResponse> ResponseParser::parseInfoPlaintext(std::string_view plaintextText) {
     JsonValue document;
     PHPVPN_TRY_ASSIGN(document, Json::parse(plaintextText));
     if (!document.isObject()) {
@@ -210,6 +208,21 @@ Result<InfoResponse> ResponseParser::parseInfo(CryptoProvider& crypto,
         return Error(ErrorCode::response_invalid, "the info limits are not usable");
     }
 
+    const auto* clients = document.find("clients");
+    if (!clients || !clients->isArray()) return Error(ErrorCode::response_invalid, "info clients must be an array");
+    std::set<std::uint32_t> seen;
+    for (const auto& client : clients->arrayValue()) {
+        if (!client.isObject()) return Error(ErrorCode::response_invalid, "info client must be an object");
+        const auto* address = client.find("address");
+        const auto* lastSeen = client.find("lastSeen");
+        if (!address || !address->isString() || !lastSeen || !lastSeen->isString())
+            return Error(ErrorCode::response_invalid, "info client has invalid fields");
+        const auto ip = Ipv4Address::parse(address->stringValue());
+        const auto timestamp = Iso8601::parse(lastSeen->stringValue());
+        if (!ip || !timestamp || !seen.insert(ip->value()).second)
+            return Error(ErrorCode::response_invalid, "info client address or timestamp is invalid or duplicated");
+        response.clients.push_back({*ip, *timestamp});
+    }
     return response;
 }
 

@@ -144,7 +144,9 @@ PHPVPN_TEST(crypto, aes_gcm_supports_the_empty_plaintext_gmac) {
 
 PHPVPN_TEST(crypto, server_secret_normalisation_is_length_based) {
     // Only an exactly empty secret becomes 32 ASCII zeroes.
-    PHPVPN_CHECK_EQ(normalizeServerSecret(""), std::string(32, '0'));
+    PHPVPN_CHECK_EQ(normalizeServerSecret(""), std::string("CHANGE_THIS_SERVER_SECRET"));
+    PHPVPN_CHECK_EQ(normalizeServerSecret(std::string(32, '0')), std::string(32, '0'));
+    PHPVPN_CHECK_EQ(normalizeServerSecret(std::string(64, '0')), std::string(64, '0'));
     PHPVPN_CHECK_EQ(normalizeServerSecret("0"), std::string("0"));
     PHPVPN_CHECK_EQ(normalizeServerSecret(std::string(2, '\0')), std::string(2, '\0'));
     PHPVPN_CHECK_EQ(normalizeServerSecret("secret"), std::string("secret"));

@@ -132,6 +132,13 @@ def test_no_response_leaks_implementation_details(client: PhpVpnClient) -> None:
         for access_key in client.configuration.access_keys.values():
             assert access_key.hex().encode() not in response.content, label
         lowered = response.content.lower()
+        if label == "status page":
+            # The protocol explicitly requires this exact public default-secret
+            # warning. Exempt only that sentence, never arbitrary PHP paths.
+            lowered = lowered.replace(
+                b"server is not secure. please modify server_secret in the phpvpn.php",
+                b"",
+            )
         markers = (b".php", b"php/", b"php-cgi", b"d:/", b"d:\\", b"c:\\",
                    b"exception", b"stack trace", b" on line ")
         for marker in markers:

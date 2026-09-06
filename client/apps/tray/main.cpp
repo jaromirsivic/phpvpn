@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <optional>
 #include <string>
 
@@ -14,6 +15,9 @@
 #include "statistics_window.h"
 #include "status_reader.h"
 #include "window_utils.h"
+#include "wizard_window.h"
+#include "contracts_window.h"
+#include "menu_model.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -25,6 +29,8 @@ namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kStatusMessage = WM_APP + 2;
 constexpr UINT kCommandMessage = WM_APP + 3;
+constexpr UINT kConfigMessage = WM_APP + 4, kDisconnectMessage = WM_APP + 5, kInfoMessage = WM_APP + 6;
+constexpr UINT kWizardMenu = 206, kContractsMenu = 207;
 constexpr UINT_PTR kStatusTimer = 1;
 constexpr wchar_t kClass[] = L"PhpVpnTrayWindow";
 constexpr wchar_t kMutexName[] = L"Local\\phpvpn-tray-session";
@@ -33,6 +39,7 @@ class TrayApplication {
 public:
     ~TrayApplication() {
         commands_.stop();
+        disconnect_.stop(); info_.stop(); config_.stop();
         statusReader_.stop();
         if (window_) {
             KillTimer(window_, kStatusTimer);
@@ -49,6 +56,13 @@ private:
     void onSnapshot(const TrayStatus& snapshot);
     void startCommand(IpcCommand command, const std::string& payload = {});
     void finishCommand();
+    void startConfigAction(MenuAction action);
+    void finishConfigAction();
+    void finishDisconnect();
+    void finishInfo();
+    void showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason = {});
+    void openEditor(const std::string& text);
+    void openContracts() { if (!contracts_.show(instance_)) showError(L"The configuration was saved, but Communication Contracts could not be opened."); }
     void showError(const wchar_t* message) { MessageBoxW(window_, message, L"PHPVPN", MB_OK | MB_ICONERROR); }
     bool connectedOrConnecting() const {
         return snapshot_.state == "connected" || snapshot_.state == "connecting" || snapshot_.state == "recovering";
@@ -64,9 +78,15 @@ private:
     PollSchedule polling_{kStatusIntervalMs};
     StatusReader statusReader_;
     CommandReader commands_;
+    CommandReader disconnect_, info_;
+    WizardReader config_;
+    std::optional<MenuAction> configAction_;
     std::optional<IpcCommand> pendingCommand_;
     std::uint64_t saveGeneration_ = 0;
     EditorWindow editor_;
+    EditorWindow infoWindow_;
+    WizardWindow wizard_;
+    ContractsWindow contracts_;
     ProgressWindow progress_;
     StatisticsWindow statistics_;
 };
@@ -102,6 +122,7 @@ int TrayApplication::run() {
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
         if (editor_.translate(message)) continue;
+        if (infoWindow_.translate(message) || wizard_.translate(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -127,17 +148,24 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
             if (auto snapshot = self->statusReader_.take()) self->onSnapshot(*snapshot);
             return 0;
         case kCommandMessage: self->finishCommand(); return 0;
+        case kConfigMessage: self->finishConfigAction(); return 0;
+        case kDisconnectMessage: self->finishDisconnect(); return 0;
+        case kInfoMessage: self->finishInfo(); return 0;
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
-                case IDM_EDIT_CONFIG: self->startCommand(IpcCommand::get_config); return 0;
-                case IDM_SHOW_INFO: self->startCommand(IpcCommand::get_info); return 0;
+                case IDM_EDIT_CONFIG: self->startConfigAction(MenuAction::edit); return 0;
+                case IDM_SHOW_INFO:
+                    if (!self->info_.request(IpcCommand::get_info, {}, window, kInfoMessage)) self->showError(L"Server information is already being requested. Wait for that result.");
+                    return 0;
+                case kWizardMenu:
+                    if (!self->wizard_.open(self->instance_, [self] { self->openContracts(); })) self->showError(L"Configuration Wizard could not be opened.");
+                    return 0;
+                case kContractsMenu: self->startConfigAction(MenuAction::contracts); return 0;
                 case IDM_TOGGLE:
                     self->startCommand(self->connectedOrConnecting() ? IpcCommand::disconnect : IpcCommand::connect);
                     return 0;
                 case IDM_STATISTICS:
-                    self->statistics_.open(self->instance_, self->snapshot_);
-                    // One extra read. Neither window's timer is changed.
-                    self->statusReader_.request(window, kStatusMessage);
+                    self->startConfigAction(MenuAction::statistics);
                     return 0;
                 case IDM_EXIT: PostQuitMessage(0); return 0;
                 default: break;
@@ -151,13 +179,21 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
 void TrayApplication::showMenu() {
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
-    const UINT flags = MF_STRING | (pendingCommand_ ? MF_GRAYED : MF_ENABLED);
-    AppendMenuW(menu, flags, IDM_EDIT_CONFIG, L"Edit Config");
-    AppendMenuW(menu, flags, IDM_SHOW_INFO, L"Show Info");
-    AppendMenuW(menu, flags, IDM_TOGGLE, connectedOrConnecting() ? L"Disconnect" : L"Connect");
-    AppendMenuW(menu, MF_STRING, IDM_STATISTICS, L"Statistics");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Exit");
+    for (const auto& item : configurationMenu) {
+        UINT id = 0;
+        switch (item.action) {
+            case MenuAction::toggle: id = IDM_TOGGLE; break;
+            case MenuAction::wizard: id = kWizardMenu; break;
+            case MenuAction::contracts: id = kContractsMenu; break;
+            case MenuAction::edit: id = IDM_EDIT_CONFIG; break;
+            case MenuAction::info: id = IDM_SHOW_INFO; break;
+            case MenuAction::statistics: id = IDM_STATISTICS; break;
+            case MenuAction::exit: id = IDM_EXIT; break;
+            case MenuAction::separator: break;
+        }
+        const auto* title = item.action == MenuAction::toggle && connectedOrConnecting() ? L"Disconnect" : item.title.data();
+        AppendMenuW(menu, item.action == MenuAction::separator ? MF_SEPARATOR : MF_STRING, id, title);
+    }
     POINT cursor{};
     GetCursorPos(&cursor);
     SetForegroundWindow(window_);
@@ -185,7 +221,11 @@ void TrayApplication::updateIcon() {
     Shell_NotifyIconW(NIM_MODIFY, &icon_);
 }
 void TrayApplication::startCommand(IpcCommand command, const std::string& payload) {
-    if (pendingCommand_) return;
+    if (command == IpcCommand::disconnect) {
+        if (!disconnect_.request(command, {}, window_, kDisconnectMessage)) showError(L"Disconnect is already being processed. Waiting for its result.");
+        return;
+    }
+    if (pendingCommand_) { showError(L"A configuration command is already being processed. Wait for its result and choose this action again."); return; }
     if (commands_.request(command, payload, window_, kCommandMessage)) {
         pendingCommand_ = command;
         if (command == IpcCommand::set_config) {
@@ -214,7 +254,9 @@ void TrayApplication::finishCommand() {
     if (const auto* error = parsed.value().find("error"); error && error->isObject()) {
         // Never display raw transport/system/configuration text as an error.
         const auto* description = error->find("description");
-        const auto text = description && description->isString() ? widen(description->stringValue()) : L"The command failed.";
+        auto text = description && description->isString() ? widen(description->stringValue()) : L"The command failed.";
+        if (const auto* code = error->find("code"); code && code->isString() && code->stringValue().starts_with("config_"))
+            text += L"\nExpected configuration: " + expectedConfigurationPath() + L"\nOpen Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
         showError(text.c_str());
         return;
     }
@@ -240,6 +282,83 @@ void TrayApplication::finishCommand() {
             break;
         default: break;
     }
+}
+void TrayApplication::showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason) {
+    const auto text = L"The configuration is " + widen(availability) + L".\n" + widen(reason) + L"\nExpected configuration: " + widen(path) +
+        L"\nOpen Configuration Wizard to create or reset it, or copy a configuration supplied by your administrator to this path. Edit Config can repair readable UTF-8 text.";
+    MessageBoxW(window_, text.c_str(), L"PHPVPN configuration", MB_OK | MB_ICONWARNING);
+}
+void TrayApplication::openEditor(const std::string& text) {
+    editor_.open(instance_, L"PHPVPN configuration", text, [this](const std::string& content) {
+        startCommand(IpcCommand::set_config, content);
+        return false;
+    });
+}
+void TrayApplication::startConfigAction(MenuAction action) {
+    if (config_.busy()) { showError(L"Another configuration action is being checked. Wait for its result and choose this action again."); return; }
+    WizardRequest request;
+    request.command = requiresConfigState(action) ? WizardCommand::get_config_state : WizardCommand::get_config_document;
+    if (!config_.request(request, window_, kConfigMessage)) { showError(L"The configuration action could not be sent to the service."); return; }
+    configAction_ = action;
+}
+void TrayApplication::finishConfigAction() {
+    auto response = config_.take();
+    if (!response || !configAction_) return;
+    const auto action = *configAction_; configAction_.reset();
+    if (!response->reply || response->reply->error) {
+        const auto failure = response->reply ? *response->reply->error : WizardIpc::safeError(response->reply.error());
+        std::wstring text = widen(failure.description) + L"\n" + widen(failure.suggestedAction);
+        if (failure.configPath) text += L"\nExpected configuration: " + widen(*failure.configPath) +
+            L"\nOpen Configuration Wizard or copy a configuration supplied by your administrator to this path.";
+        showError(text.c_str()); return;
+    }
+    const auto& result = response->reply->result;
+    const auto& availability = result.find("availability")->stringValue();
+    const auto& path = result.find("configPath")->stringValue();
+    if (action == MenuAction::edit) {
+        if (availability == "missing") {
+            const auto text = L"No configuration exists at:\n" + widen(path) +
+                L"\nCreate the default configuration now and open Edit Config? The file will be written immediately.\nYou can also choose No and use Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
+            if (MessageBoxW(window_, text.c_str(), L"Create configuration", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+            WizardRequest create; create.command = WizardCommand::create_default_config;
+            if (config_.request(create, window_, kConfigMessage)) configAction_ = action;
+            else showError(L"The default configuration request could not be sent.");
+            return;
+        }
+        const auto* document = result.find("document");
+        if (document && document->isString()) { openEditor(document->stringValue()); return; }
+    } else if (availability == "valid") {
+        if (action == MenuAction::contracts) {
+            if (!contracts_.show(instance_)) showError(L"Communication Contracts could not be opened.");
+        } else {
+            statistics_.open(instance_, snapshot_);
+            statusReader_.request(window_, kStatusMessage);
+        }
+        return;
+    }
+    const auto* reason = result.find("reasonCode");
+    showConfigWarning(availability, path, reason && reason->isString() ? reason->stringValue() : std::string_view{});
+}
+void TrayApplication::finishDisconnect() {
+    auto response = disconnect_.take(); if (!response) return;
+    const auto status = parseStatusResponse(*response);
+    if (!status.valid) { showError(L"The service did not confirm Disconnect. Try Disconnect again or check the service status."); return; }
+    onSnapshot(status); progress_.onSnapshot(status);
+    statusReader_.stop(); statusReader_.request(window_, kStatusMessage);
+}
+void TrayApplication::finishInfo() {
+    auto response = info_.take(); if (!response) return;
+    auto value = Json::parse(*response);
+    if (!value || !value->isObject()) { showError(L"The service did not return valid server information."); return; }
+    if (const auto* failure = value->find("error"); failure && failure->isObject()) {
+        const auto* description = failure->find("description");
+        auto text = description && description->isString() ? widen(description->stringValue()) : L"Server information could not be read.";
+        if (const auto* code = failure->find("code"); code && code->isString() && code->stringValue().starts_with("config_"))
+            text += L"\nExpected configuration: " + expectedConfigurationPath() + L"\nOpen Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
+        showError(text.c_str());
+        return;
+    }
+    infoWindow_.open(instance_, L"PHPVPN server information", Json::serializePretty(*value));
 }
 }  // namespace
 }  // namespace phpvpn::tray

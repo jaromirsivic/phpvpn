@@ -241,8 +241,8 @@ def test_published_limits_match_the_specification_defaults(
 ) -> None:
     """Chapter 11.1, the deployment publishes the documented default limits."""
     assert limits["maxDataRecordsPerRequest"] == 16
-    assert limits["maxRequestBodyBytes"] == 4198400
+    assert limits["maxRequestBodyBytes"] == 983040
     assert limits["maxQueueBytesPerClient"] == 16777216
     assert limits["queueTtlSeconds"] == 60
-    assert limits["minDataPollIntervalMs"] == 80
-    assert limits["maxDataPollIntervalMs"] == 1000
+    assert limits["minDataPollIntervalMs"] == 50
+    assert limits["maxDataPollIntervalMs"] == 3200

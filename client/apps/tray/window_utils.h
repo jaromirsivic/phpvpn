@@ -1,25 +1,36 @@
 #pragma once
 #include <windows.h>
+#include <shlobj.h>
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <string_view>
 #include "layout.h"
 
 namespace phpvpn::tray {
+inline std::wstring expectedConfigurationPath() {
+    PWSTR path = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DONT_VERIFY, nullptr, &path)) || !path)
+        return L"(the shared configuration path could not be resolved)";
+    const std::wstring result = std::wstring(path) + L"\\PHPVPN\\config.json";
+    CoTaskMemFree(path); return result;
+}
 inline std::wstring widen(std::string_view text) {
     if (text.empty()) return {};
-    const int required = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (text.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) return {};
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
     if (required <= 0) return {};
     std::wstring result(static_cast<std::size_t>(required), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), required);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), required);
     return result;
 }
 inline std::string narrow(const std::wstring& text) {
     if (text.empty()) return {};
-    const int required = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (text.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) return {};
+    const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
     if (required <= 0) return {};
     std::string result(static_cast<std::size_t>(required), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), required, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), required, nullptr, nullptr);
     return result;
 }
 inline std::int64_t nowMs() { return static_cast<std::int64_t>(GetTickCount64()); }

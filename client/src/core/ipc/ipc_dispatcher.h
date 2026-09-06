@@ -13,10 +13,11 @@
 #include "core/runtime/vpn_engine.h"
 
 namespace phpvpn {
+class WizardService;
 
 class IpcDispatcher {
 public:
-    explicit IpcDispatcher(VpnEngine& engine) : engine_(engine) {}
+    explicit IpcDispatcher(VpnEngine& engine, WizardService* wizard = nullptr) : engine_(engine), wizard_(wizard) {}
 
     // Returns the exact bytes to send back. `get-info` and `get-config` answer
     // without an IPC envelope, every other command answers with one.
@@ -24,6 +25,7 @@ public:
 
 private:
     VpnEngine& engine_;
+    WizardService* wizard_;
 };
 
 }  // namespace phpvpn

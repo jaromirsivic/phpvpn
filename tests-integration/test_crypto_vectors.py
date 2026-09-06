@@ -170,21 +170,25 @@ def test_non_canonical_base64url_is_rejected(text: str) -> None:
 
 def test_server_secret_normalization() -> None:
     """Chapter 16.3.15, only an exactly empty secret is normalized."""
-    assert normalize_server_secret(b"") == b"0" * 32
+    assert normalize_server_secret(b"") == b"CHANGE_THIS_SERVER_SECRET"
     assert normalize_server_secret(b"0") == b"0"
     assert normalize_server_secret(bytes(32)) == bytes(32)
 
-    assert derive_semi_key(b"") == derive_semi_key(b"0" * 32)
-    assert derive_semi_key(b"0") != derive_semi_key(b"0" * 32)
-    assert derive_semi_key(bytes(32)) != derive_semi_key(b"0" * 32)
+    assert derive_semi_key(b"") == derive_semi_key(b"CHANGE_THIS_SERVER_SECRET")
+    assert derive_semi_key(b"0") != derive_semi_key(b"CHANGE_THIS_SERVER_SECRET")
+    assert derive_semi_key(bytes(32)) != derive_semi_key(b"CHANGE_THIS_SERVER_SECRET")
 
-    for secret in (b"", b"0" * 32):
+    for secret in (b"", b"CHANGE_THIS_SERVER_SECRET"):
         assert derive_health_key(secret, "c22cd6e8-14a9-4d83-97b7-54c26a72d1f0") == (
-            derive_health_key(b"0" * 32, "c22cd6e8-14a9-4d83-97b7-54c26a72d1f0")
+            derive_health_key(b"CHANGE_THIS_SERVER_SECRET", "c22cd6e8-14a9-4d83-97b7-54c26a72d1f0")
         )
         assert derive_full_auth_key(secret, bytes(32), "10.99.99.2") == (
-            derive_full_auth_key(b"0" * 32, bytes(32), "10.99.99.2")
+            derive_full_auth_key(b"CHANGE_THIS_SERVER_SECRET", bytes(32), "10.99.99.2")
         )
+
+    for original in (b"0" * 32, b"0" * 64):
+        assert normalize_server_secret(original) == original
+        assert derive_semi_key(original) != derive_semi_key(b"")
 
 
 def test_auth_semi_key_derivation_structure() -> None:

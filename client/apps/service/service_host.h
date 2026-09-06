@@ -6,6 +6,7 @@
 #pragma once
 
 #include <string>
+#include <filesystem>
 
 #include "core/base/result.h"
 
@@ -13,6 +14,17 @@ namespace phpvpn {
 
 // Runs the process as a Windows Service. Returns after the service stopped.
 int runAsService();
+
+// Internal host construction for the opt-in isolated SCM integration target.
+// The installed executable never accepts these values from CLI/JSON/IPC.
+struct ServiceHostEnvironment {
+    std::wstring serviceName = L"phpvpn";
+    std::filesystem::path dataDirectory;
+    std::wstring pipeName;
+    std::wstring adapterName = L"PHPVPN";
+    std::wstring adapterGuid = L"{7d1b4d2f-1f34-4d0e-9a3e-2f6c9b5a41d8}";
+};
+int runAsService(const ServiceHostEnvironment& environment);
 
 // Runs the same engine in the foreground, which is how the service is debugged
 // and how the developer install verifies a build.

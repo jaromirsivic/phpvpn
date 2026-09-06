@@ -22,7 +22,7 @@
 #include <string>
 #include <thread>
 
-#include "core/config/config.h"
+#include "core/config/config_store.h"
 #include "core/queues/packet_queues.h"
 #include "core/runtime/network_worker.h"
 #include "core/runtime/status_snapshot.h"
@@ -39,6 +39,16 @@ struct EnginePaths {
     std::filesystem::path configFile;
     std::filesystem::path journalFile;
     std::wstring installDirectory;
+    // Internal host dependency injection. Neither JSON nor public IPC changes
+    // the production adapter identity.
+    std::wstring adapterName = L"PHPVPN";
+    std::wstring adapterGuid = L"{7d1b4d2f-1f34-4d0e-9a3e-2f6c9b5a41d8}";
+};
+struct ConnectionIdentity {
+    std::uint64_t epoch = 0;
+    ConnectionState state = ConnectionState::disconnected;
+    ConnectionPhase phase = ConnectionPhase::idle;
+    bool connectPending = false;
 };
 
 class VpnEngine {
@@ -48,7 +58,8 @@ public:
               Clock& clock,
               TunnelDriver& tunnelDriver,
               NetConfig& netConfig,
-              EnginePaths paths);
+              EnginePaths paths,
+              ConfigStore& configStore);
     ~VpnEngine();
 
     VpnEngine(const VpnEngine&) = delete;
@@ -82,6 +93,13 @@ public:
     // roles or a `data` poll, and never changes the connection state.
     Result<std::string> fetchInfoOnce();
 
+    ConnectionIdentity connectionIdentity() const;
+    // Dedicated ordering guard for accepted Connect and file commit. This is
+    // never the state mutex used by get-status or Disconnect.
+    std::mutex& transitionMutex() noexcept { return transitionMutex_; }
+    void setDiagnosticHooks(std::function<Status()> beforeConnect, std::function<void()> cancelWizard);
+    void cancelDiagnostics();
+
 private:
     friend struct VpnEngineTestAccess;
     enum class Command { none, connect, disconnect, stop };
@@ -90,7 +108,6 @@ private:
     void pushCommand(Command command);
     Command takeCommand(std::int64_t waitMs);
 
-    Status loadStoredConfig();
     Status runConnectSequence(bool initialBootstrap);
     void runConnectedIteration();
     void teardown(bool keepError);
@@ -108,6 +125,11 @@ private:
     TunnelDriver& tunnelDriver_;
     NetConfig& netConfig_;
     EnginePaths paths_;
+    ConfigStore& configStore_;
+    std::mutex transitionMutex_;
+    std::uint64_t connectionEpoch_ = 0;
+    std::function<Status()> beforeConnect_;
+    std::function<void()> cancelWizard_;
 
     NetworkWorker network_;
     TrafficCounters counters_;
@@ -151,12 +173,17 @@ private:
     std::string lastInfoPlaintext_;
 
     mutable std::mutex configMutex_;
-    ClientConfigPtr storedConfig_;
+    ClientConfigPtr pendingConfig_;
+    bool configurationValid_ = false;
     ConfigWarnings storedWarnings_;
+    std::atomic<std::uint64_t> controlGeneration_{0};
     ClientConfigPtr activeConfig_;
 
     // Serialises the one shot `get-info` exchanges of several local clients.
     std::mutex infoMutex_;
+    std::mutex diagnosticMutex_;
+    std::shared_ptr<Transport> diagnosticTransport_;
+    std::atomic<std::uint64_t> diagnosticGeneration_{0};
 
     mutable std::mutex commandMutex_;
     std::condition_variable commandSignal_;

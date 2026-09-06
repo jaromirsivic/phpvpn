@@ -19,8 +19,8 @@
 
 namespace phpvpn {
 
-// protocol.md chapter 3.2: only an exactly empty configured secret becomes 32
-// ASCII characters `0`. The string "0" and a value made of NUL bytes are left
+// protocol.md chapter 3.2: only an exactly empty configured secret becomes
+// CHANGE_THIS_SERVER_SECRET. The string "0" and a value made of NUL bytes are left
 // untouched, so the test is on the length and never on general falsiness.
 std::string normalizeServerSecret(std::string_view configured);
 
