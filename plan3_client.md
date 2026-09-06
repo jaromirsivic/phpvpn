@@ -45,7 +45,7 @@ Implementace zůstává C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové
 | D27 | Ve třetím kroku je před polem Access Key checkbox **Use default access key**. Nový nebo resetovaný koncept a opravovaný dokument bez `accessKey` jej inicializují zaškrtnutý. Pole je tehdy zakázané a obsahuje `hex2(lastOctet)` opakované 32krát. Existující platný `accessKey` v edit/repair dokumentu se vždy načte jako uložená vlastní hodnota, textbox ji zobrazí a checkbox je při prvním otevření kroku odškrtnutý, i kdyby se text shodoval s vypočteným defaultem. Zaškrtnutí okamžitě a bez potvrzení přepíše textbox výchozím klíčem pro aktuální IP. Každá uživatelská i systémová změna IP při zaškrtnutí klíč okamžitě přegeneruje. Odškrtnutí pole zpřístupní a ponechá právě zobrazený text. Po předchozím zaškrtnutí tedy neobnoví původní hodnotu z `config.json`. Pouhý návrat Back/Next bez Resetu zachová aktuální volbu checkboxu i text. |
 | D28 | Různé klientské počítače smějí používat stejnou virtuální IP. phpvpn jedinečnost klientských IP nevynucuje ani nerezervuje. Kolize je pro systém přípustná, ale jde o odpovědnost a chybu konfigurace provozovatele. To nemění zákaz, aby vlastní IP současně byla cílem vlastního `communicationContract`. |
 
-Poslední rozhodnutí mají přednost i před historickými požadavky na revizně podmíněný Finish, sdílení VPN síťového vlákna s diagnostikou, automatické obnovení síťového pokusu, předběžné zakazování menu podle konfigurace, zákaz otevření nevalidního JSON v editoru a automatické zachování existujícího či ručně zadaného Access Key při aktivním výchozím režimu. Editor nadále vyžaduje platné UTF-8 a stanovený limit. Aktualizace podle `plan3_client_problems.md` zpracovává výhradně nálezy 2, 5, 6 a 8. Ostatní dosavadní rozhodnutí zůstávají v platnosti.
+Poslední rozhodnutí mají přednost i před historickými požadavky na revizně podmíněný Finish, sdílení VPN síťového vlákna s diagnostikou, automatické obnovení síťového pokusu, předběžné zakazování menu podle konfigurace, zákaz otevření nevalidního JSON v editoru a automatické zachování existujícího či ručně zadaného Access Key při aktivním výchozím režimu. Editor nadále vyžaduje platné UTF-8 a stanovený limit.
 
 ## 3. Zjištěný výchozí stav a dopady
 
@@ -518,7 +518,7 @@ Navržený normativní text pro `protocol.md` 9.5 a odpovídající odkazy, bez 
 >
 > Kontrola ověřuje Access Key a autentizovanou strukturu serverové odpovědi. Neprokazuje autenticitu, integritu ani čitelnost plaintextu jednotlivých payloadů. Tato výjimka se nevztahuje na normální bootstrap připojení, recovery ani pravidelný provozní polling `data`. Tyto cesty musí po ověření `data-mac` nadále provést úplné GCM ověření každého zpracovávaného datového záznamu a platné payloady zpracovat podle běžných pravidel.
 
-Vazbu na `wizard-check-access`, ProbeClient, Next a krok IP Address a Access Key Configuration uvést výhradně v `client.md` a v tomto plánu podle 7.3. Tam také stanovit zákaz dopadu této operace na tunel, fronty, čítače, kontrolní body a aktivní stav VPN. Číslování v následující tabulce pochází z dřívější dokumentační matice a není číslováním nálezů v `plan3_client_problems.md`.
+Vazbu na `wizard-check-access`, ProbeClient, Next a krok IP Address a Access Key Configuration uvést výhradně v `client.md` a v tomto plánu podle 7.3. Tam také stanovit zákaz dopadu této operace na tunel, fronty, čítače, kontrolní body a aktivní stav VPN.
 
 | Nález | Místo normativní změny | Závazný obsah a vazba na plán |
 |---|---|---|
