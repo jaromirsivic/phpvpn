@@ -11,7 +11,10 @@ WizardDocument makeNewWizardDocument() {
         {"serverUrl", JsonValue::makeString(document.fields.serverUrl)},
         {"trustAnyTlsCertificate", JsonValue::makeBool(true)},
         {"serverSecret", JsonValue::makeString(document.fields.serverSecret)},
-        {"vpnCidr", JsonValue::makeString(kDefaultVpnCidr)}
+        {"vpnCidr", JsonValue::makeString(kDefaultVpnCidr)},
+        {"useDefaultServerSecretInWizard", JsonValue::makeBool(document.fields.useDefaultServerSecretInWizard)},
+        {"autoDetectIpAddressInWizard", JsonValue::makeBool(document.fields.autoDetectIpAddressInWizard)},
+        {"useDefaultAccessKeyInWizard", JsonValue::makeBool(document.fields.useDefaultAccessKeyInWizard)}
     })}});
     return document;
 }

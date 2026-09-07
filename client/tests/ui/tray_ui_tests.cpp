@@ -27,6 +27,7 @@ using namespace phpvpn::tray;
 using J = JsonValue;
 constexpr int nextId = 701, backId = 702, resetId = 703, cancelId = 704;
 constexpr int urlId = 710, secretId = 711, defaultSecretId = 712, ipId = 713, keyId = 714, defaultKeyId = 715;
+constexpr int contractsId = 716, automaticIpId = 717;
 constexpr wchar_t wizardClass[] = L"PhpVpnConfigurationWizard";
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 std::string uuid() {
@@ -126,6 +127,8 @@ struct Backend {
     WizardOperationResult operation;
     std::vector<WizardRequest> starts;
     std::string storedSecret = "ui-test-secret", observedSecret;
+    std::optional<std::string> suggestion = "10.99.99.2";
+    std::optional<WizardRequest> finishedRequest;
     Backend(bool editing = false) : editMode(editing) {
         const auto document = editing ? analyzeWizardDocument(makeDefaultEditorDocument()).value() : makeNewWizardDocument();
         view.sessionId = uuid(); view.serviceInstanceId = uuid();
@@ -135,7 +138,13 @@ struct Backend {
         view.availability = editing ? ConfigAvailability::valid : ConfigAvailability::missing;
         view.revisionToken = editing ? "ui-opaque-revision" : "";
         view.contractCount = editing ? 1 : 0;
-        if (editing) { view.fields->serverUrl = "http://ui-fixture.invalid/phpvpn.php"; view.fields->serverSecret = storedSecret; }
+        if (editing) {
+            view.fields->serverUrl = "http://ui-fixture.invalid/phpvpn.php"; view.fields->serverSecret = storedSecret;
+            view.fields->useDefaultServerSecretInWizard = false;
+            view.fields->autoDetectIpAddressInWizard = false;
+            view.fields->useDefaultAccessKeyInWizard = false;
+            view.existingDefaultContractPeers = {*Ipv4Address::parse("10.99.99.3")};
+        }
     }
     void release() { { std::lock_guard lock(mutex); stopping = true; } changed.notify_all(); }
     unsigned count(unsigned Backend::*member) { std::lock_guard lock(mutex); return this->*member; }
@@ -172,6 +181,7 @@ struct Backend {
             auto defaults = makeNewWizardDocument();
             view.mode = WizardMode::reset; view.fields = defaults.fields; view.context = defaults.context;
             view.context->runtime.responseTimeoutSeconds = 1; view.contractCount = 0;
+            view.existingDefaultContractPeers.clear();
             return result(WizardIpc::viewValue(view));
         }
         case WizardCommand::resume:
@@ -194,7 +204,7 @@ struct Backend {
                 r.command == WizardCommand::check_secret ? WizardOperationKind::secret : WizardOperationKind::access;
             operation.state = WizardOperationState::succeeded; operation.connectionEpoch = epoch;
             operation.clientAttemptId = r.clientAttemptId; operation.attemptSequence = r.attemptSequence;
-            if (operation.kind == WizardOperationKind::secret && !editMode) operation.suggestedIp = "10.99.99.2";
+            if (operation.kind == WizardOperationKind::secret) operation.suggestedIp = suggestion;
             if (startDelayMs) { const auto ms = std::exchange(startDelayMs, 0u); delay(lock, ms); }
             return result(J::makeObject({{"operationId", str(operation.operationId)}, {"operationState", str("pending")}}));
         case WizardCommand::get_operation: {
@@ -209,6 +219,7 @@ struct Backend {
             ++closeCalls;
             return result(J::makeObject({{"closed", J::makeBool(true)}}));
         case WizardCommand::finish:
+            finishedRequest = r;
             ++finishCalls; operation = {};
             operation.operationId = uuid(); operation.kind = WizardOperationKind::finish;
             operation.state = WizardOperationState::succeeded; operation.connectionEpoch = epoch;
@@ -276,6 +287,7 @@ struct Gui {
         check(wizard.open(GetModuleHandleW(nullptr), [&] { ++confirmed; check(contracts.show(GetModuleHandleW(nullptr)), "Contracts HWND creation failed"); }),
               "Wizard HWND creation failed");
         until([&] { return hwnd() && child(hwnd(), urlId); }, "Wizard did not load Server URL");
+        std::cout << "[ EVIDENCE ] Wizard HWND DPI " << GetDpiForWindow(hwnd()) << ", private test backend\n";
     }
     void nextTo(int field) {
         click(hwnd(), nextId);
@@ -394,6 +406,90 @@ void storedIdentityAndLiteral() {
     check(gui.backend.count(&Backend::finishCalls) == 0, "Reset published configuration");
     gui.escape();
     check(gui.backend.count(&Backend::closeCalls) == 1, "Escape did not close the remote session exactly once");
+}
+
+void fix2PreferencesAndContractPreview() {
+    for (unsigned count : {0u, 1u, 13u}) {
+        Gui gui(true);
+        {
+            std::lock_guard lock(gui.backend.mutex);
+            auto& view = gui.backend.view;
+            view.contractCount = count; view.existingDefaultContractPeers.clear();
+            if (count == 1) view.existingDefaultContractPeers.push_back(*Ipv4Address::parse("10.99.99.3"));
+            if (count == 13) for (auto peer : defaultContractCandidates(view.context->vpnCidr))
+                if (peer.toString() != "10.99.99.2") view.existingDefaultContractPeers.push_back(peer);
+        }
+        gui.open(); gui.nextTo(secretId); gui.nextTo(ipId);
+        click(gui.hwnd(), nextId);
+        gui.until([&] { return child(gui.hwnd(), contractsId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "contracts step missing");
+        check(IsWindowVisible(child(gui.hwnd(), contractsId)) && SendMessageW(child(gui.hwnd(), contractsId), BM_GETCHECK, 0, 0) == BST_CHECKED,
+              "edit contracts checkbox is not visible and checked");
+        check(allText(gui.hwnd()).find(L"Missing default contracts: " + std::to_wstring(13 - count)) != std::wstring::npos, "wrong missing count");
+        click(gui.hwnd(), contractsId);
+        check(allText(gui.hwnd()).find(L"To add on Finish: 0") != std::wstring::npos, "unchecked contracts still advertised additions");
+        footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
+        gui.escape();
+    }
+    Gui gui(true);
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        auto& fields = *gui.backend.view.fields;
+        fields.useDefaultServerSecretInWizard = true;
+        fields.autoDetectIpAddressInWizard = true;
+        fields.useDefaultAccessKeyInWizard = true;
+        gui.backend.suggestion = "10.99.99.10";
+    }
+    gui.open(); gui.nextTo(secretId);
+    check(!IsWindowEnabled(child(gui.hwnd(), secretId)) && text(child(gui.hwnd(), secretId)) == L"CHANGE_THIS_SERVER_SECRET", "stored true secret not applied");
+    gui.nextTo(ipId);
+    check(!IsWindowEnabled(child(gui.hwnd(), ipId)) && text(child(gui.hwnd(), ipId)) == L"10.99.99.10", "automatic suggestion did not replace placeholder");
+    check(text(child(gui.hwnd(), keyId)) == widen(defaultAccessKey("10.99.99.10")), "suggestion did not recalculate key");
+    for (auto size : {Size{1000, 680}, Size{480, 320}}) {
+        resizeClient(gui.hwnd(), size.width, size.height);
+        footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
+    }
+    click(gui.hwnd(), automaticIpId);
+    check(IsWindowEnabled(child(gui.hwnd(), ipId)), "automatic IP cannot be disabled");
+    edit(gui.hwnd(), ipId, L"10.99.99.11");
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return child(gui.hwnd(), contractsId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "manual identity did not reach contracts");
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return !gui.wizard.isOpen(); }, "metadata Finish did not complete");
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        check(gui.backend.finishedRequest.has_value(), "Finish fields missing");
+        const auto& fields = gui.backend.finishedRequest->fields;
+        check(fields.useDefaultServerSecretInWizard && !fields.autoDetectIpAddressInWizard && fields.useDefaultAccessKeyInWizard &&
+              fields.virtualIp == "10.99.99.11" && fields.accessKey == defaultAccessKey(fields.virtualIp), "Finish lost metadata or concrete values");
+    }
+    gui.contracts.close();
+}
+
+void fix2MissingSuggestionAndUnsupportedCidr() {
+    Gui gui(true);
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        gui.backend.suggestion.reset();
+        gui.backend.view.fields->autoDetectIpAddressInWizard = true;
+        gui.backend.view.context->vpnCidr = *Ipv4Cidr::parse("10.99.99.0/25");
+        gui.backend.view.existingDefaultContractPeers.clear();
+    }
+    gui.open(); gui.nextTo(secretId); gui.nextTo(ipId);
+    check(allText(gui.hwnd()).find(L"No verified IP suggestion") != std::wstring::npos, "missing suggestion explanation absent");
+    click(gui.hwnd(), nextId);
+    check(gui.backend.count(&Backend::totalStarts) == 2, "unverified automatic IP reached HTTP");
+    click(gui.hwnd(), automaticIpId); edit(gui.hwnd(), ipId, L"10.99.99.10");
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return child(gui.hwnd(), contractsId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "manual fallback failed");
+    check(IsWindowVisible(child(gui.hwnd(), contractsId)) && !IsWindowEnabled(child(gui.hwnd(), contractsId)) &&
+          SendMessageW(child(gui.hwnd(), contractsId), BM_GETCHECK, 0, 0) == BST_CHECKED, "unsupported checkbox state incorrect");
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return !gui.wizard.isOpen(); }, "unsupported CIDR Finish failed");
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        check(gui.backend.finishedRequest && !gui.backend.finishedRequest->createDefaultContracts, "unsupported CIDR sent true");
+    }
+    gui.contracts.close();
 }
 
 void delayed(bool start) {
@@ -556,6 +652,8 @@ int main(int argc, char** argv) {
     const std::pair<const char*, void(*)()> tests[]{
         {"happy_path_resize_keyboard_finish", happyPath},
         {"stored_identity_literal_reset_escape", storedIdentityAndLiteral},
+        {"fix2_preferences_contract_preview", fix2PreferencesAndContractPreview},
+        {"fix2_missing_suggestion_unsupported_cidr", fix2MissingSuggestionAndUnsupportedCidr},
         {"late_start_ack", [] { delayed(true); }},
         {"late_operation_result", [] { delayed(false); }},
         {"heartbeat_epoch_resume_cancel", heartbeatEpoch},

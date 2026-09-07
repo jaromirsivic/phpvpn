@@ -55,21 +55,29 @@ public:
     Status start() {
         std::filesystem::path data;
         if (g_environment.dataDirectory.empty()) {
-            PHPVPN_TRY_ASSIGN(data, dataDirectory());
+            PHPVPN_TRY_ASSIGN(data, dataDirectory(false));
         } else {
             data = g_environment.dataDirectory;
-            std::error_code code;
-            std::filesystem::create_directories(data, code);
-            if (code) return Error(ErrorCode::config_write_failed);
         }
 
         // The stored keys must not be readable by a standard user; the pipe
         // stays deliberately public, which is a separate, documented decision.
-        PHPVPN_TRY(restrictDirectoryToAdministrators(data));
+        std::optional<Error> storageError;
+        std::error_code directoryError;
+        std::filesystem::create_directories(data, directoryError);
+        if (directoryError) storageError = Error(ErrorCode::config_write_failed);
+        if (!storageError) {
+            auto secured = restrictDirectoryToAdministrators(data);
+            if (!secured) storageError = secured.error();
+        }
         std::unique_ptr<ConfigFiles> files;
-        PHPVPN_TRY_ASSIGN(files, createWindowsConfigFiles(configFilePath(data)));
+        if (!storageError) {
+            auto backend = createWindowsConfigFiles(configFilePath(data));
+            if (backend) files = std::move(backend).value();
+            else storageError = backend.error();
+        }
 
-        Logger::instance().configureFile(logDirectory(data), "phpvpn-service");
+        if (!storageError) Logger::instance().configureFile(logDirectory(data), "phpvpn-service");
         PHPVPN_LOG_INFO(kComponent, "the service is starting");
 
         std::filesystem::path installDirectory;
@@ -88,12 +96,18 @@ public:
         paths.adapterName = g_environment.adapterName;
         paths.adapterGuid = g_environment.adapterGuid;
 
-        configStore_ = std::make_unique<ConfigStore>(*crypto_, std::move(files));
+        configStore_ = storageError ? std::make_unique<ConfigStore>(*crypto_, configFilePath(data), *storageError) :
+            std::make_unique<ConfigStore>(*crypto_, std::move(files));
         auto recoveredConfig = configStore_->recover();
-        if (!recoveredConfig) return recoveredConfig.error();
+        if (!recoveredConfig) PHPVPN_LOG_ERROR(kComponent, std::string("config recovery: ") + recoveredConfig.error().name());
+        auto initialConfig = configStore_->ensureDefaultAtStartup();
+        if (!initialConfig) PHPVPN_LOG_ERROR(kComponent, std::string("config startup: ") + initialConfig.error().name());
+        else PHPVPN_LOG_INFO(kComponent, initialConfig.value() == StartupConfigState::created ? "config startup: default created" :
+            initialConfig.value() == StartupConfigState::alreadyExists ? "config startup: concurrent file preserved" : "config startup: existing file preserved");
         engine_ = std::make_unique<VpnEngine>(*crypto_, *transport_, *clock_, *tunnelDriver_,
                                               *netConfig_, std::move(paths), *configStore_);
-        PHPVPN_TRY(engine_->start());
+        auto engineStarted = engine_->start();
+        if (!engineStarted) PHPVPN_LOG_ERROR(kComponent, std::string("engine initialization: ") + engineStarted.error().name());
 
         WizardScheduler scheduler;
         scheduler.file = [this](std::function<void()> task) { return server_ && server_->tryPostFile(std::move(task)); };
@@ -133,7 +147,7 @@ public:
             [this](std::string_view request) { return dispatcher_->handle(request); }, std::move(options));
         PHPVPN_TRY(server_->start());
 
-        PHPVPN_LOG_INFO(kComponent, "the service is ready");
+        PHPVPN_LOG_INFO(kComponent, "the service control IPC is ready");
         return Status::success();
     }
 

@@ -13,6 +13,7 @@
 
 #include "core/crypto/canonical.h"
 #include "core/ipc/ipc_protocol.h"
+#include "core/ipc/ipc_dispatcher.h"
 #include "core/protocol/base64url.h"
 #include "core/protocol/data_record.h"
 #include "core/protocol/iso8601.h"
@@ -134,7 +135,7 @@ PacketBytes packet(std::size_t size, bool incoming) {
 
 class ScriptedTransport final : public Transport {
 public:
-    explicit ScriptedTransport(CryptoProvider& crypto) : crypto_(crypto), config_(fixtureConfig()) {}
+    explicit ScriptedTransport(CryptoProvider& crypto, ClientConfigPtr config = fixtureConfig()) : crypto_(crypto), config_(std::move(config)) {}
     std::function<std::optional<HttpExchangeResult>(HttpAction, std::string_view, int)> hook;
     std::function<void()> cancel;
     std::function<void(HttpResponse&)> mutateResponse;
@@ -328,6 +329,7 @@ struct EngineFixture {
 
 struct WizardServiceFixture {
     EngineFixture runtime;
+    ClientConfigPtr relayConfig = fixtureConfig();
     std::function<void()> diagnosticTask;
     std::deque<std::function<void()>> fileTasks;
     std::unique_ptr<WizardService> service;
@@ -345,7 +347,7 @@ struct WizardServiceFixture {
             diagnosticTask = std::move(task); return true;
         };
         scheduler.transport = [&]() -> Result<std::unique_ptr<Transport>> {
-            auto transport = std::make_unique<ScriptedTransport>(*runtime.crypto.actual);
+            auto transport = std::make_unique<ScriptedTransport>(*runtime.crypto.actual, relayConfig);
             transport->hook = [&](HttpAction, std::string_view, int) -> std::optional<HttpExchangeResult> { ++httpCalls; return {}; };
             return std::unique_ptr<Transport>(std::move(transport));
         };
@@ -1106,7 +1108,7 @@ PHPVPN_TEST(runtime, ownership_recovery_never_opens_adapter_and_blocks_unresolve
     const auto blockedStart = fixture.engine.start();
     PHPVPN_CHECK(!blockedStart && blockedStart.error().code == ErrorCode::journal_ambiguous);
     const auto blockedConnect = fixture.engine.connect();
-    PHPVPN_CHECK(!blockedConnect && blockedConnect.error().code == ErrorCode::service_not_running);
+    PHPVPN_CHECK(!blockedConnect && blockedConnect.error().code == blockedStart.error().code);
     PHPVPN_CHECK(std::filesystem::exists(settings.journalPath));
     fixture.net.recoveryInterfacePresent = false;
     fixture.net.recoveryLookupFailure = ErrorCode::none;
@@ -1122,5 +1124,127 @@ PHPVPN_TEST(runtime, ownership_recovery_never_opens_adapter_and_blocks_unresolve
     PHPVPN_CHECK_EQ(fixture.driver.loads.load(), 0);
     PHPVPN_CHECK_EQ(fixture.driver.opens.load(), 0);
     PHPVPN_CHECK(!std::filesystem::exists(settings.journalPath));
+}
+PHPVPN_TEST(wizard_service, fix2_additive_finish_preserves_existing_keys_and_binds_all_metadata) {
+    for (bool repair : {false, true}) {
+        WizardServiceFixture fixture;
+        if (repair) {
+            auto dom = Json::parse(*fixture.runtime.files->bytes).value();
+            for (auto& [name, value] : dom.objectValue()) if (name == "masterSetup")
+                std::erase_if(value.objectValue(), [](const auto& item) { return item.first == "virtualIp"; });
+            fixture.runtime.files->bytes = Json::serialize(dom);
+            auto view = WizardIpc::parseView(fixture.call(WizardCommand::open).result).value();
+            PHPVPN_CHECK_EQ(view.mode, WizardMode::repair);
+            fixture.request.sessionId = view.sessionId;
+            fixture.request.fields = *view.fields;
+            fixture.request.fields.virtualIp = "10.99.99.2";
+        }
+        const auto original = analyzeWizardDocument(*fixture.runtime.files->bytes).value();
+        fixture.request.fields.autoDetectIpAddressInWizard = true;
+        fixture.allChecks();
+        fixture.request.commitId = fixture.runtime.crypto.actual->randomUuidV4().value();
+        fixture.request.createDefaultContracts = true;
+        auto started = fixture.call(WizardCommand::finish);
+        PHPVPN_CHECK(!started.error);
+        fixture.runFile();
+        auto receipt = fixture.call(WizardCommand::get_commit);
+        PHPVPN_CHECK_EQ(receipt.result.find("commitState")->stringValue(), std::string("confirmed"));
+        auto stored = analyzeWizardDocument(*fixture.runtime.files->bytes).value();
+        PHPVPN_CHECK_EQ(stored.contractPeers.size(), 13u);
+        PHPVPN_CHECK(stored.fields.autoDetectIpAddressInWizard);
+        PHPVPN_CHECK_EQ(Json::serialize(*stored.dom.find("communicationContracts")->find("10.99.99.3")),
+            Json::serialize(*original.dom.find("communicationContracts")->find("10.99.99.3")));
+        const auto writes = fixture.runtime.files->writes;
+        PHPVPN_CHECK(!fixture.call(WizardCommand::finish).error);
+        PHPVPN_CHECK_EQ(fixture.runtime.files->writes, writes);
+        fixture.request.fields.autoDetectIpAddressInWizard = false;
+        auto changed = fixture.call(WizardCommand::finish);
+        PHPVPN_CHECK(changed.error && changed.error->code == "invalid_argument");
+    }
+}
+PHPVPN_TEST(wizard_service, fix2_rejects_false_default_claims_and_unverified_automatic_ip_before_http) {
+    WizardServiceFixture fixture;
+    fixture.check(WizardCommand::check_url);
+    fixture.check(WizardCommand::check_secret);
+    const auto original = fixture.request.fields;
+    const auto httpCalls = fixture.httpCalls;
+    for (unsigned bad = 0; bad < 3; ++bad) {
+        fixture.request.fields = original;
+        if (bad == 0) fixture.request.fields.useDefaultServerSecretInWizard = true;
+        if (bad == 1) fixture.request.fields.useDefaultAccessKeyInWizard = true;
+        if (bad == 2) { fixture.request.fields.autoDetectIpAddressInWizard = true; fixture.request.fields.virtualIp = "10.99.99.10"; }
+        fixture.request.attemptSequence = ++fixture.sequence;
+        fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+        auto rejected = fixture.call(WizardCommand::check_access);
+        PHPVPN_CHECK(rejected.error && rejected.error->code == "wizard_prerequisite_failed");
+        PHPVPN_CHECK_EQ(fixture.httpCalls, httpCalls);
+        PHPVPN_CHECK(!fixture.diagnosticTask);
+    }
+    fixture.request.fields = original;
+    fixture.check(WizardCommand::check_access);
+    fixture.request.fields.autoDetectIpAddressInWizard = true;
+    auto unproven = fixture.beginFinish();
+    PHPVPN_CHECK(unproven.error && unproven.error->code == "wizard_prerequisite_failed");
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+}
+PHPVPN_TEST(runtime, fix2_degraded_storage_keeps_diagnostics_and_blocks_connect_with_original_error) {
+    EngineFixture fixture;
+    fixture.files->recoveryError = ErrorCode::journal_corrupt;
+    PHPVPN_CHECK(!fixture.store.recover());
+    const auto bytes = fixture.files->bytes;
+    auto start = fixture.engine.start();
+    PHPVPN_CHECK(!start && start.error().code == ErrorCode::journal_corrupt);
+    auto connect = fixture.engine.connect();
+    PHPVPN_CHECK(!connect && connect.error().code == ErrorCode::journal_corrupt);
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::error);
+    PHPVPN_CHECK_EQ(fixture.files->bytes, bytes);
+    PHPVPN_CHECK_EQ(fixture.files->writes, 0u);
+    PHPVPN_CHECK_EQ(fixture.driver.loads.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.transport.dataCalls.load(), 0);
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    IpcDispatcher dispatcher(fixture.engine);
+    const auto requestId = fixture.crypto.actual->randomUuidV4().value();
+    for (auto command : {IpcCommand::get_status, IpcCommand::get_diagnostics, IpcCommand::disconnect}) {
+        const auto reply = Json::parse(dispatcher.handle(IpcProtocol::buildRequest(command, requestId)));
+        PHPVPN_REQUIRE_OK(reply);
+        PHPVPN_CHECK(!reply->find("error"));
+    }
+    const auto rejected = Json::parse(dispatcher.handle(IpcProtocol::buildRequest(IpcCommand::connect, requestId)));
+    PHPVPN_REQUIRE_OK(rejected);
+    PHPVPN_CHECK_EQ(rejected->find("error")->find("code")->stringValue(), std::string("journal_corrupt"));
+}
+
+PHPVPN_TEST(wizard_service, fix2_all_preferences_persist_through_verified_finish_and_reopen) {
+    for (unsigned mask = 0; mask < 8; ++mask) {
+        WizardServiceFixture fixture;
+        fixture.runtime.files->bytes = makeDefaultEditorDocument();
+        ConfigWarnings warnings;
+        fixture.relayConfig = parseAndValidateConfig(*fixture.runtime.files->bytes, warnings).value();
+        const auto view = WizardIpc::parseView(fixture.call(WizardCommand::open).result).value();
+        fixture.request.sessionId = view.sessionId;
+        fixture.request.fields = *view.fields;
+        fixture.request.fields.useDefaultServerSecretInWizard = (mask & 1) != 0;
+        fixture.request.fields.autoDetectIpAddressInWizard = (mask & 2) != 0;
+        fixture.request.fields.useDefaultAccessKeyInWizard = (mask & 4) != 0;
+        const auto expected = fixture.request.fields;
+        fixture.allChecks();
+        PHPVPN_CHECK(!fixture.beginFinish().error);
+        fixture.runFile();
+        const auto receipt = fixture.call(WizardCommand::get_commit);
+        PHPVPN_CHECK_EQ(receipt.result.find("commitState")->stringValue(), std::string("confirmed"));
+        for (unsigned flag = 0; flag < 3; ++flag) {
+            fixture.request.fields = expected;
+            if (flag == 0) fixture.request.fields.useDefaultServerSecretInWizard = !expected.useDefaultServerSecretInWizard;
+            if (flag == 1) fixture.request.fields.autoDetectIpAddressInWizard = !expected.autoDetectIpAddressInWizard;
+            if (flag == 2) fixture.request.fields.useDefaultAccessKeyInWizard = !expected.useDefaultAccessKeyInWizard;
+            auto changed = fixture.call(WizardCommand::finish);
+            PHPVPN_CHECK(changed.error && changed.error->code == "invalid_argument");
+        }
+        PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+        auto reopened = WizardIpc::parseView(fixture.call(WizardCommand::open).result);
+        PHPVPN_REQUIRE_OK(reopened);
+        PHPVPN_CHECK_EQ(*reopened->fields, expected);
+        PHPVPN_CHECK_EQ(reopened->contractCount, 1u);
+    }
 }
 }  // namespace phpvpn

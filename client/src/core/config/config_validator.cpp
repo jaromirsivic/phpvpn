@@ -143,11 +143,23 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
                                                           "serverSecret",
                                                           "vpnCidr",
                                                           "virtualIp",
-                                                          "accessKey"};
+                                                          "accessKey",
+                                                          "useDefaultServerSecretInWizard",
+                                                          "autoDetectIpAddressInWizard",
+                                                          "useDefaultAccessKeyInWizard"};
     PHPVPN_TRY(requireKnownMembers(*master, kMasterMembers, "masterSetup"));
 
     auto config = std::make_shared<ConfigValues>();
     config->rawJson.assign(json);
+    for (const auto& [name, destination] : {
+        std::pair{"useDefaultServerSecretInWizard", &config->wizardPreferences.useDefaultServerSecretInWizard},
+        std::pair{"autoDetectIpAddressInWizard", &config->wizardPreferences.autoDetectIpAddressInWizard},
+        std::pair{"useDefaultAccessKeyInWizard", &config->wizardPreferences.useDefaultAccessKeyInWizard}}) {
+        if (const auto* value = master->find(name)) {
+            if (!value->isBool()) return Error(ErrorCode::config_invalid_value, std::string(name) + " must be a boolean");
+            *destination = value->boolValue();
+        }
+    }
 
     std::string serverUrlText;
     PHPVPN_TRY_ASSIGN(serverUrlText, requireString(*master, "serverUrl", "masterSetup"));

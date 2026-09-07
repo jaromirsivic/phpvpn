@@ -17,6 +17,9 @@ struct WizardFields {
     std::string serverSecret;
     std::string virtualIp;
     std::string accessKey;
+    bool useDefaultServerSecretInWizard = true;
+    bool autoDetectIpAddressInWizard = true;
+    bool useDefaultAccessKeyInWizard = true;
     bool operator==(const WizardFields&) const = default;
 };
 struct WizardContext {
@@ -25,6 +28,11 @@ struct WizardContext {
     RuntimeLimits runtime;
 };
 // Incomplete input never becomes a runtime ClientConfig or uses dummy keys.
+struct WizardPreferences {
+    std::optional<bool> useDefaultServerSecretInWizard;
+    std::optional<bool> autoDetectIpAddressInWizard;
+    std::optional<bool> useDefaultAccessKeyInWizard;
+};
 struct ConfigValues {
     ServerUrl serverUrl;
     bool trustAnyTlsCertificate = kDefaultTrustAnyTlsCertificate;
@@ -35,6 +43,7 @@ struct ConfigValues {
     RuntimeLimits runtime;
     std::vector<CommunicationContract> contracts;
     std::string rawJson;
+    WizardPreferences wizardPreferences;
 };
 struct WizardDocument {
     JsonValue dom;

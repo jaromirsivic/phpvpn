@@ -405,26 +405,61 @@ void run(bool udp) {
     OwnedService service(directory / L"phpvpn-e2e-service.exe");
     service.start();
     client.awaitVpn("disconnected", "idle", 5000);
-    check(!std::filesystem::exists(config), "SCM startup created config");
+    check(readConfig(config) == makeDefaultEditorDocument(), "SCM startup did not create the shared default");
+    const auto startupBytes = readConfig(config);
+    service.stop();
+    service.start();
+    client.awaitVpn("disconnected", "idle", 5000);
+    check(readConfig(config) == startupBytes, "second SCM startup changed existing bytes");
+    auto legacy = require(Json::parse(startupBytes));
+    for (auto& [name, value] : legacy.objectValue()) if (name == "masterSetup")
+        std::erase_if(value.objectValue(), [](const auto& item) { return item.first.ends_with("InWizard"); });
+    for (const auto& existing : {std::string(" \r\n") + Json::serialize(legacy), std::string("{invalid fixture json")}) {
+        service.stop();
+        {
+            std::ofstream seeded(config, std::ios::binary | std::ios::trunc);
+            seeded << existing;
+            check(seeded.good(), "isolated existing-file seed failed");
+        }
+        service.start();
+        client.awaitVpn("disconnected", "idle", 5000);
+        check(readConfig(config) == existing, "SCM startup replaced an existing legacy or invalid document");
+        const auto state = client.wizard(WizardCommand::get_config_state);
+        check(state.result.find("availability")->stringValue() == (existing.front() == '{' ? "invalid" : "valid"), "existing fixture misclassified");
+        if (existing.front() == '{') check(client.legacy(IpcCommand::connect, true).find("error") != nullptr, "invalid config Connect was accepted");
+    }
+    pass("SCM startup preserves legacy and invalid bytes with IPC available");
+    check(DeleteFileW(config.c_str()) != FALSE, "isolated config deletion failed");
     const auto missing = client.wizard(WizardCommand::get_config_state);
     check(missing.result.find("availability")->stringValue() == "missing", "missing config was misclassified");
     const auto rejected = client.legacy(IpcCommand::connect, true);
     check(rejected.find("error") && rejected.find("error")->find("code") &&
           rejected.find("error")->find("code")->stringValue() == "config_not_found", "Connect without config did not report config_not_found");
     check(!std::filesystem::exists(config) && service.status().dwCurrentState == SERVICE_RUNNING, "missing Connect created config or stopped service");
-    pass("actual SCM start and missing Connect preserve no-config state");
+    pass("SCM startup creates exact default, restart preserves bytes, missing Connect does not create");
+    client.wizard(WizardCommand::create_default_config);
+    check(readConfig(config) == startupBytes, "explicit create after deletion did not restore shared default");
+    check(DeleteFileW(config.c_str()) != FALSE, "second isolated config deletion failed");
+    service.stop();
+    service.start();
+    client.awaitVpn("disconnected", "idle", 5000);
+    check(readConfig(config) == startupBytes, "restart after deletion did not restore shared default");
     auto view = require(WizardIpc::parseView(client.wizard(WizardCommand::open).result));
-    check(view.mode == WizardMode::create && view.availability == ConfigAvailability::missing && view.fields.has_value(), "Wizard did not open create mode");
+    check(view.mode == WizardMode::edit && view.availability == ConfigAvailability::valid && view.fields.has_value() && view.contractCount == 1,
+          "Wizard did not open startup default in edit mode with one contract");
+    check(view.fields->useDefaultServerSecretInWizard && view.fields->autoDetectIpAddressInWizard && view.fields->useDefaultAccessKeyInWizard,
+          "startup default preferences were lost");
     client.session.sessionId = view.sessionId; client.session.serviceInstanceId = view.serviceInstanceId;
     client.session.connectionEpoch = view.connectionEpoch; client.session.fields = *view.fields;
     client.session.fields.serverUrl = relay;
     client.session.fields.serverSecret = std::string(kDefaultServerSecret);
     client.session.fields.virtualIp = "10.99.99.2";
+    client.session.fields.autoDetectIpAddressInWizard = false;
     client.session.fields.accessKey = defaultAccessKey("10.99.99.2");
     client.checkNext(WizardCommand::check_url, WizardOperationKind::url);
     client.checkNext(WizardCommand::check_secret, WizardOperationKind::secret);
     client.checkNext(WizardCommand::check_access, WizardOperationKind::access);
-    check(!std::filesystem::exists(config), "Wizard Next wrote config before Finish");
+    check(readConfig(config) == startupBytes, "Wizard Next wrote config before Finish");
     pass("three explicit service Wizard Next operations through real WinHTTP/PHP");
     client.session.commitId = client.uuid(); client.session.createDefaultContracts = true;
     client.wizard(WizardCommand::finish);
@@ -446,6 +481,10 @@ void run(bool udp) {
     ConfigWarnings warnings;
     const auto stored = require(parseAndValidateConfig(published, warnings));
     check(stored->virtualIp.toString() == "10.99.99.2" && stored->contracts.size() == 13, "Finish default identity/contracts mismatch");
+    const auto originalDom = require(Json::parse(startupBytes));
+    const auto publishedDom = require(Json::parse(published));
+    check(Json::serialize(*originalDom.find("communicationContracts")->find("10.99.99.3")) ==
+          Json::serialize(*publishedDom.find("communicationContracts")->find("10.99.99.3")), "Finish replaced an existing payload key");
     client.wizard(WizardCommand::finish); // Same UUID and identical complete input.
     const auto repeated = client.wizard(WizardCommand::get_commit);
     check(repeated.result.find("commitState")->stringValue() == "confirmed" &&

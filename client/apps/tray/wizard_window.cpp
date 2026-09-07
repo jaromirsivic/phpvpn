@@ -16,6 +16,7 @@ constexpr UINT primaryMessage = WM_APP + 51, controlMessage = WM_APP + 52, heart
 constexpr UINT disconnectMessage = WM_APP + 54, statusMessage = WM_APP + 55;
 constexpr int nextId = 701, backId = 702, resetId = 703, cancelId = 704;
 constexpr int urlId = 710, secretId = 711, defaultSecretId = 712, ipId = 713, keyId = 714, defaultKeyId = 715, contractsId = 716;
+constexpr int automaticIpId = 717;
 Result<std::string> inputText(HWND field) {
     const int length = GetWindowTextLengthW(field);
     std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
@@ -85,7 +86,7 @@ WizardRequest WizardWindow::request(WizardCommand command) const {
     WizardRequest value; value.command = command;
     value.serviceInstanceId = model_.view().serviceInstanceId; value.sessionId = model_.view().sessionId;
     value.connectionEpoch = model_.view().connectionEpoch; value.fields = model_.fields();
-    value.commitId = commitId_; value.createDefaultContracts = model_.createContracts();
+    value.commitId = commitId_; value.createDefaultContracts = model_.shouldAddDefaultContracts();
     if (model_.attempt()) {
         value.clientAttemptId = model_.attempt()->clientAttemptId;
         value.attemptSequence = model_.attempt()->sequence;
@@ -399,8 +400,12 @@ void WizardWindow::render() {
         label(L"Virtual IP and Access Key", true);
         label(L"Choose this computer's virtual IP inside " + widen(model_.view().context->vpnCidr.toString()) +
             L". A suggested IP is not a reservation. Duplicate client IPs are technically allowed, but a collision is the operator's configuration responsibility. An existing local contract cannot point to this computer itself.");
-        if (model_.fields().virtualIp.empty()) label(L"Enter an IP manually. No usable suggestion is available for the preserved CIDR and contracts.");
-        label(L"Virtual IP"); add(L"EDIT", widen(model_.fields().virtualIp), WS_TABSTOP | ES_AUTOHSCROLL, ipId);
+        auto automatic = add(L"BUTTON", L"Automatically detect IP address", WS_TABSTOP | BS_AUTOCHECKBOX, automaticIpId);
+        SendMessageW(automatic, BM_SETCHECK, model_.autoDetectIpAddress() ? BST_CHECKED : BST_UNCHECKED, 0);
+        if (model_.autoDetectIpAddress() && !model_.hasSuggestedIp())
+            label(L"No verified IP suggestion is available for this CIDR and the preserved contracts. Turn off automatic detection to enter an IP manually, or go Back and verify the server secret again.");
+        label(L"Virtual IP"); auto ipField = add(L"EDIT", widen(model_.fields().virtualIp), WS_TABSTOP | ES_AUTOHSCROLL, ipId);
+        EnableWindow(ipField, !locked && !model_.autoDetectIpAddress());
         auto box = add(L"BUTTON", L"Use default access key", WS_TABSTOP | BS_AUTOCHECKBOX, defaultKeyId);
         SendMessageW(box, BM_SETCHECK, model_.useDefaultAccessKey() ? BST_CHECKED : BST_UNCHECKED, 0);
         label(L"Access Key (64 lowercase hexadecimal characters)");
@@ -410,13 +415,14 @@ void WizardWindow::render() {
         label(L"This check may remove waiting messages for this IP address from the server. The messages will be discarded and will not be delivered to the VPN. If the result does not reach this window, the check may still have removed messages. Each new click on Next starts a new check and may remove more messages. Checks are not retried automatically.");
     } else if (step == WizardStep::contracts) {
         label(L"Communication Contracts", true);
-        if (model_.contractsAllowed()) {
-            auto box = add(L"BUTTON", L"Create default communication contracts", WS_TABSTOP | BS_AUTOCHECKBOX, contractsId);
-            SendMessageW(box, BM_SETCHECK, model_.createContracts() ? BST_CHECKED : BST_UNCHECKED, 0);
-            label(L"Default peers use host addresses .2 through .15 in " + widen(model_.view().context->vpnCidr.toString()) + L", excluding this computer. Contracts to create: " + std::to_wstring(model_.contractCount()) + L".");
-        } else if (model_.view().mode == WizardMode::edit || model_.view().mode == WizardMode::repair)
-            label(L"Existing communication contracts will be preserved without changes. Contract count: " + std::to_wstring(model_.contractCount()) + L".");
-        else label(L"No default contracts will be created because vpnCidr is not in the supported 10.A.B.0/24 form.");
+        auto box = add(L"BUTTON", L"Add missing default communication contracts", WS_TABSTOP | BS_AUTOCHECKBOX, contractsId);
+        SendMessageW(box, BM_SETCHECK, model_.createContracts() ? BST_CHECKED : BST_UNCHECKED, 0);
+        EnableWindow(box, !locked && model_.contractsAllowed());
+        label(L"Existing contracts: " + std::to_wstring(model_.view().contractCount) + L". Missing default contracts: " +
+            std::to_wstring(model_.missingContractCount()) + L". To add on Finish: " +
+            std::to_wstring(model_.shouldAddDefaultContracts() ? model_.missingContractCount() : 0) + L".");
+        if (model_.contractsAllowed()) label(L"Default peers use host addresses .2 through .15 in " + widen(model_.view().context->vpnCidr.toString()) + L", excluding this computer. Existing contracts and keys are preserved. Default keys are publicly predictable.");
+        else label(L"No default contracts will be added because vpnCidr is not in the supported 10.A.B.0/24 form. Existing contracts are preserved.");
         label(L"Finish saves the entire validated configuration and opens Communication Contracts. It does not connect the VPN. The latest successful save wins, including saves from another editor. Your existing connection is not started automatically.");
     }
     if (model_.error()) {
@@ -542,6 +548,7 @@ void WizardWindow::command(int id, int notification) {
     else if (id == cancelId) cancel(false);
     else if (id == defaultSecretId) { model_.setDefaultSecret(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }
     else if (id == defaultKeyId) { model_.setDefaultAccessKey(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }
+    else if (id == automaticIpId) { model_.setAutoDetectIpAddress(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }
     else if (id == contractsId) { model_.setCreateContracts(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }
 }
 LRESULT CALLBACK WizardWindow::bodyProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {

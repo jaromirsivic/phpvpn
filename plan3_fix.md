@@ -1,5 +1,7 @@
 # Oprava vytvoření konfigurace přes Edit Config
 
+Aktualizace fix 2: novější [plan3_fix2.md](plan3_fix2.md) nahrazuje pouze pravidlo startup vytvoření. ACL ochrana, konkrétní diagnostika a zákaz oprav ACL z tray platí beze změny. Historické výsledky nejsou novým ověřením.
+
 ## 1. Cíl a rozsah
 
 Vyřešit scénář: běží služba a tray, administrátor odstraní `C:\ProgramData\PHPVPN\config.json`, v tray zvolí Edit Config a potvrdí vytvoření. Při bezpečném stavu adresáře musí ihned vzniknout validní výchozí konfigurace a otevřít se její skutečný obsah. Pokud vytvoření blokují oprávnění, aplikace musí vysvětlit konkrétní příčinu a použitelný postup nápravy.
@@ -40,7 +42,7 @@ Zachovat ochranu SYSTEM/Administrators. Neodstraňovat kontrolu počtu položek 
 
 Oprava má dvě části:
 
-- **Provozní náprava:** obnovit očekávaná oprávnění a znovu provést Edit Config. Již existující start služby volá `restrictDirectoryToAdministrators()` před vytvořením backendu. Pro zjištěnou změnu DACL je proto ručně provedený administrátorský restart služby dostupnou cestou obnovy politiky. Restart přeruší aktivní VPN a sám konfiguraci nevytvoří. Po úspěšném startu zvolit Edit Config a Yes. Úspěch celého postupu ověřit, mohou se následně odhalit další nezávislé chyby obnovy.
+- **Provozní náprava:** obnovit očekávaná oprávnění a znovu provést Edit Config. Již existující start služby volá `restrictDirectoryToAdministrators()` před vytvořením backendu. Pro zjištěnou změnu DACL je proto ručně provedený administrátorský restart služby dostupnou cestou obnovy politiky. Restart přeruší aktivní VPN. Podle novějšího plan3_fix2 po bezpečné recovery vytvoří chybějící default, proto po startu ověřit skutečný obsah přes Edit Config. Další potvrzení Yes nemusí být potřeba. Úspěch celého postupu ověřit, mohou se následně odhalit další nezávislé chyby obnovy.
 - **Oprava aplikace:** místo obecného selhání zápisu vracet konkrétní chybu bezpečnosti adresáře, zobrazit správný postup a pokrýt rozdíl mezi smazáním souboru a změnou ACL regresními testy.
 
 Automatická změna ACL při kliknutí Yes není součástí této opravy. Znamenala by novou správní operaci a změnu současné politiky, podle které Reset neopravuje ACL. Pro tento problém není nutná. Tray také nebude samo restartovat službu.
@@ -108,7 +110,7 @@ V `client.md` doplnit nový chybový kód, vysvětlení politiky adresáře a po
 2. Dodatečné oprávnění uživatele vyvolá konkrétní chybu adresáře a použitelný návod, nikoli obecný text s Next.
 3. Administrátorská obnova očekávaných oprávnění umožní následné explicitní vytvoření, doložené testem.
 4. Create-if-missing zachová cizí existující soubor, původní ochrany publikace, limity a validaci. Cancel již vytvořený soubor nemaže.
-5. Instalace, start služby ani Connect konfiguraci samy nevytvoří. Aktivní VPN se nezmění při pouhém pokusu o vytvoření.
+5. Původní zákaz startup vytvoření je překonán plan3_fix2. Start služby vytváří pouze skutečně chybějící default po bezpečné recovery. Connect nic nevytváří, aktivní VPN se při explicitním vytvoření nemění.
 6. Report obsahuje skutečně provedené testy i zbývající omezení, včetně výsledku celého tray scénáře.
 
 ## 6. Co bylo při přípravě provedeno

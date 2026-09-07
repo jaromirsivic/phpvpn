@@ -33,6 +33,7 @@ PHPVPN_TEST(WizardModel, DefaultKeyTransitionsAndExistingValue) {
     auto view = modelView();
     model.load(view);
     PHPVPN_CHECK(model.useDefaultAccessKey());
+    PHPVPN_CHECK(model.setAutoDetectIpAddress(false));
     PHPVPN_CHECK(model.setIp("10.99.99.10"));
     PHPVPN_CHECK_EQ(model.fields().accessKey, defaultAccessKey("10.99.99.10"));
     PHPVPN_CHECK(!model.setAccessKey(std::string(64, 'a')));
@@ -50,6 +51,7 @@ PHPVPN_TEST(WizardModel, DefaultKeyTransitionsAndExistingValue) {
     view.mode = WizardMode::edit;
     view.fields->virtualIp = "10.99.99.2";
     view.fields->accessKey = defaultAccessKey(view.fields->virtualIp);
+    view.fields->useDefaultAccessKeyInWizard = false;
     model.load(view);
     PHPVPN_CHECK(!model.useDefaultAccessKey());
 }
@@ -57,6 +59,7 @@ PHPVPN_TEST(WizardModel, ExactSecretAndLiteralRoundTrip) {
     for (const auto& secret : {std::string{}, std::string(32, '0'), std::string(64, '0'), std::string(" a "), std::string("a\0b\n", 4)}) {
         WizardModel model;
         auto view = modelView(); view.fields->serverSecret = secret;
+        view.fields->useDefaultServerSecretInWizard = false;
         model.load(view);
         PHPVPN_CHECK(!model.useDefaultSecret());
         PHPVPN_CHECK_EQ(model.fields().serverSecret, secret);
@@ -110,6 +113,7 @@ PHPVPN_TEST(WizardModel, CorrelationDeadlineEpochAndNoAutomaticRetry) {
 }
 PHPVPN_TEST(WizardModel, ContractsAndResumePreserveDraft) {
     WizardModel model; auto view = modelView(); model.load(view);
+    model.setAutoDetectIpAddress(false);
     model.setIp("10.99.99.20");
     PHPVPN_CHECK_EQ(model.contractCount(), 14u);
     model.setCreateContracts(false);
@@ -121,9 +125,10 @@ PHPVPN_TEST(WizardModel, ContractsAndResumePreserveDraft) {
     PHPVPN_CHECK(!model.createContracts());
     view.mode = WizardMode::repair; view.contractCount = 7;
     model.load(view);
-    PHPVPN_CHECK(!model.contractsAllowed());
+    PHPVPN_CHECK(model.contractsAllowed());
     PHPVPN_CHECK_EQ(model.contractCount(), 7u);
     view.mode = WizardMode::reset;
+    view.contractCount = 0;
     view.context->vpnCidr = Ipv4Cidr::parse("192.168.0.0/24").value();
     model.load(view);
     PHPVPN_CHECK(!model.contractsAllowed());

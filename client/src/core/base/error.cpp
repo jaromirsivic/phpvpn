@@ -17,7 +17,7 @@ constexpr ErrorInfo kErrors[] = {
     {ErrorCode::wizard_attempt_closed, "wizard_attempt_closed", "This check attempt is already closed. Choose Next to start a new attempt.", false},
     {ErrorCode::wizard_connection_interrupted, "wizard_connection_interrupted", "Another application or user started a VPN connection. Previous checks are no longer valid.", false},
     {ErrorCode::wizard_commit_unknown, "wizard_commit_unknown", "The configuration publication has not been confirmed. Check its receipt before taking another action.", false},
-    {ErrorCode::wizard_unsupported, "wizard_unsupported", "This wizard requires the updated PHPVPN service.", false},
+    {ErrorCode::wizard_unsupported, "wizard_unsupported", "The PHPVPN service and tray must use the same updated wizard schema.", false},
     {ErrorCode::config_unreadable, "config_unreadable", "The configuration file could not be accessed.", false},
     {ErrorCode::config_encoding_error, "config_encoding_error", "The configuration file is not supported UTF-8 text.", false},
     {ErrorCode::config_too_large, "config_too_large", "The configuration exceeds the 512 KiB limit.", false},

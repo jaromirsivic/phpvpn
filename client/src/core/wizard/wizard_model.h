@@ -20,13 +20,17 @@ public:
     WizardStep step() const { return step_; }
     bool busy() const { return busy_; }
     bool committing() const { return committing_; }
-    bool useDefaultAccessKey() const { return defaultKey_; }
-    bool useDefaultSecret() const { return defaultSecret_; }
+    bool useDefaultAccessKey() const { return fields_.useDefaultAccessKeyInWizard; }
+    bool useDefaultSecret() const { return fields_.useDefaultServerSecretInWizard; }
+    bool autoDetectIpAddress() const { return fields_.autoDetectIpAddressInWizard; }
+    bool hasSuggestedIp() const { return suggestedIp_.has_value(); }
     bool secretLiteralMode() const { return literalSecret_; }
     const std::string& secretEditorText() const { return secretText_; }
     bool createContracts() const { return createContracts_; }
+    bool shouldAddDefaultContracts() const { return createContracts_ && contractsAllowed(); }
     bool contractsAllowed() const;
     std::size_t contractCount() const;
+    std::size_t missingContractCount() const;
     const std::optional<WizardError>& error() const { return error_; }
     const std::optional<WizardAttempt>& attempt() const { return attempt_; }
     const std::array<CheckpointResult, 3>& checks() const { return checks_; }
@@ -34,6 +38,7 @@ public:
     bool setSecretEditor(std::string text);
     bool setDefaultSecret(bool checked);
     bool setIp(std::string text);
+    bool setAutoDetectIpAddress(bool checked);
     bool setAccessKey(std::string text);
     bool setDefaultAccessKey(bool checked);
     void setCreateContracts(bool checked);
@@ -59,7 +64,8 @@ private:
     WizardFields fields_;
     WizardStep step_ = WizardStep::loading;
     bool busy_ = false, committing_ = false;
-    bool defaultKey_ = true, defaultSecret_ = true, literalSecret_ = false, secretValid_ = true, createContracts_ = true;
+    bool literalSecret_ = false, secretValid_ = true, createContracts_ = true;
+    std::optional<std::string> suggestedIp_;
     std::string secretText_;
     std::uint64_t sequence_ = 0;
     std::optional<WizardAttempt> attempt_;

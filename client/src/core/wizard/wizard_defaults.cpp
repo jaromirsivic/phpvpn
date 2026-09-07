@@ -15,6 +15,19 @@ std::string defaultAccessKey(std::string_view text) {
 bool supportsDefaultContracts(const Ipv4Cidr& cidr) noexcept {
     return cidr.prefixLength() == 24 && (cidr.network().value() >> 24) == 10;
 }
+std::vector<Ipv4Address> defaultContractCandidates(const Ipv4Cidr& cidr) {
+    std::vector<Ipv4Address> result;
+    if (supportsDefaultContracts(cidr)) {
+        for (std::uint32_t octet = 2; octet <= 15; ++octet) result.emplace_back(cidr.network().value() | octet);
+    }
+    return result;
+}
+std::vector<Ipv4Address> missingDefaultContractPeers(const Ipv4Cidr& cidr, Ipv4Address own,
+    const std::vector<Ipv4Address>& existing) {
+    auto result = defaultContractCandidates(cidr);
+    std::erase_if(result, [&](Ipv4Address peer) { return peer == own || std::find(existing.begin(), existing.end(), peer) != existing.end(); });
+    return result;
+}
 Result<std::string> defaultPayloadKey(CryptoProvider& crypto, Ipv4Address first, Ipv4Address second) {
     if (second < first) std::swap(first, second);
     auto hash = crypto.sha256(asBytes(first.toString() + "_" + second.toString()));

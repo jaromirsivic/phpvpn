@@ -126,6 +126,7 @@ private:
     NetConfig& netConfig_;
     EnginePaths paths_;
     ConfigStore& configStore_;
+    std::optional<Error> startupError_;
     std::mutex transitionMutex_;
     std::uint64_t connectionEpoch_ = 0;
     std::function<Status()> beforeConnect_;

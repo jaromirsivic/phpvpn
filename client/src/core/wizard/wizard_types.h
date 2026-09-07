@@ -47,6 +47,7 @@ struct WizardView {
     std::optional<WizardFields> fields;
     std::optional<WizardContext> context;
     std::size_t contractCount = 0;
+    std::vector<Ipv4Address> existingDefaultContractPeers;
     std::uint64_t connectionEpoch = 0;
     ConnectionState vpnState = ConnectionState::disconnected;
     ConnectionPhase vpnPhase = ConnectionPhase::idle;

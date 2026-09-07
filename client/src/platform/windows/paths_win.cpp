@@ -44,7 +44,7 @@ Result<std::filesystem::path> executableDirectory() {
     return path.parent_path();
 }
 
-Result<std::filesystem::path> dataDirectory() {
+Result<std::filesystem::path> dataDirectory(bool create) {
     PWSTR programData = nullptr;
     const HRESULT result =
         SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &programData);
@@ -58,6 +58,7 @@ Result<std::filesystem::path> dataDirectory() {
     std::filesystem::path path(programData);
     CoTaskMemFree(programData);
     path /= kProductDirectoryName;
+    if (!create) return path;
 
     std::error_code code;
     std::filesystem::create_directories(path, code);

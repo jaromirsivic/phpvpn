@@ -5,6 +5,7 @@
 #include "core/wizard/wizard_defaults.h"
 #include <chrono>
 #include <limits>
+#include <algorithm>
 
 namespace phpvpn {
 namespace {
@@ -38,12 +39,15 @@ J WizardService::acknowledgement(const Operation& operation) {
 }
 void WizardService::clearEvidenceLocked(Session& session) {
     session.urlEvidence.reset(); session.secretEvidence.reset(); session.accessEvidence.reset();
+    session.suggestedIpEvidence.reset();
 }
 void WizardService::clearOperationEvidenceLocked(Session& session, WizardOperationKind kind) {
     // Cancelling a later checkpoint does not revoke an earlier successful
     // checkpoint. Its exact-field proof remains necessary for an explicit retry.
     if (kind == WizardOperationKind::url) session.urlEvidence.reset();
-    if (kind == WizardOperationKind::url || kind == WizardOperationKind::secret) session.secretEvidence.reset();
+    if (kind == WizardOperationKind::url || kind == WizardOperationKind::secret) {
+        session.secretEvidence.reset(); session.suggestedIpEvidence.reset();
+    }
     session.accessEvidence.reset();
 }
 void WizardService::cancelLocked(const std::shared_ptr<Operation>& operation) {
@@ -145,6 +149,10 @@ Result<J> WizardService::open() {
     if (session->original) {
         session->view.fields = session->original->fields; session->view.context = session->original->context;
         session->view.contractCount = session->original->contractPeers.size();
+        for (const auto peer : defaultContractCandidates(session->original->context.vpnCidr)) {
+            const auto& peers = session->original->contractPeers;
+            if (std::find(peers.begin(), peers.end(), peer) != peers.end()) session->view.existingDefaultContractPeers.push_back(peer);
+        }
     }
     std::lock_guard lock(mutex_);
     expireLocked(clock_.leaseMonotonicMs());
@@ -247,6 +255,7 @@ Result<J> WizardService::execute(const WizardRequest& request) {
                 session->view.fields = session->original->fields;
                 session->view.context = session->original->context;
                 session->view.contractCount = 0;
+                session->view.existingDefaultContractPeers.clear();
             } else {
                 session->interrupted = false;
                 session->view.connectionEpoch = identity.epoch;
@@ -320,9 +329,13 @@ Result<J> WizardService::startProbe(const WizardRequest& request) {
         if (!session->secretEvidence || session->secretEvidence->serverUrl != fields.serverUrl || session->secretEvidence->serverSecret != fields.serverSecret)
             return Error(ErrorCode::wizard_prerequisite_failed);
         PHPVPN_TRY(validateWizardIdentity(*session->original, fields));
+        if ((fields.useDefaultServerSecretInWizard && fields.serverSecret != kDefaultServerSecret) ||
+            (fields.useDefaultAccessKeyInWizard && fields.accessKey != defaultAccessKey(fields.virtualIp)) ||
+            (fields.autoDetectIpAddressInWizard && (!session->suggestedIpEvidence || *session->suggestedIpEvidence != fields.virtualIp)))
+            return Error(ErrorCode::wizard_prerequisite_failed);
     }
     if (kind == WizardOperationKind::url) clearEvidenceLocked(*session);
-    else if (kind == WizardOperationKind::secret) { session->secretEvidence.reset(); session->accessEvidence.reset(); }
+    else if (kind == WizardOperationKind::secret) { session->secretEvidence.reset(); session->suggestedIpEvidence.reset(); session->accessEvidence.reset(); }
     else session->accessEvidence.reset();
     auto operation = std::make_shared<Operation>();
     operation->result.operationId = id; operation->result.kind = kind;
@@ -392,7 +405,10 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
             operation->result.state = WizardOperationState::succeeded;
             operation->result.suggestedIp = suggestion; operation->result.discardedRecordCount = outcome.value();
             if (operation->result.kind == WizardOperationKind::url) session->urlEvidence = operation->fields.serverUrl;
-            else if (operation->result.kind == WizardOperationKind::secret) session->secretEvidence = operation->fields;
+            else if (operation->result.kind == WizardOperationKind::secret) {
+                session->secretEvidence = operation->fields;
+                session->suggestedIpEvidence = suggestion;
+            }
             else session->accessEvidence = operation->fields;
         }
     }
@@ -420,8 +436,7 @@ Result<J> WizardService::finish(const WizardRequest& request) {
     if (!session->urlEvidence || *session->urlEvidence != request.fields.serverUrl || !session->secretEvidence ||
         session->secretEvidence->serverUrl != request.fields.serverUrl || session->secretEvidence->serverSecret != request.fields.serverSecret ||
         !session->accessEvidence || *session->accessEvidence != request.fields) return Error(ErrorCode::wizard_prerequisite_failed);
-    if (request.createDefaultContracts && ((session->view.mode != WizardMode::create && session->view.mode != WizardMode::reset) ||
-        !supportsDefaultContracts(session->original->context.vpnCidr))) return Error(ErrorCode::invalid_argument);
+    if (request.createDefaultContracts && !supportsDefaultContracts(session->original->context.vpnCidr)) return Error(ErrorCode::invalid_argument);
     auto operation = std::make_shared<Operation>();
     operation->result.operationId = id; operation->result.kind = WizardOperationKind::finish;
     operation->result.connectionEpoch = session->view.connectionEpoch; operation->generation = session->generation;

@@ -1,5 +1,7 @@
 # Plan3: dohledatelná matice implementace a důkazů
 
+Novější implementace [plan3_fix2.md](../../plan3_fix2.md) má vlastní [report](implementation-plan3-fix2-report.md) a [matici AK01 až AK17](implementation-plan3-fix2-matrix.md). Níže uvedené historické výsledky zůstávají beze změny a nejsou důkazem nového startupu ani nových voleb Wizardu.
+
 Zdroje byly 6. září 2026 přeneseny do `C:/git/phpvpn`. Tento report zachovává výsledky běhů v původním worktree. Odkazy na pracovní logy vedou do tohoto původního umístění, odkazy na distribuci vedou na novou kopii v hlavním projektu. Podrobnosti přenosu uvádí [předávací report](implementation-plan3-handoff.md).
 
 Stav podkladů k 6. září 2026, pracovní strom `C:/Users/User/.codex/worktrees/d6c8/phpvpn`.

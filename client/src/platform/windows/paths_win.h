@@ -16,7 +16,7 @@ namespace phpvpn {
 Result<std::filesystem::path> executableDirectory();
 
 // %ProgramData%\PHPVPN, created when missing.
-Result<std::filesystem::path> dataDirectory();
+Result<std::filesystem::path> dataDirectory(bool create = true);
 
 std::filesystem::path configFilePath(const std::filesystem::path& dataDirectory);
 std::filesystem::path journalFilePath(const std::filesystem::path& dataDirectory);

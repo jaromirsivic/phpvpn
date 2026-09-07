@@ -32,15 +32,18 @@ inline constexpr std::int64_t kDefaultMaxDataRecordsPerResponse = 65535;
 inline constexpr std::int64_t kDefaultResponseTimeoutSeconds = 30;
 inline constexpr std::int64_t kDefaultTimeSyncIntervalSeconds = 300;
 
-// Shared editor template. Only an explicit approved save/create writes it.
+// Shared complete template for service startup and explicit editor creation/reset.
 inline constexpr std::string_view kDefaultConfigDocument = R"json({
   "masterSetup": {
     "serverUrl": "http://127.0.0.1/phpvpn.php",
     "trustAnyTlsCertificate": true,
     "serverSecret": "CHANGE_THIS_SERVER_SECRET",
+    "useDefaultServerSecretInWizard": true,
     "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
-    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202"
+    "autoDetectIpAddressInWizard": true,
+    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202",
+    "useDefaultAccessKeyInWizard": true
   },
   "communicationContracts": {
     "10.99.99.3": {

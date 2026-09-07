@@ -11,6 +11,8 @@ public:
     std::optional<std::string> bytes;
     std::optional<ErrorCode> readError;
     std::optional<ErrorCode> publishError;
+    std::optional<ErrorCode> recoveryError;
+    ConfigRecoveryState recoveryState = ConfigRecoveryState::clean;
     ConfigPublishState outcome = ConfigPublishState::confirmed;
     std::uint64_t identity = 1;
     unsigned reads = 0, writes = 0;
@@ -39,6 +41,9 @@ public:
         if (!digest) return digest.error();
         return ConfigFilePublication{outcome, std::string(id), ConfigFileIdentity{1, identity}, toLowercaseHex(*digest)};
     }
-    Result<ConfigFileRecovery> recover() override { return ConfigFileRecovery{}; }
+    Result<ConfigFileRecovery> recover() override {
+        if (recoveryError) return Error(*recoveryError);
+        return ConfigFileRecovery{recoveryState};
+    }
 };
 }

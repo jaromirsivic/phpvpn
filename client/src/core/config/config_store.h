@@ -24,14 +24,18 @@ struct DefaultConfigCreation {
     bool created = false;
     StoredConfigSnapshot snapshot;
 };
+enum class StartupConfigState { existing, created, alreadyExists };
 
 // This is the only service owner of configuration disk operations. Its mutex
 // never guards VPN state and callers must run file actions outside control I/O.
 class ConfigStore {
 public:
     ConfigStore(CryptoProvider& crypto, std::unique_ptr<ConfigFiles> files);
+    ConfigStore(CryptoProvider& crypto, std::filesystem::path fixedPath, Error unavailable);
     const std::filesystem::path& path() const noexcept;
     Result<ConfigFileRecovery> recover();
+    Status operationalStatus() const;
+    Result<StartupConfigState> ensureDefaultAtStartup();
     Result<StoredConfigSnapshot> read();
     Result<ClientConfigPtr> readValid();
     Result<ConfigCommit> save(std::string_view document, std::string_view commitId);
@@ -41,7 +45,9 @@ private:
     Result<StoredConfigSnapshot> analyze(ConfigFileRead input);
     CryptoProvider& crypto_;
     std::unique_ptr<ConfigFiles> files_;
-    std::mutex mutex_;
+    std::filesystem::path path_;
+    std::optional<Error> initializationError_;
+    mutable std::mutex mutex_;
     StoredConfigSnapshot latest_;
 };
 } // namespace phpvpn

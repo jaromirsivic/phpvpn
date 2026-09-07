@@ -39,7 +39,7 @@ private:
 
 }  // namespace
 
-PHPVPN_TEST(default_config, startup_and_connect_do_not_create_missing_file) {
+PHPVPN_TEST(default_config, engine_start_and_connect_do_not_create_missing_file) {
     TemporaryDirectory directory;
     const std::filesystem::path path = directory.path() / "config.json";
 

@@ -12,12 +12,33 @@ ConfigAvailability classify(ErrorCode code) {
 }
 }
 ConfigStore::ConfigStore(CryptoProvider& crypto, std::unique_ptr<ConfigFiles> files)
-    : crypto_(crypto), files_(std::move(files)) {}
-const std::filesystem::path& ConfigStore::path() const noexcept { return files_->path(); }
+    : crypto_(crypto), files_(std::move(files)), path_(files_->path()) {}
+ConfigStore::ConfigStore(CryptoProvider& crypto, std::filesystem::path fixedPath, Error unavailable)
+    : crypto_(crypto), path_(std::move(fixedPath)), initializationError_(std::move(unavailable)) {}
+const std::filesystem::path& ConfigStore::path() const noexcept { return path_; }
+Status ConfigStore::operationalStatus() const {
+    std::lock_guard lock(mutex_);
+    return initializationError_ ? Status(*initializationError_) : ok();
+}
 Result<ConfigFileRecovery> ConfigStore::recover() {
     std::lock_guard lock(mutex_);
     latest_ = {};
-    return files_->recover();
+    if (!files_) return *initializationError_;
+    auto result = files_->recover();
+    if (!result) initializationError_ = result.error();
+    else if (result->state == ConfigRecoveryState::unknown) initializationError_ = Error(ErrorCode::journal_ambiguous);
+    else initializationError_.reset();
+    return result;
+}
+Result<StartupConfigState> ConfigStore::ensureDefaultAtStartup() {
+    PHPVPN_TRY(operationalStatus());
+    auto snapshot = read();
+    if (!snapshot) return snapshot.error();
+    if (snapshot->availability != ConfigAvailability::missing) return StartupConfigState::existing;
+    if (snapshot->reasonCode != ErrorCode::config_not_found) return Error(ErrorCode::config_unreadable);
+    auto created = createDefault();
+    if (!created) return created.error();
+    return created->created ? StartupConfigState::created : StartupConfigState::alreadyExists;
 }
 Result<StoredConfigSnapshot> ConfigStore::analyze(ConfigFileRead input) {
     StoredConfigSnapshot result;
@@ -57,6 +78,12 @@ Result<StoredConfigSnapshot> ConfigStore::analyze(ConfigFileRead input) {
     return result;
 }
 Result<StoredConfigSnapshot> ConfigStore::readLocked() {
+    if (!files_) {
+        latest_ = {};
+        latest_.availability = ConfigAvailability::unreadable;
+        latest_.reasonCode = initializationError_->code;
+        return latest_;
+    }
     auto input = files_->readBounded(kMaxConfigFileBytes);
     if (!input) {
         // Never retain a previously valid document after a failed fresh read.
@@ -75,6 +102,7 @@ Result<StoredConfigSnapshot> ConfigStore::read() {
     return readLocked();
 }
 Result<ClientConfigPtr> ConfigStore::readValid() {
+    PHPVPN_TRY(operationalStatus());
     auto snapshot = read();
     if (!snapshot) return snapshot.error();
     if (!snapshot->config) return Error(snapshot->reasonCode.value_or(ErrorCode::config_invalid_value));
@@ -88,6 +116,7 @@ Result<ConfigCommit> ConfigStore::save(std::string_view document, std::string_vi
     auto config = parseAndValidateConfig(document, warnings);
     if (!config) return config.error();
     std::lock_guard lock(mutex_);
+    if (initializationError_) return *initializationError_;
     // Allocate the receipt token before publication so allocation/randomness
     // failure can never turn a completed write into a reported failed write.
     std::string revision;
@@ -117,6 +146,7 @@ Result<DefaultConfigCreation> ConfigStore::createDefault() {
     auto valid = parseAndValidateConfig(text, warnings);
     if (!valid) return valid.error();
     std::lock_guard lock(mutex_);
+    if (initializationError_) return *initializationError_;
     std::string id;
     PHPVPN_TRY_ASSIGN(id, crypto_.randomUuidV4());
     auto publication = files_->publish(text, ConfigPublishMode::createIfMissing, id);

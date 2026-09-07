@@ -16,17 +16,21 @@ void WizardModel::load(WizardView view, bool preserveFields) {
     if (!view_.fields || !view_.context) { step_ = WizardStep::loadError; return; }
     if (!preserveFields) {
         fields_ = *view_.fields;
-        defaultKey_ = fields_.accessKey.empty();
-        defaultSecret_ = fields_.serverSecret == kDefaultServerSecret;
+        if (useDefaultSecret()) fields_.serverSecret = kDefaultServerSecret;
         updateDefaultKey(); updateSecretText();
-        createContracts_ = contractsAllowed();
+        createContracts_ = true;
     }
     step_ = view_.vpnState == ConnectionState::disconnected && view_.vpnPhase == ConnectionPhase::idle ? WizardStep::serverUrl : WizardStep::disconnectGate;
 }
 void WizardModel::invalidate(std::size_t from) {
+    if (from <= 1) suggestedIp_.reset();
     for (auto i = from; i < checks_.size(); ++i) checks_[i] = CheckpointResult::pending;
 }
-void WizardModel::updateDefaultKey() { if (defaultKey_) fields_.accessKey = defaultAccessKey(fields_.virtualIp); }
+void WizardModel::updateDefaultKey() {
+    if (!useDefaultAccessKey()) return;
+    const auto ip = Ipv4Address::parse(fields_.virtualIp);
+    fields_.accessKey = ip && view_.context && view_.context->vpnCidr.isValidClientAddress(*ip) ? defaultAccessKey(fields_.virtualIp) : std::string{};
+}
 void WizardModel::updateSecretText() {
     literalSecret_ = std::any_of(fields_.serverSecret.begin(), fields_.serverSecret.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
     secretText_ = literalSecret_ ? Json::escapeString(fields_.serverSecret) : fields_.serverSecret;
@@ -38,7 +42,7 @@ bool WizardModel::setUrl(std::string text) {
     return true;
 }
 bool WizardModel::setSecretEditor(std::string text) {
-    if (busy_ || committing_ || defaultSecret_) return false;
+    if (busy_ || committing_ || useDefaultSecret()) return false;
     secretText_ = std::move(text);
     if (literalSecret_) {
         auto parsed = Json::parse(secretText_);
@@ -53,35 +57,42 @@ bool WizardModel::setSecretEditor(std::string text) {
 }
 bool WizardModel::setDefaultSecret(bool checked) {
     if (busy_ || committing_) return false;
-    defaultSecret_ = checked;
+    fields_.useDefaultServerSecretInWizard = checked;
     if (checked) fields_.serverSecret = kDefaultServerSecret;
     updateSecretText(); invalidate(1); return true;
 }
 bool WizardModel::setIp(std::string text) {
-    if (busy_ || committing_) return false;
+    if (busy_ || committing_ || autoDetectIpAddress()) return false;
     if (fields_.virtualIp != text) { fields_.virtualIp = std::move(text); updateDefaultKey(); invalidate(2); }
     return true;
 }
+bool WizardModel::setAutoDetectIpAddress(bool checked) {
+    if (busy_ || committing_) return false;
+    fields_.autoDetectIpAddressInWizard = checked;
+    if (checked && suggestedIp_) fields_.virtualIp = *suggestedIp_;
+    updateDefaultKey(); invalidate(2); return true;
+}
 bool WizardModel::setAccessKey(std::string text) {
-    if (busy_ || committing_ || defaultKey_) return false;
+    if (busy_ || committing_ || useDefaultAccessKey()) return false;
     fields_.accessKey = std::move(text); invalidate(2); return true;
 }
 bool WizardModel::setDefaultAccessKey(bool checked) {
     if (busy_ || committing_) return false;
-    defaultKey_ = checked; updateDefaultKey(); invalidate(2); return true;
+    fields_.useDefaultAccessKeyInWizard = checked; updateDefaultKey(); invalidate(2); return true;
 }
 bool WizardModel::contractsAllowed() const {
-    return view_.context && (view_.mode == WizardMode::create || view_.mode == WizardMode::reset) && supportsDefaultContracts(view_.context->vpnCidr);
+    return view_.context && supportsDefaultContracts(view_.context->vpnCidr);
 }
 std::size_t WizardModel::contractCount() const {
-    if (view_.mode == WizardMode::edit || view_.mode == WizardMode::repair) return view_.contractCount;
-    if (!createContracts_ || !contractsAllowed()) return 0;
-    const auto own = Ipv4Address::parse(fields_.virtualIp);
-    if (!own) return 0;
-    const auto last = own->value() & 255;
-    return (own->value() & 0xffffff00) == view_.context->vpnCidr.network().value() && last >= 2 && last <= 15 ? 13 : 14;
+    return view_.contractCount + (shouldAddDefaultContracts() ? missingContractCount() : 0);
 }
-void WizardModel::setCreateContracts(bool checked) { if (!busy_ && !committing_) createContracts_ = checked && contractsAllowed(); }
+std::size_t WizardModel::missingContractCount() const {
+    if (!contractsAllowed()) return 0;
+    const auto own = Ipv4Address::parse(fields_.virtualIp);
+    if (!own || !view_.context->vpnCidr.isValidClientAddress(*own)) return 0;
+    return missingDefaultContractPeers(view_.context->vpnCidr, *own, view_.existingDefaultContractPeers).size();
+}
+void WizardModel::setCreateContracts(bool checked) { if (!busy_ && !committing_ && contractsAllowed()) createContracts_ = checked; }
 bool WizardModel::back() {
     if (busy_ || committing_) return false;
     if (step_ == WizardStep::contracts) step_ = WizardStep::identity;
@@ -101,6 +112,8 @@ Status WizardModel::validateCurrent() const {
     } else if (step_ == WizardStep::serverSecret) {
         if (!secretValid_) return Error(ErrorCode::config_invalid_value, "enter a complete JSON string literal");
     } else if (step_ == WizardStep::identity) {
+        if (autoDetectIpAddress() && (!suggestedIp_ || *suggestedIp_ != fields_.virtualIp))
+            return Error(ErrorCode::wizard_prerequisite_failed, "no verified IP suggestion is available; disable automatic IP detection to enter an address manually");
         const auto ip = Ipv4Address::parse(fields_.virtualIp);
         if (!ip || !view_.context->vpnCidr.isValidClientAddress(*ip)) return Error(ErrorCode::config_invalid_address);
         if (fields_.accessKey.size() != 64 || !isLowercaseHex(fields_.accessKey)) return Error(ErrorCode::config_invalid_key);
@@ -140,7 +153,8 @@ bool WizardModel::applyOperation(const WizardOperationResult& operation, std::in
     checks_[static_cast<std::size_t>(operation.kind)] = CheckpointResult::success;
     if (step_ == WizardStep::serverUrl) step_ = WizardStep::serverSecret;
     else if (step_ == WizardStep::serverSecret) {
-        if (fields_.virtualIp.empty() && operation.suggestedIp) { fields_.virtualIp = *operation.suggestedIp; updateDefaultKey(); }
+        suggestedIp_ = operation.suggestedIp;
+        if (autoDetectIpAddress() && suggestedIp_) { fields_.virtualIp = *suggestedIp_; updateDefaultKey(); }
         step_ = WizardStep::identity;
     } else step_ = WizardStep::contracts;
     return true;
@@ -161,6 +175,7 @@ void WizardModel::interrupt() {
 }
 void WizardModel::sessionExpired() {
     busy_ = false; if (attempt_) attempt_->closed = true;
+    invalidate(0);
     if (!committing_) step_ = WizardStep::sessionExpired;
     error_ = WizardIpc::safeError(Error(ErrorCode::wizard_session_expired));
 }

@@ -7,7 +7,9 @@ param(
     [ValidateSet('debug', 'release', 'asan')][string]$Preset = 'debug',
     [switch]$Configure,
     [switch]$Test,
-    [switch]$ResourceTests
+    [switch]$ResourceTests,
+    [switch]$ServiceE2E,
+    [switch]$UiTests
 )
 $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -19,9 +21,11 @@ cmd /c $devCommand | ForEach-Object {
 }
 Push-Location (Split-Path -Parent $PSScriptRoot)
 try {
-    if ($Configure -or $ResourceTests) {
+    if ($Configure -or $ResourceTests -or $ServiceE2E -or $UiTests) {
         $configureArgs = @('--preset', $Preset)
         if ($ResourceTests) { $configureArgs += '-DPHPVPN_BUILD_RESOURCE_TESTS=ON' }
+        if ($ServiceE2E) { $configureArgs += '-DPHPVPN_BUILD_SERVICE_E2E=ON' }
+        if ($UiTests) { $configureArgs += '-DPHPVPN_BUILD_UI_TESTS=ON' }
         & cmake @configureArgs
         if ($LASTEXITCODE) { throw 'CMake configuration failed.' }
     }

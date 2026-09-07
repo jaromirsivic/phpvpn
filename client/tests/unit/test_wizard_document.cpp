@@ -58,7 +58,7 @@ PHPVPN_TEST(wizard_document, PatchPreservesUnshownValuesAndOmission) {
     fields.serverSecret = std::string("a\0b", 3);
     auto crypto = createPlatformCryptoProvider();
     PHPVPN_REQUIRE_OK(crypto);
-    auto output = buildWizardDocument(*crypto.value(), draft.value(), WizardMode::repair, fields, true);
+    auto output = buildWizardDocument(*crypto.value(), draft.value(), WizardMode::repair, fields, false);
     PHPVPN_REQUIRE_OK(output);
     auto after = analyzeWizardDocument(output.value());
     PHPVPN_REQUIRE_OK(after);

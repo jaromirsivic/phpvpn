@@ -56,6 +56,9 @@ Result<WizardDocument> analyzeWizardDocument(std::string_view json) {
     document.context = {values->vpnCidr, values->trustAnyTlsCertificate, values->runtime};
     document.hasVirtualIp = values->virtualIp.has_value();
     document.hasAccessKey = values->accessKey.has_value();
+    document.fields.useDefaultServerSecretInWizard = values->wizardPreferences.useDefaultServerSecretInWizard.value_or(values->serverSecret == kDefaultServerSecret);
+    document.fields.autoDetectIpAddressInWizard = values->wizardPreferences.autoDetectIpAddressInWizard.value_or(!document.hasVirtualIp);
+    document.fields.useDefaultAccessKeyInWizard = values->wizardPreferences.useDefaultAccessKeyInWizard.value_or(!document.hasAccessKey);
     if (values->virtualIp) document.fields.virtualIp = values->virtualIp->toString();
     if (values->accessKey) document.fields.accessKey = toLowercaseHex(values->accessKey->span());
     for (const auto& contract : values->contracts) document.contractPeers.push_back(contract.peer);
@@ -85,18 +88,20 @@ Result<std::string> buildWizardDocument(CryptoProvider& crypto, const WizardDocu
         set(member.second, "serverSecret", JsonValue::makeString(fields.serverSecret));
         set(member.second, "virtualIp", JsonValue::makeString(fields.virtualIp));
         set(member.second, "accessKey", JsonValue::makeString(fields.accessKey));
+        set(member.second, "useDefaultServerSecretInWizard", JsonValue::makeBool(fields.useDefaultServerSecretInWizard));
+        set(member.second, "autoDetectIpAddressInWizard", JsonValue::makeBool(fields.autoDetectIpAddressInWizard));
+        set(member.second, "useDefaultAccessKeyInWizard", JsonValue::makeBool(fields.useDefaultAccessKeyInWizard));
     }
-    if (mode == WizardMode::create || mode == WizardMode::reset) {
+    if (createDefaultContracts && !supportsDefaultContracts(original.context.vpnCidr)) return Error(ErrorCode::invalid_argument);
+    const auto own = *Ipv4Address::parse(fields.virtualIp);
+    const auto missing = createDefaultContracts ? missingDefaultContractPeers(original.context.vpnCidr, own, original.contractPeers) : std::vector<Ipv4Address>{};
+    if (!missing.empty() || mode == WizardMode::create || mode == WizardMode::reset) {
         JsonObject contracts;
-        if (createDefaultContracts && supportsDefaultContracts(original.context.vpnCidr)) {
-            const auto own = *Ipv4Address::parse(fields.virtualIp);
-            for (std::uint32_t i = 2; i <= 15; ++i) {
-                const Ipv4Address peer(original.context.vpnCidr.network().value() | i);
-                if (peer == own) continue;
-                std::string key;
-                PHPVPN_TRY_ASSIGN(key, defaultPayloadKey(crypto, own, peer));
-                contracts.emplace_back(peer.toString(), JsonValue::makeObject({{"payloadKey", JsonValue::makeString(key)}}));
-            }
+        if (const auto* existing = dom.find("communicationContracts")) contracts = existing->objectValue();
+        for (const auto peer : missing) {
+            std::string key;
+            PHPVPN_TRY_ASSIGN(key, defaultPayloadKey(crypto, own, peer));
+            contracts.emplace_back(peer.toString(), JsonValue::makeObject({{"payloadKey", JsonValue::makeString(key)}}));
         }
         set(dom, "communicationContracts", JsonValue::makeObject(std::move(contracts)));
     }

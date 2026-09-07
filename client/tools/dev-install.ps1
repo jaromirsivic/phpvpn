@@ -84,7 +84,7 @@ if ($WithTrayAutostart) {
 
 Write-Host ""
 Write-Host "Next steps:"
-Write-Host "  Open Configuration Wizard and choose Finish, or use Edit Config and confirm creation of the default file."
-Write-Host "  Installation and service startup do not create config.json. Existing configuration is preserved."
+Write-Host "  Configure the file using Configuration Wizard or Edit Config. Edit Config can recreate a file deleted while running."
+Write-Host "  Service startup creates config.json only when missing, after secure storage recovery. Existing bytes are preserved."
 Write-Host "  $(Join-Path $appsDirectory 'phpvpn.exe') status"
 Write-Host "  $(Join-Path $appsDirectory 'phpvpn.exe') connect"

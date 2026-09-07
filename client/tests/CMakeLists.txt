@@ -10,6 +10,7 @@ add_executable(phpvpn-client-tests
     unit/test_wizard_layout.cpp
     unit/test_crypto.cpp
     unit/test_default_config.cpp
+    unit/test_plan3_fix2.cpp
     unit/test_ipc.cpp
     unit/test_ipc_availability_win.cpp
     unit/test_iso8601.cpp

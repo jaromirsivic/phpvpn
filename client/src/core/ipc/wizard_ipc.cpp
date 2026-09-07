@@ -1,6 +1,7 @@
 #include "core/ipc/wizard_ipc.h"
 #include "core/ipc/ipc_protocol.h"
 #include "core/protocol/uuid.h"
+#include "core/wizard/wizard_defaults.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -206,13 +207,25 @@ Result<std::string> WizardIpc::buildRequest(const WizardRequest& request) {
 }
 J WizardIpc::fieldsValue(const WizardFields& fields) {
     return J::makeObject({{"serverUrl", str(fields.serverUrl)}, {"serverSecret", str(fields.serverSecret)},
-        {"virtualIp", str(fields.virtualIp)}, {"accessKey", str(fields.accessKey)}});
+        {"virtualIp", str(fields.virtualIp)}, {"accessKey", str(fields.accessKey)},
+        {"useDefaultServerSecretInWizard", J::makeBool(fields.useDefaultServerSecretInWizard)},
+        {"autoDetectIpAddressInWizard", J::makeBool(fields.autoDetectIpAddressInWizard)},
+        {"useDefaultAccessKeyInWizard", J::makeBool(fields.useDefaultAccessKeyInWizard)}});
 }
 Result<WizardFields> WizardIpc::parseFields(const J& value) {
-    if (!shape(value, {"serverUrl", "serverSecret", "virtualIp", "accessKey"})) return malformed();
-    for (const auto& member : value.objectValue()) if (!member.second.isString()) return malformed();
+    if (shape(value, {"serverUrl", "serverSecret", "virtualIp", "accessKey"})) {
+        for (const auto& member : value.objectValue()) if (!member.second.isString()) return malformed();
+        return Error(ErrorCode::wizard_unsupported);
+    }
+    if (!shape(value, {"serverUrl", "serverSecret", "virtualIp", "accessKey",
+        "useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})) return malformed();
+    for (auto name : {"serverUrl", "serverSecret", "virtualIp", "accessKey"}) if (!value.find(name)->isString()) return malformed();
+    for (auto name : {"useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})
+        if (!value.find(name)->isBool()) return malformed();
     return WizardFields{value.find("serverUrl")->stringValue(), value.find("serverSecret")->stringValue(),
-        value.find("virtualIp")->stringValue(), value.find("accessKey")->stringValue()};
+        value.find("virtualIp")->stringValue(), value.find("accessKey")->stringValue(),
+        value.find("useDefaultServerSecretInWizard")->boolValue(), value.find("autoDetectIpAddressInWizard")->boolValue(),
+        value.find("useDefaultAccessKeyInWizard")->boolValue()};
 }
 J WizardIpc::contextValue(const WizardContext& context) {
     const auto& r = context.runtime;
@@ -250,15 +263,29 @@ Result<WizardContext> WizardIpc::parseContext(const J& value) {
     return context;
 }
 J WizardIpc::viewValue(const WizardView& view) {
+    JsonArray peers;
+    for (const auto peer : view.existingDefaultContractPeers) peers.push_back(str(peer.toString()));
     return J::makeObject({{"sessionId", str(view.sessionId)}, {"serviceInstanceId", str(view.serviceInstanceId)},
         {"revisionToken", view.revisionToken.empty() ? J::makeNull() : str(view.revisionToken)},
         {"availability", str(configAvailabilityName(view.availability))}, {"mode", str(modes.at(static_cast<std::size_t>(view.mode)))},
         {"fields", view.fields ? fieldsValue(*view.fields) : J::makeNull()}, {"context", view.context ? contextValue(*view.context) : J::makeNull()},
-        {"contractCount", J::makeUnsignedInteger(view.contractCount)}, {"connectionEpoch", J::makeUnsignedInteger(view.connectionEpoch)},
+        {"contractCount", J::makeUnsignedInteger(view.contractCount)}, {"existingDefaultContractPeers", J::makeArray(std::move(peers))},
+        {"connectionEpoch", J::makeUnsignedInteger(view.connectionEpoch)},
         {"vpnState", str(connectionStateName(view.vpnState))}, {"vpnPhase", str(connectionPhaseName(view.vpnPhase))}});
 }
 Result<WizardView> WizardIpc::parseView(const J& value) {
-    if (!shape(value, {"sessionId", "serviceInstanceId", "revisionToken", "availability", "mode", "fields", "context", "contractCount", "connectionEpoch", "vpnState", "vpnPhase"}) ||
+    if (shape(value, {"sessionId", "serviceInstanceId", "revisionToken", "availability", "mode", "fields", "context", "contractCount", "connectionEpoch", "vpnState", "vpnPhase"})) {
+        // Diagnose only a fully valid historical view. Never downgrade or use it.
+        J candidate = value;
+        for (auto& [name, fields] : candidate.objectValue()) if (name == "fields" && !fields.isNull()) {
+            if (parseFields(fields).code() != ErrorCode::wizard_unsupported) return malformed();
+            for (auto flag : {"useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})
+                fields.objectValue().emplace_back(flag, J::makeBool(false));
+        }
+        candidate.objectValue().emplace_back("existingDefaultContractPeers", J::makeArray({}));
+        return parseView(candidate) ? Error(ErrorCode::wizard_unsupported) : malformed();
+    }
+    if (!shape(value, {"sessionId", "serviceInstanceId", "revisionToken", "availability", "mode", "fields", "context", "contractCount", "existingDefaultContractPeers", "connectionEpoch", "vpnState", "vpnPhase"}) ||
         !uuid(value.find("sessionId")) || !uuid(value.find("serviceInstanceId")) || !nullText(value.find("revisionToken")) ||
         !availability(value.find("availability")) || !number(value.find("contractCount")) || !number(value.find("connectionEpoch"))) return malformed();
     const auto mode = index(value.find("mode"), modes);
@@ -287,6 +314,16 @@ Result<WizardView> WizardIpc::parseView(const J& value) {
     if (readableAvailability(value.find("availability")) ? !token(value.find("revisionToken")) :
         !value.find("revisionToken")->isNull()) return malformed();
     view.contractCount = jsonUnsignedOrZero(value.find("contractCount"));
+    const auto* peers = value.find("existingDefaultContractPeers");
+    if (!peers->isArray() || peers->arrayValue().size() > 14 || peers->arrayValue().size() > view.contractCount) return malformed();
+    for (const auto& peerValue : peers->arrayValue()) {
+        if (!peerValue.isString() || !view.context || !supportsDefaultContracts(view.context->vpnCidr)) return malformed();
+        const auto peer = Ipv4Address::parse(peerValue.stringValue());
+        if (!peer || (peer->value() & 0xffffff00) != view.context->vpnCidr.network().value() ||
+            (peer->value() & 255) < 2 || (peer->value() & 255) > 15 ||
+            (!view.existingDefaultContractPeers.empty() && ! (view.existingDefaultContractPeers.back() < *peer))) return malformed();
+        view.existingDefaultContractPeers.push_back(*peer);
+    }
     view.connectionEpoch = jsonUnsignedOrZero(value.find("connectionEpoch"));
     view.vpnState = *state; view.vpnPhase = *phase;
     if (!view.fields && (view.mode != WizardMode::reset || view.contractCount != 0 ||
@@ -294,14 +331,14 @@ Result<WizardView> WizardIpc::parseView(const J& value) {
     if (view.mode == WizardMode::create && view.availability != ConfigAvailability::missing) return malformed();
     if (view.mode == WizardMode::edit && view.availability != ConfigAvailability::valid) return malformed();
     if (view.mode == WizardMode::repair && view.availability != ConfigAvailability::repairable) return malformed();
-    if (view.mode == WizardMode::reset && view.contractCount != 0) return malformed();
+    if ((view.mode == WizardMode::create || view.mode == WizardMode::reset) && view.contractCount != 0) return malformed();
     return view;
 }
 WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     std::optional<std::string> field, std::optional<std::string> url, std::optional<std::string> path) {
     std::string action = "Correct the reported issue, then choose Next for a new check.";
     if (error.code == ErrorCode::config_directory_security_invalid)
-        action = "Ask an administrator to restart the PHPVPN service to restore the folder permissions, then choose Edit Config again. Restarting the service disconnects the VPN.";
+        action = "Ask an administrator to restart the PHPVPN service to restore the folder permissions, then inspect the file with Edit Config. Startup may already have recreated a missing file. Restarting the service disconnects the VPN.";
     else if ((std::string_view(error.name()).starts_with("config_") && (!field || *field == "configuration")) ||
         error.code == ErrorCode::journal_corrupt || error.code == ErrorCode::journal_ambiguous ||
         error.code == ErrorCode::journal_missing)
@@ -313,7 +350,7 @@ WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     else if (error.code == ErrorCode::wizard_commit_unknown) action = "Check the existing commit receipt. Do not start another write automatically.";
     else if (error.code == ErrorCode::wizard_connection_interrupted) action = "Choose Next to disconnect the VPN for everyone, then repeat the checks.";
     else if (error.code == ErrorCode::wizard_contract_self_conflict) action = "Choose another virtual IP, or correct the contract through Edit Config before opening a new wizard.";
-    else if (error.code == ErrorCode::wizard_unsupported) action = "Update the PHPVPN service, then open Configuration Wizard again.";
+    else if (error.code == ErrorCode::wizard_unsupported) action = "Update both the PHPVPN service and tray to the same version, then open Configuration Wizard again.";
     return {error.name(), errorCodeDescription(error.code), error.recoverable(), std::move(field), status,
         std::move(action), std::move(url), std::move(path)};
 }

@@ -47,6 +47,7 @@ Status VpnEngine::start() {
     }
 
     startedAtMs_ = clock_.monotonicMs();
+    startupError_.reset();
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
@@ -59,10 +60,14 @@ Status VpnEngine::start() {
     settings.requestedGuid = paths_.adapterGuid;
     settings.journalPath = paths_.journalFile;
     settings.installDirectory = paths_.installDirectory;
-    auto recovered = tunnelSession_.recoverPreviousRun(settings);
+    auto recovered = configStore_.operationalStatus();
+    if (recovered) recovered = tunnelSession_.recoverPreviousRun(settings);
     if (!recovered.ok()) {
         PHPVPN_LOG_ERROR(kComponent, recovered.error().message());
         running_.store(false);
+        startupError_ = recovered.error();
+        recordError(recovered.error());
+        setState(ConnectionState::error, ConnectionPhase::idle);
         return recovered.error();
     }
 
@@ -169,6 +174,7 @@ Result<std::string> VpnEngine::fetchInfoOnce() {
 }
 
 Status VpnEngine::connect() {
+    if (startupError_) return *startupError_;
     if (!running_.load()) return Error(ErrorCode::service_not_running);
     const auto generation = controlGeneration_.load();
     {
@@ -188,6 +194,7 @@ Status VpnEngine::connect() {
     }
     // An action reads once, outside the state lock. Concurrent readers can
     // share acceptance, but only the first accepted snapshot becomes active.
+    PHPVPN_TRY(configStore_.operationalStatus());
     auto snapshot = configStore_.read();
     if (!snapshot) return snapshot.error();
     {
@@ -223,6 +230,7 @@ Status VpnEngine::disconnect() {
     controlGeneration_.fetch_add(1);
     cancelDiagnostics();
     connectRequested_.store(false);
+    if (!running_.load()) return ok();
     pushCommand(Command::disconnect);
     transport_.cancelCurrentRequest();
     return Status::success();

@@ -232,6 +232,36 @@ PHPVPN_TEST(config_files, deleted_default_recreated_with_same_backend_and_confir
     std::cout << "[ EVIDENCE ] same backend: delete/recreate with confirmed journal and backup ran on NTFS\n";
 }
 
+PHPVPN_TEST(config_files, fix2_startup_recovery_preserves_bytes_and_recreates_only_missing) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    auto crypto = createPlatformCryptoProvider();
+    PHPVPN_REQUIRE_OK(crypto);
+    auto backend = createWindowsConfigFiles(fixture.path());
+    PHPVPN_REQUIRE_OK(backend);
+    ConfigStore store(*crypto.value(), std::move(backend).value());
+    PHPVPN_REQUIRE_OK(store.recover());
+    auto initial = store.ensureDefaultAtStartup();
+    PHPVPN_REQUIRE_OK(initial);
+    PHPVPN_CHECK_EQ(initial.value(), StartupConfigState::created);
+    auto snapshot = store.read();
+    PHPVPN_CHECK_EQ(*snapshot->document, makeDefaultEditorDocument());
+    const auto customized = makeDefaultEditorDocument() + "\n\n";
+    PHPVPN_REQUIRE_OK(store.save(customized, kCommitA));
+    PHPVPN_REQUIRE_OK(store.recover());
+    auto repeated = store.ensureDefaultAtStartup();
+    PHPVPN_CHECK_EQ(repeated.value(), StartupConfigState::existing);
+    snapshot = store.read();
+    PHPVPN_CHECK_EQ(*snapshot->document, customized);
+    PHPVPN_CHECK(DeleteFileW(fixture.path().c_str()) != FALSE);
+    PHPVPN_REQUIRE_OK(store.recover());
+    auto recreated = store.ensureDefaultAtStartup();
+    PHPVPN_CHECK_EQ(recreated.value(), StartupConfigState::created);
+    snapshot = store.read();
+    PHPVPN_CHECK_EQ(*snapshot->document, makeDefaultEditorDocument());
+    std::cout << "[ EVIDENCE ] startup operation, recovery and missing recreation ran on protected NTFS\n";
+}
+
 PHPVPN_TEST(config_files, changed_directory_acl_blocks_create_until_explicit_administrator_repair) {
     SecureFixture fixture;
     if (!fixture.create()) return;

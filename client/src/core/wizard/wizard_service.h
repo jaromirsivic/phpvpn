@@ -46,6 +46,7 @@ private:
         std::shared_ptr<Operation> operation;
         std::optional<std::string> urlEvidence;
         std::optional<WizardFields> secretEvidence, accessEvidence;
+        std::optional<std::string> suggestedIpEvidence;
     };
     struct CommitRecord {
         std::string sessionId, commitId, fingerprint;
