@@ -61,7 +61,7 @@ WP05 Contracts end-to-end, Save, souběh a Exit/logoff
 WP06 Izolovaný vývojový runner a UI harness
   |
   v
-WP07 Normativní dokumentace a trasovatelnost
+WP07 Závěrečný audit dokumentace a trasovatelnost
   |
   v
 WP08 Finální integrační a regresní brána
@@ -72,7 +72,7 @@ WP08 Finální integrační a regresní brána
 - `main.cpp`, pozdější `tray_application.*`, menu, IPC čtečky a životní cyklus oken tvoří jeden koordinační uzel. Connect, Wizard, Contracts, Exit i preview potřebují stejný message loop a stejné injektované endpointy.
 - `client/src/CMakeLists.txt`, `client/apps/CMakeLists.txt` a `client/tests/CMakeLists.txt` jsou krátké explicitní seznamy. Paralelní přidávání zdrojů má vysokou pravděpodobnost textového i významového konfliktu.
 - `tray_application.*`, `wizard_window.*`, `contracts_window.*` a UI harness sdílejí focus, DPI, generace, čtečky a ukončování. Dočasně rozdílné kontrakty životního cyklu by vytvářely chyby obtížně odhalitelné při prostém sloučení.
-- `client.md` a `tray_UX.md` obsahují stará protichůdná pravidla. Mají jediného pozdního vlastníka, aby několik agentů nevkládalo nové odstavce vedle neodstraněných starých vět.
+- `client.md` a `tray_UX.md` obsahují stará protichůdná pravidla. Každý balíček současně s implementací upraví jejich příslušné části a odstraní přímo související staré rozpory. Sekvenční předávání chrání společné sekce před konflikty, WP07 provede závěrečný audit úplnosti, terminologie a konzistence.
 - Projektové instrukce preferují práci přímo v uloženém Git projektu. Bez výslovného povolení worktree nelze dvě zapisující úlohy bezpečně izolovat.
 
 ### Co lze paralelizovat jen po výslovném rozhodnutí koordinátora
@@ -81,7 +81,7 @@ Read-only audit zdrojů, kontrola textových rozporů a příprava seznamu test�
 
 - WP01 vlastní `client/src/core/config/contracts_document.*`, `client/src/core/presentation/*` a své nové unit testy.
 - WP02 vlastní pouze nové obecné tray utility a samostatné testy geometrie. Nesmí sahat na Contracts model, `main.cpp`, CMake ani sdílené existující testy.
-- CMake registraci, `TrayApplication` seam a integraci obou větví provede až jeden další agent.
+- CMake registraci, `TrayApplication` seam a integraci obou větví provede až jeden další agent. Normativní změny WP01/WP02 zůstávají součástí jejich implementace, před paralelní prací musí koordinátor rozdělit konkrétní sekce `client.md` a `tray_UX.md` a zajistit jejich sloučení před dokončením příslušných balíčků.
 
 Tato možnost se nedoporučuje. Úspora času je malá a přesun CMake a integračního seam do třetího kroku zvyšuje riziko, že každá větev ověří jiný neúplný target. WP03 a WP04 se také nemají paralelizovat, i když jejich hlavní okna jsou odlišná, protože obě potřebují měnit centrální tray koordinaci a společný UI základ.
 
@@ -103,6 +103,7 @@ Neshoda seznamu změněných souborů, chybějící předávací report, konflik
 ### Pravidla práce
 
 - Změny musí zůstat v rozsahu balíčku. Zjištěná potřeba mimo vlastnictví se uvede jako integrační požadavek, neprovede se potají.
+- Každý balíček aktualizuje příslušné normativní části `client.md` a `tray_UX.md` současně se svou implementací a pouze ve vlastním rozsahu. Odstraní související protichůdné věty a ověří soulad s kódem. Samotná textová delta pro WP07 nenahrazuje provedenou aktualizaci. WP07 audituje úplnost, terminologii a konzistenci průběžně aktualizovaných dokumentů. Toto pravidlo platí i pro opravy ve WP08 nebo vrácené dřívějšímu balíčku.
 - Agent nevytváří nový IPC příkaz, wire formát, službový dispatcher ani nový build systém. Výjimku nelze odvodit z pohodlí implementace.
 - Testy používají syntetická data. Logy, screenshoty a reporty nesmějí obsahovat skutečné konfigurace, hesla ani klíče.
 - Žádný balíček neinstaluje nebo neregistruje službu, nespouští plnou distribuci, nepíše do `dist`, `dist_old_do_not_use` ani ProgramData a nemanipuluje s reálnou VPN.
@@ -121,6 +122,8 @@ HEAD a výchozí stav:
 Převzaté změny předchozích balíčků:
 Změněné soubory:
 Implementované kontrakty N/F/A:
+Provedené normativní změny: dokument, sekce, přesná náhrada a vazba na N/F/A
+Ověření dokumentace proti implementaci a zachování rozsahu balíčku:
 Klíčová rozhraní a nové symboly:
 Provedené příkazy a výsledky:
 NOT RUN a důvod:
@@ -145,7 +148,8 @@ Vlastnictví znamená právo zapisovat během daného balíčku. Read-only kontr
 | `wizard_window.*`, `wizard_layout.*`, Wizard prezentační texty a Finish callback | WP04 | WP06 jen preview seam, WP08 oprava regresí | Lifecycle Wizard služby, lease a receipts se nepřepisují. |
 | `contracts_window.*`, `password_sha_window.*`, `contracts_save_controller.*`, Contracts část tray koordinace a jejich testy | WP05 | WP06 jen fixture/preview adaptér, WP08 oprava regresí | WP05 je jediný vlastník celé saveUnknown a child-generation logiky. |
 | `client/tools/dev-tray.ps1`, `client/tests/ui/*`, preview backend a preview CLI | WP06 | WP08 oprava brány | Produkční UI zdroje se jen sdílejí, nekopírují. |
-| `client.md`, `tray_UX.md`, nový implementační report a trasovací matice | WP07 | WP08 pouze oprava zjištěného nesouladu | WP00 až WP06 dodají textový delta report, ale tyto dokumenty nezapisují. |
+| Příslušné normativní části `client.md` a `tray_UX.md` | WP00 až WP06, každý pouze ve svém rozsahu současně s implementací | WP07 závěrečný audit úplnosti, terminologie a konzistence, WP08 dokumentace vlastní opravy | Přesné provedené změny patří do předávacího reportu každého balíčku. Sdílené sekce se předávají sekvenčně, zápis se neodkládá na WP07. |
+| Nový implementační report a trasovací matice | WP07 | WP08 finální evidence | Sestavit z průběžných předávacích reportů a skutečných důkazů, zachovat historické reporty. |
 | `client/src/CMakeLists.txt` | WP01 | WP08 | WP01 zaregistruje core modely. Další potřeba jde do integračního seznamu. |
 | `client/apps/CMakeLists.txt` | WP02 | WP03 až WP06 jen při přidání vlastních produkčních tray zdrojů, WP08 finální audit | Každý agent zachová předchozí explicitní seznam a ověří produkční target. |
 | `client/tests/CMakeLists.txt` | WP01 | WP02 až WP06 pouze pro vlastní nové testy/zdroje, WP08 finální audit | Před editací načíst aktuální diff, neduplikovat zdroje a zachovat opt-in UI target mimo CTest. |
@@ -161,11 +165,11 @@ Centrální soubor `tray_application.*` se úmyslně předává sekvenčně. WP0
 >
 > **Cíl:** vytvořit reprodukovatelný baseline a zavést jedinou globální podporu kanonických IPv4 prefixů `/24` až `/29` ve sdíleném jádře. Odmítnutí `/16` až `/23` a `/30` až `/32` musí platit před Connectem i ve všech publikačních cestách. Neměň rezervaci síťové adresy, první host adresy a broadcastu, nejdelší prefix `/29`, Wizard kandidáty 13/14 ani wire/IPC schema.
 >
-> **Povinně načti:** celý `plan3_fix3.md`, zejména mapování problému 6, N03, F00, F00a, A04, A11, A22, rizika a zrychlený závěr. Z `client.md` načti Architekturu, Konfigurační soubor, Správu uložené konfigurace, Wizard a jeho testy. Z `protocol.md` ověř, že změna není wire změna. Načti `client/src/core/protocol/ipv4.*`, `client/src/core/config/config_validator.cpp`, config parser/store/document/defaults, Wizard defaults/service a všechny testy používající širší CIDR.
+> **Povinně načti:** celý `plan3_fix3.md`, zejména mapování problému 6, N03, F00, F00a, A04, A11, A22, rizika a zrychlený závěr. Z `client.md` načti Architekturu, Konfigurační soubor, Správu uložené konfigurace, Wizard a jeho testy. Z `tray_UX.md` načti UX10/13/14 v rozsahu globální validace a jejích limitů. Z `protocol.md` ověř, že změna není wire změna. Načti `client/src/core/protocol/ipv4.*`, `client/src/core/config/config_validator.cpp`, config parser/store/document/defaults, Wizard defaults/service a všechny testy používající širší CIDR.
 >
-> **Rozsah zápisu:** `client/src/core/protocol/ipv4.h`, případně jen nutná korekce `ipv4.cpp`, `client/src/core/config/config_validator.cpp` a existující unit testy či syntetické fixture, které přímo dokazují globální rozsah. Smíš upravit další core call site pouze pokud read-only trasování prokáže, že obchází sdílenou validaci. Každý takový soubor uveď zvlášť v reportu.
+> **Rozsah zápisu:** `client/src/core/protocol/ipv4.h`, případně jen nutná korekce `ipv4.cpp`, `client/src/core/config/config_validator.cpp` a existující unit testy či syntetické fixture, které přímo dokazují globální rozsah. Smíš upravit další core call site pouze pokud read-only trasování prokáže, že obchází sdílenou validaci. Každý takový soubor uveď zvlášť v reportu. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: globální rozsah `/24` až `/29`, kompatibilitu, limity řádků a příslušná validační očekávání podle N03/F00a v Konfiguračním souboru a testech `client.md` a v UX10/13/14. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** `client.md`, `tray_UX.md`, `protocol.md`, `distribution.md`, tray UI, CMake strukturu, IPC příkazy, službový dispatcher, Wizard lifecycle, distribuci ani historické reporty. Pozitivní širší fixture, která testuje jinou vlastnost, převeď na `/24` až `/29` bez oslabení původního účelu. Zachovej samostatné negativní testy všech nepodporovaných prefixů.
+> **Nesmíš měnit:** `protocol.md`, `distribution.md`, tray UI, CMake strukturu, IPC příkazy, službový dispatcher, Wizard lifecycle, distribuci ani historické reporty. Pozitivní širší fixture, která testuje jinou vlastnost, převeď na `/24` až `/29` bez oslabení původního účelu. Zachovej samostatné negativní testy všech nepodporovaných prefixů.
 >
 > **Předpoklady a vstup:** pracovní strom může obsahovat uživatelské změny. Nejprve zaznamenej HEAD, status, diff, toolchain dostupný bez instalace, read-only inventář a hash `dist`. Výchozí auditní revize v plánu je historická, skutečný aktuální HEAD zaznamenej zvlášť.
 >
@@ -173,9 +177,9 @@ Centrální soubor `tray_application.*` se úmyslně předává sekvenčně. WP0
 >
 > **Testy a ověření:** spusť úzké config/IPv4/Wizard testy s prokazatelně nenulovým filtrem podle skutečného harnessu. Ověř `/24`, `/29`, nekanonickou síť, obě rezervované hrany, `/16`, `/23`, `/30`, `/31`, `/32`, full i repair režim, set-config a Finish. Sestav relevantní core test target a službový target bez registrace nebo spuštění služby. Pokud prostředí build neumožní, uveď přesný `NOT RUN`.
 >
-> **Dokončeno je, když:** existuje jeden sdílený rozsah `/24` až `/29`, žádná publikační nebo Connect cesta jej neobchází, zamýšlené negativní testy procházejí, `git diff --check` je čistý a nebyl změněn dokument ani distribuce.
+> **Dokončeno je, když:** existuje jeden sdílený rozsah `/24` až `/29`, žádná publikační nebo Connect cesta jej neobchází, zamýšlené negativní testy procházejí, `git diff --check` je čistý a distribuce zůstala beze změny. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report z tohoto orchestration dokumentu. Navíc vypiš všechny změněné fixture, seznam call sites globální validace, přesné filtry testů a seznam textových změn, které má WP07 později provést v `client.md` a `tray_UX.md`.
+> **Předání:** vrať povinný report z tohoto orchestration dokumentu. Navíc vypiš všechny změněné fixture, seznam call sites globální validace, přesné filtry testů a přesný seznam již provedených normativních změn v `client.md` a `tray_UX.md`. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP01
 
@@ -191,9 +195,9 @@ WP01 smí začít až po ověření, že `Ipv4Cidr::kMinPrefixLength == 24`, val
 >
 > **Povinně načti:** celý `plan3_fix3.md`, zejména N03, datovou část N04, N09, F02, A03 až A09, A11 a A31. Z `client.md` načti Architekturu, Konfigurační soubor, Správu uložené konfigurace, Wizard Contracts/defaults, limity a bezpečné mazání. Z `tray_UX.md` načti UX10 až UX13 pouze jako spotřebitelský kontrakt modelu. Načti výsledek a report WP00, aktuální diff a zdroje `config_document.*`, `config.*`, `json.*`, `ipv4.*`, `wizard_defaults.*`, `crypto_provider.*`, `secure_buffer.*` a relevantní test harness.
 >
-> **Rozsah zápisu:** vytvoř `client/src/core/config/contracts_document.*`, `client/src/core/presentation/contracts_model.*` a `client/src/core/presentation/password_key_model.*`, případně malé přenosné pomocné typy v témže adresáři. Přidej samostatné unit testy, například `test_contracts_document.cpp`, `test_contracts_model.cpp` a `test_password_key.cpp`. Zaregistruj je v `client/src/CMakeLists.txt` a `client/tests/CMakeLists.txt`.
+> **Rozsah zápisu:** vytvoř `client/src/core/config/contracts_document.*`, `client/src/core/presentation/contracts_model.*` a `client/src/core/presentation/password_key_model.*`, případně malé přenosné pomocné typy v témže adresáři. Přidej samostatné unit testy, například `test_contracts_document.cpp`, `test_contracts_model.cpp` a `test_password_key.cpp`. Zaregistruj je v `client/src/CMakeLists.txt` a `client/tests/CMakeLists.txt`. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: přenosné modely, DOM patch, odvození a validaci klíčů, limity a modelové testy podle N03, datové části N04 a F02 v `client.md` a UX02/10 až UX14, bez tvrzení o již hotovém UI nebo Save. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** tray okna, `main.cpp`, readers, UI harness, `client.md`, `tray_UX.md`, IPC schema, ConfigStore zápis, Wizard lifecycle, síť, service dispatcher ani distribuci. Neduplikuj `defaultPayloadKey`, IPv4 pravidla, JSON parser nebo CryptoProvider. Service a CLI nesmějí kvůli přidání objektů statické knihovny přitáhnout nepoužívaný prezentační kód.
+> **Nesmíš měnit:** tray okna, `main.cpp`, readers, UI harness, IPC schema, ConfigStore zápis, Wizard lifecycle, síť, service dispatcher ani distribuci. Neduplikuj `defaultPayloadKey`, IPv4 pravidla, JSON parser nebo CryptoProvider. Service a CLI nesmějí kvůli přidání objektů statické knihovny přitáhnout nepoužívaný prezentační kód.
 >
 > **Předpoklady a artefakty:** WP00 dodal globální `/24` až `/29`. Model musí používat toto sdílené pravidlo, ne vlastní konstantu. Aktuální `ConfigDocument` a JSON DOM zachovávají absent/present rozdíly. `defaultPayloadKey` ve Wizard defaults je jediná autorita pro odvozený klíč.
 >
@@ -203,9 +207,9 @@ WP01 smí začít až po ověření, že `Ipv4Cidr::kMinPrefixLength == 24`, val
 >
 > **Testy a ověření:** spusť nové modelové testy a relevantní config/Wizard default testy úzkým nenulovým filtrem. Povinné jsou vektory A03 až A09 a A11 včetně `.2_.3` hashe z plánu, obou směrů páru, přetečení, pořadí `.2/.10`, 252/4 peerů, preserving DOM a limitů. Ověř, že headers modelů neobsahují `windows.h`, HWND ani GDI typy. Sestav core, unit test target, service a CLI bez spuštění.
 >
-> **Dokončeno je, když:** čisté modely mají úplné unit důkazy, public API je dostatečné pro WP05 bez znalosti HWND, všechny nové zdroje jsou v CMake, `git diff --check` projde a žádný dokument nebo UI soubor se nezměnil.
+> **Dokončeno je, když:** čisté modely mají úplné unit důkazy, public API je dostatečné pro WP05 bez znalosti HWND, všechny nové zdroje jsou v CMake, `git diff --check` projde a žádný UI soubor se nezměnil. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report. Přilož stručný public API kontrakt, seznam invariancí, které má UI zachovat, přesné vlastnictví citlivých bufferů, výkonové předpoklady a dokumentační deltu pro WP07.
+> **Předání:** vrať povinný report. Přilož stručný public API kontrakt, seznam invariancí, které má UI zachovat, přesné vlastnictví citlivých bufferů, výkonové předpoklady a přesné provedené normativní změny pro závěrečný audit WP07. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP02
 
@@ -221,9 +225,9 @@ WP02 ověří, že nové hlavičky modelů jsou platformně čisté a že celý 
 >
 > **Povinně načti:** celý `plan3_fix3.md`, zejména N09/N09a/N09b, F01, architektonickou část F09, A20, A27, A28, A29, A31 a A32. Z `tray_UX.md` načti UX00 až UX03. Z `client.md` načti Architekturu, Win32 UI, Windows tray lifecycle a relevantní testy. Načti reporty WP00/WP01, celý aktuální diff, `main.cpp`, `window_utils.h`, `layout.*`, `wizard_layout.*`, všechna window headers, readers, `apps/CMakeLists.txt`, `tests/CMakeLists.txt` a UI harness.
 >
-> **Rozsah zápisu:** obecné utility pod `client/apps/tray`, například `ui_style.h`, `ui_resources.*`, `ui_controls.*`, rozšíření `window_utils.*`, obecné `layout.*`, nové `tray_application.*` a ztenčení `main.cpp`. Uprav `client/apps/CMakeLists.txt` a `client/tests/CMakeLists.txt` jen pro registraci těchto sdílených zdrojů a úzkých testů. Přidej čisté geometry/resource/shell-adapter testy podle potřeby.
+> **Rozsah zápisu:** obecné utility pod `client/apps/tray`, například `ui_style.h`, `ui_resources.*`, `ui_controls.*`, rozšíření `window_utils.*`, obecné `layout.*`, nové `tray_application.*` a ztenčení `main.cpp`. Uprav `client/apps/CMakeLists.txt` a `client/tests/CMakeLists.txt` jen pro registraci těchto sdílených zdrojů a úzkých testů. Přidej čisté geometry/resource/shell-adapter testy podle potřeby. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: sdílenou Win32 vrstvu, přístupnost, monitor, cache, jazyk a příslušné testy podle N09/F01 v `client.md` a UX00 až UX03/14. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** význam Connect, Wizard Finish, Contracts model nebo Save, editorový NUL model, Statistics counter semantics, `client.md`, `tray_UX.md`, core Contracts model, IPC schema, službu ani distribuci. Nevytvářej vlastní GUI framework, bitmapové pozadí, resource katalog lokalizace nebo novou knihovnu.
+> **Nesmíš měnit:** význam Connect, Wizard Finish, Contracts model nebo Save, editorový NUL model, Statistics counter semantics, core Contracts model, IPC schema, službu ani distribuci. Nevytvářej vlastní GUI framework, bitmapové pozadí, resource katalog lokalizace nebo novou knihovnu.
 >
 > **Předpoklady a artefakty:** WP01 poskytuje modely, ale tento balíček je nemusí zapojit. Stávající produkční pipe a mutex musí zůstat výchozími hodnotami pouze tenkého produkčního vstupu. Všechny readers musí být konstruovatelné s explicitním endpointem, aby WP06 nemohl omylem spadnout na produkční službu.
 >
@@ -233,9 +237,9 @@ WP02 ověří, že nové hlavičky modelů jsou platformně čisté a že celý 
 >
 > **Testy a ověření:** geometry unit testy zahrnou záporné souřadnice, rodiče, bod menu, fallbacky, reaktivaci, unplug, rozlišení/DPI a minimální clamp. Shell adapter test zahrne shodný a změněný status. Resource test ověří opakovaný create/destroy bez double-free. Sestav `phpvpn-tray`, unit test target a opt-in UI target, pokud je dostupný. Nespouštěj celé CTest.
 >
-> **Dokončeno je, když:** produkční chování je zachované, `main.cpp` je tenký vstup, explicitní endpoint nemá skrytý fallback, sdílený UI základ je použitelný dalšími okny, úzké testy procházejí, `git diff --check` je čistý a dokumenty se nezměnily.
+> **Dokončeno je, když:** produkční chování je zachované, `main.cpp` je tenký vstup, explicitní endpoint nemá skrytý fallback, sdílený UI základ je použitelný dalšími okny, úzké testy procházejí, `git diff --check` je čistý a ostatní normativní části se nezměnily. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report. Navíc popiš konstruktor a ownership `TrayApplication`, všechny injekční body, resource lifecycle, společné layout API a přesné soubory, které další balíčky smějí rozšířit bez změny kontraktu.
+> **Předání:** vrať povinný report. Navíc popiš konstruktor a ownership `TrayApplication`, všechny injekční body, resource lifecycle, společné layout API a přesné soubory, které další balíčky smějí rozšířit bez změny kontraktu. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP03
 
@@ -251,9 +255,9 @@ WP03 před prací ověří, že produkční tray lze sestavit po extrakci, všic
 >
 > **Povinně načti:** celý `plan3_fix3.md`, zejména N01, N05, N08, F03, relevantní části F07, N09b, A14 až A17, A20 až A22, A27 až A29. Z `tray_UX.md` načti UX03 až UX07 a UX13/14. Z `client.md` načti Správu konfigurace, Edit Config, Windows tray, progress, statistics a testy 20 až 35. Načti report WP02, celý diff sdíleného UI a `TrayApplication`, `status_reader.*`, `status_model.*`, `progress_model.*`, `progress_window.*`, `editor_document.h`, `editor_window.*`, `statistics_window.*`, `poll_schedule.h` a jejich testy.
 >
-> **Rozsah zápisu:** uvedené progress, editor a statistics soubory, jejich specializované layout/model testy, nezbytné připojení v `tray_application.*` a vlastní záznamy v apps/tests CMake. Smíš přidat malý čistý model pro Connect details nebo safe error mapu, pokud zůstane bez HWND.
+> **Rozsah zápisu:** uvedené progress, editor a statistics soubory, jejich specializované layout/model testy, nezbytné připojení v `tray_application.*` a vlastní záznamy v apps/tests CMake. Smíš přidat malý čistý model pro Connect details nebo safe error mapu, pokud zůstane bez HWND. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: Connect, prezentační změny Edit Config a Statistics a jejich testy podle N01/N05/N08 v `client.md` a UX04 až UX07/14, bez rozšíření editorového lifecycle. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** Wizard okno/model/lifecycle, Contracts okno/model/Save, globální CIDR, IPC schema/parser/dispatcher, službový status engine, counter semantics, síť, `client.md`, `tray_UX.md` ani distribuci. `get-status` nesmí dostat URL/IP. Nevytvářej nový timer Statistics ani nový progress příkaz.
+> **Nesmíš měnit:** Wizard okno/model/lifecycle, Contracts okno/model/Save, globální CIDR, IPC schema/parser/dispatcher, službový status engine, counter semantics, síť ani distribuci. `get-status` nesmí dostat URL/IP. Nevytvářej nový timer Statistics ani nový progress příkaz.
 >
 > **Předpoklady a artefakty:** WP02 dodal endpoint injection, monitor helper, resources a layout primitives. Status polling tray zůstává 5 s. Progress má vlastní 500 ms reader s nejvýše jedním požadavkem. Statistics dostává poslední validní `TrayStatus` a oddělený freshness stav.
 >
@@ -263,9 +267,9 @@ WP03 před prací ověří, že produkční tray lze sestavit po extrakci, všic
 >
 > **Testy a ověření:** rozšiř `test_tray_progress.cpp`, `test_tray_layout.cpp`, editorové testy a vhodné status testy. Ověř config call count, lifetime/logging audit, snapshot mismatch, šest chyb, celý odpočet s fake monotonic clock, nezávislost timerů, close cleanup, hodnoty nad `2^53`, stale a editor resize/NUL/Reset. Proveď úzký UI smoke syntetickými daty pro relevantní okna a DPI, pokud harness dovoluje. Sestav tray a cílené testy.
 >
-> **Dokončeno je, když:** A14 až A17 a relevantní A20/A21/A22 mají konkrétní důkaz, neexistuje nový IPC nebo timer, editor neztrácí data, Statistics neztrácí přesnost, `git diff --check` projde a nebyly změněny Wizard/Contracts dokumenty ani dist.
+> **Dokončeno je, když:** A14 až A17 a relevantní A20/A21/A22 mají konkrétní důkaz, neexistuje nový IPC nebo timer, editor neztrácí data, Statistics neztrácí přesnost, `git diff --check` projde a nebyly změněny nesouvisející Wizard/Contracts části dokumentů ani dist. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report. Uveď public modely, safe error mapu, přesný okamžik success deadline, všechny config/status call counts a dokumentační deltu N01/N05/N08 pro WP07.
+> **Předání:** vrať povinný report. Uveď public modely, safe error mapu, přesný okamžik success deadline, všechny config/status call counts a přesné provedené normativní změny N01/N05/N08 pro závěrečný audit WP07. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP04
 
@@ -281,9 +285,9 @@ WP04 ověří, že `TrayApplication` stále sestavuje, endpoint injection zůsta
 >
 > **Povinně načti:** celý `plan3_fix3.md`, zejména N06, N07, relevantní N04a, F04, Wizard část F07, A12, A13, A20 až A22, A29/A30. Z `tray_UX.md` načti UX03, UX04, UX08, UX09 a UX13/14. Z `client.md` načti Správu konfigurace, celý Configuration Wizard, Wizard IPC, Win32 UI a příslušné testy. Načti reporty WP00 až WP03, aktuální `tray_application.*`, `wizard_window.*`, `wizard_layout.*`, `wizard_reader.*`, `core/wizard/*`, `core/ipc/wizard_ipc.*` a všechny Wizard unit/UI testy.
 >
-> **Rozsah zápisu:** `wizard_window.*`, `wizard_layout.*`, čisté Wizard prezentační modely/texty, nutné safe action texty v `core/base/error.*` nebo `core/ipc/wizard_ipc.*`, cílené Wizard testy a úzké připojení v `tray_application.*`. CMake měň jen při přidání vlastního zdroje/testu.
+> **Rozsah zápisu:** `wizard_window.*`, `wizard_layout.*`, čisté Wizard prezentační modely/texty, nutné safe action texty v `core/base/error.*` nebo `core/ipc/wizard_ipc.*`, cílené Wizard testy a úzké připojení v `tray_application.*`. CMake měň jen při přidání vlastního zdroje/testu. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: Wizard UX, Finish a příslušné testy podle N06/N07/N08 v `client.md` a UX03/04/08/09/14, bez přebírání implementace Contracts. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** lease 15/60 s, max osm relací, attemptSequence, epochy, receipts, síťové důkazy, žádný auto retry, globální Disconnect semantics, Contracts model/window/Save, Connect/Editor/Statistics, IPC seznam nebo schema, službový dispatcher, `client.md`, `tray_UX.md` a distribuci. Neodstraň varování o trvalé spotřebě čekajících zpráv ani informace o kolizích IP.
+> **Nesmíš měnit:** lease 15/60 s, max osm relací, attemptSequence, epochy, receipts, síťové důkazy, žádný auto retry, globální Disconnect semantics, Contracts model/window/Save, Connect/Editor/Statistics, IPC seznam nebo schema, službový dispatcher a distribuci. Neodstraň varování o trvalé spotřebě čekajících zpráv ani informace o kolizích IP.
 >
 > **Předpoklady a artefakty:** WP00 již globálně odmítá nepodporované CIDR. WP02 dodal sdílený layout/resources a WP03 stabilní `TrayApplication`. Pozdější ruční Contracts akci implementuje WP05, proto Finish pouze skončí a nesmí volat placeholder.
 >
@@ -291,9 +295,9 @@ WP04 ověří, že `TrayApplication` stále sestavuje, endpoint injection zůsta
 >
 > **Testy a ověření:** uprav unit/UI testy pro nové texty, Back/gate, metadata, layout, focus, Cancel/Reset, lost reply a confirmed Finish call counts. Výslovně dokaž 0 automatických Contracts oken, 0 dalšího config read, 1 Finish a 1 wizard-close. Ověř žádný nový IPC příkaz a zachování všech existujících lifecycle testů úzkými nenulovými filtry. Proveď syntetický UI smoke relevantních kroků, pokud harness dovoluje.
 >
-> **Dokončeno je, když:** A12/A13 a relevantní A20/A21/A22 jsou prokazatelné, potvrzený Finish končí bez handoffu, bezpečnostní copy zůstala, úzké testy procházejí, `git diff --check` je čistý a Contracts implementace ani dokumenty se nezměnily.
+> **Dokončeno je, když:** A12/A13 a relevantní A20/A21/A22 jsou prokazatelné, potvrzený Finish končí bez handoffu, bezpečnostní copy zůstala, úzké testy procházejí, `git diff --check` je čistý a Contracts implementace ani nesouvisející části dokumentů se nezměnily. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report. Uveď přesnou Finish sekvenci, počty IPC/callbacků, zachované Wizard invariance, změněné safe texty a dokumentační deltu N06/N07/N08 pro WP07.
+> **Předání:** vrať povinný report. Uveď přesnou Finish sekvenci, počty IPC/callbacků, zachované Wizard invariance, změněné safe texty a přesné provedené normativní změny N06/N07/N08 pro závěrečný audit WP07. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP05
 
@@ -309,25 +313,25 @@ WP05 smí začít až po testu, že Wizard Finish neotevírá Contracts a nečte
 >
 > **Povinně načti:** celý `plan3_fix3.md`, zejména N02, N03, celý N04/N04a, F05, F06, A01 až A11, A18 až A20, A22, A26, A29/A30. Z `tray_UX.md` načti UX03/04 a UX10 až UX14. Z `client.md` načti Správu uložené konfigurace, Wizard příkazy, Win32 UI, bezpečnost, lifecycle a testy. Načti reporty WP01, WP02 a WP04, aktuální Contracts model API, `tray_application.*`, readers, `contracts_window.*`, `window_utils.*`, editor save flow, IPC protocol/parser a UI harness.
 >
-> **Rozsah zápisu:** přepiš `contracts_window.*`, přidej `password_sha_window.*`, `contracts_save_controller.*` a malé Contracts-specific adaptéry/layouty. Zapoj ruční Contracts a společný Exit/logoff v `tray_application.*`. Uprav `menu_model.h` jen kvůli odstranění nesprávného `requiresConfigState` kontraktu. Doplň vlastní unit/UI testy a CMake registrace. Core model z WP01 měň jen při testem prokázané chybě a každou takovou změnu vysvětli.
+> **Rozsah zápisu:** přepiš `contracts_window.*`, přidej `password_sha_window.*`, `contracts_save_controller.*` a malé Contracts-specific adaptéry/layouty. Zapoj ruční Contracts a společný Exit/logoff v `tray_application.*`. Uprav `menu_model.h` jen kvůli odstranění nesprávného `requiresConfigState` kontraktu. Doplň vlastní unit/UI testy a CMake registrace. Core model z WP01 měň jen při testem prokázané chybě a každou takovou změnu vysvětli. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: Contracts, Password SHA včetně neměnného systémového titulu, Save a souběh podle N02/N03/N04/N04a v `client.md` a UX00/03/04/10 až UX14, pouze v implementačním rozsahu WP05. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** Wizard Finish nebo lifecycle, Connect/Editor/Statistics semantics, globální CIDR pravidlo, IPC seznam a uzavřená schémata, service dispatcher, ConfigStore filesystem cestu, wire protokol, `client.md`, `tray_UX.md`, distribuci ani reálnou službu. Nevytvářej `wizard-get-commit` pro Contracts a nepoužívej revisionToken jako CAS.
+> **Nesmíš měnit:** Wizard Finish nebo lifecycle, Connect/Editor/Statistics semantics, globální CIDR pravidlo, IPC seznam a uzavřená schémata, service dispatcher, ConfigStore filesystem cestu, wire protokol, distribuci ani reálnou službu. Nevytvářej `wizard-get-commit` pro Contracts a nepoužívej revisionToken jako CAS.
 >
 > **Předpoklady a artefakty:** WP01 poskytuje DOM/model/password logiku, WP02 UI resources a monitor helper, WP04 odstranil automatické otevření po Finish. `get-config-document` a `set-config` jsou existující příkazy s přesnými schématy a deadline 5000/30000 ms uvedenými v plánu.
 >
 > **Implementační požadavky:** menu samo nečte config. Explicitní Contracts akce pošle právě jeden `get-config-document` bez předchozího `get-config-state`. Availability matici implementuj přesně podle N02. Pouze valid otevře model. Opakované otevření aktivuje tutéž instanci bez čtení a resetu dirty.
 >
-> Vytvoř všech nejvýše 252 skutečných nativních controls bez virtualizace a recyklace. Header/footer zůstanou pevné, tabulka scrolluje, tab order je po řádcích a odkrývá focus. Identita akcí je `remoteIp + generation`, ne index nebo HWND. Random potvrzení je dočasně modální jen vůči rodiči a výchozí No. Password SHA je nemodální, dovolí více oken i pro stejný řádek, poslední potvrzené OK vyhrává. Hlavní OK zmrazí kandidáta, zavře vlastní děti bez aplikace jejich dalších změn a zakáže jen ukládané okno.
+> Vytvoř všech nejvýše 252 skutečných nativních controls bez virtualizace a recyklace. Header/footer zůstanou pevné, tabulka scrolluje, tab order je po řádcích a odkrývá focus. Identita akcí je `remoteIp + generation`, ne index nebo HWND. Random potvrzení je dočasně modální jen vůči rodiči a výchozí No. Password SHA je nemodální, dovolí více oken i pro stejný řádek, poslední potvrzené OK pro daný kontrakt vyhrává. Systémový titulkový pruh nastav na `Password SHA - Contract {minIP_maxIP}` s kanonickým numericky seřazeným párem lokální IP a cílového remoteIp zachyceným při otevření. Cíl ani titul nesmí změnit pozdější focus nebo výběr rodiče. Titul poskytne identitu také čtečce obrazovky a přepínači aplikací, nepřidávej kvůli ní další obsahový prvek. Dvě okna stejného kontraktu smějí mít shodný titul. Hlavní OK zmrazí kandidáta, zavře vlastní děti bez aplikace jejich dalších změn a zakáže jen ukládané okno.
 >
 > `ContractsSaveController` použije existující `set-config` se čtyřmi členy a striktní korelací. IPC čekání je vždy asynchronní. Confirmed success zavře jen daný editor. Prokázané neodeslání vrátí editing, možná publikace nebo chybná/pozdní reply přejde do saveUnknown. `Check current configuration` provede jediné explicitní `get-config-document` a porovná význam celého DOM včetně typů a absent/present. Shoda je stavová evidence, ne receipt. Neshoda zachová draft. `Save draft again` je nová potvrzená generace, nikdy automatický retry.
 >
 > Více editorů se neslučuje ani nerebaseuje, poslední potvrzený save vyhrává. Ruční Exit v clean zavře, při dirty/unknown se ptá jednou společně, No zruší Exit. Během saving čeká pouze do původního deadline a potom použije unknown potvrzení. Logoff/`WM_ENDSESSION` neblokuje ani nezobrazuje UI a neprodlužuje deadline. Zavření tray nesmí měnit config, službu nebo VPN. Vyřaď pozdní generace a best-effort smaž vlastněné citlivé buffery a EDIT undo.
 >
-> **Testy a ověření:** unit testy pokryjí A01 až A11, A18 a A30. UI/accessibility smoke pokryje `/24` i `/29`, 252 controls, tab/shift-tab, scroll, resize, DPI, focus, multiple Password, Random No/Yes/failure, hlavní OK s neaplikovaným dítětem, create failure, late generation, two editors, unknown workflow, Exit a logoff. Fake writer/reader změří call counts a deadline. Audituj 512 KiB, 4 MiB a +1200 GDI/USER hranici. Sestav tray a cílené testy, nespouštěj reálnou službu.
+> **Testy a ověření:** unit testy pokryjí A01 až A11, A18 a A30. UI/accessibility smoke pokryje `/24` i `/29`, 252 controls, tab/shift-tab, scroll, resize, DPI, focus, multiple Password, Random No/Yes/failure, hlavní OK s neaplikovaným dítětem, create failure, late generation, two editors, unknown workflow, Exit a logoff. Ověř přesný systémový titul dvou různých kontraktů i dvou oken téhož kontraktu, jeho dostupnost čtečce obrazovky a přepínači aplikací, změnu pořadí aktivace, focusu/výběru a scroll rodiče bez změny titulu nebo cíle OK. Dolož poslední potvrzený výsledek stejného cíle a zachování obsahu dialogu bez dalšího prvku identity. Fake writer/reader změří call counts a deadline. Audituj 512 KiB, 4 MiB a +1200 GDI/USER hranici. Sestav tray a cílené testy, nespouštěj reálnou službu.
 >
-> **Dokončeno je, když:** Contracts funguje pouze z explicitní ruční akce, celý lifecycle má jednotné generace, žádná větev neblokuje UI čekáním na IPC, akceptace mají konkrétní důkazy, žádný nový IPC příkaz nevznikl, `git diff --check` projde a dist/ProgramData zůstaly beze změny.
+> **Dokončeno je, když:** Contracts funguje pouze z explicitní ruční akce, celý lifecycle má jednotné generace, žádná větev neblokuje UI čekáním na IPC, akceptace mají konkrétní důkazy, žádný nový IPC příkaz nevznikl, `git diff --check` projde a dist/ProgramData zůstaly beze změny. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report. Přilož stavový automat editoru, seznam generací a jejich invalidačních bodů, přesná request/response schema a deadline, call counts, accessibility/object výsledky, bezpečnostní cleanup omezení a dokumentační deltu N02/N03/N04/N04a pro WP07.
+> **Předání:** vrať povinný report. Přilož stavový automat editoru, seznam generací a jejich invalidačních bodů, přesná request/response schema a deadline, call counts, accessibility/object výsledky včetně přesných titulků, neměnnosti cíle a přepínače aplikací, bezpečnostní cleanup omezení a přesné provedené normativní změny N02/N03/N04/N04a pro závěrečný audit WP07. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP06
 
@@ -341,11 +345,11 @@ WP06 ověří unit důkazy všech Contracts stavů, zejména saveUnknown a více
 >
 > **Cíl:** implementovat F09 jako jeden bezpečný příkaz `client/tools/dev-tray.ps1` a rozšířit existující UI harness tak, aby otevíral všechna produkční okna nad izolovanou syntetickou fixture. Produkční EXE nesmí obsahovat preview parser ani fake backend.
 >
-> **Povinně načti:** celý `plan3_fix3.md`, zejména celý F09, N09b, A20, A24 až A27 a A32, zrychlený závěr a rizika. Načti `client/CMakePresets.json`, `client/tools/build-x64.ps1`, `run-tray-ui-tests.ps1`, `client/tests/ui/tray_ui_tests.cpp`, jeho README, všechny CMake soubory, aktuální `tray_application.*`, readers a reporty WP02 až WP05. Z `distribution.md` načti pouze hranice zakazující záměnu preview za vydání.
+> **Povinně načti:** celý `plan3_fix3.md`, zejména celý F09, N09b, A20, A24 až A27 a A32, zrychlený závěr a rizika. Načti `client/CMakePresets.json`, `client/tools/build-x64.ps1`, `run-tray-ui-tests.ps1`, `client/tests/ui/tray_ui_tests.cpp`, jeho README, všechny CMake soubory, aktuální `tray_application.*`, readers a reporty WP02 až WP05. Z `client.md` načti vývojové a testovací části a z `tray_UX.md` UX14 pro současnou aktualizaci workflow a jeho hranic. Z `distribution.md` načti pouze hranice zakazující záměnu preview za vydání.
 >
-> **Rozsah zápisu:** nový `client/tools/dev-tray.ps1`, `client/tests/ui/tray_ui_tests.cpp`, případné malé nové soubory pod `client/tests/ui/`, `client/tests/ui/README.md`, vhodný odkaz z existující klientské vývojové dokumentace a nutné záznamy v `client/tests/CMakeLists.txt`. Produkční `tray_application.*` a malé seams oken smíš měnit jen pokud je to nutné pro explicitní injection nebo otevření skutečného pohledu, bez změny jejich semantics.
+> **Rozsah zápisu:** nový `client/tools/dev-tray.ps1`, `client/tests/ui/tray_ui_tests.cpp`, případné malé nové soubory pod `client/tests/ui/`, `client/tests/ui/README.md`, vhodný odkaz z existující klientské vývojové dokumentace a nutné záznamy v `client/tests/CMakeLists.txt`. Produkční `tray_application.*` a malé seams oken smíš měnit jen pokud je to nutné pro explicitní injection nebo otevření skutečného pohledu, bez změny jejich semantics. Současně aktualizuj příslušné normativní části `client.md` a `tray_UX.md`: ověřené vývojové workflow a hranice preview podle F09/A32 v klientské vývojové části `client.md` a UX14, včetně příslušných odkazů. Ostatní normativní části neměň.
 >
-> **Nesmíš měnit:** produkční `wWinMain` CLI, IPC schema, službu, ConfigStore, síť, ProgramData, instalaci, release preset význam, dist, `protocol.md`, `distribution.md`, `client.md` a `tray_UX.md`. Nevytvářej druhý frontend, kopii UX konstant, fallback na produkční pipe, hot reload, watcher, nový build systém nebo admin workflow.
+> **Nesmíš měnit:** produkční `wWinMain` CLI, IPC schema, službu, ConfigStore, síť, ProgramData, instalaci, release preset význam, dist, `protocol.md`, `distribution.md`. Nevytvářej druhý frontend, kopii UX konstant, fallback na produkční pipe, hot reload, watcher, nový build systém nebo admin workflow.
 >
 > **Předpoklady a artefakty:** WP02 poskytuje explicitní pipe/mutex/shell injection a WP03 až WP05 hotová produkční okna. UI target je opt-in a zůstává mimo běžný CTest. Stávající `--interactive`, staré `--preview` a substring testy musí zůstat kompatibilní.
 >
@@ -355,21 +359,21 @@ WP06 ověří unit důkazy všech Contracts stavů, zejména saveUnknown a více
 >
 > **Testy a ověření:** proveď všech sedm bodů F09 `Ověření a předání vývojové cesty`. Povinně dokaž první build, no-op iteraci, změnu jednoho GUI zdroje bez service/CLI, compile failure bez starého preview, validní a nevalidní View/Scene, neprázdný i nulový test filter, jinou cwd, cestu s mezerami, preview delší než 45 s, vlastní mutex/tooltip a nulový přístup k reálné pipe. Sestav produkční targety a zkontroluj, že neobsahují fixture nebo `--dev-preview`. Nevytvářej dist.
 >
-> **Dokončeno je, když:** A32 je doložen konkrétními příkazy a časy, všechny View/Scene se otevřou nebo mají pravdivé `NOT RUN`, izolace je fail-closed, produkční target je čistý, README popisuje pouze skutečně ověřené příkazy, `git diff --check` projde a dist/ProgramData/služba jsou beze změny.
+> **Dokončeno je, když:** A32 je doložen konkrétními příkazy a časy, všechny View/Scene se otevřou nebo mají pravdivé `NOT RUN`, izolace je fail-closed, produkční target je čistý, README popisuje pouze skutečně ověřené příkazy, `git diff --check` projde a dist/ProgramData/služba jsou beze změny. Příslušné normativní části jsou aktualizované současně s implementací, odpovídají jejímu rozsahu a report přesně uvádí provedené náhrady.
 >
-> **Předání:** vrať povinný report. Uveď tabulku View/Scene výsledků, build adresáře, první/no-op/incremental časy a Ninja kroky, negativní scénáře, důkaz endpoint/mutex izolace, produkční linkage audit a dokumentační deltu F09/A32 pro WP07.
+> **Předání:** vrať povinný report. Uveď tabulku View/Scene výsledků, build adresáře, první/no-op/incremental časy a Ninja kroky, negativní scénáře, důkaz endpoint/mutex izolace, produkční linkage audit a přesné provedené normativní změny F09/A32 pro závěrečný audit WP07. U každé dokumentační změny uveď dokument, sekci, přesnou náhradu a vazbu na N/F/A.
 
 ### Brána pro WP07
 
-WP07 smí začít až po potvrzení, že runner a README popisují skutečně existující příkazy a že produkční EXE neobsahuje preview cestu. Neověřené scény se označí jako `NOT RUN`, ne jako hotové.
+WP07 smí začít až po ověření průběžných normativních změn a jejich přesného předání ve WP00 až WP06 a po potvrzení, že runner a README popisují skutečně existující příkazy a že produkční EXE neobsahuje preview cestu. Neověřené scény se označí jako `NOT RUN`, ne jako hotové.
 
-## WP07: Normativní dokumentace a trasovatelnost
+## WP07: Závěrečný audit dokumentace a trasovatelnost
 
 ### Hotový delegační prompt
 
-> Pracuj přímo v aktuálním checkoutu phpvpn po WP00 až WP06. Jde o jediný balíček s primárním vlastnictvím `client.md` a `tray_UX.md`. Neprováděj commit, push ani distribuci.
+> Pracuj přímo v aktuálním checkoutu phpvpn po WP00 až WP06. Jde o závěrečný audit průběžných normativních změn WP00 až WP06 v `client.md` a `tray_UX.md`, nikoli o odložený zápis celé dokumentace. Neprováděj commit, push ani distribuci.
 >
-> **Cíl:** synchronizovat normativní dokumentaci se skutečně implementovaným řešením bez změny schváleného významu N01 až N09. Odstraň staré protichůdné věty, nevkládej nové pravidlo vedle opačného textu a nevydávej historické testy za nově provedené.
+> **Cíl:** provést závěrečný audit úplnosti, terminologie a konzistence průběžně aktualizované normativní dokumentace proti skutečně implementovanému řešení bez změny schváleného významu N01 až N09. Odstraň staré protichůdné věty, nevkládej nové pravidlo vedle opačného textu a nevydávej historické testy za nově provedené.
 >
 > **Povinně načti:** celý `plan3_fix3.md`, zejména tabulku povinných aktualizací, celé N01 až N09, A01 až A32, F08/F09 a zrychlený závěr. Načti celý relevantní diff kódu a předávací reporty WP00 až WP06. V `client.md` načti všechny sekce citované tabulkou plánu, v `tray_UX.md` celý UX00 až UX14. `protocol.md` a `distribution.md` načti read-only pro kontrolu hranic.
 >
@@ -377,15 +381,15 @@ WP07 smí začít až po potvrzení, že runner a README popisují skutečně ex
 >
 > **Nesmíš měnit:** C++/PowerShell/CMake kód, unit/UI testy, `protocol.md`, `distribution.md`, historické reporty, assets, dist ani ProgramData. Neprováděj implementační opravu. Zjištěnou chybu vrať vlastníkovi nebo označ jako blokátor WP08.
 >
-> **Předpoklady a artefakty:** technický význam určuje `plan3_fix3.md`, ale dokumentace musí odpovídat skutečnému kódu. Reporty předchozích balíčků obsahují textové delty a skutečné testy. `NOT RUN` zůstává `NOT RUN`.
+> **Předpoklady a artefakty:** technický význam určuje `plan3_fix3.md`, ale dokumentace musí odpovídat skutečnému kódu. Reporty předchozích balíčků obsahují přesné již provedené normativní změny s dokumentem, sekcí, náhradou a vazbou N/F/A i skutečné testy. Chybějící aktualizace příslušného balíčku se vrací jeho vlastníkovi, nesmí být plánovaně odložena na WP07. `NOT RUN` zůstává `NOT RUN`.
 >
-> **Implementační požadavky:** proveď přesné náhrady uvedené v tabulce plánu pro UX00, UX02 až UX14 a `client.md`. Odstraň aktivní tvrzení o placeholderu, modalitě celého Contracts, zákazu souběhu, 4092 řádcích, virtualizaci/recyklaci, `/16` až `/23`, 524288 bajtech hesla, zákazu odpočtu, neurčitém aktivním monitoru, automatickém Contracts po Finish, handoffu a kopii tray do dist. Zachovej všech 12 schválených rozhodnutí, Wizard lifecycle, wire invariance a distribuční hranice. Implementační report mapuje každý A01 až A32 na PASS/FAIL/NOT RUN s konkrétním důkazem.
+> **Implementační požadavky:** ověř provedení přesných náhrad uvedených v tabulce plánu pro UX00, UX02 až UX14 a `client.md` proti reportům jednotlivých balíčků. Oprav zjištěné terminologické nebo konzistenční nesoulady, chybějící implementační či normativní změny vrať konkrétnímu vlastníkovi. Ověř odstranění aktivních tvrzení o placeholderu, modalitě celého Contracts, zákazu souběhu, 4092 řádcích, virtualizaci/recyklaci, `/16` až `/23`, 524288 bajtech hesla, zákazu odpočtu, neurčitém aktivním monitoru, automatickém Contracts po Finish, handoffu a kopii tray do dist. Zachovej všech 12 schválených rozhodnutí, Wizard lifecycle, wire invariance a distribuční hranice. Implementační report mapuje každý A01 až A32 na PASS/FAIL/NOT RUN s konkrétním důkazem.
 >
-> **Testy a ověření:** proveď cílené `rg` pro všechny staré konfliktní formulace i nové závazné termíny. Porovnej IPC seznam před/po, diff dokumentů s kódem a všech 12 řádků mapování problému. Ověř, že `protocol.md` a `distribution.md` nejsou změněné. Spusť `git diff --check`.
+> **Testy a ověření:** proveď cílené `rg` pro všechny staré konfliktní formulace i nové závazné termíny včetně systémového titulu Password SHA. Ověř rozsah zápisu, zákazy, dokončovací bránu a předání každé karty WP00 až WP06 proti průběžné strategii dokumentace a skutečným změnám. Porovnej IPC seznam před/po, diff dokumentů s kódem a všech 12 řádků mapování problému. Ověř, že `protocol.md` a `distribution.md` nejsou změněné. Spusť `git diff --check`.
 >
-> **Dokončeno je, když:** v aktivní normativní části nezůstal žádný starý konflikt, všech 12 rozhodnutí má nezměněný význam, A01 až A32 mají pravdivý stav, historické reporty jsou nedotčené a rozsah změn je pouze dokumentační.
+> **Dokončeno je, když:** průběžné dokumentační změny všech balíčků jsou doložené a audit úplnosti, terminologie a konzistence je dokončený, v aktivní normativní části nezůstal žádný starý konflikt, všech 12 rozhodnutí má nezměněný význam, A01 až A32 mají pravdivý stav, historické reporty jsou nedotčené a rozsah změn je pouze dokumentační.
 >
-> **Předání:** vrať povinný report. Přilož tabulku odstraněných konfliktů, seznam normativních náhrad, A01 až A32 stav, `rg` příkazy a případné implementační nesoulady, které musí WP08 vrátit původnímu vlastníkovi.
+> **Předání:** vrať povinný report. Přilož tabulku auditovaných změn podle původních vlastníků, odstraněných konfliktů a přesných vlastních auditních oprav, seznam normativních náhrad, A01 až A32 stav, `rg` příkazy a případné implementační nesoulady, které musí WP08 vrátit původnímu vlastníkovi.
 
 ### Brána pro WP08
 
@@ -439,8 +443,10 @@ WP08 ověří nulový výskyt aktivních protichůdných pravidel. Pokud dokumen
 | S4 | Wizard Finish bez Contracts/handoff, zachované receipts | WP05 až WP08 | Vrátit WP04, ruční Contracts nelze integrovat vedle starého callbacku. |
 | S5 | Contracts kompletní lifecycle a bezpečný Exit/logoff | WP06 až WP08 | Vrátit WP05, harness nesmí maskovat nehotové produkční chování. |
 | S6 | Izolovaný runner, všechna View/Scene, produkční target bez fixture | WP07/WP08 | Vrátit WP06, dokumentace nesmí slibovat neexistující workflow. |
-| S7 | Normativní dokumenty sjednocené s kódem | WP08 | Vrátit WP07 nebo konkrétní feature balíček podle příčiny. |
+| S7 | Závěrečný audit úplnosti, terminologie a konzistence průběžných normativních změn, doložených po jednotlivých balíčcích, proti kódu | WP08 | Vrátit WP07 nebo konkrétní feature balíček podle příčiny. |
 | S8 | Cílené build/test/runtime/visual/textové brány a nulová změna dist | uživatel | Výsledek `NOT READY`, žádné zakrytí FAIL jako zbytkového rizika. |
+
+Každý synchronizační bod S0 až S6 zahrnuje také aktualizované příslušné normativní části a jejich přesný předávací report. Chybějící dokumentační změna vrací práci danému balíčku, neodkládá se na S7.
 
 Oprava vrácená dřívějšímu balíčku musí dostat nový čistý agentní kontext, aktuální diff a přesný failing důkaz. Po opravě se znovu provede jeho dokončovací brána a všechny následné synchronizační body, které mohl ovlivnit.
 
@@ -458,7 +464,7 @@ Po dokončení balíčku:
 
 - porovnej report se skutečným `git status --short` a `git diff --name-only`,
 - zkontroluj `git diff --check`,
-- ověř předepsanou synchronizační bránu,
+- ověř předepsanou synchronizační bránu a současnou aktualizaci normativních částí ve vlastním rozsahu balíčku, včetně přesného seznamu náhrad v reportu,
 - předej přesná rozhraní, výsledky a `NOT RUN` následujícímu agentovi,
 - při FAIL vrať práci vlastníkovi, nepokračuj pouze na základě ústního ujištění.
 
