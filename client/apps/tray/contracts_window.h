@@ -47,18 +47,27 @@ private:
     void scrollBody(int position);
     void paint(HWND target);
     void syncRow(Row& row);
+    bool createRows();
+    void destroyRows();
+    bool createPager();
+    void changePage(int page);
+    void focusContract(Ipv4Address remote, int column);
+    int pageCount() const;
     bool acceptKey(Ipv4Address remote, std::wstring_view text);
     ContractsSaveController controller_;
     CryptoFactory cryptoFactory_;
     decltype(&CreateWindowExW) createWindow_;
     std::unique_ptr<CryptoProvider> crypto_;
     std::vector<Row> rows_;
+    struct PageButton { HWND window; int page; };
+    std::vector<PageButton> pageButtons_;
+    int page_ = 0;
     std::vector<std::unique_ptr<PasswordShaWindow>> children_;
     UiResources resources_;
     IAccPropServices* accessibility_ = nullptr;
     bool comInitialised_ = false;
     HINSTANCE instance_ = nullptr;
-    HWND window_ = nullptr, body_ = nullptr, viewport_ = nullptr, content_ = nullptr, header_ = nullptr, heading_ = nullptr, description_ = nullptr,
+    HWND window_ = nullptr, body_ = nullptr, table_ = nullptr, pager_ = nullptr, viewport_ = nullptr, content_ = nullptr, header_ = nullptr, heading_ = nullptr, description_ = nullptr,
         local_ = nullptr, localLabel_ = nullptr, notice_ = nullptr, error_ = nullptr, ok_ = nullptr, check_ = nullptr, repeat_ = nullptr;
     bool ending_ = false, changing_ = false, layingOut_ = false, connectionActive_ = false;
     int x_ = 0, y_ = 0, width_ = 0, keyWidth_ = 260, rowHeight_ = 48;

@@ -11,8 +11,10 @@ namespace phpvpn::tray {
 namespace {
 constexpr wchar_t rootClass[] = L"PhpVpnContracts", paneClass[] = L"PhpVpnContractsPane";
 constexpr UINT resultMessage = WM_APP + 80;
+constexpr UINT pageMessage = WM_APP + 81;
 constexpr UINT_PTR timer = 80;
 constexpr int firstControl = 1000, checkId = 800, repeatId = 801;
+constexpr int pageSize = 20, firstPageControl = 900;
 }
 ContractsWindow::~ContractsWindow() { endSession(); }
 bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view document, std::string path, std::string revision) {
@@ -26,6 +28,7 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
     instance_ = instance;
     x_ = y_ = width_ = rowHeight_ = 0;
     bodyScroll_ = 0;
+    page_ = 0;
     comInitialised_ = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
     if (FAILED(CoCreateInstance(CLSID_AccPropServices, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&accessibility_)))) { endSession(); ending_ = false; return false; }
     for (const auto* name : {rootClass, paneClass}) {
@@ -48,24 +51,42 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
     localLabel_ = control(body_, L"STATIC", L"Your virtual IP", SS_NOPREFIX);
     local_ = control(body_, L"STATIC", widen(controller_.model()->localIp().toString()).c_str(), SS_NOPREFIX);
     notice_ = control(body_, L"STATIC", L"", SS_NOPREFIX);
-    header_ = createWindow_(0, paneClass, L"Contracts table header", WS_CHILD | WS_VISIBLE, 0, 0, 1, 1, body_, nullptr, instance, this);
+    table_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Contracts table", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+        0, 0, 1, 1, body_, nullptr, instance, this);
+    header_ = createWindow_(0, paneClass, L"Contracts table header", WS_CHILD | WS_VISIBLE, 0, 0, 1, 1, table_, nullptr, instance, this);
     viewport_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Communication contracts table",
-        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_VSCROLL | WS_HSCROLL, 0, 0, 1, 1, body_, nullptr, instance, this);
-    // One native content parent moves inside the clipped viewport. All row
-    // HWNDs retain their identity, native roles and complete accessibility tree.
+        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_VSCROLL | WS_HSCROLL, 0, 0, 1, 1, table_, nullptr, instance, this);
+    // Only the current page owns native row controls. The controller's model
+    // retains every draft by remote IP independently of these HWNDs.
     content_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Contracts rows", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
         0, 0, 1, 1, viewport_, nullptr, instance, this);
+    pager_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Contract pages", WS_CHILD | WS_CLIPCHILDREN,
+        0, 0, 1, 1, body_, nullptr, instance, this);
     error_ = control(window_, L"STATIC", L"", SS_NOPREFIX | SS_NOTIFY, 802);
     check_ = control(window_, L"BUTTON", L"Check current configuration", WS_TABSTOP | BS_OWNERDRAW, checkId);
     repeat_ = control(window_, L"BUTTON", L"Save draft again", WS_TABSTOP | BS_OWNERDRAW, repeatId);
-    ok_ = control(window_, L"BUTTON", L"OK", WS_TABSTOP | BS_OWNERDRAW, IDOK);
-    bool complete = heading_ && description_ && local_ && localLabel_ && notice_ && header_ && viewport_ && content_ && error_ && check_ && repeat_ && ok_;
+    ok_ = control(window_, L"BUTTON", L"Save", WS_TABSTOP | BS_OWNERDRAW, IDOK);
+    bool complete = heading_ && description_ && local_ && localLabel_ && notice_ && table_ && pager_ && header_ && viewport_ && content_ && error_ && check_ && repeat_ && ok_;
     complete = attachModernButton(check_, resources_) && complete;
     complete = attachModernButton(repeat_, resources_) && complete;
     complete = attachModernButton(ok_, resources_, ButtonRole::primary) && complete;
-    rows_.reserve(controller_.model()->rows().size());
+    if (!complete || !createRows() || !createPager()) { endSession(); ending_ = false; return false; }
+    fonts(); sizeAndCenter(window_, ui::contractsClient); layout(); refresh();
+    SetTimer(window_, timer, 50, nullptr);
+    activate(); if (!rows_.empty()) SetFocus(rows_.front().controls[0]);
+    return true;
+}
+bool ContractsWindow::createRows() {
+    auto control = [&](HWND parent, const wchar_t* kind, const wchar_t* text, DWORD style, int id) {
+        return createWindow_(0, kind, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 1, 1, parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
+    };
+    bool complete = true;
+    rows_.reserve(pageSize);
     changing_ = true;
-    for (const auto& source : controller_.model()->rows()) {
+    const auto sources = controller_.model()->rows();
+    const auto start = static_cast<std::size_t>(page_) * pageSize;
+    for (const auto& source : sources.subspan(start, (std::min)(sources.size() - start, static_cast<std::size_t>(pageSize)))) {
         rows_.emplace_back(); auto& row = rows_.back(); row.remote = source.remoteIp();
         row.identity = widen(controller_.model()->target(row.remote)->contractId());
         const auto base = firstControl + static_cast<int>(rows_.size() - 1) * 4;
@@ -89,19 +110,112 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
         syncRow(row);
     }
     changing_ = false;
-    if (!complete) { endSession(); ending_ = false; return false; }
-    fonts(); sizeAndCenter(window_, ui::contractsClient); layout(); refresh();
-    SetTimer(window_, timer, 50, nullptr);
-    activate(); if (!rows_.empty()) SetFocus(rows_.front().controls[0]);
-    return true;
+    return complete;
 }
 void ContractsWindow::activate() const { if (window_) reactivateWindow(window_); }
+int ContractsWindow::pageCount() const {
+    return (std::max)(1, (static_cast<int>(controller_.model()->rows().size()) + pageSize - 1) / pageSize);
+}
+void ContractsWindow::destroyRows() {
+    const bool wasChanging = changing_;
+    changing_ = true;
+    for (auto& row : rows_) {
+        row.edit.clear();
+        for (auto field : row.controls) if (field) {
+            const MSAAPROPID props[]{PROPID_ACC_NAME, PROPID_ACC_DESCRIPTION};
+            if (accessibility_) accessibility_->ClearHwndProps(field, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, props, 2);
+            DestroyWindow(field);
+        }
+    }
+    rows_.clear();
+    changing_ = wasChanging;
+}
+bool ContractsWindow::createPager() {
+    for (const auto& button : pageButtons_) {
+        const MSAAPROPID props[]{PROPID_ACC_NAME};
+        if (accessibility_) accessibility_->ClearHwndProps(button.window, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, props, 1);
+        DestroyWindow(button.window);
+    }
+    pageButtons_.clear();
+    const int count = pageCount();
+    ShowWindow(pager_, count > 1 ? SW_SHOW : SW_HIDE);
+    if (count <= 1) return true;
+    bool complete = true;
+    auto add = [&](std::wstring label, int page, std::wstring name, bool active = false) {
+        const int id = firstPageControl + static_cast<int>(pageButtons_.size());
+        const bool ellipsis = page < 0;
+        auto button = createWindow_(0, ellipsis ? L"STATIC" : L"BUTTON", label.c_str(),
+            WS_CHILD | WS_VISIBLE | (ellipsis ? SS_CENTER | SS_CENTERIMAGE : WS_TABSTOP | BS_OWNERDRAW),
+            0, 0, 1, 1, pager_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
+        pageButtons_.push_back({button, page});
+        if (!button) { complete = false; return; }
+        if (!ellipsis) {
+            complete = attachModernButton(button, resources_, active ? ButtonRole::primary : ButtonRole::neutral) && complete;
+            complete = SetWindowSubclass(button, fieldProcedure, 2, reinterpret_cast<DWORD_PTR>(this)) && complete;
+            // Only Save is the dialog's default action, even for a blue page button.
+            SendMessageW(button, BM_SETSTYLE, BS_PUSHBUTTON, FALSE);
+            complete = SUCCEEDED(accessibility_->SetHwndPropStr(button, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF,
+                PROPID_ACC_NAME, name.c_str())) && complete;
+        }
+        EnableWindow(button, !ellipsis && page != page_);
+    };
+    add(L"\u00ab", 0, L"First page");
+    add(L"\u2039", (std::max)(0, page_ - 1), L"Previous page");
+    std::vector<int> pages{0};
+    const int start = count <= 7 ? 1 : std::clamp(page_ - 2, 1, count - 6);
+    const int end = count <= 7 ? count - 2 : start + 4;
+    for (int page = start; page <= end; ++page) pages.push_back(page);
+    pages.push_back(count - 1);
+    int previous = -1;
+    for (int page : pages) {
+        if (page > previous + 1) add(L"\u2026", -1, L"");
+        add(std::to_wstring(page + 1), page,
+            L"Page " + std::to_wstring(page + 1) + L" of " + std::to_wstring(count) + (page == page_ ? L", current page" : L""), page == page_);
+        // The current number remains focusable and uses the active color.
+        if (page == page_) EnableWindow(pageButtons_.back().window, TRUE);
+        previous = page;
+    }
+    add(L"\u203a", (std::min)(count - 1, page_ + 1), L"Next page");
+    add(L"\u00bb", count - 1, L"Last page");
+    return complete;
+}
+void ContractsWindow::changePage(int page) {
+    if (!window_ || ending_ || !controller_.model() || controller_.model()->frozen() || page < 0 || page >= pageCount() || page == page_) return;
+    LayoutFrame frame(window_);
+    const auto focused = GetFocus();
+    const bool pagerFocus = focused && IsChild(pager_, focused);
+    const int previous = page_;
+    SetFocus(ok_);
+    destroyRows();
+    page_ = page;
+    if (!createRows()) {
+        destroyRows(); page_ = previous;
+        if (!createRows()) destroyRows();
+        localError_ = L"The page could not be displayed. Your draft has been kept. Try another page.";
+    }
+    if (!createPager()) localError_ = L"Page navigation could not be displayed. Your draft has been kept.";
+    y_ = 0;
+    fonts(); layout(); rowPositions(); refresh();
+    HWND next = rows_.empty() ? ok_ : rows_.front().controls[0];
+    if (pagerFocus) for (const auto& button : pageButtons_)
+        if (button.page == page_ && IsWindowEnabled(button.window)) { next = button.window; break; }
+    SetFocus(next);
+}
+void ContractsWindow::focusContract(Ipv4Address remote, int column) {
+    const auto sources = controller_.model()->rows();
+    for (std::size_t i = 0; i < sources.size(); ++i) if (sources[i].remoteIp() == remote) {
+        changePage(static_cast<int>(i / pageSize));
+        for (const auto& row : rows_) if (row.remote == remote) SetFocus(row.controls[column]);
+        break;
+    }
+}
 void ContractsWindow::syncRow(Row& row) {
     const auto* source = controller_.model()->row(row.remote); if (!source) return;
+    const bool wasChanging = changing_;
     changing_ = true; auto key = widen(source->keyText()); row.edit.set(key);
     secureWipe(key.data(), key.size() * sizeof(wchar_t));
     SendMessageW(row.controls[0], BM_SETCHECK, source->enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
-    changing_ = false; InvalidateRect(row.controls[1], nullptr, TRUE);
+    changing_ = wasChanging; InvalidateRect(row.controls[1], nullptr, TRUE);
 }
 bool ContractsWindow::acceptKey(Ipv4Address remote, std::wstring_view text) {
     if (changing_) return true;
@@ -120,8 +234,12 @@ void ContractsWindow::command(int id, int code) {
     if (id == IDOK) { save(false); return; }
     if (id == checkId) { controller_.check(window_, resultMessage); refresh(); return; }
     if (id == repeatId) { save(true); return; }
+    if (id >= firstPageControl && id < firstPageControl + static_cast<int>(pageButtons_.size())) {
+        if (code == BN_CLICKED) PostMessageW(window_, pageMessage, pageButtons_[id - firstPageControl].page, 0);
+        return;
+    }
     if (id == 802) {
-        if (auto focus = controller_.model()->firstBlockingFocus()) for (auto& row : rows_) if (row.remote == focus->remoteIp) SetFocus(row.controls[1]);
+        if (auto focus = controller_.model()->firstBlockingFocus()) focusContract(focus->remoteIp, 1);
         return;
     }
     const int index = (id - firstControl) / 4, column = (id - firstControl) % 4;
@@ -159,7 +277,7 @@ void ContractsWindow::command(int id, int code) {
             localError_.clear(); refresh(); return true;
         }, [this](const ContractTarget& target) {
             if (ending_ || !window_ || !controller_.model() || controller_.model()->frozen()) return;
-            for (const auto& targetRow : rows_) if (targetRow.remote == target.remoteIp()) { SetFocus(targetRow.controls[3]); break; }
+            focusContract(target.remoteIp(), 3);
         });
         if (child->open(instance_, window_)) children_.push_back(std::move(child));
         else { localError_ = L"Password SHA could not be opened."; refresh(); }
@@ -191,6 +309,7 @@ void ContractsWindow::refresh() {
     if (!window_ || !ok_ || !controller_.model()) return;
     const auto snapshot = lifecycleSnapshot();
     EnableWindow(viewport_, !snapshot.saving && !snapshot.unknown);
+    EnableWindow(pager_, !snapshot.saving && !snapshot.unknown);
     EnableWindow(ok_, controller_.model()->canPrepareSave());
     ShowWindow(ok_, snapshot.unknown ? SW_HIDE : SW_SHOW);
     ShowWindow(check_, snapshot.unknown ? SW_SHOW : SW_HIDE);
@@ -238,7 +357,7 @@ bool ContractsWindow::approvedDiscard(const ContractsLifecycleSnapshot& approved
 void ContractsWindow::endSession() {
     ending_ = true; closeChildren();
     if (window_) DestroyWindow(window_);
-    controller_.close(); rows_.clear(); crypto_.reset();
+    controller_.close(); rows_.clear(); pageButtons_.clear(); crypto_.reset();
     if (accessibility_) { accessibility_->Release(); accessibility_ = nullptr; }
     if (comInitialised_) { CoUninitialize(); comInitialised_ = false; }
 }
@@ -254,6 +373,7 @@ void ContractsWindow::fonts() {
     SendMessageW(local_,WM_SETFONT,reinterpret_cast<WPARAM>(resources_.font(ui::Font::strongValue)),TRUE);
     SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
     for (auto& row : rows_) for (std::size_t c = 0; c < 4; ++c) SendMessageW(row.controls[c], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(c == 1 ? ui::Font::mono : ui::Font::label)), TRUE);
+    for (const auto& button : pageButtons_) SendMessageW(button.window, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
 }
 void ContractsWindow::layout() {
     if (!ok_ || layingOut_ || IsIconic(window_)) return;
@@ -281,7 +401,12 @@ void ContractsWindow::layout() {
         {check_, {margin,buttonTop-s(stackActions?88:0),margin+s(236),buttonTop-s(stackActions?88:0)+s(36)}},
         {repeat_, {margin+s(stackActions?0:244),buttonTop-s(stackActions?44:0),margin+s(stackActions?164:408),buttonTop-s(stackActions?44:0)+s(36)}},
         {ok_, {right-s(104),buttonTop,right,buttonTop+s(36)}}});
-    const int bodyExtent=(std::max)(footer,tableTop+s(112));
+    // Reserve the possible body scrollbar before determining wrapped rows.
+    const int pagerColumns = (std::max)(1, (right - margin - GetSystemMetricsForDpi(SM_CXVSCROLL, resources_.dpi())) / s(40));
+    const int pagerRows = (static_cast<int>(pageButtons_.size()) + pagerColumns - 1) / pagerColumns;
+    const int pagerHeight = pageCount() > 1 ? s(12) + pagerRows * s(40) : 0;
+    const int bodyExtent=(std::max)(footer,tableTop+s(112)+pagerHeight);
+    const int tableBottom = bodyExtent - pagerHeight;
     SCROLLINFO bodyInfo{sizeof(bodyInfo),SIF_RANGE|SIF_PAGE|SIF_POS};
     bodyInfo.nMax=bodyExtent-1; bodyInfo.nPage=footer;
     bodyScroll_=std::clamp(bodyScroll_,0,(std::max)(0,bodyExtent-footer)); bodyInfo.nPos=bodyScroll_;
@@ -293,9 +418,28 @@ void ContractsWindow::layout() {
         {localLabel_, {compact?margin:right-s(150),localTop,compact?margin+s(110):right,localTop+s(24)}},
         {local_, {compact?margin+s(124):right-s(150),compact?localTop:s(56),right,compact?localTop+s(28):s(84)}},
         {notice_, {margin,tableTop-s(28),right,tableTop-s(4)}},
-        {header_, {margin,tableTop,bodyRight,tableTop+s(40)}}, {viewport_, {margin,tableTop+s(40),bodyRight,bodyExtent}}};
+        {table_, {margin,tableTop,bodyRight,tableBottom}},
+        {pager_, {margin,tableBottom,bodyRight,bodyExtent}}};
     for(auto& placement:bodyPositions) { placement.rect.top-=bodyScroll_; placement.rect.bottom-=bodyScroll_; placement.rect.right=(std::min)(placement.rect.right,bodyRight); }
     positionControls(body_,bodyPositions);
+    const int tableWidth = (std::max)(1, bodyRight - margin), tableHeight = tableBottom - tableTop;
+    const int inset = (std::max)(1, s(1));
+    positionControls(table_, std::vector<ControlPlacement>{
+        {header_, {inset,inset,tableWidth-inset,s(40)}},
+        {viewport_, {inset,s(40),tableWidth-inset,tableHeight-s(4)}}});
+    // Clip the header's top corners together with the container. Leave the
+    // outline and bottom corners outside the scrolling child windows.
+    auto region = CreateRoundRectRgn(0, 0, tableWidth + 1, tableHeight + 1, s(16), s(16));
+    if (region && !SetWindowRgn(table_, region, FALSE)) DeleteObject(region);
+    std::vector<ControlPlacement> pagerPositions;
+    const int columns = pagerColumns;
+    for (std::size_t i = 0; i < pageButtons_.size(); ++i) {
+        const int column = static_cast<int>(i) % columns, row = static_cast<int>(i) / columns;
+        const int count = (std::min)(columns, static_cast<int>(pageButtons_.size()) - row * columns);
+        const int left = (std::max)(0, (tableWidth - count * s(40)) / 2) + column * s(40);
+        pagerPositions.push_back({pageButtons_[i].window, {left,s(8)+row*s(40),left+s(36),s(44)+row*s(40)}});
+    }
+    positionControls(pager_, pagerPositions);
 
     RECT v{}; GetClientRect(viewport_, &v);
     const auto oldWidth=width_,oldRowHeight=rowHeight_;
@@ -349,6 +493,13 @@ void ContractsWindow::scrollBody(int position) {
     if(position!=bodyScroll_) { bodyScroll_=position;layout();InvalidateRect(body_,nullptr,TRUE); }
 }
 void ContractsWindow::reveal(HWND field) {
+    if (field && pager_ && IsChild(pager_, field)) {
+        RECT area{}, bounds{}; GetClientRect(body_, &area); GetWindowRect(field, &bounds);
+        MapWindowPoints(nullptr, body_, reinterpret_cast<POINT*>(&bounds), 2);
+        if (bounds.top < 0) scrollBody(bodyScroll_ + bounds.top);
+        else if (bounds.bottom > area.bottom) scrollBody(bodyScroll_ + bounds.bottom - area.bottom);
+        return;
+    }
     for (std::size_t i = 0; i < rows_.size(); ++i) for (std::size_t c = 0; c < 4; ++c) if (rows_[i].controls[c] == field) {
         if (!controller_.model()) return;
         (void)controller_.model()->setFocus(ContractFocus{rows_[i].remote, static_cast<ContractColumn>(c)});
@@ -365,24 +516,34 @@ void ContractsWindow::reveal(HWND field) {
 LRESULT CALLBACK ContractsWindow::fieldProcedure(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data) {
     auto* self = reinterpret_cast<ContractsWindow*>(data);
     if (m == WM_SETFOCUS) self->reveal(h);
-    if (m == WM_KEYDOWN && (GetDlgCtrlID(h) - firstControl) % 4 != 1) {
-        if (w == VK_END && GetKeyState(VK_CONTROL) < 0 && !self->rows_.empty()) { SetFocus(self->rows_.back().controls[0]); return 0; }
+    if (m == WM_KEYDOWN && GetDlgCtrlID(h) >= firstControl && (GetDlgCtrlID(h) - firstControl) % 4 != 1) {
+        if (w == VK_END && GetKeyState(VK_CONTROL) < 0 && !self->rows_.empty()) {
+            PostMessageW(self->window_, pageMessage, self->pageCount() - 1, 1); return 0;
+        }
         if (w == VK_NEXT || w == VK_PRIOR) { RECT r{}; GetClientRect(self->viewport_, &r); self->scroll(false, self->y_ + (w == VK_NEXT ? r.bottom : -r.bottom)); return 0; }
     }
-    if (m == WM_MOUSEWHEEL) { SendMessageW(self->viewport_, m, w, l); return 0; }
+    if (m == WM_MOUSEWHEEL) { SendMessageW(GetParent(h) == self->pager_ ? self->body_ : self->viewport_, m, w, l); return 0; }
     if (m == WM_NCDESTROY) RemoveWindowSubclass(h, fieldProcedure, 2);
     return DefSubclassProc(h, m, w, l);
 }
 void ContractsWindow::paint(HWND target) {
     PAINTSTRUCT p{}; auto targetDc = BeginPaint(target, &p); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(target, &r);
-    FillRect(dc, &r, resources_.brush(target == window_ || target == body_ ? ui::Color::background : ui::Color::surface));
+    FillRect(dc, &r, resources_.brush(target == window_ || target == body_ || target == pager_ || target == header_ ? ui::Color::background : ui::Color::surface));
+    if (target == window_ && body_) {
+        RECT bodyBounds{}; GetWindowRect(body_, &bodyBounds);
+        MapWindowPoints(nullptr, window_, reinterpret_cast<POINT*>(&bodyBounds), 2);
+        const RECT divider{0, bodyBounds.bottom, r.right, bodyBounds.bottom + 1};
+        FillRect(dc, &divider, resources_.brush(ui::Color::separator));
+    }
+    if (target == table_) paintCard(dc, {0,0,r.right,r.bottom}, resources_);
     if (target == header_ || target == content_) {
-        auto font = SelectObject(dc, resources_.font(ui::Font::label)); SetBkMode(dc, TRANSPARENT); SetTextColor(dc, resources_.color(ui::Color::text));
+        auto font = SelectObject(dc, resources_.font(target == header_ ? ui::Font::strongValue : ui::Font::label)); SetBkMode(dc, TRANSPARENT); SetTextColor(dc, resources_.color(ui::Color::text));
         const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
         if (target == header_) {
             const wchar_t* labels[]{L"Contract",L"Enabled",L"Key",L"Actions"};
             const int lefts[]{0,s(250),s(330),s(330)+keyWidth_};
             for (int c = 0; c < 4; ++c) drawText(dc, labels[c], {lefts[c]+s(12)-x_,0,(c == 3 ? width_ : lefts[c+1])-x_,r.bottom}, DT_SINGLELINE | DT_VCENTER);
+            RECT line{0,r.bottom-1,r.right,r.bottom}; FillRect(dc, &line, resources_.brush(ui::Color::separator));
         } else if (rowHeight_) {
             RECT clip{}; GetClipBox(dc,&clip);
             const auto first = static_cast<std::size_t>((std::max)(0L, clip.top) / rowHeight_);
@@ -409,7 +570,27 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
     case WM_COMMAND: self->command(LOWORD(w), HIWORD(w)); return 0;
     case WM_TIMER: if (h == self->window_ && w == timer) self->poll(); return 0;
     case resultMessage: self->poll(); return 0;
+    case pageMessage:
+        self->changePage(static_cast<int>(w));
+        if (l == 1 && !self->rows_.empty() && self->controller_.model() && !self->controller_.model()->frozen()) SetFocus(self->rows_.back().controls[0]);
+        return 0;
     case WM_SIZE: if (h == self->window_) { self->layout(); self->reveal(GetFocus()); } return 0;
+    case WM_GETMINMAXINFO:
+        if (h == self->window_) {
+            const UINT dpi = GetDpiForWindow(h);
+            RECT minimum{0, 0, scaleForDpi(920, static_cast<int>(dpi)), scaleForDpi(520, static_cast<int>(dpi))};
+            AdjustWindowRectExForDpi(&minimum, static_cast<DWORD>(GetWindowLongPtrW(h, GWL_STYLE)), FALSE,
+                static_cast<DWORD>(GetWindowLongPtrW(h, GWL_EXSTYLE)), dpi);
+            auto* info = reinterpret_cast<MINMAXINFO*>(l);
+            info->ptMinTrackSize = {minimum.right - minimum.left, minimum.bottom - minimum.top};
+            MONITORINFO monitor{sizeof(monitor)};
+            if (GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &monitor)) {
+                info->ptMinTrackSize.x = (std::min)(info->ptMinTrackSize.x, monitor.rcWork.right - monitor.rcWork.left);
+                info->ptMinTrackSize.y = (std::min)(info->ptMinTrackSize.y, monitor.rcWork.bottom - monitor.rcWork.top);
+            }
+            return 0;
+        }
+        break;
     case WM_VSCROLL: case WM_HSCROLL: {
         if(h==self->body_) {
             SCROLLINFO info{sizeof(info),SIF_ALL};GetScrollInfo(h,SB_VERT,&info);int next=self->bodyScroll_;
@@ -441,19 +622,23 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
         if (h == self->window_) {
             KillTimer(h,timer); self->changing_ = true; self->closeChildren();
             for (auto& row : self->rows_) { row.edit.clear(); if (self->accessibility_) for (auto field : row.controls) { const MSAAPROPID props[]{PROPID_ACC_NAME,PROPID_ACC_DESCRIPTION}; self->accessibility_->ClearHwndProps(field, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, props, 2); } }
+            if (self->accessibility_) for (const auto& button : self->pageButtons_) {
+                const MSAAPROPID props[]{PROPID_ACC_NAME};
+                self->accessibility_->ClearHwndProps(button.window, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, props, 1);
+            }
             self->window_ = nullptr; self->changing_ = false;
         }
         return 0;
     case WM_NCDESTROY:
         if (!(GetWindowLongPtrW(h,GWL_STYLE) & WS_CHILD)) {
-            self->body_ = self->viewport_ = self->content_ = self->header_ = self->heading_ = self->description_ = self->local_ = self->localLabel_ = self->notice_ = self->error_ = self->ok_ = self->check_ = self->repeat_ = nullptr;
+            self->body_ = self->table_ = self->pager_ = self->viewport_ = self->content_ = self->header_ = self->heading_ = self->description_ = self->local_ = self->localLabel_ = self->notice_ = self->error_ = self->ok_ = self->check_ = self->repeat_ = nullptr;
             self->resources_.clear();
         }
         SetWindowLongPtrW(h,GWLP_USERDATA,0); break;
     case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC: {
         const auto field = reinterpret_cast<HWND>(l); bool invalid = false;
         if (self->controller_.model()) for (const auto& row : self->rows_) if (row.controls[1] == field) invalid = !self->controller_.model()->row(row.remote)->keyValid();
-        const auto color = invalid ? ui::Color::errorBackground : h == self->window_ || h == self->body_ ? ui::Color::background : ui::Color::surface;
+        const auto color = invalid ? ui::Color::errorBackground : h == self->window_ || h == self->body_ || h == self->pager_ ? ui::Color::background : ui::Color::surface;
         const auto dc = reinterpret_cast<HDC>(w); SetTextColor(dc,self->resources_.color(invalid ? ui::Color::error : ui::Color::text)); SetBkColor(dc,self->resources_.color(color));
         return reinterpret_cast<LRESULT>(self->resources_.brush(color));
     }
