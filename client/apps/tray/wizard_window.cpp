@@ -17,7 +17,7 @@ constexpr wchar_t windowClass[] = L"PhpVpnConfigurationWizard";
 constexpr wchar_t bodyClass[] = L"PhpVpnWizardContent";
 constexpr UINT primaryMessage = WM_APP + 51, controlMessage = WM_APP + 52, heartbeatMessage = WM_APP + 53;
 constexpr UINT disconnectMessage = WM_APP + 54, statusMessage = WM_APP + 55;
-constexpr int nextId = 701, backId = 702, resetId = 703, cancelId = 704;
+constexpr int nextId = 701, backId = 702, resetId = 703;
 constexpr int urlId = 710, secretId = 711, defaultSecretId = 712, ipId = 713, keyId = 714, defaultKeyId = 715, contractsId = 716;
 constexpr int automaticIpId = 717;
 std::uint64_t nextWindowGeneration() {
@@ -103,7 +103,7 @@ bool WizardWindow::open(HINSTANCE instance, std::function<void()> onConfirmed) {
     body_ = CreateWindowExW(WS_EX_CONTROLPARENT, bodyClass, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
         0, 0, 1, 1, window_, nullptr, instance, this);
     steps_ = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0, 0, 1, 1, window_, nullptr, instance, nullptr);
-    for (const auto& [id, text] : {std::pair{resetId, L"Reset"}, {backId, L"Back"}, {cancelId, L"Cancel"}, {nextId, wizardText::verify}})
+    for (const auto& [id, text] : {std::pair{resetId, L"Reset"}, {backId, L"Back"}, {nextId, wizardText::verify}})
         CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | (id == nextId ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON),
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
     sizeAndCenter(window_, {1000, 680}); render();
@@ -598,16 +598,15 @@ void WizardWindow::render() {
         step == WizardStep::serverUrl ? wizardText::checkingUrl : step == WizardStep::serverSecret ? wizardText::checkingSecret : step == WizardStep::identity ? wizardText::checkingIdentity : L"Waiting for the service…");
     contentHeight_ = cursorY_;
     for (const auto& item : children_) if (locked) EnableWindow(item.first, FALSE);
-    for (int id : {nextId, backId, resetId, cancelId}) SendMessageW(GetDlgItem(window_, id), WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    for (int id : {nextId, backId, resetId}) SendMessageW(GetDlgItem(window_, id), WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
     const bool back = step == WizardStep::serverSecret || step == WizardStep::identity || step == WizardStep::contracts;
-    ShowWindow(GetDlgItem(window_, backId), back || step == WizardStep::serverUrl ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(window_, backId), back ? SW_SHOW : SW_HIDE);
     EnableWindow(GetDlgItem(window_, backId), back && !locked);
     const wchar_t* next = step == WizardStep::contracts ? L"Finish" : step == WizardStep::commitUnknown ? L"Verify save" :
         step == WizardStep::sessionExpired ? L"Open again" : step == WizardStep::disconnectGate ? (offlineKnown_ ? L"Continue" : wizardText::disconnect) : wizardText::verify;
     SetWindowTextW(GetDlgItem(window_, nextId), next);
     EnableWindow(GetDlgItem(window_, nextId), !locked && step != WizardStep::loadError && (step != WizardStep::loading || model_.error().has_value()));
     EnableWindow(GetDlgItem(window_, resetId), !model_.committing() && !closing_ && !resetting_ && step != WizardStep::commitUnknown && step != WizardStep::sessionExpired && !model_.view().sessionId.empty());
-    EnableWindow(GetDlgItem(window_, cancelId), !model_.committing() && !closing_ && !resetting_);
     for (const auto& previous : previousChildren_) if (previous.first) {
         wchar_t type[16]{}; GetClassNameW(previous.first, type, 16);
         if (std::wstring_view(type) == L"Edit") {
@@ -636,8 +635,7 @@ void WizardWindow::render() {
     }
     else {
         HWND first = GetNextDlgTabItem(body_, nullptr, FALSE);
-        SetFocus(step == WizardStep::disconnectGate ? GetDlgItem(window_, cancelId) :
-            first && IsWindowEnabled(first) ? first : GetDlgItem(window_, cancelId));
+        SetFocus(first && IsWindowEnabled(first) ? first : GetDlgItem(window_, nextId));
     }
     RECT actualBody{}; GetClientRect(body_, &actualBody);
     if (actualBody.right != contentWidth_) render(); // Scrollbar visibility changed the wrapping width.
@@ -654,7 +652,7 @@ void WizardWindow::layout() {
     move(steps_, geometry.steps); move(body_, geometry.content);
     RECT bodyRect{}; GetClientRect(body_, &bodyRect); contentWidth_ = bodyRect.right;
     std::size_t index = 0;
-    for (int id : {resetId, backId, cancelId, nextId}) {
+    for (int id : {resetId, backId, nextId}) {
         move(GetDlgItem(window_, id), geometry.buttons[index++]);
     }
 }
@@ -731,7 +729,7 @@ bool WizardWindow::translate(MSG& message) {
     if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) { cancel(false); return true; }
     if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
         const int id = GetDlgCtrlID(GetFocus());
-        if (id == cancelId || id == resetId || id == backId || id == nextId) command(id, BN_CLICKED); else next();
+        if (id == resetId || id == backId || id == nextId) command(id, BN_CLICKED); else next();
         return true;
     }
     if (IsDialogMessageW(window_, &message)) { revealFocus(); return true; }
@@ -758,13 +756,13 @@ void WizardWindow::command(int id, int notification) {
         return;
     }
     if (notification != BN_CLICKED) return;
-    const HWND button = GetDlgItem(id <= cancelId ? window_ : body_, id);
+    const bool footerButton = id == nextId || id == backId || id == resetId;
+    const HWND button = GetDlgItem(footerButton ? window_ : body_, id);
     if (!button || !IsWindowEnabled(button) || !IsWindowVisible(button)) return;
     if (id == defaultSecretId || id == defaultKeyId || id == automaticIpId || id == contractsId) draftChanged();
     if (id == nextId) next();
     else if (id == backId) { model_.back(); scroll_ = 0; render(); }
     else if (id == resetId) cancel(true);
-    else if (id == cancelId) cancel(false);
     else if (id == defaultSecretId) { model_.setDefaultSecret(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }
     else if (id == defaultKeyId) { model_.setDefaultAccessKey(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }
     else if (id == automaticIpId) { model_.setAutoDetectIpAddress(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }

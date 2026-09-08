@@ -6,7 +6,7 @@ WizardLayout computeWizardLayout(Size client, int dpi, int primaryWidth) {
     const int margin = std::min(width / 8, scaleForDpi(16, dpi)), gap = scaleForDpi(8, dpi);
     const int buttonHeight = scaleForDpi(36, dpi), small = scaleForDpi(88, dpi);
     primaryWidth = std::max(scaleForDpi(200, dpi), primaryWidth);
-    const bool wrap = width < 2 * margin + 3 * small + primaryWidth + 3 * gap;
+    const bool wrap = width < 2 * margin + 2 * small + primaryWidth + 2 * gap;
     const int footer = std::min(height, 2 * margin + buttonHeight * (wrap ? 2 : 1) + (wrap ? gap : 0));
     WizardLayout result;
     result.compact = width < scaleForDpi(760, dpi);
@@ -18,21 +18,19 @@ WizardLayout computeWizardLayout(Size client, int dpi, int primaryWidth) {
     const int y = std::max(0, height - footer + margin);
     const int available = std::max(1, width - 2 * margin);
     if (wrap) {
-        const int secondary = std::min(small, std::max(1, (available - 2 * gap) / 3));
-        result.buttons[0] = {margin, y, margin + secondary, y + buttonHeight};
-        int x = width - margin - 2 * secondary - gap;
-        result.buttons[1] = {x, y, x + secondary, y + buttonHeight};
-        x += secondary + gap;
-        result.buttons[2] = {x, y, x + secondary, y + buttonHeight};
-        const int w = std::min(primaryWidth, available), bottom = y + buttonHeight + gap;
-        result.buttons[3] = {width - margin - w, bottom, width - margin, bottom + buttonHeight};
+        const int resetWidth = std::min(small, available);
+        result.buttons[0] = {margin, y, margin + resetWidth, y + buttonHeight};
+        const int primary = std::min(primaryWidth, std::max(1, available - gap - 1));
+        const int back = std::min(small, std::max(1, available - gap - primary));
+        const int bottom = y + buttonHeight + gap;
+        const int primaryLeft = width - margin - primary;
+        result.buttons[1] = {primaryLeft - gap - back, bottom, primaryLeft - gap, bottom + buttonHeight};
+        result.buttons[2] = {primaryLeft, bottom, width - margin, bottom + buttonHeight};
     } else {
         result.buttons[0] = {margin, y, margin + small, y + buttonHeight};
-        int x = width - margin - primaryWidth - 2 * small - 2 * gap;
-        for (std::size_t i = 1; i < 4; ++i) {
-            const int w = i == 3 ? primaryWidth : small;
-            result.buttons[i] = {x, y, x + w, y + buttonHeight}; x += w + gap;
-        }
+        const int primaryLeft = width - margin - primaryWidth;
+        result.buttons[1] = {primaryLeft - gap - small, y, primaryLeft - gap, y + buttonHeight};
+        result.buttons[2] = {primaryLeft, y, width - margin, y + buttonHeight};
     }
     return result;
 }
