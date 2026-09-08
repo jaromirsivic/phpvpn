@@ -68,6 +68,7 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
         row.identity = widen(controller_.model()->target(row.remote)->contractId());
         const auto base = firstControl + static_cast<int>(rows_.size() - 1) * 4;
         row.controls[0] = control(content_, L"BUTTON", L"", WS_TABSTOP | BS_AUTOCHECKBOX, base);
+        complete = attachToggleSwitch(row.controls[0], resources_) && complete;
         row.controls[1] = control(content_, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, base + 1);
         row.controls[2] = control(content_, L"BUTTON", L"Random", WS_TABSTOP, base + 2);
         row.controls[3] = control(content_, L"BUTTON", L"Password SHA", WS_TABSTOP, base + 3);
@@ -201,6 +202,9 @@ void ContractsWindow::refresh() {
     SetWindowTextW(notice_, connectionActive_ ? L"Changes take effect on the next connection." : L"");
     ShowWindow(notice_, connectionActive_ ? SW_SHOW : SW_HIDE);
     for (auto& row : rows_) {
+        // Disable the native checkbox itself so its visual and accessible
+        // unavailable state agree with the frozen table, including repaint.
+        EnableWindow(row.controls[0], !snapshot.saving && !snapshot.unknown);
         const bool valid = controller_.model()->row(row.remote)->keyValid();
         if (valid != row.lastValid) {
             row.lastValid = valid; InvalidateRect(row.controls[1], nullptr, FALSE);

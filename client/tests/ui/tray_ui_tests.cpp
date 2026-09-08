@@ -1077,6 +1077,97 @@ int interactive(std::string_view preview = {}) {
     return 0;
 }
 #include "dev_preview.inc"
+
+// A single short, isolated regression check for the native switch skin.
+void modernToggleSwitches() {
+    const auto checked = [](HWND h) { return SendMessageW(h, BM_GETCHECK, 0, 0) == BST_CHECKED; };
+    const auto space = [](HWND h) {
+        SetFocus(h);
+        SendMessageW(h, WM_KEYDOWN, VK_SPACE, 0);
+        SendMessageW(h, WM_KEYUP, VK_SPACE, 0);
+    };
+    const auto accessibility = [&](HWND h, const std::wstring& expected, bool action) {
+        IAccessible* acc = nullptr;
+        check(SUCCEEDED(AccessibleObjectFromWindow(h, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+            reinterpret_cast<void**>(&acc))), "switch accessibility missing");
+        VARIANT self{}; self.vt = VT_I4; self.lVal = CHILDID_SELF;
+        BSTR name = nullptr; VARIANT role{}, state{};
+        const bool named = SUCCEEDED(acc->get_accName(self, &name)) && name && expected == std::wstring(name, SysStringLen(name));
+        SysFreeString(name);
+        const bool validRole = SUCCEEDED(acc->get_accRole(self, &role)) && role.vt == VT_I4 && role.lVal == ROLE_SYSTEM_CHECKBUTTON;
+        const bool validState = SUCCEEDED(acc->get_accState(self, &state)) && state.vt == VT_I4 &&
+            ((state.lVal & STATE_SYSTEM_CHECKED) != 0) == checked(h) &&
+            ((state.lVal & STATE_SYSTEM_UNAVAILABLE) != 0) == !IsWindowEnabled(h);
+        const bool before = checked(h);
+        const bool acted = !action || SUCCEEDED(acc->accDoDefaultAction(self));
+        if (action) {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&message); DispatchMessageW(&message);
+            }
+        }
+        acc->Release();
+        check(named, "native switch name mismatch"); check(validRole, "native switch role mismatch");
+        check(validState, "native switch state mismatch");
+        check(acted && (!action || checked(h) != before), "native switch action mismatch");
+    };
+    Gui gui(true); gui.open(); gui.nextTo(secretId);
+    const auto exercise = [&](int id, const wchar_t* capture) {
+        const auto h = child(gui.hwnd(), id);
+        check(h && IsWindowVisible(h) && IsWindowEnabled(h), "wizard switch missing");
+        const bool initial = checked(h);
+        space(h); check(checked(h) != initial, "Space did not toggle");
+        space(h); check(checked(h) == initial, "Space did not restore");
+        // Click on the text well beyond the switch track.
+        RECT rect{}; GetClientRect(h, &rect);
+        const LPARAM point = MAKELPARAM(MulDiv(80, GetDpiForWindow(h), 96), rect.bottom / 2);
+        SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, point);
+        SendMessageW(h, WM_LBUTTONUP, 0, point);
+        check(checked(h) != initial, "label click did not toggle");
+        accessibility(h, text(h), true);
+        check(checked(h) == initial, "accessible action did not restore");
+        EnableWindow(h, FALSE); accessibility(h, text(h), false);
+        captureWizard(gui.hwnd(), L"toggle-disabled.bmp");
+        EnableWindow(h, TRUE);
+        SetFocus(h); SendMessageW(h, WM_UPDATEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS), 0);
+        captureWizard(gui.hwnd(), capture);
+        MSG tab{}; tab.hwnd = h; tab.message = WM_KEYDOWN; tab.wParam = VK_TAB;
+        check(gui.wizard.translate(tab) && GetFocus() != h, "Tab did not leave switch");
+    };
+    exercise(defaultSecretId, L"toggle-secret.bmp");
+    gui.nextTo(ipId);
+    exercise(automaticIpId, L"toggle-automatic.bmp");
+    exercise(defaultKeyId, L"toggle-key.bmp");
+    resizeClient(gui.hwnd(), 720, 540); gui.pump();
+    captureWizard(gui.hwnd(), L"toggle-identity-small.bmp");
+    gui.nextTo(contractsId); exercise(contractsId, L"toggle-wizard-contracts.bmp");
+    gui.wizard.endSession();
+
+    ContractsWindow contracts(gui.pipe);
+    check(contracts.open(GetModuleHandleW(nullptr), nullptr, devDocument(), "synthetic", "toggle"), "Contracts open failed");
+    const auto root = contracts.window(), first = child(root, 1000), second = child(root, 1004), last = child(root, 2004);
+    check(first && second && last, "maximum 252 native rows missing");
+    check(text(first).empty(), "Contracts repeats visual label");
+    const bool a = checked(first), b = checked(second);
+    space(first); check(checked(first) != a && checked(second) == b, "first row changed another row");
+    space(second); check(checked(first) != a && checked(second) != b, "second row changed another row");
+    accessibility(first, L"10.99.99.2_10.99.99.3 Enabled", true);
+    check(checked(first) == a && checked(second) != b, "accessible action changed another row");
+    EnableWindow(second, FALSE); accessibility(second, L"10.99.99.2_10.99.99.4 Enabled", false);
+    captureWizard(root, L"toggle-contracts.bmp"); EnableWindow(second, TRUE);
+    SetFocus(last); gui.pump();
+    RECT lastRect{}, viewportRect{}; GetWindowRect(last, &lastRect);
+    const auto viewport = GetParent(GetParent(last)); GetWindowRect(viewport, &viewportRect);
+    check(lastRect.top >= viewportRect.top && lastRect.bottom <= viewportRect.bottom, "last switch not revealed by scroll");
+    resizeClient(root, 900, 600); SetFocus(first); gui.pump();
+    check(checked(first) == a && checked(second) != b, "resize/scroll changed values");
+    MSG tab{}; tab.hwnd = first; tab.message = WM_KEYDOWN; tab.wParam = VK_TAB;
+    check(contracts.translate(tab) && GetFocus() == child(root, 1001), "Contracts Tab order changed");
+    captureWizard(root, L"toggle-contracts-small.bmp");
+    contracts.endSession();
+    check(gui.backend.count(&Backend::finishCalls) == 0, "switch check published configuration");
+    std::cout << "[ EVIDENCE ] Four Wizard options, mouse label, Space, Tab, native MSAA name/role/checked/unavailable/action, 252 Contracts rows, independent values, resize and scroll.\n";
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1097,6 +1188,7 @@ int main(int argc, char** argv) {
     }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"modern_toggle_switches", modernToggleSwitches},
         {"wp06_scene_matrix", devSceneMatrix},
         {"wp06_preview_over_45_seconds", devLongPreview},
         {"wp06_connected_countdown", devConnectedCountdown},

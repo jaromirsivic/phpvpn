@@ -21,4 +21,7 @@ int measuredButtonWidth(HDC dc, HFONT font, std::wstring_view text, int dpi);
 void paintCard(HDC dc, Rect rect, const UiResources& resources,
                ui::Color fill = ui::Color::surface, ui::Color border = ui::Color::border);
 void invalidateChanged(HWND window, Rect region, bool changed);
+// Retains the native auto-checkbox input, state and accessibility provider.
+// Resources must outlive the control, as they do for the containing window.
+bool attachToggleSwitch(HWND window, const UiResources& resources);
 } // namespace phpvpn::tray

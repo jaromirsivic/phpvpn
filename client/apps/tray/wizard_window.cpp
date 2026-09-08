@@ -392,7 +392,7 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
     if (type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_AUTOCHECKBOX) {
         style |= BS_MULTILINE;
         HDC dc = GetDC(body_); auto old = SelectObject(dc, font_);
-        RECT bounds{0, 0, std::max(20, contentWidth_ - 2 * margin - scaleForDpi(40, dpi_)), 0};
+        RECT bounds{0, 0, std::max(20, contentWidth_ - 2 * margin - scaleForDpi(54, dpi_)), 0};
         DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &bounds, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
         SelectObject(dc, old); ReleaseDC(body_, dc);
         height = std::max(scaleForDpi(32, dpi_), static_cast<int>(bounds.bottom) + scaleForDpi(6, dpi_));
@@ -412,6 +412,9 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
         current.resize(GetWindowTextW(child, current.data(), static_cast<int>(current.size())));
         // In particular, do not reset EDIT undo/selection during resize or polling.
         if (current != text) SetWindowTextW(child, text.c_str());
+    }
+    if (created && type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_AUTOCHECKBOX) {
+        if (!attachToggleSwitch(child, resources_)) { DestroyWindow(child); return nullptr; }
     }
     EnableWindow(child, TRUE);
     SetPropW(child, L"WizardBackground", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(inCard_ ? cardColor_ : ui::Color::background) + 1));
@@ -793,35 +796,6 @@ LRESULT CALLBACK WizardWindow::bodyProcedure(HWND window, UINT message, WPARAM w
             FillRect(dc, &rect, self->resources_.brush(ui::Color::separator));
         }
         EndPaint(window, &paint); return 0;
-    }
-    if (message == WM_NOTIFY) {
-        const auto* custom = reinterpret_cast<NMCUSTOMDRAW*>(lParam);
-        if (custom && custom->hdr.code == NM_CUSTOMDRAW && custom->dwDrawStage == CDDS_PREPAINT) {
-            const auto button = custom->hdr.hwndFrom;
-            const bool checked = SendMessageW(button, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            const bool enabled = IsWindowEnabled(button) != FALSE;
-            const auto dc = custom->hdc;
-            FillRect(dc, &custom->rc, self->resources_.brush(ui::Color::surface));
-            const auto fill = !enabled ? ui::Color::disabledBackground : checked ? ui::Color::primary : ui::Color::border;
-            const auto oldBrush = SelectObject(dc, self->resources_.brush(fill));
-            const auto oldPen = SelectObject(dc, self->resources_.pen(fill));
-            const int x = custom->rc.left, y = custom->rc.top + scaleForDpi(8, self->dpi_);
-            const int w = scaleForDpi(28, self->dpi_), h = scaleForDpi(16, self->dpi_), inset = scaleForDpi(2, self->dpi_);
-            RoundRect(dc, x, y, x + w, y + h, h, h);
-            SelectObject(dc, self->resources_.brush(ui::Color::surface));
-            SelectObject(dc, self->resources_.pen(ui::Color::surface));
-            const int thumb = x + (checked ? w - h : 0);
-            Ellipse(dc, thumb + inset, y + inset, thumb + h - inset, y + h - inset);
-            SelectObject(dc, oldBrush); SelectObject(dc, oldPen);
-            const auto font = SelectObject(dc, self->font_);
-            SetBkMode(dc, TRANSPARENT); SetTextColor(dc, self->resources_.color(enabled ? ui::Color::text : ui::Color::disabledText));
-            wchar_t text[128]{}; GetWindowTextW(button, text, 128);
-            RECT rect = custom->rc; rect.left += scaleForDpi(40, self->dpi_); rect.top += scaleForDpi(6, self->dpi_);
-            DrawTextW(dc, text, -1, &rect, DT_WORDBREAK | DT_NOPREFIX);
-            SelectObject(dc, font);
-            if (custom->uItemState & CDIS_FOCUS) { rect = custom->rc; InflateRect(&rect, -2, -2); DrawFocusRect(dc, &rect); }
-            return CDRF_SKIPDEFAULT;
-        }
     }
     if (message == WM_COMMAND) { self->command(LOWORD(wParam), HIWORD(wParam)); return 0; }
     if (message == WM_VSCROLL) {
