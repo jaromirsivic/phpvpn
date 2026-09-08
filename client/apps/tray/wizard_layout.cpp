@@ -11,7 +11,7 @@ WizardLayout computeWizardLayout(Size client, int dpi, int primaryWidth) {
     WizardLayout result;
     result.compact = width < scaleForDpi(760, dpi);
     const int left = result.compact ? 0 : scaleForDpi(230, dpi);
-    const int top = result.compact ? std::min(scaleForDpi(96, dpi), std::max(1, height - footer)) : 0;
+    const int top = result.compact ? std::min(scaleForDpi(64, dpi), std::max(1, height - footer)) : 0;
     result.steps = {margin, margin, result.compact ? width - margin : left - margin,
         result.compact ? top - margin : std::max(margin + 1, height - footer - margin)};
     result.content = {left, top, width, std::max(top + 1, height - footer)};

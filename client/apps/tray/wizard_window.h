@@ -5,6 +5,7 @@
 #include "wizard_reader.h"
 #include "core/wizard/wizard_model.h"
 #include "layout.h"
+#include "wizard_layout.h"
 #include "ui_resources.h"
 
 namespace phpvpn::tray {
@@ -63,6 +64,7 @@ private:
     HINSTANCE instance_ = nullptr;
     HFONT font_ = nullptr, headingFont_ = nullptr;
     UiResources resources_;
+    WizardLayout geometry_{};
     WizardModel model_;
     WizardReader primary_, control_, heartbeat_;
     CommandReader disconnect_;

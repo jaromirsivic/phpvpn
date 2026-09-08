@@ -657,7 +657,8 @@ void WizardWindow::layout() {
     const int primaryWidth = std::max(measuredButtonWidth(dc, font_, wizardText::verify, dpi_),
         measuredButtonWidth(dc, font_, wizardText::disconnect, dpi_));
     ReleaseDC(window_, dc);
-    const auto geometry = computeWizardLayout({rect.right, rect.bottom}, dpi_, primaryWidth);
+    geometry_ = computeWizardLayout({rect.right, rect.bottom}, dpi_, primaryWidth);
+    const auto& geometry = geometry_;
     std::vector<ControlPlacement> positions{{steps_, geometry.steps}, {body_, geometry.content}};
     std::size_t index = 0;
     for (int id : {resetId, backId, nextId})
@@ -690,8 +691,7 @@ void WizardWindow::drawSteps(const DRAWITEMSTRUCT& original) {
     auto item = original; item.hDC = buffer.dc();
     FillRect(item.hDC, &item.rcItem, resources_.brush(ui::Color::background));
     auto old = SelectObject(item.hDC, font_); SetBkMode(item.hDC, TRANSPARENT);
-    RECT client{}; GetClientRect(window_, &client);
-    const bool compact = client.right < scaleForDpi(760, dpi_);
+    const bool compact = geometry_.compact;
     const int active = model_.step() == WizardStep::serverUrl ? 0 : model_.step() == WizardStep::serverSecret ? 1 :
         model_.step() == WizardStep::identity ? 2 : model_.step() == WizardStep::contracts ? 3 : -1;
     constexpr const wchar_t* names[]{wizardText::urlLabel, L"Server secret", L"IP and access key", L"Contracts"};
@@ -702,32 +702,41 @@ void WizardWindow::drawSteps(const DRAWITEMSTRUCT& original) {
         DrawTextW(item.hDC, wizardText::configure, -1, &heading, DT_WORDBREAK | DT_NOPREFIX);
         y += scaleForDpi(64, dpi_);
     }
-    const int row = scaleForDpi(80, dpi_), width = item.rcItem.right / 4;
+    const int row = scaleForDpi(80, dpi_);
+    const int width = item.rcItem.right - item.rcItem.left;
     for (int i = 0; i < 4; ++i) {
         const auto state = i < 3 ? model_.checks()[i] : phpvpn::CheckpointResult::pending;
         auto color = state == phpvpn::CheckpointResult::success ? ui::Color::success :
             state == phpvpn::CheckpointResult::failed ? ui::Color::error : ui::Color::secondaryText;
-        RECT rect = compact ? RECT{i * width, 0, (i + 1) * width, item.rcItem.bottom} : RECT{0, y, item.rcItem.right, y + row};
+        RECT rect = compact ? RECT{item.rcItem.left + i * width / 4, item.rcItem.top,
+            item.rcItem.left + (i + 1) * width / 4, item.rcItem.bottom} : RECT{0, y, item.rcItem.right, y + row};
         if (i == active) {
-            FillRect(item.hDC, &rect, resources_.brush(ui::Color::selectedStep));
-            if (state != phpvpn::CheckpointResult::failed) color = ui::Color::primary;
+            if (!compact) FillRect(item.hDC, &rect, resources_.brush(ui::Color::selectedStep));
+            if (compact || state != phpvpn::CheckpointResult::failed) color = ui::Color::primary;
         }
         SelectObject(item.hDC, resources_.font(i == active ? ui::Font::strongValue : ui::Font::label));
         SetTextColor(item.hDC, resources_.color(color));
         InflateRect(&rect, -scaleForDpi(8, dpi_), -scaleForDpi(8, dpi_));
         const int diameter = scaleForDpi(24, dpi_);
         RECT marker{rect.left, rect.top, rect.left + diameter, rect.top + diameter};
+        if (compact) {
+            const int x = rect.left + (rect.right - rect.left - diameter) / 2;
+            const int top = rect.top + (rect.bottom - rect.top - diameter) / 2;
+            marker = {x, top, x + diameter, top + diameter};
+        }
         paintRoundedShape(item.hDC, {marker.left, marker.top, marker.right, marker.bottom},
                           0, resources_, color, color, true);
         SetTextColor(item.hDC, resources_.color(ui::Color::primaryText));
-        const std::wstring symbol = state == phpvpn::CheckpointResult::success ? L"\u2713" :
+        const std::wstring symbol = compact ?
+            (i != active && state == phpvpn::CheckpointResult::success ? L"\u2713" : std::to_wstring(i + 1)) :
+            state == phpvpn::CheckpointResult::success ? L"\u2713" :
             state == phpvpn::CheckpointResult::failed ? L"\u00d7" : std::to_wstring(i + 1);
         DrawTextW(item.hDC, symbol.c_str(), -1, &marker, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (compact) continue;
         SetTextColor(item.hDC, resources_.color(color));
-        if (compact) rect.top += diameter + scaleForDpi(4, dpi_);
-        else rect.left += diameter + scaleForDpi(8, dpi_);
-        std::wstring text = !compact || i == active ? names[i] : L"";
-        if (!compact) text += state == phpvpn::CheckpointResult::success ? L"\nCompleted" :
+        rect.left += diameter + scaleForDpi(8, dpi_);
+        std::wstring text = names[i];
+        text += state == phpvpn::CheckpointResult::success ? L"\nCompleted" :
             state == phpvpn::CheckpointResult::failed ? L"\nFailed" : i == active ? L"" : L"\nUpcoming";
         DrawTextW(item.hDC, text.c_str(), static_cast<int>(text.size()), &rect, DT_WORDBREAK | DT_NOPREFIX);
         y += row;
@@ -835,11 +844,15 @@ LRESULT CALLBACK WizardWindow::procedure(HWND window, UINT message, WPARAM wPara
             if (self->font_ && self->body_) {
                 PAINTSTRUCT paint{}; auto targetDc = BeginPaint(window, &paint); PaintBuffer buffer(targetDc); auto dc = buffer.dc();
                 FillRect(dc, &paint.rcPaint, self->resources_.brush(ui::Color::background));
-                RECT client{}, reset{}; GetClientRect(window, &client);
-                GetWindowRect(GetDlgItem(window, resetId), &reset);
-                MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&reset), 2);
-                const int y = reset.top - scaleForDpi(16, self->dpi_);
-                RECT divider{0, y, client.right, y + scaleForDpi(1, self->dpi_)};
+                RECT client{}; GetClientRect(window, &client);
+                const auto& geometry = self->geometry_;
+                // Parent-owned gaps keep these rules at exactly one physical pixel at every DPI.
+                const auto& content = geometry.content;
+                RECT navigationDivider = geometry.compact ?
+                    RECT{0, content.top - 1, client.right, content.top} :
+                    RECT{content.left - 1, 0, content.left, content.bottom};
+                FillRect(dc, &navigationDivider, self->resources_.brush(ui::Color::separator));
+                RECT divider{0, content.bottom, client.right, content.bottom + 1};
                 FillRect(dc, &divider, self->resources_.brush(ui::Color::separator));
                 buffer.finish(); EndPaint(window, &paint); return 0;
             }
