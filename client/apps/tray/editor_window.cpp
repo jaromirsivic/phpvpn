@@ -362,14 +362,14 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             self->updateFonts(); self->layout(); break;
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: {
-            PAINTSTRUCT ps{}; HDC dc=BeginPaint(window,&ps); RECT r{}; GetClientRect(window,&r);
+            PAINTSTRUCT ps{}; auto targetDc = BeginPaint(window,&ps); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(window,&r);
             FillRect(dc,&r,self->resources_.brush(ui::Color::background));
             if(self->save_) {
                 const int top=self->oldLayout_.footer.top;
                 RECT line{0,top,r.right,top+std::max(1,scaleForDpi(1,self->resources_.dpi()))};
                 FillRect(dc,&line,self->resources_.brush(ui::Color::separator));
             }
-            EndPaint(window,&ps); return 0;
+            buffer.finish(); EndPaint(window,&ps); return 0;
         }
         case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC: {
             const bool header=reinterpret_cast<HWND>(lParam)==self->heading_ || reinterpret_cast<HWND>(lParam)==self->path_;
@@ -383,6 +383,8 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             const auto* custom=reinterpret_cast<NMCUSTOMDRAW*>(lParam);
             if(custom && custom->hdr.code==NM_CUSTOMDRAW && custom->dwDrawStage==CDDS_PREPAINT &&
                (custom->hdr.idFrom==IDC_SAVE || custom->hdr.idFrom==kReset)) {
+                PaintBuffer buffer(custom->hdc);
+                auto buffered = *custom; buffered.hdc = buffer.dc(); custom = &buffered;
                 const bool primary=custom->hdr.idFrom==IDC_SAVE;
                 const bool enabled=IsWindowEnabled(custom->hdr.hwndFrom)!=FALSE;
                 const auto fill=!enabled?ui::Color::disabledBackground:primary?ui::Color::primary:ui::Color::background;

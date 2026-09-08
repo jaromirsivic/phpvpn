@@ -138,7 +138,7 @@ LRESULT CALLBACK PasswordShaWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l
         SetBkColor(dc, self->resources_.color(color)); return reinterpret_cast<LRESULT>(self->resources_.brush(color));
     }
     case WM_ERASEBKGND: return 1;
-    case WM_PAINT: { PAINTSTRUCT p{}; auto dc = BeginPaint(h, &p); RECT r{}; GetClientRect(h, &r); FillRect(dc, &r, self->resources_.brush(ui::Color::background)); EndPaint(h, &p); return 0; }
+    case WM_PAINT: { PAINTSTRUCT p{}; auto targetDc = BeginPaint(h, &p); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(h, &r); FillRect(dc, &r, self->resources_.brush(ui::Color::background)); buffer.finish(); EndPaint(h, &p); return 0; }
     }
     return DefWindowProcW(h, m, w, l);
 }

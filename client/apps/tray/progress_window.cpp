@@ -1,4 +1,4 @@
-﻿#include "progress_window.h"
+#include "progress_window.h"
 #include "ui_controls.h"
 #include "window_utils.h"
 #include <windowsx.h>
@@ -434,7 +434,7 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
 }
 void ProgressWindow::paint() {
     PAINTSTRUCT ps{};
-    HDC dc = BeginPaint(window_, &ps);
+    auto targetDc = BeginPaint(window_, &ps); PaintBuffer buffer(targetDc); auto dc = buffer.dc();
     RECT client{};
     GetClientRect(window_, &client);
     FillRect(dc, &client, resources_.brush(ui::Color::background));
@@ -452,6 +452,6 @@ void ProgressWindow::paint() {
         paintCard(dc, shifted(layout_.panel), resources_,
                   v.stage == ProgressStage::succeeded ? ui::Color::successBackground : ui::Color::errorBackground,
                   v.stage == ProgressStage::succeeded ? ui::Color::successBorder : ui::Color::errorBorder);
-    EndPaint(window_, &ps);
+    buffer.finish(); EndPaint(window_, &ps);
 }
 } // namespace phpvpn::tray

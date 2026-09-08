@@ -2,8 +2,10 @@
 #include "ui_controls.h"
 #include <commctrl.h>
 namespace phpvpn::tray {
-inline LRESULT paintContractsPrimary(const NMCUSTOMDRAW& paint, const UiResources& resources) {
-    if (paint.dwDrawStage != CDDS_PREPAINT) return CDRF_DODEFAULT;
+inline LRESULT paintContractsPrimary(const NMCUSTOMDRAW& original, const UiResources& resources) {
+    if (original.dwDrawStage != CDDS_PREPAINT) return CDRF_DODEFAULT;
+    PaintBuffer buffer(original.hdc);
+    auto paint = original; paint.hdc = buffer.dc();
     const bool enabled = IsWindowEnabled(paint.hdr.hwndFrom) != FALSE;
     FillRect(paint.hdc, &paint.rc, resources.brush(enabled ? ui::Color::primary : ui::Color::disabledBackground));
     SetBkMode(paint.hdc, TRANSPARENT);

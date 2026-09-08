@@ -4,6 +4,27 @@
 #include "ui_resources.h"
 
 namespace phpvpn::tray {
+// Pixel-coordinate back buffer. Allocation failure leaves the original DC usable.
+// Finish before EndPaint. Only the clipped dirty area is allocated, even for a
+// very tall scrolled Contracts child. ClearType is drawn at final resolution.
+class PaintBuffer {
+public:
+    explicit PaintBuffer(HDC target);
+    ~PaintBuffer();
+    PaintBuffer(const PaintBuffer&) = delete;
+    PaintBuffer& operator=(const PaintBuffer&) = delete;
+    HDC dc() const { return memory_ ? memory_ : target_; }
+    void finish();
+private:
+    HDC target_ = nullptr, memory_ = nullptr;
+    HBITMAP bitmap_ = nullptr;
+    HGDIOBJ previous_ = nullptr;
+    RECT bounds_{};
+};
+// GDI+ coverage antialiasing for curves, GDI ClearType for text and integer
+// FillRect/DrawFocusRect for sharp axial lines. No scaling of raster assets.
+void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
+                       ui::Color fill, ui::Color border, bool ellipse = false);
 struct ControlPlacement { HWND window; Rect rect; };
 // Optional injected native calls permit deterministic failure-path tests.
 struct WindowPositionApi {

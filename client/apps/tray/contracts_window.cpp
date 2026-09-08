@@ -373,7 +373,7 @@ LRESULT CALLBACK ContractsWindow::fieldProcedure(HWND h, UINT m, WPARAM w, LPARA
     return DefSubclassProc(h, m, w, l);
 }
 void ContractsWindow::paint(HWND target) {
-    PAINTSTRUCT p{}; auto dc = BeginPaint(target, &p); RECT r{}; GetClientRect(target, &r);
+    PAINTSTRUCT p{}; auto targetDc = BeginPaint(target, &p); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(target, &r);
     FillRect(dc, &r, resources_.brush(target == window_ || target == body_ ? ui::Color::background : ui::Color::surface));
     if (target == header_ || target == content_) {
         auto font = SelectObject(dc, resources_.font(ui::Font::label)); SetBkMode(dc, TRANSPARENT); SetTextColor(dc, resources_.color(ui::Color::text));
@@ -394,7 +394,7 @@ void ContractsWindow::paint(HWND target) {
         }
         SelectObject(dc, font);
     }
-    EndPaint(target, &p);
+    buffer.finish(); EndPaint(target, &p);
 }
 LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) {
     auto* self = reinterpret_cast<ContractsWindow*>(GetWindowLongPtrW(h, GWLP_USERDATA));

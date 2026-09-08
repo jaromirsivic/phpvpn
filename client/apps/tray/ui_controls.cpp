@@ -3,10 +3,59 @@
 #include <limits>
 #include <commctrl.h>
 #include <string>
+#include <objidl.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
 
 namespace phpvpn::tray {
 namespace {
+struct GraphicsRuntime {
+    ULONG_PTR token = 0;
+    GraphicsRuntime() {
+        Gdiplus::GdiplusStartupInput input;
+        if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) token = 0;
+    }
+    ~GraphicsRuntime() { if (token) Gdiplus::GdiplusShutdown(token); }
+};
+bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
+                 ui::Color fill, ui::Color border, bool ellipse) {
+    static GraphicsRuntime runtime;
+    if (!runtime.token) return false;
+    const auto color = [&](ui::Color role) {
+        const auto c = resources.color(role);
+        return Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
+    };
+    Gdiplus::Graphics graphics(dc);
+    if (graphics.GetLastStatus() != Gdiplus::Ok ||
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias) != Gdiplus::Ok) return false;
+    // Geometry is in physical pixels, as are the existing DPI-aware layouts.
+    // Half-pixel stroke centres keep straight sections on exact pixel bounds.
+    const float stroke = static_cast<float>(std::max(1, scaleForDpi(1, resources.dpi())));
+    const float inset = fill == border ? 0.0f : stroke / 2;
+    const float x = static_cast<float>(rect.left) + inset, y = static_cast<float>(rect.top) + inset;
+    const float w = static_cast<float>(rect.right - rect.left) - 2 * inset;
+    const float h = static_cast<float>(rect.bottom - rect.top) - 2 * inset;
+    if (w <= 0 || h <= 0) return false;
+    Gdiplus::GraphicsPath path;
+    if (ellipse) {
+        if (path.AddEllipse(x, y, w, h) != Gdiplus::Ok) return false;
+    } else {
+        const float d = std::min({static_cast<float>(diameter), w, h});
+        if (d <= 0) return false;
+        if (path.AddArc(x, y, d, d, 180, 90) != Gdiplus::Ok ||
+            path.AddArc(x + w - d, y, d, d, 270, 90) != Gdiplus::Ok ||
+            path.AddArc(x + w - d, y + h - d, d, d, 0, 90) != Gdiplus::Ok ||
+            path.AddArc(x, y + h - d, d, d, 90, 90) != Gdiplus::Ok ||
+            path.CloseFigure() != Gdiplus::Ok) return false;
+    }
+    Gdiplus::SolidBrush brush(color(fill));
+    Gdiplus::Pen pen(color(border), stroke);
+    if (brush.GetLastStatus() != Gdiplus::Ok || pen.GetLastStatus() != Gdiplus::Ok) return false;
+    if (graphics.FillPath(&brush, &path) != Gdiplus::Ok) return false;
+    return fill == border || graphics.DrawPath(&pen, &path) == Gdiplus::Ok;
+}
 void paintToggle(HWND window, HDC dc, const UiResources& resources) {
+    PaintBuffer buffer(dc); dc = buffer.dc();
     const int saved = SaveDC(dc);
     RECT bounds{}; GetClientRect(window, &bounds);
     const auto background = reinterpret_cast<HBRUSH>(SendMessageW(GetParent(window), WM_CTLCOLORSTATIC,
@@ -24,12 +73,11 @@ void paintToggle(HWND window, HDC dc, const UiResources& resources) {
     const int y = (bounds.bottom - height) / 2;
     const auto fill = !enabled ? ui::Color::border : checked ?
         (pressed ? ui::Color::primaryPressed : ui::Color::primary) : ui::Color::disabledText;
-    SelectObject(dc, resources.brush(fill)); SelectObject(dc, resources.pen(fill));
-    RoundRect(dc, x, y, x + width, y + height, height, height);
+    paintRoundedShape(dc, {x, y, x + width, y + height}, height, resources, fill, fill);
     const auto thumbColor = enabled ? ui::Color::primaryText : ui::Color::disabledBackground;
-    SelectObject(dc, resources.brush(thumbColor)); SelectObject(dc, resources.pen(thumbColor));
     const int thumb = x + (checked ? width - height : 0);
-    Ellipse(dc, thumb + inset, y + inset, thumb + height - inset, y + height - inset);
+    paintRoundedShape(dc, {thumb + inset, y + inset, thumb + height - inset, y + height - inset},
+                      0, resources, thumbColor, thumbColor, true);
     RECT label = bounds; label.left = s(51); label.right -= s(3);
     SelectObject(dc, reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0)));
     SetBkMode(dc, TRANSPARENT);
@@ -64,6 +112,45 @@ LRESULT CALLBACK toggleProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
     }
     return result;
 }
+}
+PaintBuffer::PaintBuffer(HDC target) : target_(target) {
+    if (GetClipBox(target, &bounds_) == ERROR) return;
+    const int width = bounds_.right - bounds_.left, height = bounds_.bottom - bounds_.top;
+    if (width <= 0 || height <= 0) return;
+    memory_ = CreateCompatibleDC(target);
+    bitmap_ = CreateCompatibleBitmap(target, width, height);
+    if (!memory_ || !bitmap_) { finish(); return; }
+    previous_ = SelectObject(memory_, bitmap_);
+    if (!previous_ || previous_ == HGDI_ERROR) { previous_ = nullptr; finish(); return; }
+    SetViewportOrgEx(memory_, -bounds_.left, -bounds_.top, nullptr);
+    IntersectClipRect(memory_, bounds_.left, bounds_.top, bounds_.right, bounds_.bottom);
+    if (!BitBlt(memory_, bounds_.left, bounds_.top, width, height, target, bounds_.left, bounds_.top, SRCCOPY)) {
+        SelectObject(memory_, previous_); previous_ = nullptr; finish(); return;
+    }
+    SelectObject(memory_, GetCurrentObject(target, OBJ_FONT));
+    SetTextColor(memory_, GetTextColor(target));
+    SetBkColor(memory_, GetBkColor(target));
+    SetBkMode(memory_, GetBkMode(target));
+}
+PaintBuffer::~PaintBuffer() { finish(); }
+void PaintBuffer::finish() {
+    if (memory_ && previous_) {
+        BitBlt(target_, bounds_.left, bounds_.top, bounds_.right - bounds_.left,
+               bounds_.bottom - bounds_.top, memory_, bounds_.left, bounds_.top, SRCCOPY);
+        SelectObject(memory_, previous_);
+    }
+    if (bitmap_) DeleteObject(bitmap_);
+    if (memory_) DeleteDC(memory_);
+    bitmap_ = nullptr; memory_ = nullptr; previous_ = nullptr;
+}
+void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
+                       ui::Color fill, ui::Color border, bool ellipse) {
+    if (smoothShape(dc, rect, diameter, resources, fill, border, ellipse)) return;
+    const auto brush = SelectObject(dc, resources.brush(fill));
+    const auto pen = SelectObject(dc, resources.pen(border));
+    if (ellipse) Ellipse(dc, rect.left, rect.top, rect.right, rect.bottom);
+    else RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, diameter, diameter);
+    SelectObject(dc, pen); SelectObject(dc, brush);
 }
 bool attachToggleSwitch(HWND window, const UiResources& resources) {
     return window && SetWindowSubclass(window, toggleProcedure, 0,
@@ -101,12 +188,8 @@ int measuredButtonWidth(HDC dc, HFONT font, std::wstring_view text, int dpi) {
         measureText(dc, font, text, 1, false).width + 2 * scaleForDpi(ui::buttonPadding, dpi));
 }
 void paintCard(HDC dc, Rect rect, const UiResources& resources, ui::Color fill, ui::Color border) {
-    const auto oldBrush = SelectObject(dc, resources.brush(fill));
-    const auto oldPen = SelectObject(dc, resources.pen(border));
     const int diameter = scaleForDpi(2 * ui::cardRadius, resources.dpi());
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, diameter, diameter);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
+    paintRoundedShape(dc, rect, diameter, resources, fill, border);
 }
 void invalidateChanged(HWND window, Rect region, bool changed) {
     if (!changed || region.right <= region.left || region.bottom <= region.top) return;

@@ -1,4 +1,4 @@
-﻿#include "statistics_window.h"
+#include "statistics_window.h"
 #include "ui_controls.h"
 #include "window_utils.h"
 #include <windowsx.h>
@@ -295,7 +295,7 @@ LRESULT CALLBACK StatisticsWindow::procedure(HWND window, UINT message, WPARAM w
 }
 void StatisticsWindow::paint() {
     PAINTSTRUCT ps{};
-    HDC dc = BeginPaint(window_, &ps);
+    auto targetDc = BeginPaint(window_, &ps); PaintBuffer buffer(targetDc); auto dc = buffer.dc();
     RECT client{};
     GetClientRect(window_, &client);
     FillRect(dc, &client, resources_.brush(ui::Color::background));
@@ -320,6 +320,6 @@ void StatisticsWindow::paint() {
         const int x = (layout_.rows[5].value.right + layout_.rows[7].label.left) / 2;
         line({x, layout_.rows[5].label.top, x + std::max(1, scaleForDpi(1, dpi)), layout_.rows[8].value.bottom});
     }
-    EndPaint(window_, &ps);
+    buffer.finish(); EndPaint(window_, &ps);
 }
 } // namespace phpvpn::tray

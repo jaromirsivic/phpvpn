@@ -678,7 +678,9 @@ void WizardWindow::revealFocus() {
         else if (bounds.bottom > scroll_ + rect.bottom) scroll(bounds.bottom - rect.bottom);
     }
 }
-void WizardWindow::drawSteps(const DRAWITEMSTRUCT& item) {
+void WizardWindow::drawSteps(const DRAWITEMSTRUCT& original) {
+    PaintBuffer buffer(original.hDC);
+    auto item = original; item.hDC = buffer.dc();
     FillRect(item.hDC, &item.rcItem, resources_.brush(ui::Color::background));
     auto old = SelectObject(item.hDC, font_); SetBkMode(item.hDC, TRANSPARENT);
     RECT client{}; GetClientRect(window_, &client);
@@ -708,10 +710,8 @@ void WizardWindow::drawSteps(const DRAWITEMSTRUCT& item) {
         InflateRect(&rect, -scaleForDpi(8, dpi_), -scaleForDpi(8, dpi_));
         const int diameter = scaleForDpi(24, dpi_);
         RECT marker{rect.left, rect.top, rect.left + diameter, rect.top + diameter};
-        const auto oldBrush = SelectObject(item.hDC, resources_.brush(color));
-        const auto oldPen = SelectObject(item.hDC, resources_.pen(color));
-        Ellipse(item.hDC, marker.left, marker.top, marker.right, marker.bottom);
-        SelectObject(item.hDC, oldBrush); SelectObject(item.hDC, oldPen);
+        paintRoundedShape(item.hDC, {marker.left, marker.top, marker.right, marker.bottom},
+                          0, resources_, color, color, true);
         SetTextColor(item.hDC, resources_.color(ui::Color::primaryText));
         const std::wstring symbol = state == phpvpn::CheckpointResult::success ? L"\u2713" :
             state == phpvpn::CheckpointResult::failed ? L"\u00d7" : std::to_wstring(i + 1);
@@ -787,7 +787,7 @@ LRESULT CALLBACK WizardWindow::bodyProcedure(HWND window, UINT message, WPARAM w
     }
     if (message == WM_ERASEBKGND && self->font_) return 1;
     if (message == WM_PAINT && self->font_) {
-        PAINTSTRUCT paint{}; const auto dc = BeginPaint(window, &paint);
+        PAINTSTRUCT paint{}; auto targetDc = BeginPaint(window, &paint); PaintBuffer buffer(targetDc); auto dc = buffer.dc();
         FillRect(dc, &paint.rcPaint, self->resources_.brush(ui::Color::background));
         for (const auto& [bounds, color] : self->cards_)
             paintCard(dc, {bounds.left, bounds.top - self->scroll_, bounds.right, bounds.bottom - self->scroll_}, self->resources_, color);
@@ -795,7 +795,7 @@ LRESULT CALLBACK WizardWindow::bodyProcedure(HWND window, UINT message, WPARAM w
             RECT rect{bounds.left, bounds.top - self->scroll_, bounds.right, bounds.bottom - self->scroll_};
             FillRect(dc, &rect, self->resources_.brush(ui::Color::separator));
         }
-        EndPaint(window, &paint); return 0;
+        buffer.finish(); EndPaint(window, &paint); return 0;
     }
     if (message == WM_COMMAND) { self->command(LOWORD(wParam), HIWORD(wParam)); return 0; }
     if (message == WM_VSCROLL) {
@@ -826,7 +826,7 @@ LRESULT CALLBACK WizardWindow::procedure(HWND window, UINT message, WPARAM wPara
     switch (message) {
         case WM_PAINT:
             if (self->font_ && self->body_) {
-                PAINTSTRUCT paint{}; const auto dc = BeginPaint(window, &paint);
+                PAINTSTRUCT paint{}; auto targetDc = BeginPaint(window, &paint); PaintBuffer buffer(targetDc); auto dc = buffer.dc();
                 FillRect(dc, &paint.rcPaint, self->resources_.brush(ui::Color::background));
                 RECT client{}, reset{}; GetClientRect(window, &client);
                 GetWindowRect(GetDlgItem(window, resetId), &reset);
@@ -834,19 +834,20 @@ LRESULT CALLBACK WizardWindow::procedure(HWND window, UINT message, WPARAM wPara
                 const int y = reset.top - scaleForDpi(16, self->dpi_);
                 RECT divider{0, y, client.right, y + scaleForDpi(1, self->dpi_)};
                 FillRect(dc, &divider, self->resources_.brush(ui::Color::separator));
-                EndPaint(window, &paint); return 0;
+                buffer.finish(); EndPaint(window, &paint); return 0;
             }
             break;
         case WM_ERASEBKGND:
             if (self->font_) {
-                RECT rect{}; GetClientRect(window, &rect);
-                FillRect(reinterpret_cast<HDC>(wParam), &rect, self->resources_.brush(ui::Color::background)); return 1;
+                return 1;
             }
             break;
         case WM_NOTIFY: {
             const auto* custom = reinterpret_cast<NMCUSTOMDRAW*>(lParam);
             if (custom && custom->hdr.code == NM_CUSTOMDRAW && custom->dwDrawStage == CDDS_PREPAINT &&
                 (custom->hdr.idFrom == nextId || custom->hdr.idFrom == resetId)) {
+                PaintBuffer buffer(custom->hdc);
+                auto buffered = *custom; buffered.hdc = buffer.dc(); custom = &buffered;
                 const bool primary = custom->hdr.idFrom == nextId, enabled = IsWindowEnabled(custom->hdr.hwndFrom) != FALSE;
                 const auto fill = !enabled ? ui::Color::disabledBackground : primary ? ui::Color::primary : ui::Color::background;
                 FillRect(custom->hdc, &custom->rc, self->resources_.brush(fill));
