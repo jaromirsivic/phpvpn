@@ -20,13 +20,19 @@ bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
         0,0,1,1,window_,nullptr,instance,nullptr);
     if(!body_ || !SetWindowSubclass(body_,bodyProcedure,2,reinterpret_cast<DWORD_PTR>(this))) { close(); return false; }
     auto control = [&](const wchar_t* kind, const wchar_t* text, DWORD style, int id) {
-        return CreateWindowExW(0, kind, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 1, 1, id==IDOK?window_:body_,
+        const bool modernText = std::wstring_view(kind) == L"EDIT" && !(style & (ES_READONLY | ES_MULTILINE));
+        auto child = CreateWindowExW(0, kind, text, WS_CHILD | (modernText ? 0 : WS_VISIBLE) | style, 0, 0, 1, 1, id==IDOK?window_:body_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
+        if (modernText && child) {
+            if (!attachModernTextBox(child, resources_, ui::Color::background)) { DestroyWindow(child); return HWND{}; }
+            ShowWindow(child, SW_SHOWNA);
+        }
+        return child;
     };
     const wchar_t* texts[]{L"Generate key from password", L"Enter a password to create a SHA-256 communication key.",
         L"Password", L"The key updates automatically as you type.", L"SHA-256 key", L""};
     for (std::size_t i = 0; i < labels_.size(); ++i) labels_[i] = control(L"STATIC", texts[i], SS_NOPREFIX, 0);
-    input_ = control(L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 501);
+    input_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 501);
     hash_ = control(L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL | ES_READONLY, 502);
     ok_ = control(L"BUTTON", L"OK", WS_TABSTOP | BS_OWNERDRAW, IDOK);
     bool complete = input_ && hash_ && attachModernButton(ok_, resources_, ButtonRole::primary);

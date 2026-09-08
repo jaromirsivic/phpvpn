@@ -78,8 +78,14 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
 }
 bool ContractsWindow::createRows() {
     auto control = [&](HWND parent, const wchar_t* kind, const wchar_t* text, DWORD style, int id) {
-        return createWindow_(0, kind, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 1, 1, parent,
+        const bool modernText = std::wstring_view(kind) == L"EDIT";
+        auto child = createWindow_(0, kind, text, WS_CHILD | (modernText ? 0 : WS_VISIBLE) | style, 0, 0, 1, 1, parent,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
+        if (modernText && child) {
+            if (!attachModernTextBox(child, resources_)) { DestroyWindow(child); return HWND{}; }
+            ShowWindow(child, SW_SHOWNA);
+        }
+        return child;
     };
     bool complete = true;
     rows_.reserve(pageSize);
@@ -92,7 +98,8 @@ bool ContractsWindow::createRows() {
         const auto base = firstControl + static_cast<int>(rows_.size() - 1) * 4;
         row.controls[0] = control(content_, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, base);
         complete = attachToggleSwitch(row.controls[0], resources_) && complete;
-        row.controls[1] = control(content_, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, base + 1);
+        row.controls[1] = control(content_, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, base + 1);
+        setTextBoxInvalid(row.controls[1], !source.keyValid());
         row.controls[2] = control(content_, L"BUTTON", L"Random", WS_TABSTOP | BS_OWNERDRAW, base + 2);
         row.controls[3] = control(content_, L"BUTTON", L"Password SHA", WS_TABSTOP | BS_OWNERDRAW, base + 3);
         complete = attachModernButton(row.controls[2], resources_, ButtonRole::neutral, ui::Color::surface) && complete;
@@ -328,7 +335,9 @@ void ContractsWindow::refresh() {
         // Disable the native checkbox itself so its visual and accessible
         // unavailable state agree with the frozen table, including repaint.
         EnableWindow(row.controls[0], !snapshot.saving && !snapshot.unknown);
+        EnableWindow(row.controls[1], !snapshot.saving && !snapshot.unknown);
         const bool valid = controller_.model()->row(row.remote)->keyValid();
+        setTextBoxInvalid(row.controls[1], !valid);
         if (valid != row.lastValid) {
             row.lastValid = valid; InvalidateRect(row.controls[1], nullptr, FALSE);
             if (accessibility_) accessibility_->SetHwndPropStr(row.controls[1],static_cast<DWORD>(OBJID_CLIENT),CHILDID_SELF,

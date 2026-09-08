@@ -20,7 +20,7 @@ struct GraphicsRuntime {
     ~GraphicsRuntime() { if (token) Gdiplus::GdiplusShutdown(token); }
 };
 bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
-                 ui::Color fill, ui::Color border, bool ellipse) {
+                 ui::Color fill, ui::Color border, bool ellipse, float physicalStroke = 0) {
     static GraphicsRuntime runtime;
     if (!runtime.token) return false;
     const auto color = [&](ui::Color role) {
@@ -32,7 +32,7 @@ bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias) != Gdiplus::Ok) return false;
     // Geometry is in physical pixels, as are the existing DPI-aware layouts.
     // Half-pixel stroke centres keep straight sections on exact pixel bounds.
-    const float stroke = static_cast<float>(std::max(1, scaleForDpi(1, resources.dpi())));
+    const float stroke = physicalStroke > 0 ? physicalStroke : static_cast<float>(std::max(1, scaleForDpi(1, resources.dpi())));
     const float inset = fill == border ? 0.0f : stroke / 2;
     const float x = static_cast<float>(rect.left) + inset, y = static_cast<float>(rect.top) + inset;
     const float w = static_cast<float>(rect.right - rect.left) - 2 * inset;
@@ -55,6 +55,131 @@ bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
     if (brush.GetLastStatus() != Gdiplus::Ok || pen.GetLastStatus() != Gdiplus::Ok) return false;
     if (graphics.FillPath(&brush, &path) != Gdiplus::Ok) return false;
     return fill == border || graphics.DrawPath(&pen, &path) == Gdiplus::Ok;
+}
+constexpr UINT_PTR textBoxId = 0x50425639;
+struct ModernTextBox {
+    const UiResources* resources;
+    ui::Color background;
+    bool invalid = false;
+};
+bool textBoxEnabled(HWND window) {
+    for (auto current = window; current; current = GetParent(current))
+        if (!IsWindowEnabled(current)) return false;
+    return true;
+}
+ui::Color textBoxFill(HWND window, const ModernTextBox& box) {
+    return !textBoxEnabled(window) ? ui::Color::disabledBackground :
+        box.invalid ? ui::Color::errorBackground : ui::Color::surface;
+}
+void repaintTextBox(HWND window) {
+    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME);
+}
+void textBoxFrame(HWND window) {
+    SetWindowPos(window, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    repaintTextBox(window);
+}
+void paintTextBoxFrame(HWND window, HDC dc, const ModernTextBox& box) {
+    const int saved = SaveDC(dc);
+    RECT bounds{}, client{}; GetWindowRect(window, &bounds); GetClientRect(window, &client);
+    POINT origin{}; ClientToScreen(window, &origin);
+    OffsetRect(&client, origin.x - bounds.left, origin.y - bounds.top);
+    OffsetRect(&bounds, -bounds.left, -bounds.top);
+    ExcludeClipRect(dc, client.left, client.top, client.right, client.bottom);
+    PaintBuffer buffer(dc); auto target = buffer.dc();
+    const auto& resources = *box.resources;
+    FillRect(target, &bounds, resources.brush(box.background));
+    const bool enabled = textBoxEnabled(window);
+    const bool focus = enabled && GetFocus() == window;
+    const auto fill = textBoxFill(window, box);
+    const auto border = !enabled ? ui::Color::border : box.invalid ? ui::Color::error :
+        focus ? ui::Color::focus : ui::Color::border;
+    const int diameter = scaleForDpi(12, resources.dpi());
+    const float stroke = focus || (enabled && box.invalid) ? 2.0f : 1.0f;
+    const Rect rect{0, 0, bounds.right, bounds.bottom};
+    if (!smoothShape(target, rect, diameter, resources, fill, border, false, stroke)) {
+        auto pen = CreatePen(PS_SOLID, static_cast<int>(stroke), resources.color(border));
+        auto oldPen = SelectObject(target, pen); auto oldBrush = SelectObject(target, resources.brush(fill));
+        RoundRect(target, 0, 0, bounds.right, bounds.bottom, diameter, diameter);
+        SelectObject(target, oldBrush); SelectObject(target, oldPen); DeleteObject(pen);
+    }
+    if (focus) {
+        const int inset = 2;
+        smoothShape(target, {inset, inset, bounds.right-inset, bounds.bottom-inset},
+            std::max(1, diameter-2*inset), resources, fill,
+            box.invalid ? ui::Color::errorBorder : ui::Color::selectedStep, false, 1.0f);
+    }
+    buffer.finish(); RestoreDC(dc, saved);
+}
+LRESULT CALLBACK textBoxProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
+                                  UINT_PTR id, DWORD_PTR data) {
+    const auto* box = reinterpret_cast<ModernTextBox*>(data);
+    // Classic EDIT does not consistently bind Select All across Windows
+    // versions. Delegate the operation itself to the native selection API.
+    if (message == WM_CHAR && w == 1 && textBoxEnabled(window)) {
+        SendMessageW(window, EM_SETSEL, 0, -1); return 0;
+    }
+    if (message == WM_PRINT) {
+        const auto result = DefSubclassProc(window, message, w, l & ~PRF_NONCLIENT);
+        DWORD_PTR alive = 0;
+        if ((l & PRF_NONCLIENT) && GetWindowSubclass(window, textBoxProcedure, id, &alive))
+            paintTextBoxFrame(window, reinterpret_cast<HDC>(w), *reinterpret_cast<ModernTextBox*>(alive));
+        return result;
+    }
+    if (message == WM_NCCALCSIZE) {
+        auto& rect = w ? reinterpret_cast<NCCALCSIZE_PARAMS*>(l)->rgrc[0] : *reinterpret_cast<RECT*>(l);
+        const int width = rect.right-rect.left, height = rect.bottom-rect.top;
+        const int padding = scaleForDpi(8, box->resources->dpi());
+        HDC dc = GetDC(window);
+        const auto font = reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0));
+        const auto old = font ? SelectObject(dc, font) : nullptr;
+        TEXTMETRICW metrics{}; GetTextMetricsW(dc, &metrics);
+        if (old) SelectObject(dc, old); ReleaseDC(window, dc);
+        const int x = std::min(padding, std::max(0, (width-1)/2));
+        const int y = std::min(std::max(scaleForDpi(3, box->resources->dpi()), (height-static_cast<int>(metrics.tmHeight))/2),
+            std::max(0, (height-1)/2));
+        InflateRect(&rect, -x, -y);
+        return 0;
+    }
+    if (message == WM_NCPAINT) {
+        const auto dc = GetWindowDC(window);
+        if (dc) { paintTextBoxFrame(window, dc, *box); ReleaseDC(window, dc); }
+        return 0;
+    }
+    if (message == WM_NCHITTEST) return HTCLIENT;
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(window, textBoxProcedure, id); delete box;
+        return DefSubclassProc(window, message, w, l);
+    }
+    const auto result = DefSubclassProc(window, message, w, l);
+    // Native notifications can synchronously destroy the control. Never use
+    // the saved state after calling through the native text implementation.
+    DWORD_PTR alive = 0;
+    if (!GetWindowSubclass(window, textBoxProcedure, id, &alive)) return result;
+    switch (message) {
+    case WM_SETFONT: case WM_DPICHANGED_AFTERPARENT:
+        textBoxFrame(window); break;
+    case WM_SETFOCUS: case WM_KILLFOCUS: case WM_ENABLE: case WM_SETTEXT:
+    case WM_SIZE: case WM_THEMECHANGED: case WM_SYSCOLORCHANGE:
+        repaintTextBox(window); break;
+    }
+    return result;
+}
+LRESULT CALLBACK textBoxParentProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
+                                        UINT_PTR id, DWORD_PTR) {
+    DWORD_PTR data = 0;
+    if ((message == WM_CTLCOLOREDIT || message == WM_CTLCOLORSTATIC) && l &&
+        GetWindowSubclass(reinterpret_cast<HWND>(l), textBoxProcedure, textBoxId, &data)) {
+        const auto& box = *reinterpret_cast<ModernTextBox*>(data);
+        const auto field = reinterpret_cast<HWND>(l);
+        const auto fill = textBoxFill(field, box);
+        const auto dc = reinterpret_cast<HDC>(w);
+        SetBkColor(dc, box.resources->color(fill));
+        SetTextColor(dc, box.resources->color(textBoxEnabled(field) ? ui::Color::text : ui::Color::disabledText));
+        return reinterpret_cast<LRESULT>(box.resources->brush(fill));
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, textBoxParentProcedure, id);
+    return DefSubclassProc(window, message, w, l);
 }
 void paintToggle(HWND window, HDC dc, const UiResources& resources) {
     PaintBuffer buffer(dc); dc = buffer.dc();
@@ -479,6 +604,29 @@ bool attachModernButton(HWND window, const UiResources& resources, ButtonRole ro
     return true;
 }
 thread_local LayoutFrame* LayoutFrame::active_ = nullptr;
+bool attachModernTextBox(HWND window, const UiResources& resources, ui::Color background) {
+    if (!window) return false;
+    const auto style = GetWindowLongPtrW(window, GWL_STYLE);
+    wchar_t name[16]{}; GetClassNameW(window, name, 16);
+    if (std::wstring_view(name) != L"Edit" && std::wstring_view(name) != L"EDIT") return false;
+    if ((style & (WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY)) ||
+        (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_CLIENTEDGE)) return false;
+    auto* box = new (std::nothrow) ModernTextBox{&resources, background};
+    if (!box) return false;
+    if (!SetWindowSubclass(GetParent(window), textBoxParentProcedure, textBoxId, 0) ||
+        !SetWindowSubclass(window, textBoxProcedure, textBoxId, reinterpret_cast<DWORD_PTR>(box))) {
+        delete box; return false;
+    }
+    textBoxFrame(window);
+    return true;
+}
+void setTextBoxInvalid(HWND window, bool invalid) {
+    DWORD_PTR data = 0;
+    if (!window || !GetWindowSubclass(window, textBoxProcedure, textBoxId, &data)) return;
+    auto& box = *reinterpret_cast<ModernTextBox*>(data);
+    if (box.invalid == invalid) return;
+    box.invalid = invalid; repaintTextBox(window);
+}
 LayoutFrame::LayoutFrame(HWND window) : root_(GetAncestor(window, GA_ROOT)), previous_(active_) {
     for (auto* frame = previous_; frame; frame = frame->previous_)
         if (frame->root_ == root_) outer_ = false;

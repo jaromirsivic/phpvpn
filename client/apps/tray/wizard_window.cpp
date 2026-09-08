@@ -409,8 +409,9 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
         child = std::exchange(previous.first, nullptr); break;
     }
     const bool created = !child;
-    if (created) child = CreateWindowExW(type == std::wstring_view(L"EDIT") ? WS_EX_CLIENTEDGE : 0, type, text.c_str(),
-        WS_CHILD | WS_VISIBLE | style, margin, cursorY_, std::max(1, contentWidth_ - 2 * margin), height, body_,
+    const bool modernText = type == std::wstring_view(L"EDIT");
+    if (created) child = CreateWindowExW(0, type, text.c_str(),
+        WS_CHILD | (modernText ? 0 : WS_VISIBLE) | style, margin, cursorY_, std::max(1, contentWidth_ - 2 * margin), height, body_,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
     else {
         std::wstring current(static_cast<std::size_t>(GetWindowTextLengthW(child)) + 1, L'\0');
@@ -420,6 +421,12 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
     }
     if (created && type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
         if (!attachToggleSwitch(child, resources_)) { DestroyWindow(child); return nullptr; }
+    }
+    if (created && modernText) {
+        if (!attachModernTextBox(child, resources_, inCard_ ? cardColor_ : ui::Color::background)) {
+            DestroyWindow(child); return nullptr;
+        }
+        ShowWindow(child, SW_SHOWNA);
     }
     EnableWindow(child, TRUE);
     SetPropW(child, L"WizardBackground", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(inCard_ ? cardColor_ : ui::Color::background) + 1));
@@ -588,6 +595,23 @@ void WizardWindow::render() {
     } else if (step == WizardStep::finished) {
         label(wizardText::savedHeading, true); label(wizardText::saved);
     }
+    // Presentation follows only errors already evaluated by the workflow.
+    // Transport failures (including timeout) do not declare the input invalid.
+    int invalidField = 0;
+    if (model_.error()) {
+        const auto& failure = *model_.error();
+        if (failure.code == "config_invalid_url" && step == WizardStep::serverUrl) invalidField = urlId;
+        else if (failure.code == "config_invalid_value" && step == WizardStep::serverSecret) invalidField = secretId;
+        else if ((failure.code == "config_invalid_address" || failure.code == "wizard_contract_self_conflict") &&
+            step == WizardStep::identity) invalidField = ipId;
+        else if (failure.code == "config_invalid_key" && step == WizardStep::identity) invalidField = keyId;
+        else if (failure.code == "crypto_tag_mismatch" && failure.field == "serverSecret") invalidField = secretId;
+        else if (failure.code == "server_unauthorized" && failure.field) {
+            if (*failure.field == "serverSecret") invalidField = secretId;
+            else if (*failure.field == "accessKey") invalidField = keyId;
+        }
+    }
+    for (int id : {urlId, secretId, ipId, keyId}) setTextBoxInvalid(GetDlgItem(body_, id), id == invalidField);
     if (model_.error()) {
         const auto& failure = *model_.error();
         beginCard(ui::Color::errorBackground);

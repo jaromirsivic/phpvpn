@@ -64,6 +64,11 @@ void invalidateChanged(HWND window, Rect region, bool changed);
 // Resources must outlive the control, as they do for the containing window.
 bool attachToggleSwitch(HWND window, const UiResources& resources);
 enum class ButtonRole { neutral, primary, reset };
+// Attach only to a hidden, borderless, editable single-line native EDIT.
+// Keeps the original HWND, parent, ID and native text/accessibility provider.
+bool attachModernTextBox(HWND window, const UiResources& resources,
+                         ui::Color background = ui::Color::surface);
+void setTextBoxInvalid(HWND window, bool invalid);
 // Only the presentation is replaced. BUTTON keeps its native input, dialog
 // input and accessibility provider. Create with BS_OWNERDRAW before attaching,
 // while the containing window is hidden. Primary starts as the default action.
