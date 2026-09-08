@@ -5,6 +5,8 @@
 #include "platform/windows/ipc_pipe.h"
 #include "resource.h"
 #include "window_utils.h"
+#include "ui_controls.h"
+#include <commctrl.h>
 #include <algorithm>
 #include <atomic>
 
@@ -19,24 +21,91 @@ struct EditorWindow::ResetTask {
     std::atomic<bool> done{false};
     std::string document;
     std::wstring error;
+    ~ResetTask() { secureWipe(document.data(), document.size()); }
 };
 EditorWindow::~EditorWindow() {
     if (window_) DestroyWindow(window_);
     // No worker ever owns HWND or this. Its only I/O has a five-second deadline.
     if (resetThread_.joinable()) resetThread_.join();
 }
-void EditorWindow::setSaving(std::uint64_t generation, bool saving) {
-    if (!window_ || generation != generation_) return;
-    saving_ = saving;
+EditorLifecycleSnapshot EditorWindow::lifecycleSnapshot() const {
+    return {window_ != nullptr, window_ && save_ && SendMessageW(field_, EM_GETMODIFY, 0, 0) != 0,
+        window_ && saving_, window_ && unknown_, generation_, draftGeneration_, operationGeneration_, saveOperation_.deadlineMs};
+}
+std::optional<SaveOperation> EditorWindow::beginSave(std::uint64_t deadlineMs) {
+    if (!window_ || !save_ || saving_ || unknown_ || endingSession_ ||
+        (resetTask_ && resetTask_->generation == generation_) || deadlineMs <= GetTickCount64()) return {};
+    if (!SetTimer(window_, kResetTimer, 50, nullptr)) return {};
+    saveOperation_ = {generation_, draftGeneration_, ++operationGeneration_, deadlineMs};
+    saving_ = true;
     updateEnabled();
+    return saveOperation_;
+}
+bool EditorWindow::finishSave(const SaveResult& result) {
+    if (!window_ || endingSession_ || !saving_ || result.operation != saveOperation_ ||
+        result.operation.windowGeneration != generation_ || result.operation.draftGeneration != draftGeneration_) return false;
+    saving_ = false;
+    unknown_ = result.outcome == SaveOutcome::unknown;
+    if (!resetTask_) KillTimer(window_, kResetTimer);
+    updateEnabled();
+    const auto generation = generation_;
+    if (result.outcome == SaveOutcome::confirmed) {
+        MessageBoxW(window_, L"The configuration was stored. It takes effect on the next connection attempt.",
+            L"Edit Config", MB_OK | MB_ICONINFORMATION);
+        // A modal message pumps session-end and other generation changes.
+        if (window_ && generation == generation_ && !endingSession_) DestroyWindow(window_);
+    } else {
+        const auto text = unknown_ ? L"The file may already have changed. The save result is unknown. Close this editor and open Edit Config to inspect the current configuration. The save will not be retried automatically." :
+            result.outcome == SaveOutcome::notSent ? L"The save was not sent. Your text has been preserved." :
+            L"The service rejected the configuration before publication. Your text has been preserved.";
+        MessageBoxW(window_, text, L"Edit Config", MB_OK | (unknown_ ? MB_ICONWARNING : MB_ICONERROR));
+        if (window_ && generation == generation_ && !endingSession_) SetFocus(field_);
+    }
+    return true;
+}
+bool EditorWindow::approvedDiscard(const EditorLifecycleSnapshot& approved) {
+    if (!window_ || saving_ || endingSession_ || lifecycleSnapshot() != approved) return false;
+    DestroyWindow(window_);
+    return true;
+}
+void EditorWindow::requestClose() {
+    if (saving_ || endingSession_) return;
+    const auto approved = lifecycleSnapshot();
+    if ((approved.dirty || approved.unknown) && MessageBoxW(window_, approved.unknown ?
+        L"The file may already have changed. Close without checking the save result?" : L"Discard unsaved changes?",
+        L"Edit Config", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    approvedDiscard(approved);
+}
+void EditorWindow::clearDraft() {
+    changingContent_ = true;
+    if (field_) { SetWindowTextW(field_, L""); SendMessageW(field_, EM_EMPTYUNDOBUFFER, 0, 0); }
+    document_.load({});
+    changingContent_ = false;
+}
+void EditorWindow::endSession() {
+    if (endingSession_) return;
+    endingSession_ = true;
+    // Copy before invocation: destroying the window clears the stored callbacks.
+    const auto abandon = abandonSave_;
+    if (abandon) abandon();
+    ++generation_; ++draftGeneration_; ++operationGeneration_;
+    saving_ = unknown_ = false;
+    if (window_) { KillTimer(window_, kResetTimer); DestroyWindow(window_); }
+    // Reset owns only task + endpoint values, never this/HWND or an app callback.
+    if (resetThread_.joinable()) resetThread_.detach();
+    resetTask_.reset();
 }
 void EditorWindow::updateEnabled() {
     const bool resetting = resetTask_ && resetTask_->generation == generation_;
     EnableWindow(field_, !saving_ && !resetting);
-    EnableWindow(GetDlgItem(window_, IDC_SAVE), !saving_ && !resetting);
-    EnableWindow(GetDlgItem(window_, kReset), !saving_ && !resetTask_);
+    SendMessageW(field_, EM_SETREADONLY, !save_ || unknown_, 0);
+    EnableWindow(GetDlgItem(window_, IDC_SAVE), !saving_ && !unknown_ && !resetting);
+    EnableWindow(GetDlgItem(window_, kReset), !saving_ && !unknown_ && !resetTask_);
+    EnableWindow(GetDlgItem(window_, IDC_CANCEL), !saving_);
 }
 void EditorWindow::setContent(const std::string& content) {
+    changingContent_ = true;
+    ++draftGeneration_;
     document_.load(content);
     const auto presentation = document_.presentation();
     std::string crlf;
@@ -50,12 +119,15 @@ void EditorWindow::setContent(const std::string& content) {
     SetWindowTextW(field_, widen(crlf).c_str());
     SendMessageW(field_, EM_SETMODIFY, FALSE, 0);
     SetWindowTextW(window_, (title_ + (document_.literal() ? L" - JSON string literal (raw NUL shown as \\u0000)" : L"")).c_str());
+    changingContent_ = false;
 }
 void EditorWindow::reset() {
-    if (!save_ || saving_ || resetTask_) return;
+    if (!save_ || saving_ || unknown_ || endingSession_ || resetTask_) return;
+    const auto expected = lifecycleSnapshot();
     if (MessageBoxW(window_,
         L"Restore the default configuration in this editor? The file will change only after you choose Save.",
         L"Edit Config", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    if (endingSession_ || lifecycleSnapshot() != expected) return;
     auto task = std::make_shared<ResetTask>();
     task->generation = generation_;
     resetTask_ = task;
@@ -118,7 +190,7 @@ void EditorWindow::pollReset() {
     if (!resetTask_ || !resetTask_->done.load(std::memory_order_acquire)) return;
     if (resetThread_.joinable()) resetThread_.join();
     auto task = std::move(resetTask_);
-    KillTimer(window_, kResetTimer);
+    if (!saving_) KillTimer(window_, kResetTimer);
     updateEnabled();
     if (task->generation != generation_) return;
     if (!task->error.empty()) {
@@ -130,18 +202,26 @@ void EditorWindow::pollReset() {
     SendMessageW(field_, EM_SETMODIFY, TRUE, 0);
     SetFocus(field_);
 }
-void EditorWindow::completeSave(std::uint64_t generation) {
-    if (!window_ || generation != generation_) return;
-    MessageBoxW(window_, L"The configuration was stored. It takes effect on the next connection attempt.",
-                L"Edit Config", MB_OK | MB_ICONINFORMATION);
-    DestroyWindow(window_);
+void EditorWindow::pollLifecycle() {
+    if (endingSession_) return;
+    if (saving_) {
+        const auto poll = pollSave_;
+        if (poll) poll();
+    }
+    if (window_) pollReset();
 }
-void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std::string& content, Save save) {
+void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std::string& content, Save save,
+                        const std::string& configPath, std::function<void()> pollSave, std::function<void()> abandonSave) {
+    if (endingSession_) return;
     if (window_) DestroyWindow(window_);
     ++generation_;
     saving_ = false;
+    unknown_ = false;
+    saveOperation_ = {};
     save_ = std::move(save);
+    pollSave_ = std::move(pollSave); abandonSave_ = std::move(abandonSave);
     title_ = title;
+    instance_ = instance;
     oldClient_ = {};
     oldLayout_ = {};
     WNDCLASSEXW type{};
@@ -168,12 +248,16 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     SendMessageW(field_, EM_SETLIMITTEXT, kIpcMaxMessageBytes, 0);
     setContent(content);
     if (save_) {
-        CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_SAVE), instance, nullptr);
+        heading_ = CreateWindowExW(0, L"STATIC", L"Edit configuration", WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
+            0, 0, 1, 1, window_, nullptr, instance, nullptr);
+        path_ = CreateWindowExW(0, L"EDIT", widen(configPath).c_str(), WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL,
+            0, 0, 1, 1, window_, nullptr, instance, nullptr);
         CreateWindowExW(0, L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kReset)), instance, nullptr);
         CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_CANCEL), instance, nullptr);
+        CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_SAVE), instance, nullptr);
     }
     updateFonts();
     layout();
@@ -190,16 +274,16 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
 }
 void EditorWindow::updateFonts() {
     const int dpi = static_cast<int>(GetDpiForWindow(window_));
-    HFONT text = makeFont(dpi, 14, false, true);
-    HFONT button = makeFont(dpi, 15);
+    if (!resources_.update(instance_, dpi)) return;
+    HFONT text = resources_.font(ui::Font::mono);
+    HFONT button = resources_.font(ui::Font::label);
     SendMessageW(field_, WM_SETFONT, reinterpret_cast<WPARAM>(text), TRUE);
     for (const int id : {IDC_SAVE, kReset, IDC_CANCEL}) {
         if (const HWND child = GetDlgItem(window_, id)) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(button), TRUE);
     }
-    if (textFont_) DeleteObject(textFont_);
-    if (buttonFont_) DeleteObject(buttonFont_);
-    textFont_ = text;
-    buttonFont_ = button;
+    if (heading_) SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
+    if (path_) SendMessageW(path_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::subtitle)), TRUE);
+    SendMessageW(window_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(resources_.icon(2)));
 }
 void EditorWindow::layout() {
     if (!field_) return;
@@ -207,27 +291,17 @@ void EditorWindow::layout() {
     GetClientRect(window_, &client);
     const Size size{client.right, client.bottom};
     const auto next = computeEditorLayout(size, static_cast<int>(GetDpiForWindow(window_)), static_cast<bool>(save_));
-    HDWP batch = BeginDeferWindowPos(save_ ? 4 : 1);
+    std::vector<ControlPlacement> controls;
     const auto move = [&](HWND child, Rect rect) {
         if (!child) return;
-        if (batch) batch = DeferWindowPos(batch, child, nullptr, rect.left, rect.top,
-            rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        controls.push_back({child,rect});
     };
     move(field_, next.textArea);
     move(GetDlgItem(window_, IDC_SAVE), next.saveButton);
     move(GetDlgItem(window_, kReset), next.resetButton);
     move(GetDlgItem(window_, IDC_CANCEL), next.cancelButton);
-    const bool moved = batch && EndDeferWindowPos(batch);
-    if (!moved) {
-        const auto fallback = [](HWND child, Rect rect) {
-            if (child) SetWindowPos(child, nullptr, rect.left, rect.top, rect.right - rect.left,
-                                   rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE);
-        };
-        fallback(field_, next.textArea);
-        fallback(GetDlgItem(window_, IDC_SAVE), next.saveButton);
-        fallback(GetDlgItem(window_, kReset), next.resetButton);
-        fallback(GetDlgItem(window_, IDC_CANCEL), next.cancelButton);
-    }
+    move(heading_,next.heading); move(path_,next.path);
+    positionControls(window_,controls);
     const auto exposed = exposedParentRegion(oldClient_, size, oldLayout_, next);
     const RECT region{exposed.left, exposed.top, exposed.right, exposed.bottom};
     InvalidateRect(window_, &region, TRUE);
@@ -245,13 +319,17 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
     if (!self) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
         case WM_COMMAND:
+            if (reinterpret_cast<HWND>(lParam) == self->field_ && HIWORD(wParam) == EN_CHANGE && !self->changingContent_) {
+                ++self->draftGeneration_;
+                return 0;
+            }
             if (LOWORD(wParam) == kReset) { self->reset(); return 0; }
             if (LOWORD(wParam) == IDC_CANCEL || LOWORD(wParam) == IDCANCEL) {
-                DestroyWindow(window);
+                self->requestClose();
                 return 0;
             }
             if ((LOWORD(wParam) == IDC_SAVE || LOWORD(wParam) == IDOK) && self->save_) {
-                if (self->saving_ || (self->resetTask_ && self->resetTask_->generation == self->generation_)) return 0;
+                if (self->saving_ || self->unknown_ || self->endingSession_ || (self->resetTask_ && self->resetTask_->generation == self->generation_)) return 0;
                 const int length = GetWindowTextLengthW(self->field_);
                 std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
                 GetWindowTextW(self->field_, text.data(), length + 1);
@@ -266,7 +344,9 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
                     MessageBoxW(window, L"Enter a complete JSON string literal, including its surrounding quotes. The file has not been changed.", L"Edit Config", MB_OK | MB_ICONERROR);
                     return 0;
                 }
-                if (self->save_(*document)) {
+                const auto save = self->save_;
+                const auto generation = self->generation_;
+                if (save(*document) && self->window_ && generation == self->generation_ && !self->endingSession_) {
                     MessageBoxW(window, L"The configuration was stored. It takes effect on the next connection attempt.",
                                 L"Edit Config", MB_OK | MB_ICONINFORMATION);
                     DestroyWindow(window);
@@ -275,9 +355,48 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             }
             break;
         case WM_TIMER:
-            if (wParam == kResetTimer) { self->pollReset(); return 0; }
+            if (wParam == kResetTimer) { self->pollLifecycle(); return 0; }
             break;
         case WM_SIZE: self->layout(); return 0;
+        case WM_SETTINGCHANGE: case WM_SYSCOLORCHANGE:
+            self->updateFonts(); self->layout(); break;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps{}; HDC dc=BeginPaint(window,&ps); RECT r{}; GetClientRect(window,&r);
+            FillRect(dc,&r,self->resources_.brush(ui::Color::background));
+            if(self->save_) {
+                const int top=self->oldLayout_.footer.top;
+                RECT line{0,top,r.right,top+std::max(1,scaleForDpi(1,self->resources_.dpi()))};
+                FillRect(dc,&line,self->resources_.brush(ui::Color::separator));
+            }
+            EndPaint(window,&ps); return 0;
+        }
+        case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC: {
+            const bool header=reinterpret_cast<HWND>(lParam)==self->heading_ || reinterpret_cast<HWND>(lParam)==self->path_;
+            const auto background=header?ui::Color::background:ui::Color::surface;
+            HDC dc=reinterpret_cast<HDC>(wParam);
+            SetTextColor(dc,self->resources_.color(reinterpret_cast<HWND>(lParam)==self->path_?ui::Color::secondaryText:ui::Color::text));
+            SetBkColor(dc,self->resources_.color(background));
+            return reinterpret_cast<LRESULT>(self->resources_.brush(background));
+        }
+        case WM_NOTIFY: {
+            const auto* custom=reinterpret_cast<NMCUSTOMDRAW*>(lParam);
+            if(custom && custom->hdr.code==NM_CUSTOMDRAW && custom->dwDrawStage==CDDS_PREPAINT &&
+               (custom->hdr.idFrom==IDC_SAVE || custom->hdr.idFrom==kReset)) {
+                const bool primary=custom->hdr.idFrom==IDC_SAVE;
+                const bool enabled=IsWindowEnabled(custom->hdr.hwndFrom)!=FALSE;
+                const auto fill=!enabled?ui::Color::disabledBackground:primary?ui::Color::primary:ui::Color::background;
+                const auto text=!enabled?ui::Color::disabledText:primary?ui::Color::primaryText:ui::Color::primary;
+                FillRect(custom->hdc,&custom->rc,self->resources_.brush(fill));
+                SetBkMode(custom->hdc,TRANSPARENT);SetTextColor(custom->hdc,self->resources_.color(text));
+                const auto old=SelectObject(custom->hdc,self->resources_.font(ui::Font::label));
+                RECT rect=custom->rc;DrawTextW(custom->hdc,primary?L"Save":L"Reset",-1,&rect,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+                SelectObject(custom->hdc,old);
+                if((custom->uItemState&CDIS_FOCUS)!=0){InflateRect(&rect,-3,-3);DrawFocusRect(custom->hdc,&rect);}
+                return CDRF_SKIPDEFAULT;
+            }
+            break;
+        }
         case WM_DPICHANGED:
             applyDpiRect(window, lParam);
             self->updateFonts();
@@ -296,16 +415,24 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             info->ptMinTrackSize.y = std::min(outer.bottom - outer.top, monitor.rcWork.bottom - monitor.rcWork.top);
             return 0;
         }
-        case WM_CLOSE: DestroyWindow(window); return 0;
+        case WM_QUERYENDSESSION: return TRUE;
+        case WM_ENDSESSION: if (wParam) self->endSession(); return 0;
+        case WM_CLOSE: self->requestClose(); return 0;
         case WM_DESTROY:
             KillTimer(window, kResetTimer);
+            self->clearDraft();
             ++self->generation_;
+            ++self->draftGeneration_; ++self->operationGeneration_;
+            self->saving_ = self->unknown_ = false;
+            self->save_ = {}; self->pollSave_ = {}; self->abandonSave_ = {};
             self->window_ = nullptr;
             self->field_ = nullptr;
-            if (self->textFont_) DeleteObject(self->textFont_);
-            if (self->buttonFont_) DeleteObject(self->buttonFont_);
-            self->textFont_ = self->buttonFont_ = nullptr;
             return 0;
+        case WM_NCDESTROY:
+            self->heading_=self->path_=nullptr;
+            self->resources_.clear();
+            SetWindowLongPtrW(window,GWLP_USERDATA,0);
+            break;
         default: break;
     }
     return DefWindowProcW(window, message, wParam, lParam);

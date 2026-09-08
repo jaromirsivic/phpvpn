@@ -189,7 +189,7 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
     const auto parsedCidr = Ipv4Cidr::parse(cidrText);
     if (!parsedCidr.has_value()) {
         return Error(ErrorCode::config_invalid_cidr,
-                     "vpnCidr must be a canonical IPv4 network with a prefix length of 16 to 29");
+                     "vpnCidr must be a canonical IPv4 network with a prefix length of 24 to 29");
     }
     config->vpnCidr = *parsedCidr;
 

@@ -336,7 +336,7 @@ Result<WizardView> WizardIpc::parseView(const J& value) {
 }
 WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     std::optional<std::string> field, std::optional<std::string> url, std::optional<std::string> path) {
-    std::string action = "Correct the reported issue, then choose Next for a new check.";
+    std::string action = "Correct the reported issue, then choose Verify & continue for a new check.";
     if (error.code == ErrorCode::config_directory_security_invalid)
         action = "Ask an administrator to restart the PHPVPN service to restore the folder permissions, then inspect the file with Edit Config. Startup may already have recreated a missing file. Restarting the service disconnects the VPN.";
     else if ((std::string_view(error.name()).starts_with("config_") && (!field || *field == "configuration")) ||
@@ -348,7 +348,7 @@ WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     else if (error.code == ErrorCode::busy) action = "Wait for the current operation to finish, then try again.";
     else if (error.code == ErrorCode::wizard_session_expired) action = "Open a new Configuration Wizard.";
     else if (error.code == ErrorCode::wizard_commit_unknown) action = "Check the existing commit receipt. Do not start another write automatically.";
-    else if (error.code == ErrorCode::wizard_connection_interrupted) action = "Choose Next to disconnect the VPN for everyone, then repeat the checks.";
+    else if (error.code == ErrorCode::wizard_connection_interrupted) action = "Choose Disconnect & continue to disconnect the VPN for everyone, then repeat the checks.";
     else if (error.code == ErrorCode::wizard_contract_self_conflict) action = "Choose another virtual IP, or correct the contract through Edit Config before opening a new wizard.";
     else if (error.code == ErrorCode::wizard_unsupported) action = "Update both the PHPVPN service and tray to the same version, then open Configuration Wizard again.";
     return {error.name(), errorCodeDescription(error.code), error.recoverable(), std::move(field), status,

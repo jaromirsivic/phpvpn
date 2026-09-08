@@ -1,8 +1,10 @@
 // Configuration parsing and validation, client.md "Konfiguracni soubor".
 
 #include <string>
+#include <limits>
 
 #include "core/config/config.h"
+#include "core/config/config_document.h"
 #include "harness.h"
 
 namespace phpvpn {
@@ -247,6 +249,85 @@ PHPVPN_TEST(config, rejects_an_invalid_prefix_length) {
                         R"("vpnCidr":")") +
             cidr + R"(","virtualIp":"10.99.99.2","accessKey":")" + kAccessKey + R"("}})";
         PHPVPN_CHECK(!parseAndValidateConfig(document, warnings).ok());
+    }
+}
+
+PHPVPN_TEST(config, cidr_range_is_global_in_full_and_every_repair_mode) {
+    // A canonical network for every IPv4 prefix. Missing identity must never
+    // turn an unsupported prefix into a repairable document.
+    for (int prefix = 0; prefix <= 33; ++prefix) {
+        for (unsigned missing = 0; missing < 4; ++missing) {
+            const auto document = std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s","vpnCidr":"0.0.0.0/)") +
+                std::to_string(prefix) + "\"" +
+                ((missing & 1) ? "" : R"(,"virtualIp":"0.0.0.2")") +
+                ((missing & 2) ? "" : std::string(R"(,"accessKey":")") + kAccessKey + "\"") + "}}";
+            ConfigWarnings warnings;
+            const auto full = parseAndValidateConfig(document, warnings);
+            const auto repair = analyzeWizardDocument(document);
+            if (prefix >= 24 && prefix <= 29) {
+                PHPVPN_REQUIRE_OK(repair);
+                PHPVPN_CHECK_EQ(full.ok(), missing == 0);
+                PHPVPN_CHECK_EQ(repair->hasVirtualIp, (missing & 1) == 0);
+                PHPVPN_CHECK_EQ(repair->hasAccessKey, (missing & 2) == 0);
+            } else {
+                PHPVPN_REQUIRE_ERROR(full, ErrorCode::config_invalid_cidr);
+                PHPVPN_REQUIRE_ERROR(repair, ErrorCode::config_invalid_cidr);
+                if (!full && !repair) {
+                    PHPVPN_CHECK_EQ(full.error().detail,
+                        "vpnCidr must be a canonical IPv4 network with a prefix length of 24 to 29");
+                    PHPVPN_CHECK_EQ(repair.error().detail, full.error().detail);
+                }
+            }
+        }
+    }
+}
+
+PHPVPN_TEST(config, cidr_queue_reservations_check_both_sides_and_overflow) {
+    for (const int prefix : {24, 29}) {
+        const std::int64_t peers = prefix == 24 ? 252 : 4;
+        const auto make = [&](std::int64_t outbound, std::int64_t inbound, std::int64_t perPeer) {
+            auto text = documentWith({}, "{\"maxOutboundQueueBytes\":" + std::to_string(outbound) +
+                ",\"maxInboundQueueBytes\":" + std::to_string(inbound) +
+                ",\"minPerPeerQueueBytes\":" + std::to_string(perPeer) + "}");
+            text.replace(text.find("/24"), 3, "/" + std::to_string(prefix));
+            return text;
+        };
+        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+        const auto perPeer = maximum / peers;
+        const auto required = peers * perPeer;
+        ConfigWarnings warnings;
+        const auto exact = parseAndValidateConfig(make(required, required, perPeer), warnings);
+        PHPVPN_REQUIRE_OK(exact);
+        PHPVPN_CHECK_EQ(exact.value()->maxRemotePeers(), static_cast<std::uint32_t>(peers));
+        for (const auto& rejected : {make(required - 1, required, perPeer),
+                make(required, required - 1, perPeer), make(maximum, maximum, perPeer + 1)}) {
+            PHPVPN_REQUIRE_ERROR(parseAndValidateConfig(rejected, warnings), ErrorCode::config_queue_budget);
+            PHPVPN_REQUIRE_ERROR(analyzeWizardDocument(rejected), ErrorCode::config_queue_budget);
+        }
+    }
+}
+
+PHPVPN_TEST(config, cidr_edges_validate_local_and_remote_addresses_in_full_and_repair) {
+    for (const int prefix : {24, 29}) {
+        const auto broadcast = prefix == 24 ? 255 : 7;
+        for (const auto octet : {0, 1, 2, 3, broadcast - 1, broadcast}) {
+            for (const bool remote : {false, true}) {
+                auto text = validDocument();
+                text.replace(text.find("/24"), 3, "/" + std::to_string(prefix));
+                const auto replaced = remote ? "10.99.99.3" : "10.99.99.2";
+                text.replace(text.find(replaced), std::string_view(replaced).size(), "10.99.99." + std::to_string(octet));
+                const bool valid = octet >= 2 && octet < broadcast && octet != (remote ? 2 : 3);
+                ConfigWarnings warnings;
+                const auto full = parseAndValidateConfig(text, warnings);
+                const auto repair = analyzeWizardDocument(text);
+                PHPVPN_CHECK_EQ(full.ok(), valid);
+                PHPVPN_CHECK_EQ(repair.ok(), valid);
+                if (!valid) {
+                    PHPVPN_REQUIRE_ERROR(full, ErrorCode::config_invalid_address);
+                    PHPVPN_REQUIRE_ERROR(repair, ErrorCode::config_invalid_address);
+                }
+            }
+        }
     }
 }
 

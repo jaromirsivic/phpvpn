@@ -14,7 +14,7 @@ struct ErrorInfo {
 constexpr ErrorInfo kErrors[] = {
     {ErrorCode::wizard_session_expired, "wizard_session_expired", "This wizard session has expired. Open the wizard again.", false},
     {ErrorCode::wizard_prerequisite_failed, "wizard_prerequisite_failed", "Complete the required checks for these exact values before continuing.", false},
-    {ErrorCode::wizard_attempt_closed, "wizard_attempt_closed", "This check attempt is already closed. Choose Next to start a new attempt.", false},
+    {ErrorCode::wizard_attempt_closed, "wizard_attempt_closed", "This check attempt is already closed. Choose Verify & continue to start a new attempt.", false},
     {ErrorCode::wizard_connection_interrupted, "wizard_connection_interrupted", "Another application or user started a VPN connection. Previous checks are no longer valid.", false},
     {ErrorCode::wizard_commit_unknown, "wizard_commit_unknown", "The configuration publication has not been confirmed. Check its receipt before taking another action.", false},
     {ErrorCode::wizard_unsupported, "wizard_unsupported", "The PHPVPN service and tray must use the same updated wizard schema.", false},

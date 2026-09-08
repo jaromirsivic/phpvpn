@@ -202,6 +202,35 @@ PHPVPN_TEST(payload, cidr_rejects_a_non_canonical_spelling) {
     PHPVPN_CHECK(!Ipv4Cidr::parse("10.99.99.0/30").has_value());
     PHPVPN_CHECK(!Ipv4Cidr::parse("010.99.99.0/24").has_value());
     PHPVPN_CHECK(!Ipv4Cidr::parse("10.99.99.0").has_value());
+    PHPVPN_CHECK(!Ipv4Cidr::parse("10.99.99.0/024").has_value());
+    PHPVPN_CHECK(!Ipv4Cidr::parse("10.99.99.0/99999999999999999999").has_value());
+    for (int prefix = 0; prefix <= 33; ++prefix) {
+        PHPVPN_CHECK_EQ(Ipv4Cidr::parse("0.0.0.0/" + std::to_string(prefix)).has_value(),
+            prefix >= 24 && prefix <= 29);
+    }
+}
+
+PHPVPN_TEST(payload, cidr_supported_boundaries_keep_reservations_without_overflow) {
+    for (int prefix = 24; prefix <= 29; ++prefix) {
+        const std::uint32_t addresses = 1u << (32 - prefix);
+        // Both ends of uint32_t, including the last aligned /29 network.
+        for (const auto network : {0u, 0xffffffffu - addresses + 1}) {
+            const auto cidr = Ipv4Cidr::parse(Ipv4Address(network).toString() + "/" + std::to_string(prefix));
+            PHPVPN_CHECK(cidr.has_value());
+            if (!cidr) return;
+            const auto broadcast = network + (addresses - 1);
+            PHPVPN_CHECK_EQ(cidr->firstClientAddress().value(), network + 2);
+            PHPVPN_CHECK_EQ(cidr->lastClientAddress().value(), broadcast - 1);
+            PHPVPN_CHECK_EQ(cidr->clientAddressCount(), addresses - 3);
+            PHPVPN_CHECK_EQ(cidr->clientAddressCount() - 1, addresses - 4);
+            PHPVPN_CHECK(!cidr->isValidClientAddress(Ipv4Address(network)));
+            PHPVPN_CHECK(!cidr->isValidClientAddress(Ipv4Address(network + 1)));
+            PHPVPN_CHECK(cidr->isValidClientAddress(Ipv4Address(network + 2)));
+            PHPVPN_CHECK(cidr->isValidClientAddress(Ipv4Address(broadcast - 1)));
+            PHPVPN_CHECK(!cidr->isValidClientAddress(Ipv4Address(broadcast)));
+            PHPVPN_CHECK(!Ipv4Cidr::parse(Ipv4Address(network + 2).toString() + "/" + std::to_string(prefix)));
+        }
+    }
 }
 
 PHPVPN_TEST(payload, address_parsing_pins_the_decimal_spelling) {

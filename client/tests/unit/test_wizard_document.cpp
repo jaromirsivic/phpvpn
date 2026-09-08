@@ -126,4 +126,36 @@ PHPVPN_TEST(wizard_document, StrictEncodingAndReadBound) {
     PHPVPN_CHECK(repeated->starts_with("\xef\xbb\xbf"));
     PHPVPN_CHECK(!Json::parse(repeated.value()));
 }
+
+PHPVPN_TEST(wizard_document, cidr_finish_revalidates_the_actual_dom_in_full_and_repair) {
+    auto crypto = createPlatformCryptoProvider();
+    PHPVPN_REQUIRE_OK(crypto);
+    for (const auto mode : {WizardMode::edit, WizardMode::repair}) {
+        const auto text = mode == WizardMode::repair ? withoutIdentity(true, true) : makeDefaultEditorDocument();
+        const auto original = analyzeWizardDocument(text);
+        PHPVPN_REQUIRE_OK(original);
+        auto fields = original->fields;
+        fields.virtualIp = "10.99.99.2";
+        fields.accessKey = defaultAccessKey(fields.virtualIp);
+        for (const auto prefix : {16, 17, 18, 19, 20, 21, 22, 23, 24, 29, 30, 31, 32}) {
+            auto draft = *original;
+            // Deliberately keep a valid typed context: the final JSON must be
+            // checked even if an internal producer patches an invalid CIDR.
+            for (auto& root : draft.dom.objectValue()) if (root.first == "masterSetup") {
+                for (auto& member : root.second.objectValue()) if (member.first == "vpnCidr") {
+                    const auto network = prefix >= 24 ? "10.99.99.0/" : "10.99.0.0/";
+                    member.second = JsonValue::makeString(network + std::to_string(prefix));
+                }
+            }
+            const auto built = buildWizardDocument(*crypto.value(), draft, mode, fields, false);
+            if (prefix == 24 || prefix == 29) {
+                PHPVPN_REQUIRE_OK(built);
+                const auto parsed = analyzeWizardDocument(*built);
+                PHPVPN_REQUIRE_OK(parsed);
+                PHPVPN_CHECK_EQ(parsed->context.vpnCidr.prefixLength(), prefix);
+                PHPVPN_CHECK_EQ(parsed->contractPeers, original->contractPeers);
+            } else PHPVPN_REQUIRE_ERROR(built, ErrorCode::config_invalid_cidr);
+        }
+    }
+}
 }

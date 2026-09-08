@@ -9,13 +9,13 @@ PHPVPN_TEST(WizardLayout, FooterRemainsAccessibleAcrossDpiAndSmallWorkAreas) {
         const Size client{scaleForDpi(logical.width, dpi), scaleForDpi(logical.height, dpi)};
         const auto layout = computeWizardLayout(client, dpi);
         PHPVPN_CHECK(layout.content.bottom <= layout.buttons[0].top);
-        PHPVPN_CHECK(layout.content.left >= layout.steps.right);
+        PHPVPN_CHECK(layout.compact ? layout.content.top >= layout.steps.bottom : layout.content.left >= layout.steps.right);
         PHPVPN_CHECK(layout.content.right <= client.width);
         for (std::size_t i = 0; i < layout.buttons.size(); ++i) {
             const auto& button = layout.buttons[i];
             PHPVPN_CHECK(button.left >= 0 && button.right <= client.width && button.top >= 0 && button.bottom <= client.height);
-            PHPVPN_CHECK(button.right - button.left >= scaleForDpi(100, dpi));
-            if (i) PHPVPN_CHECK(button.right < layout.buttons[i - 1].left);
+            PHPVPN_CHECK(button.right - button.left >= scaleForDpi(i == 3 ? 200 : 88, dpi));
+            if (i) PHPVPN_CHECK(button.left > layout.buttons[i - 1].right || button.top > layout.buttons[i - 1].bottom);
         }
     }
 }
@@ -24,7 +24,8 @@ PHPVPN_TEST(TrayMenu, ExactOrderAndOnlyChosenStateActions) {
         MenuAction::edit, MenuAction::separator, MenuAction::info, MenuAction::statistics, MenuAction::separator, MenuAction::exit};
     for (std::size_t i = 0; i < configurationMenu.size(); ++i) {
         PHPVPN_CHECK(configurationMenu[i].action == expected[i]);
-        PHPVPN_CHECK(requiresConfigState(expected[i]) == (i == 3 || i == 7));
+        // Contracts loads one document directly. Only Statistics needs state.
+        PHPVPN_CHECK(requiresConfigState(expected[i]) == (i == 7));
     }
 }
 PHPVPN_TEST(EditorDocument, ExactUnmodifiedBytesAndUnambiguousRawNulRepair) {

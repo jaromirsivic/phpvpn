@@ -1,6 +1,8 @@
 #include "harness.h"
 #include "../../apps/tray/layout.h"
+#include "../../apps/tray/progress_layout.h"
 #include <array>
+#include <cmath>
 
 namespace {
 using namespace phpvpn::tray;
@@ -15,6 +17,101 @@ PHPVPN_TEST(TrayLayout, DefaultClientSizeScalesAtEverySupportedDpi) {
         const auto size = defaultEditorClientSize(dpi);
         PHPVPN_CHECK_EQ(size.width, 1080 * dpi / 96);
         PHPVPN_CHECK_EQ(size.height, 560 * dpi / 96);
+    }
+}
+PHPVPN_TEST(TrayLayout, ConnectCardMatchesReferenceAndKeepsContentAlignedAtSupportedDpi) {
+    // N09b: reference client x=1..1462, card x=79, target width 940 DIP.
+    constexpr double referenceLeft = (79.0 - 1.0) * 940.0 / 1461.0;
+    for (const int dpi : {96, 120, 144, 192}) {
+        const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        for (const bool success : {false, true}) {
+            const auto l = computeProgressLayout(p(940), dpi, p(42), p(24), p(24), success, p(28));
+            PHPVPN_CHECK(std::abs(l.card.left * 96.0 / dpi - referenceLeft) <= 6.0);
+            PHPVPN_CHECK_EQ(l.heading.left, l.card.left);
+            PHPVPN_CHECK_EQ(l.panel.left, l.card.left);
+            PHPVPN_CHECK_EQ(l.heading.right, l.card.right);
+            PHPVPN_CHECK_EQ(l.detailsHeading.left - l.card.left, p(24));
+            PHPVPN_CHECK(l.values[0].right > l.values[0].left);
+            PHPVPN_CHECK(l.panelHeading.right > l.panelHeading.left);
+            PHPVPN_CHECK(l.panelAction.bottom <= l.panel.bottom);
+            PHPVPN_CHECK_EQ(l.eyebrow.top, p(32));
+            PHPVPN_CHECK(l.card.top > l.description.bottom);
+        }
+        const auto narrow = computeProgressLayout(p(320), dpi, p(84), p(48), p(72), true, p(56));
+        PHPVPN_CHECK_EQ(narrow.card.left, p(16));
+        PHPVPN_CHECK(narrow.values[0].top >= narrow.labels[0].bottom);
+        PHPVPN_CHECK(narrow.countdown.top >= narrow.panelAction.bottom);
+    }
+}
+PHPVPN_TEST(TrayLayout, ConnectAllFourEdgesMatchBothClientReferences) {
+    // Entire reference client: (1,79), 1461x995 pixels mapped to 940x680 DIP.
+    const std::array<std::array<double, 4>, 2> references{{
+        {{(79.0 - 1) * 940 / 1461, (310.0 - 79) * 680 / 995,
+          (1364.0 - 1) * 940 / 1461, (828.0 - 79) * 680 / 995}},
+        {{(78.0 - 1) * 940 / 1461, (310.0 - 79) * 680 / 995,
+          (1360.0 - 1) * 940 / 1461, (827.0 - 79) * 680 / 995}}}};
+    for (const int dpi : {96, 120, 144, 192}) {
+        const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        for (const int heading : {42, 46}) {
+            for (const bool success : {false, true}) {
+                const auto l = computeProgressLayout(p(940), dpi, p(heading), p(24), p(24), success, p(28));
+                const std::array<int, 4> actual{l.card.left, l.card.top, l.card.right, l.card.bottom};
+                for (const auto &reference : references)
+                    for (std::size_t edge = 0; edge < actual.size(); ++edge)
+                        PHPVPN_CHECK(std::abs(actual[edge] * 96.0 / dpi - reference[edge]) <= 6.0);
+                PHPVPN_CHECK(l.description.bottom < l.card.top);
+                PHPVPN_CHECK(l.detailsHeading.bottom < l.labels[0].top);
+                PHPVPN_CHECK(l.values[1].bottom < l.separator.top);
+                PHPVPN_CHECK(l.checksHeading.bottom < l.checks[0].top);
+                PHPVPN_CHECK(l.checks[2].bottom < l.card.bottom);
+                PHPVPN_CHECK(l.card.bottom < l.panel.top);
+                PHPVPN_CHECK(l.height <= p(680));
+            }
+        }
+    }
+}
+PHPVPN_TEST(TrayLayout, ConnectResponsiveContentStaysInsideCardsAcrossBreakpoints) {
+    for (const int dpi : {96, 120, 144, 192}) {
+        const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        for (const int width : {320, 399, 400, 599, 600, 640, 759, 760, 940}) {
+            for (const bool success : {false, true}) {
+                const auto l = computeProgressLayout(p(width), dpi, p(84), p(48), p(72), success, p(56));
+                const auto contained = [](Rect child, Rect parent) {
+                    return child.left >= parent.left && child.right <= parent.right &&
+                           child.top >= parent.top && child.bottom <= parent.bottom &&
+                           child.left < child.right && child.top < child.bottom;
+                };
+                for (const auto r : l.values) PHPVPN_CHECK(contained(r, l.card));
+                for (const auto r : l.labels) PHPVPN_CHECK(contained(r, l.card));
+                for (const auto r : l.checks) PHPVPN_CHECK(contained(r, l.card));
+                for (const auto r : l.checkLabels) PHPVPN_CHECK(contained(r, l.card));
+                PHPVPN_CHECK(contained(l.panelHeading, l.panel));
+                PHPVPN_CHECK(contained(l.panelAction, l.panel));
+                PHPVPN_CHECK(l.description.bottom < l.card.top && l.card.bottom < l.panel.top);
+                if (success) {
+                    PHPVPN_CHECK(contained(l.countdown, l.panel));
+                    PHPVPN_CHECK(l.countdown.left >= l.panelAction.right || l.countdown.top >= l.panelAction.bottom);
+                }
+                PHPVPN_CHECK_EQ(l.card.left, p(width < 600 ? 16 : 48));
+            }
+        }
+    }
+}
+PHPVPN_TEST(TrayLayout, EditorReferenceTopPreservesHeaderAndFooterAtSupportedDpi) {
+    // N09b: reference client y=55..1004, text top y=202, target height 560 DIP.
+    constexpr double referenceTop = (202.0 - 55.0) * 560.0 / 949.0;
+    for (const int dpi : {96, 120, 144, 192}) {
+        const auto size = defaultEditorClientSize(dpi);
+        const auto l = computeEditorLayout(size, dpi, true);
+        PHPVPN_CHECK(std::abs(l.textArea.top * 96.0 / dpi - referenceTop) <= 6.0);
+        PHPVPN_CHECK(l.heading.bottom <= l.path.top);
+        PHPVPN_CHECK(l.path.bottom < l.textArea.top);
+        PHPVPN_CHECK(inside(l.heading, size) && inside(l.path, size));
+        PHPVPN_CHECK_EQ(l.textArea.bottom, scaleForDpi(460, dpi));
+        PHPVPN_CHECK_EQ(l.saveButton.bottom, scaleForDpi(528, dpi));
+        const auto info = computeEditorLayout(size, dpi, false);
+        PHPVPN_CHECK_EQ(info.textArea.top, scaleForDpi(32, dpi));
+        PHPVPN_CHECK_EQ(info.textArea.bottom, scaleForDpi(528, dpi));
     }
 }
 PHPVPN_TEST(TrayLayout, WorkAreaClampingAndCenteringSupportsSecondaryMonitorCoordinates) {
@@ -40,8 +137,8 @@ PHPVPN_TEST(TrayLayout, RepeatedEdgeAndCornerResizesKeepControlsSeparateAndVisib
             PHPVPN_CHECK(inside(layout.saveButton, size));
             PHPVPN_CHECK(inside(layout.resetButton, size));
             PHPVPN_CHECK(inside(layout.cancelButton, size));
-            PHPVPN_CHECK(layout.saveButton.right < layout.resetButton.left);
             PHPVPN_CHECK(layout.resetButton.right < layout.cancelButton.left);
+            PHPVPN_CHECK(layout.cancelButton.right < layout.saveButton.left);
             PHPVPN_CHECK(layout.resetButton.right > layout.resetButton.left);
             PHPVPN_CHECK(layout.resetButton.bottom > layout.resetButton.top);
             PHPVPN_CHECK(layout.saveButton.bottom > layout.saveButton.top);

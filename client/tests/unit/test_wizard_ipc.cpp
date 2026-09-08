@@ -143,9 +143,11 @@ PHPVPN_TEST(wizard_ipc, configuration_errors_have_safe_action_and_authoritative_
             PHPVPN_CHECK(error.suggestedAction.find("restart") == std::string::npos);
         }
     }
-    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::transport_connect_failed)).suggestedAction.find("Next") != std::string::npos);
-    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::config_invalid_url), {}, "serverUrl").suggestedAction.find("Next") != std::string::npos);
-    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::wizard_connection_interrupted)).suggestedAction.find("Next") != std::string::npos);
+    PHPVPN_CHECK_EQ(WizardIpc::safeError(Error(ErrorCode::transport_connect_failed)).suggestedAction,
+        std::string("Correct the reported issue, then choose Verify & continue for a new check."));
+    PHPVPN_CHECK(WizardIpc::safeError(Error(ErrorCode::config_invalid_url), {}, "serverUrl").suggestedAction.find("Verify & continue") != std::string::npos);
+    PHPVPN_CHECK_EQ(WizardIpc::safeError(Error(ErrorCode::wizard_connection_interrupted)).suggestedAction,
+        std::string("Choose Disconnect & continue to disconnect the VPN for everyone, then repeat the checks."));
 }
 PHPVPN_TEST(wizard_ipc, maximum_document_escaping_and_message_limit) {
     const std::string control(kMaxConfigFileBytes, '\x01');

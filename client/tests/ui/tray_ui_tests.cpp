@@ -1,6 +1,8 @@
 // Explicit Win32 UI integration harness. The backend is deterministic test
 // state, not a claim about the real service. All windows belong to this PID.
 #include "wizard_window.h"
+#include "wizard_text.h"
+#include "tray_application.h"
 #include "editor_window.h"
 #include "contracts_window.h"
 #include "window_utils.h"
@@ -15,6 +17,8 @@
 #include <atomic>
 #include <condition_variable>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -81,10 +85,13 @@ std::wstring allText(HWND parent) {
     }, reinterpret_cast<LPARAM>(&result));
     return result;
 }
+#include "ui_diagnostics.inc"
 void click(HWND parent, int id) {
     const HWND button = child(parent, id);
     check(button && IsWindowEnabled(button), "button missing or disabled");
+    uiDiagnostics.state("click-before", parent); uiDiagnostics.add("click-id", id);
     SendMessageW(button, BM_CLICK, 0, 0);
+    uiDiagnostics.state("click-after", parent);
 }
 void edit(HWND parent, int id, const std::wstring& value) {
     const HWND field = child(parent, id);
@@ -116,6 +123,13 @@ struct Backend {
     std::mutex mutex;
     std::condition_variable changed;
     bool stopping = false, editMode = false, heartbeatInterrupt = false, defaultError = false;
+    bool lostFinish = false, lostClose = false, gateHeld = false;
+    bool pendingFinish = false, holdStatus = false, releaseHeld = false;
+    std::optional<WizardCommand> heldCommand;
+    unsigned heldStarted = 0, heldCompleted = 0;
+    ConnectionState gateState = ConnectionState::connected;
+    ConnectionPhase gatePhase = ConnectionPhase::running;
+    unsigned commitReads = 0, connects = 0;
     unsigned startDelayMs = 0, resultDelayMs = 0, defaultDelayMs = 0;
     unsigned totalStarts = 0, finishCalls = 0, defaultCalls = 0, resetCalls = 0, closeCalls = 0, heartbeats = 0;
     unsigned configReads = 0, disconnects = 0, resumes = 0, operationsRead = 0;
@@ -166,14 +180,26 @@ struct Backend {
             if (legacy->command == IpcCommand::disconnect) {
                 ++disconnects; ++epoch; disconnectReceivedAt = GetTickCount64();
             }
+            if (legacy->command == IpcCommand::connect) ++connects;
             StatusSnapshot snapshot;
+            if (gateHeld) { snapshot.state = gateState; snapshot.phase = gatePhase; }
             snapshot.stateChangedAtUtc = "2026-09-06T12:00:00.000Z";
             snapshot.clientVersion = "ui-fixture";
+            if (holdStatus && legacy->command == IpcCommand::get_status) {
+                ++heldStarted; changed.wait(lock, [&] { return stopping || releaseHeld; }); ++heldCompleted;
+            }
             return IpcProtocol::buildStatusResponse(legacy->requestId, snapshot);
         }
         auto& r = request.value();
+        uiDiagnostics.add("backend-command:command/sequence", static_cast<UINT_PTR>(r.command), r.attemptSequence);
         std::unique_lock lock(mutex);
-        const auto result = [&](J value) { return WizardIpc::buildResult(r.requestId, std::move(value)); };
+        const auto result = [&](J value) {
+            if (heldCommand == r.command) {
+                ++heldStarted; changed.wait(lock, [&] { return stopping || releaseHeld; }); ++heldCompleted;
+            }
+            uiDiagnostics.add("backend-reply:command/sequence", static_cast<UINT_PTR>(r.command), r.attemptSequence);
+            return WizardIpc::buildResult(r.requestId, std::move(value));
+        };
         switch (r.command) {
         case WizardCommand::open: return result(WizardIpc::viewValue(view));
         case WizardCommand::reset: {
@@ -211,12 +237,17 @@ struct Backend {
             ++operationsRead;
             const auto response = operation; // Preserve the captured late result while cancellation arrives.
             if (resultDelayMs) { const auto ms = std::exchange(resultDelayMs, 0u); delay(lock, ms); }
-            return result(WizardIpc::operationValue(response));
+            auto visible = response;
+            if (pendingFinish && visible.kind == WizardOperationKind::finish) {
+                visible.state = WizardOperationState::running; visible.receipt.reset();
+            }
+            return result(WizardIpc::operationValue(visible));
         }
         case WizardCommand::cancel_attempt:
             return result(J::makeObject({{"attemptSequence", J::makeUnsignedInteger(r.attemptSequence)}, {"attemptState", str("closed")}}));
         case WizardCommand::close:
             ++closeCalls;
+            if (lostClose) return {};
             return result(J::makeObject({{"closed", J::makeBool(true)}}));
         case WizardCommand::finish:
             finishedRequest = r;
@@ -224,7 +255,12 @@ struct Backend {
             operation.operationId = uuid(); operation.kind = WizardOperationKind::finish;
             operation.state = WizardOperationState::succeeded; operation.connectionEpoch = epoch;
             operation.receipt = WizardReceipt{r.commitId, "ui-confirmed-revision"};
+            if (lostFinish) return {};
             return result(J::makeObject({{"operationId", str(operation.operationId)}, {"operationState", str("pending")}}));
+        case WizardCommand::get_commit:
+            ++commitReads;
+            check(operation.receipt.has_value(), "receipt query without publication");
+            return result(J::makeObject({{"commitState", str("confirmed")}, {"receipt", WizardIpc::receiptValue(*operation.receipt)}, {"error", J::makeNull()}}));
         case WizardCommand::get_default_config:
             ++defaultCalls;
             delay(lock, defaultDelayMs);
@@ -246,10 +282,27 @@ struct Gui {
     WizardWindow wizard{pipe};
     EditorWindow editor{pipe};
     unsigned confirmed = 0;
+    unsigned notifications = 0, closesAtNotification = 0;
+    std::function<void()> onSuccessNotification;
+    UINT_PTR successTimer = 0;
+    inline static Gui* active = nullptr;
+    static void CALLBACK acknowledgeSuccess(HWND, UINT, UINT_PTR, DWORD) {
+        const auto dialog = findTop(L"#32770");
+        if (!active || !dialog || text(dialog) != L"Configuration saved") return;
+        uiDiagnostics.add("success-dialog", reinterpret_cast<UINT_PTR>(dialog));
+        ++active->notifications;
+        active->closesAtNotification = active->backend.count(&Backend::closeCalls);
+        if (active->onSuccessNotification) active->onSuccessNotification();
+        const auto button = GetDlgItem(dialog, IDOK) ? GetDlgItem(dialog, IDOK) : GetDlgItem(dialog, IDCANCEL);
+        if (button) SendMessageW(button, BM_CLICK, 0, 0);
+    }
     explicit Gui(bool editing = false) : backend(editing), server([this](std::string_view request) { return backend.handle(request); }, options()) {
         check(server.start().ok(), "private UI pipe could not start");
+        active = this;
+        successTimer = SetTimer(nullptr, 0, 20, acknowledgeSuccess);
+        check(successTimer != 0, "success notification timer unavailable");
     }
-    ~Gui() { backend.release(); }
+    ~Gui() { KillTimer(nullptr, successTimer); active = nullptr; backend.release(); }
     IpcPipeServerOptions options() {
         IpcPipeServerOptions options;
         options.pipeName = pipe;
@@ -269,13 +322,27 @@ struct Gui {
     void pump() {
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            // Never record character/key payloads from the input queue.
+            uiDiagnostics.add("queued:hwnd/msg/wparam", reinterpret_cast<UINT_PTR>(message.hwnd), message.message,
+                message.message == WM_TIMER || message.message == WM_COMMAND || message.message == WM_QUIT ? message.wParam : 0);
             if (!wizard.translate(message) && !editor.translate(message)) { TranslateMessage(&message); DispatchMessageW(&message); }
         }
     }
     template<class Predicate> void until(Predicate predicate, const char* failure, DWORD timeout = 3000) {
+        uiDiagnostics.add(failure, timeout); uiDiagnostics.state("until-begin", hwnd());
         const auto end = GetTickCount64() + timeout;
-        do { pump(); if (predicate()) return; MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT); }
+        do { pump(); if (predicate()) { uiDiagnostics.state("until-pass", hwnd()); return; } MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT); }
         while (GetTickCount64() < end);
+        uiDiagnostics.state("until-FAIL", hwnd());
+        std::cout << "[ UI TIMEOUT ] " << failure << " limit_ms=" << timeout << " elapsed_ms=" << GetTickCount64() - (end - timeout)
+            << " starts=" << backend.count(&Backend::totalStarts) << " operation_reads=" << backend.count(&Backend::operationsRead)
+            << " finishes=" << backend.count(&Backend::finishCalls) << " modal=" << (findTop(L"#32770") != nullptr)
+            << " focus=" << GetDlgCtrlID(GetFocus()) << '\n';
+        if (const HWND root = hwnd()) for (int id : {nextId, urlId, secretId, ipId, contractsId}) {
+            const HWND control = child(root, id);
+            std::cout << "[ UI CONTROL ] id=" << id << " present=" << (control != nullptr)
+                << " visible=" << (IsWindowVisible(control) != FALSE) << " enabled=" << (IsWindowEnabled(control) != FALSE) << '\n';
+        }
         throw std::runtime_error(failure);
     }
     void wait(DWORD duration) {
@@ -283,15 +350,17 @@ struct Gui {
         until([&] { return GetTickCount64() >= end; }, "message pump timed out", duration + 1000);
     }
     HWND hwnd() { return findTop(wizardClass); }
-    void open() {
-        check(wizard.open(GetModuleHandleW(nullptr), [&] { ++confirmed; check(contracts.show(GetModuleHandleW(nullptr)), "Contracts HWND creation failed"); }),
+    void open(bool gate = false) {
+        check(wizard.open(GetModuleHandleW(nullptr), [&] { ++confirmed; }),
               "Wizard HWND creation failed");
-        until([&] { return hwnd() && child(hwnd(), urlId); }, "Wizard did not load Server URL");
+        until([&] { return hwnd() && (gate ? text(child(hwnd(), nextId)) == wizardText::disconnect : child(hwnd(), urlId) != nullptr); }, "Wizard did not load expected first screen");
         std::cout << "[ EVIDENCE ] Wizard HWND DPI " << GetDpiForWindow(hwnd()) << ", private test backend\n";
     }
     void nextTo(int field) {
         click(hwnd(), nextId);
-        until([&] { return hwnd() && child(hwnd(), field) && IsWindowEnabled(child(hwnd(), nextId)); }, "Next did not reach expected step");
+        const char* failure = field == secretId ? "Next URL -> secret did not reach expected step" :
+            field == ipId ? "Next secret -> identity did not reach expected step" : "Next did not reach expected step";
+        until([&] { return hwnd() && child(hwnd(), field) && IsWindowEnabled(child(hwnd(), nextId)); }, failure);
     }
     void escape() {
         MSG message{}; message.hwnd = GetFocus(); message.message = WM_KEYDOWN; message.wParam = VK_ESCAPE;
@@ -325,6 +394,33 @@ void resizeClient(HWND window, int width, int height) {
     SetWindowPos(window, nullptr, 30, 30, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void captureWizard(HWND window, const wchar_t* name) {
+    wchar_t directory[32768]{};
+    if (!GetEnvironmentVariableW(L"PHPVPN_WP04_CAPTURE_DIR", directory, 32768)) return;
+    check(ownWindow(window), "capture outside fixture process");
+    RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    RECT client{}; GetClientRect(window, &client);
+    HDC source = GetDC(window), dc = CreateCompatibleDC(source);
+    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = client.right; info.bmiHeader.biHeight = -client.bottom;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+    void* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(source, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    check(bitmap && dc, "capture GDI allocation failed");
+    auto old = SelectObject(dc, bitmap);
+    const bool printed = PrintWindow(window, dc, PW_CLIENTONLY) != FALSE;
+    BITMAPFILEHEADER header{}; header.bfType = 0x4d42;
+    header.bfOffBits = sizeof(header) + sizeof(BITMAPINFOHEADER);
+    header.bfSize = header.bfOffBits + client.right * client.bottom * 4;
+    std::ofstream out(std::filesystem::path(directory) / name, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(BITMAPINFOHEADER));
+    out.write(static_cast<const char*>(pixels), client.right * client.bottom * 4);
+    const bool written = out.good();
+    SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(window, source);
+    check(printed && written, "fixture capture failed");
+    std::wcout << L"[ EVIDENCE ] " << name << L": " << client.right << L"x" << client.bottom << L" pixels, DPI " << GetDpiForWindow(window) << L"\n";
+}
 void happyPath() {
     Gui gui;
     gui.open();
@@ -362,18 +458,351 @@ void happyPath() {
     check(gui.backend.count(&Backend::totalStarts) == 3, "three explicit Next clicks did not create exactly three probes");
     footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
     click(gui.hwnd(), nextId);
-    gui.until([&] { return !gui.wizard.isOpen() && gui.contracts.isOpen(); }, "confirmed Finish did not open Contracts");
+    gui.until([&] { return !gui.wizard.isOpen(); }, "confirmed Finish did not close Wizard");
     gui.wait(800);
     check(gui.confirmed == 1 && gui.backend.count(&Backend::finishCalls) == 1, "Finish confirmation was repeated");
     check(gui.backend.count(&Backend::closeCalls) == 1, "confirmed Finish did not close its remote session exactly once");
     check(gui.backend.count(&Backend::configReads) == 0, "Finish performed another configuration read");
-    const HWND contracts = findTop(L"PhpVpnCommunicationContracts");
-    check(contracts && !GetWindow(contracts, GW_CHILD), "Contracts placeholder is not empty");
-    check(gui.contracts.show(GetModuleHandleW(nullptr)), "reopening Contracts failed");
-    check(findTop(L"PhpVpnCommunicationContracts") == contracts, "Contracts created a second instance");
-    gui.contracts.close();
+    check(!findTop(L"PhpVpnCommunicationContracts") && !gui.contracts.isOpen(), "Finish opened Contracts");
+    check(gui.notifications == 1 && gui.closesAtNotification == 0, "success notice did not precede exactly one close");
+    check(gui.backend.count(&Backend::connects) == 0, "Finish connected VPN");
 }
 
+void wizardGateConsentAndIdle() {
+    Gui gui(true);
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        gui.backend.gateHeld = true;
+        gui.backend.view.vpnState = ConnectionState::connected;
+        gui.backend.view.vpnPhase = ConnectionPhase::running;
+    }
+    gui.open(true);
+    captureWizard(gui.hwnd(), L"wizard-gate.bmp");
+    check(!IsWindowVisible(child(gui.hwnd(), backId)), "gate exposes Back");
+    check(GetFocus() == child(gui.hwnd(), cancelId), "gate focus is not Cancel");
+    check(allText(gui.hwnd()).find(L"The VPN will be disconnected for everyone.") != std::wstring::npos, "global consent text missing");
+    // No modal-answer helper: a second consent dialog would fail this bounded run.
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return gui.backend.count(&Backend::disconnects) == 1; }, "gate did not issue one Disconnect");
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        gui.backend.gateState = ConnectionState::disconnected;
+        gui.backend.gatePhase = ConnectionPhase::stopping;
+    }
+    gui.wait(800);
+    check(gui.backend.count(&Backend::resumes) == 0 && !child(gui.hwnd(), urlId), "gate accepted disconnected before idle");
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        gui.backend.gateState = ConnectionState::connected;
+        gui.backend.gatePhase = ConnectionPhase::idle;
+    }
+    gui.wait(800);
+    check(gui.backend.count(&Backend::resumes) == 0, "gate accepted idle before disconnected");
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        gui.backend.gateState = ConnectionState::disconnected;
+    }
+    gui.until([&] { return child(gui.hwnd(), urlId) != nullptr; }, "disconnected/idle did not resume");
+    check(gui.backend.count(&Backend::resumes) == 1 && gui.backend.count(&Backend::disconnects) == 1, "gate repeated global action");
+    check(gui.backend.count(&Backend::totalStarts) == 0, "resume retried checks automatically");
+    check(IsWindowVisible(child(gui.hwnd(), backId)) && !IsWindowEnabled(child(gui.hwnd(), backId)), "URL Back must be visible and disabled");
+    gui.escape();
+}
+
+void wizardStableFieldsAndWarning() {
+    Gui gui(true); gui.open();
+    captureWizard(gui.hwnd(), L"wizard-url.bmp");
+    check(text(child(gui.hwnd(), nextId)) == wizardText::verify, "wrong network action text");
+    check(IsWindowVisible(child(gui.hwnd(), backId)) && !IsWindowEnabled(child(gui.hwnd(), backId)), "URL Back state incorrect");
+    HWND field = child(gui.hwnd(), urlId);
+    const auto original = text(field);
+    SetFocus(field); SendMessageW(field, EM_SETSEL, 0, 4); SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"https"));
+    SendMessageW(field, EM_SETSEL, 2, 7);
+    for (auto size : {Size{480, 320}, Size{1000, 680}, Size{760, 520}}) {
+        resizeClient(gui.hwnd(), size.width, size.height);
+        check(child(gui.hwnd(), urlId) == field && GetFocus() == field, "resize replaced the field or focus");
+        DWORD start = 0, end = 0; SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+        check(start == 2 && end == 7 && SendMessageW(field, EM_CANUNDO, 0, 0), "resize lost selection or undo");
+        footer(gui.hwnd(), {resetId, backId, cancelId, nextId});
+    }
+    SendMessageW(field, EM_UNDO, 0, 0);
+    check(text(field) == original, "undo no longer restores exact URL");
+    gui.nextTo(secretId);
+    resizeClient(gui.hwnd(), scaleForDpi(1000, static_cast<int>(GetDpiForWindow(gui.hwnd()))), scaleForDpi(680, static_cast<int>(GetDpiForWindow(gui.hwnd()))));
+    captureWizard(gui.hwnd(), L"wizard-secret.bmp");
+    check(IsWindowEnabled(child(gui.hwnd(), backId)), "Back disabled on secret");
+    SendMessageW(child(gui.hwnd(), secretId), EM_SETSEL, 2, 5);
+    RECT input{}, toggle{}; GetWindowRect(child(gui.hwnd(), secretId), &input); GetWindowRect(child(gui.hwnd(), defaultSecretId), &toggle);
+    check(input.bottom < toggle.top, "secret switch is above field");
+    gui.nextTo(ipId);
+    resizeClient(gui.hwnd(), scaleForDpi(1000, static_cast<int>(GetDpiForWindow(gui.hwnd()))), scaleForDpi(680, static_cast<int>(GetDpiForWindow(gui.hwnd()))));
+    check(IsWindowEnabled(child(gui.hwnd(), backId)), "Back disabled on identity");
+    click(gui.hwnd(), backId);
+    DWORD restoredStart = 0, restoredEnd = 0;
+    SendMessageW(child(gui.hwnd(), secretId), EM_GETSEL, reinterpret_cast<WPARAM>(&restoredStart), reinterpret_cast<LPARAM>(&restoredEnd));
+    check(restoredStart == 2 && restoredEnd == 5, "Back lost secret selection");
+    gui.nextTo(ipId);
+    for (const auto pair : {std::pair{ipId, automaticIpId}, std::pair{keyId, defaultKeyId}}) {
+        GetWindowRect(child(gui.hwnd(), pair.first), &input); GetWindowRect(child(gui.hwnd(), pair.second), &toggle);
+        check(input.bottom < toggle.top, "identity switch is above field");
+    }
+    click(gui.hwnd(), defaultKeyId);
+    captureWizard(gui.hwnd(), L"wizard-identity.bmp");
+    HWND warning = nullptr;
+    EnumChildWindows(gui.hwnd(), [](HWND window, LPARAM value) -> BOOL {
+        if (text(window) == wizardText::warning) *reinterpret_cast<HWND*>(value) = window;
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&warning));
+    check(warning != nullptr, "full destructive-message warning missing");
+    RECT bounds{}, body{}; GetWindowRect(warning, &bounds); GetWindowRect(GetParent(warning), &body);
+    check(bounds.left >= body.left && bounds.right <= body.right && bounds.top >= body.top && bounds.bottom <= body.bottom,
+          "identity warning not entirely visible at default size");
+    check(allText(gui.hwnd()).find(L"A suggested IP is not a reservation.") != std::wstring::npos, "IP reservation warning missing");
+    gui.escape();
+}
+
+void wizardResources() {
+    const auto cycle = [](bool stress) {
+        Gui gui(true); gui.open();
+        if (stress) {
+            const auto process = GetCurrentProcess();
+            RedrawWindow(gui.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            const auto gdi = GetGuiResources(process, GR_GDIOBJECTS), user = GetGuiResources(process, GR_USEROBJECTS);
+            for (int i = 0; i < 500; ++i) RedrawWindow(gui.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            check(GetGuiResources(process, GR_GDIOBJECTS) == gdi && GetGuiResources(process, GR_USEROBJECTS) == user, "Wizard paint leaks native objects");
+        }
+        gui.escape();
+    };
+    cycle(false);
+    const auto process = GetCurrentProcess();
+    const auto gdi = GetGuiResources(process, GR_GDIOBJECTS), user = GetGuiResources(process, GR_USEROBJECTS);
+    cycle(true);
+    for (int i = 0; i < 20; ++i) cycle(false);
+    const auto gdiAfter = GetGuiResources(process, GR_GDIOBJECTS), userAfter = GetGuiResources(process, GR_USEROBJECTS);
+    std::cout << "[ EVIDENCE ] Wizard 500 paints and 20 cycles: GDI " << gdiAfter << " vs " << gdi << ", USER " << userAfter << " vs " << user << "\n";
+    check(gdiAfter <= gdi + 5 && userAfter <= user + 5, "Wizard open/close leaks native objects");
+}
+class WizardFixtureShell final : public ShellAdapter {
+public:
+    bool notify(DWORD, NOTIFYICONDATAW&) override { return true; }
+};
+void wizardProductionFinish(bool lost) {
+    Gui gui(true);
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        gui.backend.lostFinish = lost; gui.backend.lostClose = lost;
+    }
+    TrayApplication app({gui.pipe, L"Local\\phpvpn-wp04-" + widen(uuid()), std::make_unique<WizardFixtureShell>(), L"WP04 synthetic"});
+    check(app.initialise(GetModuleHandleW(nullptr)), "production TrayApplication could not initialise");
+    SendMessageW(app.window(), WM_COMMAND, 206, 0);
+    gui.until([&] { return gui.hwnd() && child(gui.hwnd(), urlId); }, "production Wizard action failed");
+    gui.nextTo(secretId); gui.nextTo(ipId); gui.nextTo(contractsId);
+    captureWizard(gui.hwnd(), L"wizard-contracts.bmp");
+    check(allText(gui.hwnd()).find(wizardText::finishHint) != std::wstring::npos, "Finish hint promises wrong action");
+    click(gui.hwnd(), nextId);
+    if (lost) {
+        gui.until([&] { return text(child(gui.hwnd(), nextId)) == L"Verify save" && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "lost Finish did not offer Verify save", 6500);
+        gui.wait(700);
+        check(gui.notifications == 0 && gui.backend.count(&Backend::commitReads) == 0 && gui.backend.count(&Backend::finishCalls) == 1,
+              "lost Finish guessed success or retried");
+        click(gui.hwnd(), nextId);
+    }
+    gui.until([&] { return !gui.hwnd(); }, "production Finish did not close", 6500);
+    gui.wait(800);
+    check(gui.notifications == 1 && gui.closesAtNotification == 0, "notification/close order wrong");
+    check(gui.backend.count(&Backend::finishCalls) == 1 && gui.backend.count(&Backend::closeCalls) == 1, "Finish or close repeated");
+    check(gui.backend.count(&Backend::commitReads) == (lost ? 1u : 0u), "receipt query count wrong");
+    check(gui.backend.count(&Backend::configReads) == 0 && gui.backend.count(&Backend::connects) == 0, "Finish read config or connected");
+    check(!findTop(L"PhpVpnCommunicationContracts"), "production Finish opened Contracts");
+    std::cout << "[ EVIDENCE ] production Finish=1 close=1 configReads=0 Connect=0 Contracts=0 getCommit=" << (lost ? 1 : 0) << "\n";
+}
+void wizardLifecycleSnapshotAndDiscard() {
+    Gui gui(true); gui.open();
+    const auto clean = gui.wizard.lifecycleSnapshot();
+    check(clean.open && !clean.dirty && !clean.committing && !clean.commitUnknown && !clean.commitDeadlineMs,
+        "initial lifecycle is not clean");
+    check(clean.windowGeneration && clean.sessionGeneration && clean.draftGeneration, "missing lifecycle identity");
+    const wchar_t invalidUtf16[]{static_cast<wchar_t>(0xd800), 0};
+    check(SetWindowTextW(child(gui.hwnd(), urlId), invalidUtf16) != FALSE, "invalid native input setup failed");
+    const auto invalidDraft = gui.wizard.lifecycleSnapshot();
+    check(invalidDraft.dirty && invalidDraft.draftGeneration > clean.draftGeneration && !gui.wizard.approvedDiscard(clean),
+        "rejected UTF-16 input reused clean approval");
+    const auto field = child(gui.hwnd(), urlId);
+    SetFocus(field); SendMessageW(field, EM_SETSEL, 0, 4);
+    SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"https"));
+    const auto draft = gui.wizard.lifecycleSnapshot();
+    check(draft.dirty && draft.windowGeneration == clean.windowGeneration && draft.draftGeneration > clean.draftGeneration,
+        "edit did not advance draft identity");
+    check(!gui.wizard.approvedDiscard(clean), "old clean snapshot discarded changed draft");
+    SendMessageW(field, EM_UNDO, 0, 0);
+    const auto undone = gui.wizard.lifecycleSnapshot();
+    check(undone.draftGeneration > draft.draftGeneration && !gui.wizard.approvedDiscard(draft), "undo reused approval");
+    DWORD first = 0, last = 0;
+    SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&first), reinterpret_cast<LPARAM>(&last));
+    const auto value = text(field);
+    for (int i = 0; i < 20; ++i) check(gui.wizard.lifecycleSnapshot() == undone, "snapshot mutates state");
+    DWORD afterFirst = 0, afterLast = 0;
+    SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&afterFirst), reinterpret_cast<LPARAM>(&afterLast));
+    check(field == child(gui.hwnd(), urlId) && value == text(field) && first == afterFirst && last == afterLast,
+        "snapshot disturbed native field");
+    check(gui.wizard.approvedDiscard(undone) && !gui.wizard.isOpen(), "approved discard did not close immediately");
+    gui.open();
+    check(!gui.wizard.approvedDiscard(undone), "old window snapshot closed reopened Wizard");
+    const auto reopened = gui.wizard.lifecycleSnapshot();
+    check(reopened.windowGeneration != undone.windowGeneration, "reopen reused window generation");
+    gui.nextTo(secretId);
+    const auto attempted = gui.wizard.lifecycleSnapshot();
+    check(attempted.attemptSequence == 1 && attempted.attemptGeneration > reopened.attemptGeneration &&
+        attempted.operationGeneration > reopened.operationGeneration && !gui.wizard.approvedDiscard(reopened),
+        "attempt reused approval identity");
+    answer(IDYES, [&] { click(gui.hwnd(), resetId); });
+    gui.until([&] { return child(gui.hwnd(), urlId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "reset did not settle");
+    const auto reset = gui.wizard.lifecycleSnapshot();
+    check(reset.dirty && reset.sessionGeneration > attempted.sessionGeneration && reset.attemptSequence == 0 &&
+        !gui.wizard.approvedDiscard(attempted), "reset retained old approval");
+    check(gui.wizard.approvedDiscard(reset), "reset draft discard failed");
+    gui.wait(100);
+    check(gui.backend.count(&Backend::finishCalls) == 0 && gui.backend.count(&Backend::commitReads) == 0 &&
+        gui.backend.count(&Backend::configReads) == 0 && gui.backend.count(&Backend::closeCalls) == 0 &&
+        gui.backend.count(&Backend::connects) == 0 && gui.backend.count(&Backend::disconnects) == 0 && gui.notifications == 0,
+        "approved discard triggered IPC or success UI");
+    check(!findTop(L"#32770") && !findTop(L"PhpVpnCommunicationContracts"), "discard created a dialog or Contracts");
+}
+void wizardLifecycleCommitDeadline() {
+    Gui gui(true); gui.open();
+    gui.nextTo(secretId); gui.nextTo(ipId); gui.nextTo(contractsId);
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.pendingFinish = true; }
+    const auto before = gui.wizard.lifecycleSnapshot();
+    const auto pressed = nowMs();
+    click(gui.hwnd(), nextId);
+    const auto committing = gui.wizard.lifecycleSnapshot();
+    check(committing.committing && !committing.commitUnknown && committing.commitDeadlineMs &&
+        *committing.commitDeadlineMs >= pressed + 15000 && *committing.commitDeadlineMs <= nowMs() + 15000,
+        "Finish did not preserve original 15s deadline");
+    check(committing.operationGeneration > before.operationGeneration &&
+        committing.attemptSequence == before.attemptSequence && !gui.wizard.approvedDiscard(committing),
+        "committing is discardable or changed attempt sequence");
+    check(SendMessageW(gui.hwnd(), WM_QUERYENDSESSION, 0, ENDSESSION_LOGOFF) == TRUE, "query blocks shutdown");
+    SendMessageW(gui.hwnd(), WM_ENDSESSION, FALSE, ENDSESSION_LOGOFF);
+    check(gui.wizard.lifecycleSnapshot() == committing, "query/false-end mutated Wizard");
+    gui.until([&] {
+        const auto current = gui.wizard.lifecycleSnapshot();
+        check(current.commitDeadlineMs == committing.commitDeadlineMs && current.operationGeneration == committing.operationGeneration &&
+            current.sessionGeneration == committing.sessionGeneration && current.windowGeneration == committing.windowGeneration,
+            "polling renewed commit identity or deadline");
+        return current.commitUnknown;
+    }, "commit did not expire at original deadline", 16500);
+    check(nowMs() >= *committing.commitDeadlineMs && nowMs() < *committing.commitDeadlineMs + 750,
+        "commit timeout exceeded original deadline tolerance");
+    const auto unknown = gui.wizard.lifecycleSnapshot();
+    check(!unknown.committing && !gui.wizard.approvedDiscard(committing), "stale committing snapshot discarded unknown");
+    check(gui.wizard.approvedDiscard(unknown), "unknown discard failed");
+    gui.wait(100);
+    check(gui.backend.count(&Backend::finishCalls) == 1 && gui.backend.count(&Backend::commitReads) == 0 &&
+        gui.backend.count(&Backend::closeCalls) == 0 && gui.backend.count(&Backend::configReads) == 0 &&
+        gui.backend.count(&Backend::connects) == 0 && gui.backend.count(&Backend::disconnects) == 0 && gui.notifications == 0,
+        "deadline/discard retried, verified or claimed success");
+    std::cout << "[ EVIDENCE ] original commit deadline=15000ms; Finish=1 getCommit=0 close=0 config=0 Connect=0 Disconnect=0\n";
+}
+void wizardLifecycleEndSessionCycles() {
+    ULONGLONG worst = 0;
+    for (unsigned i = 0; i < 24; ++i) {
+        Gui gui(true);
+        auto wizard = std::make_unique<WizardWindow>(gui.pipe);
+        unsigned callbacks = 0;
+        if (i % 3 == 0) { std::lock_guard lock(gui.backend.mutex); gui.backend.heldCommand = WizardCommand::open; }
+        check(wizard->open(GetModuleHandleW(nullptr), [&] { ++callbacks; }), "cycle open failed");
+        if (i % 3 != 0) {
+            gui.until([&] { return gui.hwnd() && child(gui.hwnd(), urlId); }, "cycle did not load");
+            if (i % 3 == 1) {
+                { std::lock_guard lock(gui.backend.mutex); gui.backend.heldCommand = WizardCommand::check_url; }
+                click(gui.hwnd(), nextId);
+            } else {
+                gui.nextTo(secretId); gui.nextTo(ipId); gui.nextTo(contractsId);
+                { std::lock_guard lock(gui.backend.mutex); gui.backend.heldCommand = WizardCommand::finish; }
+                click(gui.hwnd(), nextId);
+                check(wizard->lifecycleSnapshot().committing, "cycle did not enter committing");
+            }
+        }
+        gui.until([&] { return gui.backend.count(&Backend::heldStarted) == 1; }, "cycle reader did not block");
+        const auto state = wizard->lifecycleSnapshot();
+        const HWND oldWindow = gui.hwnd();
+        check(SendMessageW(oldWindow, WM_QUERYENDSESSION, 0, ENDSESSION_LOGOFF) == TRUE, "cycle query rejected");
+        SendMessageW(oldWindow, WM_ENDSESSION, FALSE, ENDSESSION_LOGOFF);
+        check(state == wizard->lifecycleSnapshot(), "cycle false-end changed state");
+        const auto started = GetTickCount64();
+        SendMessageW(oldWindow, WM_ENDSESSION, TRUE, ENDSESSION_LOGOFF);
+        const auto closed = wizard->lifecycleSnapshot();
+        check(!closed.open && closed.windowGeneration != state.windowGeneration && closed.sessionGeneration != state.sessionGeneration &&
+            closed.attemptGeneration != state.attemptGeneration && closed.operationGeneration != state.operationGeneration,
+            "end-session did not invalidate identities");
+        wizard->endSession();
+        check(closed == wizard->lifecycleSnapshot() && !wizard->open(GetModuleHandleW(nullptr)), "end-session is not terminal/idempotent");
+        wizard.reset();
+        worst = std::max(worst, GetTickCount64() - started);
+        check(worst < 250 && gui.backend.count(&Backend::heldCompleted) == 0, "cleanup waited for reader");
+        { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseHeld = true; }
+        gui.backend.changed.notify_all();
+        gui.until([&] { return gui.backend.count(&Backend::heldCompleted) == 1; }, "held reader did not release");
+        gui.wait(50);
+        check(callbacks == 0 && gui.notifications == 0 && !gui.hwnd() && !findTop(L"#32770"), "late result reached dead UI");
+        check(gui.backend.count(&Backend::finishCalls) == (i % 3 == 2 ? 1u : 0u) && gui.backend.count(&Backend::closeCalls) == 0 &&
+            gui.backend.count(&Backend::commitReads) == 0 && gui.backend.count(&Backend::configReads) == 0 &&
+            gui.backend.count(&Backend::connects) == 0 && gui.backend.count(&Backend::disconnects) == 0, "session-end sent unexpected IPC");
+    }
+    std::cout << "[ EVIDENCE ] 24 create/read-or-check-or-commit/end-session/destroy cycles; worst cleanup=" << worst << "ms; late callback=0\n";
+}
+void wizardLifecycleHeldHeartbeatAndGate() {
+    for (bool gate : {false, true}) {
+        Gui gui(true);
+        { std::lock_guard lock(gui.backend.mutex);
+            if (gate) { gui.backend.view.vpnState = ConnectionState::connected; gui.backend.view.vpnPhase = ConnectionPhase::running; gui.backend.holdStatus = true; }
+            else gui.backend.heldCommand = WizardCommand::keepalive;
+        }
+        gui.open(gate);
+        gui.until([&] { return gui.backend.count(&Backend::heldStarted) >= 1; }, "heartbeat/status did not block", 17000);
+        const auto start = GetTickCount64();
+        gui.wizard.endSession();
+        check(GetTickCount64() - start < 250 && gui.backend.count(&Backend::heldCompleted) == 0, "end-session joined heartbeat/status");
+        gui.backend.release(); gui.wait(100);
+        check(!gui.wizard.isOpen() && gui.confirmed == 0 && gui.notifications == 0 && !findTop(L"#32770"), "late heartbeat/status changed UI");
+        check(gui.backend.count(&Backend::closeCalls) == 0 && gui.backend.count(&Backend::resumes) == 0 &&
+            gui.backend.count(&Backend::disconnects) == 0 && gui.backend.count(&Backend::finishCalls) == 0, "session-end performed remote action");
+    }
+}
+void wizardLifecycleApplicationWrappers() {
+    Gui gui(true);
+    TrayApplication app({gui.pipe, L"Local\\phpvpn-wp04-seam-" + widen(uuid()), std::make_unique<WizardFixtureShell>(), L"WP04 synthetic"});
+    check(app.initialise(GetModuleHandleW(nullptr)), "app seam initialisation failed");
+    SendMessageW(app.window(), WM_COMMAND, 206, 0);
+    gui.until([&] { return gui.hwnd() && child(gui.hwnd(), urlId); }, "app Wizard did not load");
+    const auto state = app.wizardLifecycleSnapshot();
+    check(state.open && app.approvedDiscardWizard(state) && !app.wizardLifecycleSnapshot().open, "app discard wrapper failed");
+    SendMessageW(app.window(), WM_COMMAND, 206, 0);
+    gui.until([&] { return gui.hwnd() && child(gui.hwnd(), urlId); }, "app Wizard did not reopen");
+    check(!app.approvedDiscardWizard(state), "app wrapper accepted stale generation");
+    app.endWizardSession();
+    check(!app.wizardLifecycleSnapshot().open && IsWindow(app.window()), "participant changed application lifecycle");
+    check(gui.backend.count(&Backend::closeCalls) == 0 && gui.backend.count(&Backend::disconnects) == 0, "wrapper sent unexpected action");
+}
+void wizardLifecycleEndInsideSuccessNotification() {
+    Gui gui(true); gui.open();
+    gui.nextTo(secretId); gui.nextTo(ipId); gui.nextTo(contractsId);
+    click(gui.hwnd(), contractsId);
+    check(gui.wizard.lifecycleSnapshot().dirty, "Finish setup did not make a dirty draft");
+    gui.onSuccessNotification = [&] {
+        const auto saved = gui.wizard.lifecycleSnapshot();
+        check(saved.open && !saved.dirty && !saved.committing && !saved.commitUnknown, "confirmed snapshot still claims unsaved changes");
+        gui.wizard.endSession();
+    };
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return !gui.wizard.isOpen(); }, "end-session inside success notice did not close");
+    gui.wait(100);
+    check(gui.notifications == 1 && gui.confirmed == 0 && !findTop(L"#32770"), "modal unwind delivered late callback");
+    check(gui.backend.count(&Backend::finishCalls) == 1 && gui.backend.count(&Backend::closeCalls) == 0 &&
+        gui.backend.count(&Backend::commitReads) == 0 && gui.backend.count(&Backend::configReads) == 0 &&
+        gui.backend.count(&Backend::disconnects) == 0, "modal unwind started IPC after end-session");
+}
 void storedIdentityAndLiteral() {
     Gui gui(true);
     const std::string exact = std::string(" space\\literal\n", 15) + std::string("\0", 1) + "tail ";
@@ -424,9 +853,9 @@ void fix2PreferencesAndContractPreview() {
         gui.until([&] { return child(gui.hwnd(), contractsId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "contracts step missing");
         check(IsWindowVisible(child(gui.hwnd(), contractsId)) && SendMessageW(child(gui.hwnd(), contractsId), BM_GETCHECK, 0, 0) == BST_CHECKED,
               "edit contracts checkbox is not visible and checked");
-        check(allText(gui.hwnd()).find(L"Missing default contracts: " + std::to_wstring(13 - count)) != std::wstring::npos, "wrong missing count");
+        check(allText(gui.hwnd()).find(L"Missing defaults:\n" + std::to_wstring(13 - count)) != std::wstring::npos, "wrong missing count");
         click(gui.hwnd(), contractsId);
-        check(allText(gui.hwnd()).find(L"To add on Finish: 0") != std::wstring::npos, "unchecked contracts still advertised additions");
+        check(allText(gui.hwnd()).find(L"To add on Finish:\n0") != std::wstring::npos, "unchecked contracts still advertised additions");
         footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
         gui.escape();
     }
@@ -539,6 +968,13 @@ void editorReset() {
     gui.editor.open(GetModuleHandleW(nullptr), L"Edit Config UI Test", original, [&](const std::string&) { ++saves; return false; });
     HWND editor = findTop(L"PhpVpnTrayEditor");
     check(editor != nullptr, "Editor did not open");
+    STARTUPINFOW startup{sizeof(startup)};
+    GetStartupInfoW(&startup);
+    std::cout << "[ EDITOR LAUNCH ] startupHidden="
+        << ((startup.dwFlags & STARTF_USESHOWWINDOW) && startup.wShowWindow == SW_HIDE)
+        << " console=" << (GetConsoleWindow() != nullptr)
+        << " visible=" << (IsWindowVisible(editor) != FALSE)
+        << " focus=" << (GetFocus() == child(editor, IDC_TEXT_AREA)) << '\n' << std::flush;
     for (auto size : {Size{1080, 560}, Size{480, 320}}) {
         resizeClient(editor, size.width, size.height);
         footer(editor, {IDC_SAVE, 304, IDC_CANCEL});
@@ -568,7 +1004,7 @@ void editorReset() {
     }
     answer(IDYES, [&] { click(editor, 304); });
     gui.until([&] { return gui.backend.count(&Backend::defaultCalls) == 3; }, "delayed editor reset did not start");
-    SendMessageW(editor, WM_CLOSE, 0, 0);
+    answer(IDYES, [&] { SendMessageW(editor, WM_CLOSE, 0, 0); });
     gui.editor.open(GetModuleHandleW(nullptr), L"Edit Config UI Test", "new generation", [&](const std::string&) { ++saves; return false; });
     editor = findTop(L"PhpVpnTrayEditor");
     gui.wait(700);
@@ -640,17 +1076,48 @@ int interactive(std::string_view preview = {}) {
     }
     return 0;
 }
+#include "dev_preview.inc"
 } // namespace
 
 int main(int argc, char** argv) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
     InitCommonControlsEx(&controls);
-    if (argc > 1 && std::string_view(argv[1]) == "--interactive") return interactive();
-    if (argc > 2 && std::string_view(argv[1]) == "--preview") return interactive(argv[2]);
+    uiDiagnostics.begin();
+    UiDiagnostics::Scope diagnosticScope;
+    if (argc > 1 && std::string_view(argv[1]) == "--dev-preview") return devPreview(argc, argv);
+    if (argc == 2 && std::string_view(argv[1]) == "--interactive") return interactive();
+    if (argc == 3 && std::string_view(argv[1]) == "--preview") {
+        const std::string_view scene = argv[2];
+        if (scene == "secret" || scene == "identity" || scene == "identity-small" || scene == "contracts") return interactive(scene);
+    }
+    if (argc > 2 || (argc == 2 && (std::string_view(argv[1]).starts_with("--") ||
+        std::string_view(argv[1]).find_first_not_of(" \t\r\n") == std::string_view::npos))) {
+        std::cerr << "Invalid UI harness arguments\n"; return 1;
+    }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"wp06_scene_matrix", devSceneMatrix},
+        {"wp06_preview_over_45_seconds", devLongPreview},
+        {"wp06_connected_countdown", devConnectedCountdown},
+        {"wp06_unknown_check_confirmed_repeat", devSaveUnknownRepeat},
+        {"wp06_password_children_parent_ok", devPasswordChildren},
+        {"wp06_saving_original_deadline", devSavingDeadline},
+        {"wp06_private_endpoint_cleanup", devEndpointIsolation},
+        {"wp06_tray_actions_exit", devTrayActions},
+        {"wp06_wizard_memory_publication", devWizardPublication},
         {"happy_path_resize_keyboard_finish", happyPath},
+        {"wp04_gate_consent_idle", wizardGateConsentAndIdle},
+        {"wp04_resources", wizardResources},
+        {"wp04_stable_fields_warning", wizardStableFieldsAndWarning},
+        {"wp04_production_finish", [] { wizardProductionFinish(false); }},
+        {"wp04_production_lost_finish", [] { wizardProductionFinish(true); }},
+        {"wp04_lifecycle_snapshot_discard", wizardLifecycleSnapshotAndDiscard},
+        {"wp04_lifecycle_commit_deadline", wizardLifecycleCommitDeadline},
+        {"wp04_lifecycle_end_session_cycles", wizardLifecycleEndSessionCycles},
+        {"wp04_lifecycle_held_heartbeat_gate", wizardLifecycleHeldHeartbeatAndGate},
+        {"wp04_lifecycle_application_wrappers", wizardLifecycleApplicationWrappers},
+        {"wp04_lifecycle_end_inside_success_notice", wizardLifecycleEndInsideSuccessNotification},
         {"stored_identity_literal_reset_escape", storedIdentityAndLiteral},
         {"fix2_preferences_contract_preview", fix2PreferencesAndContractPreview},
         {"fix2_missing_suggestion_unsupported_cidr", fix2MissingSuggestionAndUnsupportedCidr},

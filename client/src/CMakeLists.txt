@@ -5,6 +5,9 @@ add_library(phpvpn-core STATIC
     core/base/secure_buffer.cpp
 
     core/config/config_document.cpp
+    core/config/contracts_document.cpp
+    core/presentation/contracts_model.cpp
+    core/presentation/password_key_model.cpp
     core/config/config_store.cpp
     core/config/config_defaults.cpp
     core/wizard/wizard_defaults.cpp

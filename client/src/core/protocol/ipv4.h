@@ -44,11 +44,11 @@ public:
     Ipv4Cidr() = default;
 
     // Accepts only the canonical spelling A.B.C.D/len with zero host bits and a
-    // prefix length between 16 and 29. A shorter prefix leads to nonsensical
-    // reservations, a longer one leaves no room for a single peer.
+    // prefix length between 24 and 29. This globally bounds remote peers to
+    // 252. /29 still has five client addresses and four remote peers.
     static std::optional<Ipv4Cidr> parse(std::string_view text) noexcept;
 
-    static constexpr int kMinPrefixLength = 16;
+    static constexpr int kMinPrefixLength = 24;
     static constexpr int kMaxPrefixLength = 29;
 
     Ipv4Address network() const noexcept { return network_; }

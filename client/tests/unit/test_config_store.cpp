@@ -137,4 +137,38 @@ PHPVPN_TEST(config_store, exactly_one_bom_is_removed_per_input_boundary) {
     PHPVPN_REQUIRE_OK(fixture.store->save(one, idA));
     PHPVPN_CHECK_EQ(*fixture.files->bytes, normal);
 }
+
+PHPVPN_TEST(config_store, cidr_gate_precedes_publication_and_startup_never_migrates) {
+    StoreFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.store->ensureDefaultAtStartup());
+    PHPVPN_REQUIRE_OK(fixture.store->readValid());
+    PHPVPN_CHECK_EQ(fixture.files->writes, 1u);
+    for (const auto prefix : {16, 17, 18, 19, 20, 21, 22, 23, 30, 31, 32}) {
+        auto invalid = makeDefaultEditorDocument();
+        invalid.replace(invalid.find("10.99.99.0/24"), 13, "10.99.0.0/" + std::to_string(prefix));
+        fixture.files->bytes = invalid;
+        auto read = fixture.store->read();
+        PHPVPN_REQUIRE_OK(read);
+        PHPVPN_CHECK_EQ(read->availability, ConfigAvailability::invalid);
+        PHPVPN_CHECK_EQ(read->reasonCode, ErrorCode::config_invalid_cidr);
+        PHPVPN_CHECK(!read->config && !read->wizard);
+        PHPVPN_CHECK_EQ(*read->document, invalid);
+        PHPVPN_REQUIRE_ERROR(fixture.store->readValid(), ErrorCode::config_invalid_cidr);
+        PHPVPN_REQUIRE_ERROR(fixture.store->save(invalid, idA), ErrorCode::config_invalid_cidr);
+        const auto startup = fixture.store->ensureDefaultAtStartup();
+        PHPVPN_REQUIRE_OK(startup);
+        PHPVPN_CHECK_EQ(*startup, StartupConfigState::existing);
+        PHPVPN_CHECK_EQ(*fixture.files->bytes, invalid);
+        PHPVPN_CHECK_EQ(fixture.files->writes, 1u);
+    }
+    // Explicit valid publication can repair that file, including the /29 edge.
+    for (const auto prefix : {24, 29}) {
+        auto valid = makeDefaultEditorDocument();
+        valid.replace(valid.find("/24"), 3, "/" + std::to_string(prefix));
+        PHPVPN_REQUIRE_OK(fixture.store->save(valid, idB));
+        const auto read = fixture.store->readValid();
+        PHPVPN_REQUIRE_OK(read);
+        PHPVPN_CHECK_EQ(read.value()->maxRemotePeers(), prefix == 24 ? 252u : 4u);
+    }
+}
 } // namespace phpvpn

@@ -656,6 +656,82 @@ PHPVPN_TEST(runtime, actions_read_current_file_and_disconnect_never_reads_it) {
     PHPVPN_CHECK_EQ(fixture.files->writes, 0u);
 }
 
+PHPVPN_TEST(runtime, cidr_gate_blocks_set_config_and_connect_before_network_or_tunnel) {
+    EngineFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    IpcDispatcher dispatcher(fixture.engine);
+    const auto id = fixture.crypto.actual->randomUuidV4().value();
+    for (const auto prefix : {16, 17, 18, 19, 20, 21, 22, 23, 30, 31, 32}) {
+        auto invalid = std::string(kConfig);
+        invalid.replace(invalid.find("10.99.99.0/24"), 13, "10.99.0.0/" + std::to_string(prefix));
+        const auto request = IpcProtocol::buildRequest(IpcCommand::set_config, id, invalid);
+        const auto reply = Json::parse(dispatcher.handle(request));
+        PHPVPN_REQUIRE_OK(reply);
+        PHPVPN_CHECK_EQ(reply->find("error")->find("code")->stringValue(), "config_invalid_cidr");
+        PHPVPN_CHECK_EQ(*fixture.files->bytes, kConfig);
+        PHPVPN_CHECK_EQ(fixture.files->writes, 0u);
+        fixture.files->bytes = invalid;
+        PHPVPN_REQUIRE_ERROR(fixture.engine.connect(), ErrorCode::config_invalid_cidr);
+        PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.loads.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.opens.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 0);
+        fixture.files->bytes = kConfig;
+    }
+    for (const auto prefix : {24, 29}) {
+        auto valid = std::string(kConfig);
+        valid.replace(valid.find("/24"), 3, "/" + std::to_string(prefix));
+        const auto reply = Json::parse(dispatcher.handle(IpcProtocol::buildRequest(IpcCommand::set_config, id, valid)));
+        PHPVPN_REQUIRE_OK(reply);
+        PHPVPN_CHECK_EQ(reply->find("result")->stringValue(), "ok");
+        PHPVPN_CHECK_EQ(*fixture.files->bytes, valid);
+    }
+    PHPVPN_CHECK_EQ(fixture.files->writes, 2u);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 0);
+}
+
+PHPVPN_TEST(wizard_service, cidr_invalid_source_cannot_finish_and_supported_edges_publish) {
+    WizardServiceFixture fixture;
+    for (const auto prefix : {16, 17, 18, 19, 20, 21, 22, 23, 24, 29, 30, 31, 32}) {
+        PHPVPN_CHECK(!fixture.call(WizardCommand::close).error);
+        auto text = std::string(kConfig);
+        const auto network = prefix >= 24 ? "10.99.99.0/" : "10.99.0.0/";
+        text.replace(text.find("10.99.99.0/24"), 13, network + std::to_string(prefix));
+        fixture.runtime.files->bytes = text;
+        const auto opened = fixture.call(WizardCommand::open);
+        PHPVPN_CHECK(!opened.error);
+        const auto view = WizardIpc::parseView(opened.result);
+        PHPVPN_REQUIRE_OK(view);
+        fixture.request.sessionId = view->sessionId;
+        const auto writes = fixture.runtime.files->writes;
+        const auto calls = fixture.httpCalls;
+        if (prefix == 24 || prefix == 29) {
+            PHPVPN_CHECK_EQ(view->availability, ConfigAvailability::valid);
+            fixture.request.fields = *view->fields;
+            fixture.allChecks();
+            const auto started = fixture.beginFinish();
+            PHPVPN_CHECK(!started.error);
+            if (started.error) return;
+            fixture.runFile();
+            const auto committed = fixture.call(WizardCommand::get_commit);
+            PHPVPN_CHECK_EQ(committed.result.find("commitState")->stringValue(), "confirmed");
+            PHPVPN_CHECK_EQ(fixture.runtime.files->writes, writes + 1);
+            const auto saved = fixture.runtime.store.readValid();
+            PHPVPN_REQUIRE_OK(saved);
+            PHPVPN_CHECK_EQ(saved.value()->vpnCidr.prefixLength(), prefix);
+        } else {
+            PHPVPN_CHECK_EQ(view->availability, ConfigAvailability::invalid);
+            PHPVPN_CHECK(!view->context && !view->fields);
+            const auto finish = fixture.beginFinish();
+            PHPVPN_CHECK(finish.error && finish.error->code == "wizard_prerequisite_failed");
+            PHPVPN_CHECK(fixture.fileTasks.empty());
+            PHPVPN_CHECK_EQ(fixture.runtime.files->writes, writes);
+            PHPVPN_CHECK_EQ(fixture.httpCalls, calls);
+            PHPVPN_CHECK_EQ(*fixture.runtime.files->bytes, text);
+        }
+    }
+}
+
 PHPVPN_TEST(wizard_service, create_default_preserves_directory_security_error_and_config_path) {
     WizardServiceFixture fixture;
     fixture.runtime.files->bytes.reset();

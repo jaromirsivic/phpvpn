@@ -21,9 +21,14 @@ PHPVPN_TEST(TrayProgress, ReconstructsSkippedPhasesButSucceedsOnlyWhenConnected)
     model.onSnapshot(status, 1000);
     PHPVPN_CHECK_EQ(model.view().stage, ProgressStage::connecting);
     status.state = "connected";
+    status.phase = "running";
+    status.tunnelReady = "yes";
     model.onSnapshot(status, 1500);
     PHPVPN_CHECK_EQ(model.view().stage, ProgressStage::succeeded);
     PHPVPN_CHECK_EQ(model.view().shield, Shield::green);
+    model.onTick(9000);
+    PHPVPN_CHECK(!model.view().closeRequested);
+    model.onSuccessPresented(1500);
     model.onTick(4499);
     PHPVPN_CHECK(!model.view().closeRequested);
     model.onTick(4500);
@@ -94,6 +99,8 @@ PHPVPN_TEST(TrayProgress, FinalSuccessFreezesAndNewConnectResetsPresentation) {
     ProgressModel model;
     auto status = connecting();
     status.state = "connected";
+    status.phase = "running";
+    status.tunnelReady = "yes";
     model.onSnapshot(status, 1000);
     status.state = "error";
     model.onSnapshot(status, 1500);
@@ -118,6 +125,7 @@ PHPVPN_TEST(TrayProgress, ClosingStopsOnlyLocalReadsAndRemoteDisconnectClosesPen
     model = ProgressModel{};
     auto disconnected = connecting();
     disconnected.state = "disconnected";
+    disconnected.phase = "idle";
     model.onSnapshot(disconnected, 500);
     PHPVPN_CHECK(model.view().closeRequested);
 }

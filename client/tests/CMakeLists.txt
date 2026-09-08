@@ -2,6 +2,9 @@ add_executable(phpvpn-client-tests
     unit/harness.cpp
     unit/test_base64url.cpp
     unit/test_config.cpp
+    unit/test_contracts_document.cpp
+    unit/test_contracts_model.cpp
+    unit/test_password_key.cpp
     unit/test_config_files_win.cpp
     unit/test_config_store.cpp
     unit/test_wizard_ipc.cpp
@@ -24,13 +27,34 @@ add_executable(phpvpn-client-tests
     unit/test_runtime_status.cpp
     unit/test_tray_status.cpp
     unit/test_tray_progress.cpp
+    unit/test_wp03_models.cpp
+    unit/test_wp03_save.cpp
+    unit/test_wp04_lifecycle.cpp
     unit/test_tray_layout.cpp
+    unit/test_tray_geometry.cpp
+    unit/test_tray_infrastructure.cpp
+    unit/test_tray_application.cpp
     unit/test_status_contract.cpp
     unit/test_winhttp_accounting.cpp
     ../apps/tray/status_model.cpp
     ../apps/tray/progress_model.cpp
+    ../apps/tray/progress_details.cpp
     ../apps/tray/layout.cpp
     ../apps/tray/wizard_layout.cpp
+    ../apps/tray/window_utils.cpp
+    ../apps/tray/ui_resources.cpp
+    ../apps/tray/ui_controls.cpp
+    ../apps/tray/status_reader.cpp
+    ../apps/tray/wizard_reader.cpp
+    ../apps/tray/tray_application.cpp
+    ../apps/tray/progress_window.cpp
+    ../apps/tray/statistics_window.cpp
+    ../apps/tray/editor_window.cpp
+    ../apps/tray/wizard_window.cpp
+    ../apps/tray/contracts_save_controller.cpp
+    ../apps/tray/password_sha_window.cpp
+    ../apps/tray/contracts_window.cpp
+    ../apps/tray/tray.rc
 )
 
 target_include_directories(phpvpn-client-tests PRIVATE
@@ -90,8 +114,46 @@ endif()
 
 option(PHPVPN_BUILD_UI_TESTS "Build explicit in-process Win32 tray UI tests" OFF)
 if(PHPVPN_BUILD_UI_TESTS)
+    add_executable(phpvpn-wp03-ui-tests
+        unit/harness.cpp
+        unit/test_wp03_windows.cpp
+        unit/test_wp03_save_windows.cpp
+        unit/test_wp05_windows.cpp
+        ../apps/tray/tray_application.cpp
+        ../apps/tray/wizard_reader.cpp
+        ../apps/tray/wizard_layout.cpp
+        ../apps/tray/wizard_window.cpp
+        ../apps/tray/contracts_save_controller.cpp
+        ../apps/tray/password_sha_window.cpp
+        ../apps/tray/contracts_window.cpp
+        ../apps/tray/progress_model.cpp
+        ../apps/tray/progress_details.cpp
+        ../apps/tray/progress_window.cpp
+        ../apps/tray/statistics_window.cpp
+        ../apps/tray/editor_window.cpp
+        ../apps/tray/status_model.cpp
+        ../apps/tray/status_reader.cpp
+        ../apps/tray/layout.cpp
+        ../apps/tray/window_utils.cpp
+        ../apps/tray/ui_resources.cpp
+        ../apps/tray/ui_controls.cpp
+        ../apps/tray/tray.rc)
+    target_include_directories(phpvpn-wp03-ui-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    target_link_libraries(phpvpn-wp03-ui-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)
+    target_link_options(phpvpn-wp03-ui-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/apps/app.manifest")
+    # Explicit native WP03 checks, never registered with unattended CTest.
     add_executable(phpvpn-tray-ui-tests
         ui/tray_ui_tests.cpp
+        ui/dev_preview.inc
+        ../apps/tray/tray_application.cpp
+        ../apps/tray/window_utils.cpp
+        ../apps/tray/ui_resources.cpp
+        ../apps/tray/ui_controls.cpp
+        ../apps/tray/progress_model.cpp
+        ../apps/tray/progress_details.cpp
+        ../apps/tray/progress_window.cpp
+        ../apps/tray/statistics_window.cpp
+        ../apps/tray/tray.rc
         ../apps/tray/layout.cpp
         ../apps/tray/status_model.cpp
         ../apps/tray/status_reader.cpp
@@ -99,6 +161,8 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
         ../apps/tray/editor_window.cpp
+        ../apps/tray/contracts_save_controller.cpp
+        ../apps/tray/password_sha_window.cpp
         ../apps/tray/contracts_window.cpp)
     target_include_directories(phpvpn-tray-ui-tests PRIVATE ${CMAKE_SOURCE_DIR}/apps/tray)
     target_link_libraries(phpvpn-tray-ui-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)

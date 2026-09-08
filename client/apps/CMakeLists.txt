@@ -42,8 +42,13 @@ phpvpn_add_version_resource(phpvpn-cli "phpvpn console client" "phpvpn" "phpvpn.
 
 add_executable(phpvpn-tray WIN32
     tray/main.cpp
+    tray/tray_application.cpp
+    tray/window_utils.cpp
+    tray/ui_resources.cpp
+    tray/ui_controls.cpp
     tray/status_model.cpp
     tray/progress_model.cpp
+    tray/progress_details.cpp
     tray/layout.cpp
     tray/status_reader.cpp
     tray/wizard_reader.cpp
@@ -52,6 +57,8 @@ add_executable(phpvpn-tray WIN32
     tray/progress_window.cpp
     tray/statistics_window.cpp
     tray/editor_window.cpp
+    tray/contracts_save_controller.cpp
+    tray/password_sha_window.cpp
     tray/contracts_window.cpp
     tray/tray.rc
 )

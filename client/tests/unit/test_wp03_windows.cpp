@@ -1,0 +1,524 @@
+#include "../../apps/tray/editor_window.h"
+#include "../../apps/tray/progress_window.h"
+#include "../../apps/tray/resource.h"
+#include "../../apps/tray/statistics_window.h"
+#include "../../apps/tray/window_utils.h"
+#include "contracts_fixture.h"
+#include "harness.h"
+#include "platform/windows/ipc_pipe.h"
+#include "tray_fixture.h"
+#include "wp03_dialog_test.h"
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <thread>
+
+namespace {
+using namespace phpvpn;
+using namespace phpvpn::tray;
+std::wstring windowText(HWND h) {
+    const int n = GetWindowTextLengthW(h);
+    std::wstring text(n + 1, L'\0');
+    GetWindowTextW(h, text.data(), n + 1);
+    text.resize(n);
+    return text;
+}
+void pump(unsigned milliseconds = 1) {
+    const auto deadline = GetTickCount64() + milliseconds;
+    do {
+        MSG m{};
+        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
+            if (m.message != WM_QUIT) {
+                TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
+        Sleep(1);
+    } while (GetTickCount64() < deadline);
+}
+bool until(const std::function<bool()> &predicate, unsigned ms = 2000) {
+    const auto deadline = GetTickCount64() + ms;
+    while (!predicate() && GetTickCount64() < deadline)
+        pump();
+    return predicate();
+}
+TrayStatus connected() {
+    auto s = parseStatusResponse(phpvpn::tray::test::kStatusFixture);
+    s.state = "connected";
+    s.phase = "running";
+    s.tunnelReady = "yes";
+    s.serverUrl = s.serverSecret = s.accessKey = phpvpn::tray::CheckpointResult::success;
+    return s;
+}
+struct Backend {
+    const std::wstring pipe =
+        L"\\\\.\\pipe\\phpvpn-wp03-" + widen(createPlatformCryptoProvider().value()->randomUuidV4().value());
+    std::atomic<unsigned> configs{0}, statuses{0}, other{0}, inflight{0}, maximum{0}, delay{0};
+    std::mutex mutex;
+    std::string document = contracts_test::document("10.99.99.3");
+    IpcPipeServer server;
+    Backend() : server([this](std::string_view request) { return reply(request); }, options()) {
+        PHPVPN_CHECK(server.start().ok());
+    }
+    ~Backend() { server.stop(); }
+    IpcPipeServerOptions options() {
+        IpcPipeServerOptions o;
+        o.pipeName = pipe;
+        return o;
+    }
+    std::string reply(std::string_view request) {
+        const auto parsed = IpcProtocol::parseRequest(request);
+        if (!parsed) {
+            ++other;
+            return "{}";
+        }
+        if (parsed->command == IpcCommand::get_config) {
+            ++configs;
+            std::lock_guard lock(mutex);
+            return document;
+        }
+        if (parsed->command == IpcCommand::get_status) {
+            ++statuses;
+            const auto active = ++inflight;
+            auto old = maximum.load();
+            while (old < active && !maximum.compare_exchange_weak(old, active)) {
+            }
+            Sleep(delay.load());
+            auto fixture = phpvpn::tray::test::fixture();
+            phpvpn::tray::test::member(fixture, "requestId") = JsonValue::makeString(parsed->requestId);
+            --inflight;
+            return Json::serialize(fixture);
+        }
+        ++other;
+        return "{}";
+    }
+};
+Rect bounds(HWND h, HWND parent) {
+    RECT r{};
+    GetWindowRect(h, &r);
+    MapWindowPoints(nullptr, parent, reinterpret_cast<POINT *>(&r), 2);
+    return {r.left, r.top, r.right, r.bottom};
+}
+void resizeClient(HWND h, Size size) {
+    const int dpi = GetDpiForWindow(h);
+    // Initial-placement helpers deliberately preserve the size of existing windows.
+    // Resize the real frame and allow for a scrollbar appearing or disappearing.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        RECT client{}, frame{};
+        GetClientRect(h, &client);
+        GetWindowRect(h, &frame);
+        const int dx = scaleForDpi(size.width, dpi) - client.right;
+        const int dy = scaleForDpi(size.height, dpi) - client.bottom;
+        if (!dx && !dy)
+            break;
+        PHPVPN_CHECK(SetWindowPos(h, nullptr, 0, 0, frame.right - frame.left + dx,
+                                 frame.bottom - frame.top + dy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE));
+    }
+    RECT client{};
+    GetClientRect(h, &client);
+    PHPVPN_CHECK_EQ(client.right, scaleForDpi(size.width, dpi));
+    PHPVPN_CHECK_EQ(client.bottom, scaleForDpi(size.height, dpi));
+    std::cout << "Resized client " << client.right << "x" << client.bottom << " DPI=" << dpi << "\n";
+}
+void capture(HWND h, const wchar_t *name, bool verifyConnectCard = false) {
+    wchar_t directory[32768]{};
+    const bool save = GetEnvironmentVariableW(L"PHPVPN_WP03_CAPTURE_DIR", directory, 32768) != 0;
+    if (!save && !verifyConnectCard)
+        return;
+    RECT client{};
+    GetClientRect(h, &client);
+    HDC source = GetDC(h), dc = CreateCompatibleDC(source);
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = client.right;
+    info.bmiHeader.biHeight = -client.bottom;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    void *pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(source, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    auto old = SelectObject(dc, bitmap);
+    PHPVPN_CHECK(PrintWindow(h, dc, PW_CLIENTONLY));
+    std::wcout << L"WP03 capture " << name << L": " << client.right << L"x" << client.bottom
+               << L" pixels, DPI " << GetDpiForWindow(h) << L"\n";
+    BITMAPFILEHEADER header{};
+    header.bfType = 0x4d42;
+    header.bfOffBits = sizeof(header) + sizeof(BITMAPINFOHEADER);
+    header.bfSize = header.bfOffBits + client.right * client.bottom * 4;
+    if (save) {
+        std::ofstream out(std::filesystem::path(directory) / name, std::ios::binary);
+        out.write(reinterpret_cast<const char *>(&header), sizeof(header));
+        out.write(reinterpret_cast<const char *>(&info.bmiHeader), sizeof(BITMAPINFOHEADER));
+        out.write(static_cast<const char *>(pixels), client.right * client.bottom * 4);
+        PHPVPN_CHECK(out.good());
+    }
+    if (verifyConnectCard) {
+        const int dpi = GetDpiForWindow(h);
+        const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        // Scan the rendered border across the whole client, independently of the layout helper.
+        // These lines cross blank card content and avoid headings, fields and the separator.
+        std::vector<int> horizontal, vertical;
+        for (int x = 0; x < client.right; ++x)
+            if (GetPixel(dc, x, p(300)) == RGB(214, 220, 231))
+                horizontal.push_back(x);
+        for (int y = 0; y < client.bottom; ++y)
+            if (GetPixel(dc, p(840), y) == RGB(214, 220, 231))
+                vertical.push_back(y);
+        PHPVPN_CHECK(horizontal.size() >= 2 && vertical.size() >= 2);
+        if (horizontal.size() >= 2 && vertical.size() >= 2) {
+            const std::array<int, 4> edges{horizontal.front(), vertical.front(), horizontal.back(), vertical.back()};
+            const std::array<std::array<int, 4>, 2> references{{{{79, 310, 1364, 828}}, {{78, 310, 1360, 827}}}};
+            std::cout << "Painted Connect edges DIP:";
+            for (const auto edge : edges)
+                std::cout << " " << edge * 96.0 / dpi;
+            std::cout << "\n";
+            for (const auto &reference : references)
+                for (std::size_t edge = 0; edge < edges.size(); ++edge) {
+                    const bool x = edge % 2 == 0;
+                    const double expected = (reference[edge] - (x ? 1 : 79)) * (x ? 940.0 / 1461 : 680.0 / 995);
+                    PHPVPN_CHECK(std::abs(edges[edge] * 96.0 / dpi - expected) <= 6.0);
+                }
+        }
+    }
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(h, source);
+}
+} // namespace
+PHPVPN_TEST(WP03Windows, BothConnectReferenceCardsKeepFourPaintedEdgesAfterResize) {
+    Backend backend;
+    for (const bool success : {false, true}) {
+        ProgressWindow progress(backend.pipe);
+        progress.open(GetModuleHandleW(nullptr));
+        PHPVPN_CHECK(until([&] { return windowText(GetDlgItem(progress.window(), 411)) == L"10.99.99.3"; }));
+        auto status = connected();
+        if (!success) {
+            status.hasError = true;
+            status.errorCode = "access_key_rejected";
+            status.accessKey = phpvpn::tray::CheckpointResult::failed;
+        }
+        progress.onSnapshot(status);
+        const HWND url = GetDlgItem(progress.window(), 410), ip = GetDlgItem(progress.window(), 411);
+        for (const Size size : {Size{940, 680}, Size{640, 480}, Size{320, 280}, Size{940, 680}}) {
+            resizeClient(progress.window(), size);
+            SendMessageW(progress.window(), WM_VSCROLL, SB_TOP, 0);
+            pump(10);
+            PHPVPN_CHECK_EQ(GetDlgItem(progress.window(), 410), url);
+            PHPVPN_CHECK_EQ(GetDlgItem(progress.window(), 411), ip);
+            PHPVPN_CHECK_EQ(windowText(ip), L"10.99.99.3");
+            if (size.width == 940) {
+                RECT client{};
+                GetClientRect(progress.window(), &client);
+                const int dpi = GetDpiForWindow(progress.window());
+                PHPVPN_CHECK_EQ(client.right, scaleForDpi(940, dpi));
+                PHPVPN_CHECK_EQ(client.bottom, scaleForDpi(680, dpi));
+                capture(progress.window(), success ? L"connect-reference-success.bmp" : L"connect-reference-failure.bmp", true);
+            }
+            for (const HWND field : {url, ip}) {
+                SetFocus(field);
+                RECT client{};
+                GetClientRect(progress.window(), &client);
+                const auto r = bounds(field, progress.window());
+                PHPVPN_CHECK(r.left >= 0 && r.right <= client.right && r.top >= 0 && r.bottom <= client.bottom);
+            }
+            if (size.width == 320) {
+                SendMessageW(progress.window(), WM_VSCROLL, SB_BOTTOM, 0);
+                capture(progress.window(), success ? L"connect-reference-success-narrow.bmp" : L"connect-reference-failure-narrow.bmp");
+            }
+        }
+        SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+    }
+    PHPVPN_CHECK_EQ(backend.configs.load(), 2u);
+    PHPVPN_CHECK_EQ(backend.other.load(), 0u);
+}
+PHPVPN_TEST(WP03Windows, ReferenceGeometrySurvivesNativeResizeAndEditorUndo) {
+    Backend backend;
+    ProgressWindow progress(backend.pipe);
+    progress.open(GetModuleHandleW(nullptr));
+    auto failure = connected();
+    failure.hasError = true;
+    failure.errorCode = "server_verification_failed";
+    failure.serverSecret = phpvpn::tray::CheckpointResult::failed;
+    progress.onSnapshot(failure);
+    const auto details = FindWindowExW(progress.window(), nullptr, L"STATIC", L"Connection details");
+    PHPVPN_CHECK(details != nullptr);
+    for (const Size size : {Size{940, 680}, Size{640, 480}, Size{320, 280}, Size{940, 680}}) {
+        resizeClient(progress.window(), size);
+        SendMessageW(progress.window(), WM_VSCROLL, SB_TOP, 0);
+        pump(10);
+        const int dpi = GetDpiForWindow(progress.window());
+        const double cardLeft = (bounds(details, progress.window()).left - scaleForDpi(24, dpi)) * 96.0 / dpi;
+        if (size.width == 940) {
+            RECT client{};
+            GetClientRect(progress.window(), &client);
+            PHPVPN_CHECK_EQ(client.right, scaleForDpi(940, dpi));
+            PHPVPN_CHECK_EQ(client.bottom, scaleForDpi(680, dpi));
+            PHPVPN_CHECK(std::abs(cardLeft - (79.0 - 1.0) * 940.0 / 1461.0) <= 6.0);
+            std::cout << "Geometry Connect: DPI=" << dpi << " client=" << client.right << "x" << client.bottom
+                      << " cardLeftDIP=" << cardLeft << "\n";
+        }
+        for (int id : {410, 411}) {
+            const auto field = GetDlgItem(progress.window(), id);
+            SetFocus(field);
+            RECT client{};
+            GetClientRect(progress.window(), &client);
+            const auto r = bounds(field, progress.window());
+            PHPVPN_CHECK(r.left >= 0 && r.right <= client.right && r.top >= 0 && r.bottom <= client.bottom);
+        }
+    }
+    SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+    EditorWindow editor(backend.pipe);
+    editor.open(GetModuleHandleW(nullptr), L"PHPVPN configuration", "{}",
+                [](const std::string &) { return false; }, "Z:\\synthetic\\config.json");
+    const auto field = GetDlgItem(editor.window(), IDC_TEXT_AREA);
+    SetFocus(field);
+    SendMessageW(field, EM_SETSEL, 1, 1);
+    SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"x"));
+    SendMessageW(field, EM_SETSEL, 1, 2);
+    for (const Size size : {Size{1080, 560}, Size{640, 400}, Size{320, 280}, Size{1080, 560}}) {
+        resizeClient(editor.window(), size);
+        pump(10);
+        const int dpi = GetDpiForWindow(editor.window());
+        const auto r = bounds(field, editor.window());
+        if (size.width == 1080) {
+            RECT client{};
+            GetClientRect(editor.window(), &client);
+            PHPVPN_CHECK_EQ(client.right, scaleForDpi(1080, dpi));
+            PHPVPN_CHECK_EQ(client.bottom, scaleForDpi(560, dpi));
+            PHPVPN_CHECK(std::abs(r.top * 96.0 / dpi - (202.0 - 55.0) * 560.0 / 949.0) <= 6.0);
+            std::cout << "Geometry Editor: DPI=" << dpi << " client=" << client.right << "x" << client.bottom
+                      << " textTopDIP=" << r.top * 96.0 / dpi << "\n";
+        }
+        DWORD first = 0, last = 0;
+        SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&first), reinterpret_cast<LPARAM>(&last));
+        PHPVPN_CHECK_EQ(first, 1u);
+        PHPVPN_CHECK_EQ(last, 2u);
+        PHPVPN_CHECK_EQ(GetFocus(), field);
+        PHPVPN_CHECK(SendMessageW(field, EM_CANUNDO, 0, 0));
+        PHPVPN_CHECK(r.bottom <= bounds(GetDlgItem(editor.window(), IDC_SAVE), editor.window()).top);
+    }
+    PHPVPN_CHECK(SendMessageW(field, EM_UNDO, 0, 0));
+    PHPVPN_CHECK_EQ(windowText(field), L"{}");
+    PHPVPN_CHECK_EQ(backend.other.load(), 0u);
+    for (const auto &monitor : availableMonitors())
+        std::cout << "Available monitor DPI=" << monitor.dpi << " work=" << monitor.work.left << ","
+                  << monitor.work.top << "," << monitor.work.right << "," << monitor.work.bottom << "\n";
+}
+PHPVPN_TEST(WP03Windows, OneConfigPerOpenAndIndependentStatusWithNoDisconnect) {
+    Backend backend;
+    backend.delay = 350;
+    ProgressWindow progress(backend.pipe);
+    progress.open(GetModuleHandleW(nullptr));
+    PHPVPN_CHECK(until([&] { return windowText(GetDlgItem(progress.window(), 411)) == L"10.99.99.3"; }));
+    PHPVPN_CHECK_EQ(backend.configs.load(), 1u);
+    {
+        std::lock_guard lock(backend.mutex);
+        backend.document = contracts_test::document("10.99.99.4");
+    }
+    pump(1300);
+    PHPVPN_CHECK_EQ(windowText(GetDlgItem(progress.window(), 411)), L"10.99.99.3");
+    PHPVPN_CHECK_EQ(backend.configs.load(), 1u);
+    PHPVPN_CHECK(backend.statuses >= 2 && backend.maximum == 1);
+    SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+    const auto reads = backend.statuses.load();
+    pump(550);
+    PHPVPN_CHECK_EQ(backend.statuses.load(), reads);
+    progress.open(GetModuleHandleW(nullptr));
+    PHPVPN_CHECK(until([&] { return windowText(GetDlgItem(progress.window(), 411)) == L"10.99.99.4"; }));
+    PHPVPN_CHECK_EQ(backend.configs.load(), 2u);
+    PHPVPN_CHECK_EQ(progress.model().view().stage, ProgressStage::connecting);
+    SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+    PHPVPN_CHECK_EQ(backend.other.load(), 0u);
+    std::cout << "WP03 two opens: get-config=" << backend.configs << ", get-status=" << backend.statuses
+              << ", maximum simultaneous status=" << backend.maximum << ", other=" << backend.other << "\n";
+}
+PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesInBounds) {
+    Backend backend;
+    ProgressWindow progress(backend.pipe);
+    progress.open(GetModuleHandleW(nullptr));
+    PHPVPN_CHECK(until([&] { return backend.configs == 1; }));
+    ShowWindow(progress.window(), SW_MINIMIZE);
+    progress.onSnapshot(connected());
+    pump(100);
+    PHPVPN_CHECK(!progress.model().successDeadlineMs());
+    ShowWindow(progress.window(), SW_HIDE);
+    pump(10);
+    PHPVPN_CHECK(!progress.model().successDeadlineMs());
+    ShowWindow(progress.window(), SW_RESTORE);
+    RedrawWindow(progress.window(), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    PHPVPN_CHECK(until([&] { return progress.model().successDeadlineMs().has_value(); }));
+    if (!progress.model().successDeadlineMs())
+        return;
+    const auto first = *progress.model().successDeadlineMs() - 3000;
+    capture(progress.window(), L"connect-success.bmp");
+    bool two = false, one = false;
+    const auto limit = GetTickCount64() + 4000;
+    while (progress.window() && GetTickCount64() < limit) {
+        pump();
+        two = two || progress.model().view().closingSeconds == 2;
+        one = one || progress.model().view().closingSeconds == 1;
+    }
+    const auto elapsed = nowMs() - first;
+    std::cout << "WP03 success visible-to-close ms: " << elapsed << "\n";
+    PHPVPN_CHECK(!progress.window());
+    PHPVPN_CHECK(elapsed >= 3000 && elapsed <= 3500);
+    PHPVPN_CHECK(two && one);
+    PHPVPN_CHECK_EQ(backend.configs.load(), 1u);
+    PHPVPN_CHECK_EQ(backend.other.load(), 0u);
+    std::cout << "WP03 success: get-config=" << backend.configs << ", get-status=" << backend.statuses
+              << ", other=" << backend.other << "\n";
+}
+PHPVPN_TEST(WP03Windows, FailureFreezesAndBadConfigDoesNotBecomeBootstrapFailure) {
+    Backend backend;
+    {
+        std::lock_guard lock(backend.mutex);
+        backend.document = "{}";
+    }
+    ProgressWindow progress(backend.pipe);
+    progress.open(GetModuleHandleW(nullptr));
+    pump(100);
+    PHPVPN_CHECK_EQ(progress.model().view().stage, ProgressStage::connecting);
+    PHPVPN_CHECK_EQ(windowText(GetDlgItem(progress.window(), 410)), L"Unavailable");
+    auto s = connected();
+    s.hasError = true;
+    s.errorCode = "server_verification_failed";
+    s.serverSecret = phpvpn::tray::CheckpointResult::failed;
+    s.accessKey = phpvpn::tray::CheckpointResult::pending;
+    s.errorDescription = "synthetic raw detail that must not escape";
+    progress.onSnapshot(s);
+    pump(10);
+    capture(progress.window(), L"connect-failure.bmp");
+    SetWindowPos(progress.window(), nullptr, 0, 0, 480, 360, SWP_NOMOVE | SWP_NOZORDER);
+    SendMessageW(progress.window(), WM_VSCROLL, SB_BOTTOM, 0);
+    pump(10);
+    capture(progress.window(), L"connect-narrow.bmp");
+    PHPVPN_CHECK_EQ(progress.model().view().errorCode, "server_verification_failed");
+    progress.onSnapshot(connected());
+    PHPVPN_CHECK_EQ(progress.model().view().stage, ProgressStage::failed);
+    SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+    PHPVPN_CHECK_EQ(backend.other.load(), 0u);
+}
+PHPVPN_TEST(WP03Windows, StatisticsNativeExactValuesStaleAndFocusScroll) {
+    StatisticsWindow stats;
+    stats.open(GetModuleHandleW(nullptr), {});
+    PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500)), L"-");
+    auto s = connected();
+    stats.onSnapshot(s, false);
+    pump(10);
+    capture(stats.window(), L"statistics.bmp");
+    for (auto field : kCounterFields)
+        s.counters.*field.member = UINT64_MAX;
+    stats.onSnapshot(s, false);
+    for (int i = 0; i < 9; ++i)
+        PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500 + i)),
+                        std::wstring(L"18,446,744,073,709,551,615") + (statisticsFields[i].bytes ? L" B" : L""));
+    stats.onSnapshot({}, true);
+    SetWindowPos(stats.window(), nullptr, 0, 0, 480, 360, SWP_NOMOVE | SWP_NOZORDER);
+    for (int i = 0; i < 9; ++i) {
+        const auto value = GetDlgItem(stats.window(), 500 + i);
+        SetFocus(value);
+        RECT client{};
+        GetClientRect(stats.window(), &client);
+        auto r = bounds(value, stats.window());
+        PHPVPN_CHECK(r.top >= 0 && r.bottom <= client.bottom);
+        PHPVPN_CHECK((GetWindowLongW(value, GWL_STYLE) & (ES_READONLY | WS_TABSTOP)) == (ES_READONLY | WS_TABSTOP));
+    }
+    pump(10);
+    capture(stats.window(), L"statistics-narrow-max.bmp");
+    SendMessageW(stats.window(), WM_CLOSE, 0, 0);
+}
+PHPVPN_TEST(WP03Windows, EditorPreservesNulSelectionDirtyAndSeparatesShowInfo) {
+    Backend backend;
+    EditorWindow editor(backend.pipe);
+    std::string source("bad\0json\n", 9), saved;
+    unsigned saves = 0;
+    editor.open(
+        GetModuleHandleW(nullptr), L"PHPVPN configuration", source,
+        [&](const std::string &text) {
+            ++saves;
+            saved = text;
+            return false;
+        },
+        "Z:\\synthetic\\config.json");
+    auto field = GetDlgItem(editor.window(), IDC_TEXT_AREA);
+    PHPVPN_CHECK(windowText(editor.window()).find(L"JSON string literal") != std::wstring::npos);
+    const auto style = GetWindowLongW(field, GWL_STYLE);
+    PHPVPN_CHECK((style & (WS_VSCROLL | WS_HSCROLL | ES_AUTOHSCROLL | ES_MULTILINE)) ==
+                 (WS_VSCROLL | WS_HSCROLL | ES_AUTOHSCROLL | ES_MULTILINE));
+    SendMessageW(field, EM_SETSEL, 2, 5);
+    for (int width : {1500, 480, 1080})
+        SetWindowPos(editor.window(), nullptr, 0, 0, width, 560, SWP_NOMOVE | SWP_NOZORDER);
+    DWORD start = 0, end = 0;
+    SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+    PHPVPN_CHECK_EQ(start, 2u);
+    PHPVPN_CHECK_EQ(end, 5u);
+    SendMessageW(editor.window(), WM_COMMAND, IDC_SAVE, 0);
+    PHPVPN_CHECK_EQ(saves, 1u);
+    PHPVPN_CHECK_EQ(saved, source);
+    SendMessageW(field, EM_SETSEL, 1, 1);
+    SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"X"));
+    PHPVPN_CHECK(SendMessageW(field, EM_GETMODIFY, 0, 0));
+    const auto operation = editor.beginSave(GetTickCount64() + 30000);
+    PHPVPN_CHECK(operation.has_value());
+    auto foreign = *operation;
+    ++foreign.windowGeneration;
+    PHPVPN_CHECK(!editor.finishSave({foreign, SaveOutcome::notSent, ErrorCode::ipc_unavailable}));
+    SendMessageW(editor.window(), WM_COMMAND, IDC_SAVE, 0);
+    PHPVPN_CHECK_EQ(saves, 1u);
+    phpvpn::tray::test::answer(IDOK, [&] { editor.finishSave({*operation, SaveOutcome::notSent, ErrorCode::ipc_unavailable}); });
+    SendMessageW(editor.window(), WM_COMMAND, IDC_SAVE, 0);
+    PHPVPN_CHECK_EQ(saves, 2u);
+    PHPVPN_CHECK_EQ(saved, "X" + source);
+    PHPVPN_CHECK_EQ(GetNextDlgTabItem(editor.window(), field, FALSE), GetDlgItem(editor.window(), 304));
+    PHPVPN_CHECK_EQ(GetNextDlgTabItem(editor.window(), GetDlgItem(editor.window(), 304), FALSE),
+                    GetDlgItem(editor.window(), IDC_CANCEL));
+    editor.open(
+        GetModuleHandleW(nullptr), L"PHPVPN configuration", makeDefaultEditorDocument(),
+        [&](const std::string &) { return false; }, "Z:\\synthetic\\config.json");
+    pump(10);
+    capture(editor.window(), L"edit-config.bmp");
+    editor.open(GetModuleHandleW(nullptr), L"PHPVPN information", "synthetic info");
+    PHPVPN_CHECK(!GetDlgItem(editor.window(), IDC_SAVE) && !GetDlgItem(editor.window(), 304));
+    unsigned children = 0;
+    for (auto h = GetWindow(editor.window(), GW_CHILD); h; h = GetWindow(h, GW_HWNDNEXT))
+        ++children;
+    PHPVPN_CHECK_EQ(children, 1u);
+    PHPVPN_CHECK_EQ(backend.configs.load(), 0u);
+}
+PHPVPN_TEST(WP03Windows, FiveHundredPaintsAndTwentyWindowCyclesKeepObjectsStable) {
+    Backend backend;
+    const auto cycle = [&](bool stress) {
+        ProgressWindow progress(backend.pipe);
+        StatisticsWindow stats;
+        EditorWindow editor(backend.pipe);
+        progress.open(GetModuleHandleW(nullptr));
+        stats.open(GetModuleHandleW(nullptr), connected());
+        editor.open(
+            GetModuleHandleW(nullptr), L"PHPVPN configuration", "{}", [](const std::string &) { return false; },
+            "synthetic");
+        pump(10);
+        const auto process = GetCurrentProcess();
+        const auto gdi = GetGuiResources(process, GR_GDIOBJECTS), user = GetGuiResources(process, GR_USEROBJECTS);
+        if (stress) {
+            for (int i = 0; i < 500; ++i)
+                for (HWND h : {progress.window(), stats.window(), editor.window()})
+                    RedrawWindow(h, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            PHPVPN_CHECK_EQ(GetGuiResources(process, GR_GDIOBJECTS), gdi);
+            PHPVPN_CHECK_EQ(GetGuiResources(process, GR_USEROBJECTS), user);
+        }
+    };
+    cycle(false);
+    pump(10);
+    const auto process = GetCurrentProcess();
+    const auto gdi = GetGuiResources(process, GR_GDIOBJECTS), user = GetGuiResources(process, GR_USEROBJECTS);
+    cycle(true);
+    for (int i = 0; i < 20; ++i)
+        cycle(false);
+    pump(10);
+    std::cout << "WP03 GDI/USER after cycles: " << GetGuiResources(process, GR_GDIOBJECTS) - gdi << "/"
+              << GetGuiResources(process, GR_USEROBJECTS) - user << "\n";
+    PHPVPN_CHECK(GetGuiResources(process, GR_GDIOBJECTS) <= gdi + 5);
+    PHPVPN_CHECK(GetGuiResources(process, GR_USEROBJECTS) <= user + 5);
+}

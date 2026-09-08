@@ -15,6 +15,6 @@ inline constexpr std::array<MenuItem, 10> configurationMenu{{
 // Menus describe actions, never cached configuration availability. Every item
 // stays clickable and its action reports a service response or a concrete error.
 constexpr bool requiresConfigState(MenuAction action) {
-    return action == MenuAction::contracts || action == MenuAction::statistics;
+    return action == MenuAction::statistics;
 }
 } // namespace phpvpn::tray
