@@ -44,7 +44,7 @@ void ProgressWindow::open(HINSTANCE instance) {
         type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         type.lpszClassName = kClass;
         RegisterClassExW(&type);
-        window_ = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, kClass, L"PHPVPN connection",
+        window_ = CreateWindowExW(WS_EX_COMPOSITED | WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, kClass, L"PHPVPN connection",
                                   WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, 1, 1, nullptr, nullptr, instance, this);
         if (!window_)
             return;
@@ -178,6 +178,7 @@ void ProgressWindow::onSnapshot(const TrayStatus &snapshot) {
 void ProgressWindow::layout() {
     if (!heading_ || layingOut_ || IsIconic(window_))
         return;
+    LayoutFrame frame(window_);
     layingOut_ = true;
     RECT client{};
     GetClientRect(window_, &client);
@@ -243,6 +244,7 @@ void ProgressWindow::layout() {
     layingOut_ = false;
 }
 void ProgressWindow::scroll(int position) {
+    LayoutFrame frame(window_);
     position = std::clamp(position, 0, scrollMax_);
     if (position == scroll_)
         return;

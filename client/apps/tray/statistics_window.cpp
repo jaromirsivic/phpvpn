@@ -32,7 +32,7 @@ void StatisticsWindow::open(HINSTANCE instance, const TrayStatus &snapshot, bool
         type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         type.lpszClassName = kClass;
         RegisterClassExW(&type);
-        window_ = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, kClass, L"PHPVPN Statistics",
+        window_ = CreateWindowExW(WS_EX_COMPOSITED | WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, kClass, L"PHPVPN Statistics",
                                   WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, 1, 1, nullptr, nullptr, instance, this);
         if (!window_)
             return;
@@ -109,6 +109,7 @@ void StatisticsWindow::refresh() {
 void StatisticsWindow::layout() {
     if (!heading_ || layingOut_ || IsIconic(window_))
         return;
+    LayoutFrame frame(window_);
     layingOut_ = true;
     RECT client{};
     GetClientRect(window_, &client);
@@ -168,6 +169,7 @@ void StatisticsWindow::layout() {
     layingOut_ = false;
 }
 void StatisticsWindow::scroll(int position) {
+    LayoutFrame frame(window_);
     position = std::clamp(position, 0, scrollMax_);
     if (position == scroll_)
         return;

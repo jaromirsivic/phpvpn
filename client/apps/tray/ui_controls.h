@@ -26,6 +26,21 @@ private:
 void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
                        ui::Color fill, ui::Color border, bool ellipse = false);
 struct ControlPlacement { HWND window; Rect rect; };
+// One completed layout frame for a composited top-level window, including all
+// descendants. Nested layout/scroll calls publish only at the outer boundary.
+class LayoutFrame {
+public:
+    explicit LayoutFrame(HWND window);
+    ~LayoutFrame();
+    LayoutFrame(const LayoutFrame&) = delete;
+    LayoutFrame& operator=(const LayoutFrame&) = delete;
+private:
+    HWND root_ = nullptr;
+    HDC dc_ = nullptr;
+    LayoutFrame* previous_ = nullptr;
+    bool outer_ = true;
+    static thread_local LayoutFrame* active_;
+};
 // Optional injected native calls permit deterministic failure-path tests.
 struct WindowPositionApi {
     decltype(&BeginDeferWindowPos) begin = BeginDeferWindowPos;
@@ -35,6 +50,7 @@ struct WindowPositionApi {
 };
 // False means the individual fallback also failed. Every child is retried when
 // any stage of the deferred batch fails. No recreation, focus or text changes.
+// Suppresses intermediate painting/copying. LayoutFrame publishes the result.
 bool positionControls(HWND parent, std::span<const ControlPlacement> children,
                       const WindowPositionApi& api = {});
 Size measureText(HDC dc, HFONT font, std::wstring_view text, int availableWidth, bool wrap);

@@ -234,7 +234,7 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     type.lpszClassName = kClass;
     RegisterClassExW(&type);
     const auto work = activeWorkArea();
-    window_ = CreateWindowExW(WS_EX_APPWINDOW, kClass, title.c_str(),
+    window_ = CreateWindowExW(WS_EX_COMPOSITED | WS_EX_APPWINDOW, kClass, title.c_str(),
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, work.left, work.top, 1, 1,
         nullptr, nullptr, instance, this);
     if (!window_) return;
@@ -292,6 +292,7 @@ void EditorWindow::updateFonts() {
 }
 void EditorWindow::layout() {
     if (!field_) return;
+    LayoutFrame frame(window_);
     RECT client{};
     GetClientRect(window_, &client);
     const Size size{client.right, client.bottom};
@@ -307,10 +308,6 @@ void EditorWindow::layout() {
     move(GetDlgItem(window_, IDC_CANCEL), next.cancelButton);
     move(heading_,next.heading); move(path_,next.path);
     positionControls(window_,controls);
-    const auto exposed = exposedParentRegion(oldClient_, size, oldLayout_, next);
-    const RECT region{exposed.left, exposed.top, exposed.right, exposed.bottom};
-    InvalidateRect(window_, &region, TRUE);
-    UpdateWindow(window_);
     oldClient_ = size;
     oldLayout_ = next;
 }

@@ -33,7 +33,7 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
         type.lpszClassName = name; type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         if (!RegisterClassExW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) { endSession(); ending_ = false; return false; }
     }
-    window_ = createWindow_(WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, rootClass, L"Communication contracts",
+    window_ = createWindow_(WS_EX_COMPOSITED | WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, rootClass, L"Communication contracts",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, 1, 1, owner, nullptr, instance, this);
     if (!window_) { endSession(); ending_ = false; return false; }
     body_ = createWindow_(WS_EX_CONTROLPARENT,paneClass,L"Contracts content",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_VSCROLL,
@@ -257,6 +257,7 @@ void ContractsWindow::fonts() {
 }
 void ContractsWindow::layout() {
     if (!ok_ || layingOut_ || IsIconic(window_)) return;
+    LayoutFrame frame(window_);
     layingOut_ = true;
     RECT r{}; GetClientRect(window_, &r); const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
     const int margin = s(r.right < s(700) ? 16 : 32), right = (std::max)(margin, static_cast<int>(r.right) - margin);
@@ -274,7 +275,12 @@ void ContractsWindow::layout() {
     const bool stackActions=IsWindowVisible(check_) && right-margin<s(528);
     const int footer = (std::max)(0,static_cast<int>(r.bottom)-s(stackActions?148:60)-errorHeight);
     const int buttonTop=static_cast<int>(r.bottom)-s(44);
-    SetWindowPos(body_,nullptr,0,0,r.right,footer,SWP_NOZORDER|SWP_NOACTIVATE);
+    positionControls(window_, std::vector<ControlPlacement>{
+        {body_, {0, 0, r.right, footer}},
+        {error_, {margin,footer+s(6),right,footer+(std::max)(s(6),errorHeight)}},
+        {check_, {margin,buttonTop-s(stackActions?88:0),margin+s(236),buttonTop-s(stackActions?88:0)+s(36)}},
+        {repeat_, {margin+s(stackActions?0:244),buttonTop-s(stackActions?44:0),margin+s(stackActions?164:408),buttonTop-s(stackActions?44:0)+s(36)}},
+        {ok_, {right-s(104),buttonTop,right,buttonTop+s(36)}}});
     const int bodyExtent=(std::max)(footer,tableTop+s(112));
     SCROLLINFO bodyInfo{sizeof(bodyInfo),SIF_RANGE|SIF_PAGE|SIF_POS};
     bodyInfo.nMax=bodyExtent-1; bodyInfo.nPage=footer;
@@ -290,11 +296,7 @@ void ContractsWindow::layout() {
         {header_, {margin,tableTop,bodyRight,tableTop+s(40)}}, {viewport_, {margin,tableTop+s(40),bodyRight,bodyExtent}}};
     for(auto& placement:bodyPositions) { placement.rect.top-=bodyScroll_; placement.rect.bottom-=bodyScroll_; placement.rect.right=(std::min)(placement.rect.right,bodyRight); }
     positionControls(body_,bodyPositions);
-    positionControls(window_, std::vector<ControlPlacement>{
-        {error_, {margin,footer+s(6),right,footer+(std::max)(s(6),errorHeight)}},
-        {check_, {margin,buttonTop-s(stackActions?88:0),margin+s(236),buttonTop-s(stackActions?88:0)+s(36)}},
-        {repeat_, {margin+s(stackActions?0:244),buttonTop-s(stackActions?44:0),margin+s(stackActions?164:408),buttonTop-s(stackActions?44:0)+s(36)}},
-        {ok_, {right-s(104),buttonTop,right,buttonTop+s(36)}}});
+
     RECT v{}; GetClientRect(viewport_, &v);
     const auto oldWidth=width_,oldRowHeight=rowHeight_;
     keyWidth_ = (std::max)(s(260), static_cast<int>(v.right) - s(550)); width_ = s(550) + keyWidth_; rowHeight_ = s(48);
@@ -315,12 +317,13 @@ void ContractsWindow::layout() {
     GetClientRect(viewport_, &v); horizontal.nPage=v.right;
     x_=std::clamp(x_,0,(std::max)(0,width_-static_cast<int>(v.right))); horizontal.nPos=x_;
     SetScrollInfo(viewport_,SB_HORZ,&horizontal,TRUE);
-    SetWindowPos(content_, nullptr, -x_, -y_, width_, static_cast<int>(rows_.size())*rowHeight_, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(content_, nullptr, -x_, -y_, width_, static_cast<int>(rows_.size())*rowHeight_, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     if (oldWidth!=width_ || oldRowHeight!=rowHeight_) rowPositions();
     InvalidateRect(header_, nullptr, FALSE); InvalidateRect(viewport_, nullptr, FALSE);
     layingOut_ = false;
 }
 void ContractsWindow::rowPositions() {
+    LayoutFrame frame(window_);
     const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
     std::vector<ControlPlacement> positions; positions.reserve(rows_.size() * 4);
     for (std::size_t i = 0; i < rows_.size(); ++i) {
@@ -329,21 +332,15 @@ void ContractsWindow::rowPositions() {
             {action+s(8),top,action+s(96),top+s(36)}, {action+s(104),top,action+s(216),top+s(36)}}};
         for (std::size_t c = 0; c < 4; ++c) positions.push_back({rows_[i].controls[c], rects[c]});
     }
-    // Move the complete native table as one batch without repainting each HWND
-    // during the move. Paint only after every row has its final coordinates.
-    auto batch = BeginDeferWindowPos(static_cast<int>(positions.size()));
-    for (const auto& p : positions) if (batch) batch = DeferWindowPos(batch, p.window, nullptr,
-        p.rect.left, p.rect.top, p.rect.right-p.rect.left, p.rect.bottom-p.rect.top,
-        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
-    if (!batch || !EndDeferWindowPos(batch)) positionControls(content_, positions);
-    RedrawWindow(content_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+    positionControls(content_, positions);
 }
 void ContractsWindow::scroll(bool horizontal, int position) {
+    LayoutFrame frame(window_);
     SCROLLINFO info{sizeof(info), SIF_ALL}; GetScrollInfo(viewport_, horizontal ? SB_HORZ : SB_VERT, &info);
     position = std::clamp(position, 0, (std::max)(0, info.nMax + 1 - static_cast<int>(info.nPage)));
     auto& value = horizontal ? x_ : y_; if (value == position) return;
     value = position; SetScrollPos(viewport_, horizontal ? SB_HORZ : SB_VERT, position, TRUE);
-    SetWindowPos(content_, nullptr, -x_, -y_, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(content_, nullptr, -x_, -y_, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     InvalidateRect(viewport_, nullptr, FALSE); if (horizontal) InvalidateRect(header_, nullptr, FALSE);
 }
 void ContractsWindow::scrollBody(int position) {

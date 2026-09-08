@@ -1078,6 +1078,64 @@ int interactive(std::string_view preview = {}) {
 }
 #include "dev_preview.inc"
 
+// Compare the immediately completed live layout against an explicit full
+// repaint, without pumping timers or changing application state in between.
+std::vector<DWORD> resizePixels(HWND window) {
+    RECT r{}; GetClientRect(window, &r);
+    HDC source = GetDC(window), memory = CreateCompatibleDC(source);
+    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = r.right; info.bmiHeader.biHeight = -r.bottom;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+    void* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(source, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    check(bitmap && memory && source, "resize capture allocation failed");
+    const auto old = SelectObject(memory, bitmap);
+    const bool copied = BitBlt(memory, 0, 0, r.right, r.bottom, source, 0, 0, SRCCOPY) != FALSE;
+    GdiFlush();
+    const auto* first = static_cast<const DWORD*>(pixels);
+    std::vector<DWORD> result(first, first + static_cast<std::size_t>(r.right) * r.bottom);
+    SelectObject(memory, old); DeleteObject(bitmap); DeleteDC(memory); ReleaseDC(window, source);
+    check(copied, "resize capture failed");
+    return result;
+}
+void liveResizeRepaint() {
+    for (const auto* view : {"Wizard", "Statistics", "Contracts", "Editor", "Connect", "Password"}) {
+        DevPreview preview({view, "Default"});
+        preview.run([](DevPreview& p) {
+            HWND root = p.selection.view == "Password" ? findTop(L"PhpVpnPasswordSha") : p.window();
+            check(root && IsWindowVisible(root), "resize window unavailable");
+            check((GetWindowLongPtrW(root, GWL_EXSTYLE) & WS_EX_COMPOSITED) != 0, "missing tree composition");
+            std::cout << "[ EVIDENCE ] Actual window DPI " << GetDpiForWindow(root) << "\n";
+            const HWND focus = GetFocus(); HideCaret(focus);
+            SendMessageW(root, WM_ENTERSIZEMOVE, 0, 0);
+            for (int edge = 0; edge < 8; ++edge) for (int step = 0; step < 14; ++step) {
+                const int offset = step < 7 ? step : 13 - step;
+                const int dpi = GetDpiForWindow(root);
+                const int width = MulDiv(edge == 2 || edge == 3 ? 940 : 940 - offset * 55, dpi, 96);
+                const int height = MulDiv(edge < 2 ? 650 : 650 - offset * 35, dpi, 96);
+                RECT rect{0, 0, width, height};
+                AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(root, GWL_STYLE)), FALSE,
+                    static_cast<DWORD>(GetWindowLongPtrW(root, GWL_EXSTYLE)), dpi);
+                const bool left = edge == 1 || edge == 5 || edge == 7;
+                const bool top = edge == 3 || edge == 6 || edge == 7;
+                SetWindowPos(root, nullptr, 30 + (left ? MulDiv(940, dpi, 96) - width : 0),
+                    30 + (top ? MulDiv(650, dpi, 96) - height : 0), rect.right - rect.left, rect.bottom - rect.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE);
+                check(GetFocus() == focus, "resize changed native focus");
+                check(!GetUpdateRect(root, nullptr, FALSE), "layout returned with unpainted parent");
+                const auto live = resizePixels(root);
+                RedrawWindow(root, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+                check(live == resizePixels(root), "live resize differs from clean full repaint");
+                Sleep(12);
+            }
+            SendMessageW(root, WM_EXITSIZEMOVE, 0, 0); ShowCaret(focus);
+            p.app->endSession();
+        });
+        check(preview.ready, "resize preview never ready");
+        std::cout << "[ EVIDENCE ] " << view << " 112 edge/corner resize frames match full repaint.\n";
+    }
+}
+
 unsigned startupButtons = 0, systemPaintButtons = 0;
 LRESULT CALLBACK buttonCreationHook(int code, WPARAM w, LPARAM l) {
     if (code == HCBT_CREATEWND) {
@@ -1312,6 +1370,7 @@ int main(int argc, char** argv) {
     }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"live_resize_repaint", liveResizeRepaint},
         {"modern_button_drag", modernButtonDrag},
         {"modern_button_startup", modernButtonStartup},
         {"modern_toggle_switches", modernToggleSwitches},

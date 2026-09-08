@@ -1,4 +1,5 @@
 #include "window_utils.h"
+#include "ui_controls.h"
 #include <commctrl.h>
 #include <shellscalingapi.h>
 
@@ -34,6 +35,15 @@ void place(HWND window, Rect rect) {
 }
 LRESULT CALLBACK placementProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                                     UINT_PTR, DWORD_PTR busy) {
+    if (message == WM_WINDOWPOSCHANGING && lParam)
+        reinterpret_cast<WINDOWPOS*>(lParam)->flags |= SWP_NOCOPYBITS | SWP_NOREDRAW;
+    if (message == WM_WINDOWPOSCHANGED || message == WM_DPICHANGED) {
+        // DefWindowProc sends WM_SIZE inside WM_WINDOWPOSCHANGED. Commit after
+        // the complete position change, including left/top edge exposure and
+        // any nested DPI/scrollbar layout, rather than midway through WM_SIZE.
+        LayoutFrame frame(window);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
     if (message == WM_NCDESTROY) {
         RemoveWindowSubclass(window, placementProcedure, placementSubclassId);
         return DefSubclassProc(window, message, wParam, lParam);

@@ -13,7 +13,7 @@ bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
     if (!RegisterClassExW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
     const auto title = widen(target_.passwordTitle());
     // Owned but independently switchable. Ownership does not disable parent.
-    window_ = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, className, title.c_str(),
+    window_ = CreateWindowExW(WS_EX_COMPOSITED | WS_EX_APPWINDOW | WS_EX_CONTROLPARENT, className, title.c_str(),
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, 1, 1, parent, nullptr, instance, this);
     if (!window_) return false;
     body_=CreateWindowExW(WS_EX_CONTROLPARENT,L"STATIC",L"",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_VSCROLL,
@@ -63,9 +63,12 @@ void PasswordShaWindow::resources() {
 }
 void PasswordShaWindow::layout() {
     if (!ok_) return;
+    LayoutFrame frame(window_);
     RECT r{}; GetClientRect(window_, &r); const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
     const int margin = s(24), footer = (std::max)(0,static_cast<int>(r.bottom)-s(60));
-    SetWindowPos(body_,nullptr,0,0,r.right,footer,SWP_NOZORDER|SWP_NOACTIVATE);
+    positionControls(window_, std::vector<ControlPlacement>{
+        {body_, {0, 0, r.right, footer}},
+        {ok_, {r.right-margin-s(104), footer+s(16), r.right-margin, footer+s(52)}}});
     SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS}; info.nMax=s(296)-1; info.nPage=footer;
     scroll_=std::clamp(scroll_,0,(std::max)(0,info.nMax+1-footer)); info.nPos=scroll_; SetScrollInfo(body_,SB_VERT,&info,TRUE);
     RECT body{}; GetClientRect(body_,&body); const int right=(std::max)(margin,static_cast<int>(body.right)-margin);
@@ -74,7 +77,6 @@ void PasswordShaWindow::layout() {
     add(labels_[0], 24, 28); add(labels_[1], 60, 42); add(labels_[2], 108, 20);
     add(input_, 132, 36); add(labels_[3], 176, 20); add(labels_[4], 204, 20); add(hash_, 228, 36); add(labels_[5], 268, 28);
     positionControls(body_, p);
-    SetWindowPos(ok_,nullptr,r.right-margin-s(104),footer+s(16),s(104),s(36),SWP_NOZORDER|SWP_NOACTIVATE);
 }
 LRESULT CALLBACK PasswordShaWindow::bodyProcedure(HWND h,UINT m,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR data) {
     auto* self=reinterpret_cast<PasswordShaWindow*>(data);
@@ -89,6 +91,12 @@ LRESULT CALLBACK PasswordShaWindow::bodyProcedure(HWND h,UINT m,WPARAM w,LPARAM 
         case SB_THUMBPOSITION:case SB_THUMBTRACK:position=info.nTrackPos;break;
         }
         self->scroll_=std::clamp(position,0,(std::max)(0,info.nMax+1-static_cast<int>(info.nPage))); self->layout(); InvalidateRect(h,nullptr,TRUE); return 0;
+    }
+    if (m == WM_ERASEBKGND) return 1;
+    if (m == WM_PAINT) {
+        PAINTSTRUCT p{}; auto target = BeginPaint(h, &p); PaintBuffer buffer(target);
+        FillRect(buffer.dc(), &p.rcPaint, self->resources_.brush(ui::Color::background));
+        buffer.finish(); EndPaint(h, &p); return 0;
     }
     if(m==WM_NCDESTROY) RemoveWindowSubclass(h,bodyProcedure,2);
     return DefSubclassProc(h,m,w,l);

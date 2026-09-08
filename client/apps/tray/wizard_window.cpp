@@ -97,7 +97,7 @@ bool WizardWindow::open(HINSTANCE instance, std::function<void()> onConfirmed) {
     RegisterClassExW(&type);
     type.lpfnWndProc = bodyProcedure; type.lpszClassName = bodyClass;
     RegisterClassExW(&type);
-    window_ = CreateWindowExW(WS_EX_CONTROLPARENT, windowClass, L"Configuration Wizard", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    window_ = CreateWindowExW(WS_EX_COMPOSITED | WS_EX_CONTROLPARENT, windowClass, L"Configuration Wizard", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 1000, 680, nullptr, nullptr, instance, this);
     if (!window_) return false;
     body_ = CreateWindowExW(WS_EX_CONTROLPARENT, bodyClass, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
@@ -454,6 +454,7 @@ void WizardWindow::separator() {
 }
 void WizardWindow::render() {
     if (!body_) return;
+    LayoutFrame frame(window_);
     updating_ = true;
     const HWND previousFocus = GetFocus(); const int focusId = GetDlgCtrlID(previousFocus);
     DWORD selectionStart = 0, selectionEnd = 0;
@@ -628,7 +629,7 @@ void WizardWindow::render() {
     // Reconcile native tab order with the visual order after optional hints or switches change.
     HWND after = HWND_TOP;
     for (const auto& item : children_) {
-        SetWindowPos(item.first, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(item.first, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOREDRAW);
         after = item.first;
     }
     const bool stepChanged = renderedStep_ != step;
@@ -650,22 +651,23 @@ void WizardWindow::render() {
 }
 void WizardWindow::layout() {
     if (!body_) return;
+    LayoutFrame frame(window_);
     RECT rect{}; GetClientRect(window_, &rect);
     HDC dc = GetDC(window_);
     const int primaryWidth = std::max(measuredButtonWidth(dc, font_, wizardText::verify, dpi_),
         measuredButtonWidth(dc, font_, wizardText::disconnect, dpi_));
     ReleaseDC(window_, dc);
     const auto geometry = computeWizardLayout({rect.right, rect.bottom}, dpi_, primaryWidth);
-    const auto move = [](HWND child, Rect bounds) { MoveWindow(child, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, TRUE); };
-    move(steps_, geometry.steps); move(body_, geometry.content);
-    RECT bodyRect{}; GetClientRect(body_, &bodyRect); contentWidth_ = bodyRect.right;
+    std::vector<ControlPlacement> positions{{steps_, geometry.steps}, {body_, geometry.content}};
     std::size_t index = 0;
-    for (int id : {resetId, backId, nextId}) {
-        move(GetDlgItem(window_, id), geometry.buttons[index++]);
-    }
+    for (int id : {resetId, backId, nextId})
+        positions.push_back({GetDlgItem(window_, id), geometry.buttons[index++]});
+    positionControls(window_, positions);
+    RECT bodyRect{}; GetClientRect(body_, &bodyRect); contentWidth_ = bodyRect.right;
 }
 void WizardWindow::scroll(int position) {
     if (!body_) return;
+    LayoutFrame frame(window_);
     RECT rect{}; GetClientRect(body_, &rect);
     scroll_ = std::clamp(position, 0, std::max(0, contentHeight_ - static_cast<int>(rect.bottom)));
     SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS, 0, std::max(0, contentHeight_ - 1), static_cast<UINT>(rect.bottom), scroll_, 0};

@@ -478,10 +478,34 @@ bool attachModernButton(HWND window, const UiResources& resources, ButtonRole ro
     InvalidateRect(window, nullptr, FALSE);
     return true;
 }
+thread_local LayoutFrame* LayoutFrame::active_ = nullptr;
+LayoutFrame::LayoutFrame(HWND window) : root_(GetAncestor(window, GA_ROOT)), previous_(active_) {
+    for (auto* frame = previous_; frame; frame = frame->previous_)
+        if (frame->root_ == root_) outer_ = false;
+    active_ = this;
+    // WS_EX_COMPOSITED presents the descendant tree when its last DC is
+    // released. Keep this lease only for the synchronous layout, never across
+    // a message loop or timer. Do not use WM_SETREDRAW: it changes visibility
+    // and would break responsive layout decisions and native focus handling.
+    if (outer_ && IsWindowVisible(root_)) dc_ = GetDC(root_);
+}
+LayoutFrame::~LayoutFrame() {
+    active_ = previous_;
+    if (outer_ && IsWindow(root_))
+        RedrawWindow(root_, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    // Native non-client/child painting can invalidate the parent again (for
+    // example when a scrollbar disappears). Drain that paint before releasing
+    // the composed frame. UpdateWindow is a no-op when nothing remains dirty.
+    if (outer_ && IsWindow(root_)) UpdateWindow(root_);
+    if (dc_) ReleaseDC(root_, dc_);
+
+}
 bool positionControls(HWND parent, std::span<const ControlPlacement> children, const WindowPositionApi& api) {
+    LayoutFrame frame(parent);
     if (children.empty()) return true;
     if (children.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) return false;
-    constexpr UINT flags = SWP_NOZORDER | SWP_NOACTIVATE;
+    constexpr UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS;
     HDWP batch = api.begin(static_cast<int>(children.size()));
     for (const auto& child : children) {
         if (batch && child.window) batch = api.defer(batch, child.window, nullptr, child.rect.left, child.rect.top,
@@ -493,7 +517,6 @@ bool positionControls(HWND parent, std::span<const ControlPlacement> children, c
         if (!api.set(child.window, nullptr, child.rect.left, child.rect.top,
             child.rect.right - child.rect.left, child.rect.bottom - child.rect.top, flags)) moved = false;
     }
-    InvalidateRect(parent, nullptr, TRUE);
     return moved;
 }
 Size measureText(HDC dc, HFONT font, std::wstring_view text, int availableWidth, bool wrap) {
