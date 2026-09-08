@@ -431,7 +431,7 @@ void happyPath() {
     edit(gui.hwnd(), urlId, L"http://ui-fixture.invalid/phpvpn.php");
     for (auto size : {Size{1000, 680}, Size{480, 320}}) {
         resizeClient(gui.hwnd(), size.width, size.height);
-        footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
+        footer(gui.hwnd(), {nextId, backId, resetId});
     }
     SetFocus(child(gui.hwnd(), urlId));
     const HWND initialFocus = GetFocus();
@@ -456,7 +456,7 @@ void happyPath() {
     click(gui.hwnd(), nextId);
     gui.until([&] { return text(child(gui.hwnd(), nextId)) == L"Finish" && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "access Next did not reach contracts");
     check(gui.backend.count(&Backend::totalStarts) == 3, "three explicit Next clicks did not create exactly three probes");
-    footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
+    footer(gui.hwnd(), {nextId, backId, resetId});
     click(gui.hwnd(), nextId);
     gui.until([&] { return !gui.wizard.isOpen(); }, "confirmed Finish did not close Wizard");
     gui.wait(800);
@@ -1078,6 +1078,108 @@ int interactive(std::string_view preview = {}) {
 }
 #include "dev_preview.inc"
 
+unsigned startupButtons = 0, systemPaintButtons = 0;
+LRESULT CALLBACK buttonCreationHook(int code, WPARAM w, LPARAM l) {
+    if (code == HCBT_CREATEWND) {
+        const auto* create = reinterpret_cast<const CBT_CREATEWNDW*>(l)->lpcs;
+        if (!IS_INTRESOURCE(create->lpszClass) && _wcsicmp(create->lpszClass, L"BUTTON") == 0) {
+            const auto type = create->style & BS_TYPEMASK;
+            if (type == BS_OWNERDRAW) ++startupButtons;
+            if (type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON || type == BS_AUTOCHECKBOX) ++systemPaintButtons;
+        }
+    }
+    return CallNextHookEx(nullptr, code, w, l);
+}
+void modernButtonStartup() {
+    startupButtons = systemPaintButtons = 0;
+    const auto hook = SetWindowsHookExW(WH_CBT, buttonCreationHook, nullptr, GetCurrentThreadId());
+    check(hook != nullptr, "creation hook failed");
+    try {
+        for (int repeat = 0; repeat < 2; ++repeat) for (const auto* view : {"Wizard", "Editor", "Contracts", "Password"}) {
+            DevPreview preview({view, "Default"});
+            preview.run([](DevPreview& p) {
+                check(IsWindowVisible(p.window()), "first window presentation missing");
+                RedrawWindow(p.window(), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+                p.app->endSession();
+            });
+            check(preview.ready, "window did not reach first presentation");
+        }
+    } catch (...) { UnhookWindowsHookEx(hook); throw; }
+    UnhookWindowsHookEx(hook);
+    check(startupButtons > 20 && systemPaintButtons == 0, "system pushbutton style present at creation");
+    std::cout << "[ EVIDENCE ] Twice opened Wizard, Editor, Contracts and Password. " << startupButtons
+        << " buttons created as owner-draw, zero system pushbuttons at creation.\n";
+}
+
+void modernButtonDrag() {
+    Gui gui(true); gui.open(); gui.nextTo(secretId);
+    for (const int id : {backId, nextId, resetId}) {
+        const HWND h = child(gui.hwnd(), id);
+        check((GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW, "button was not created owner-draw");
+        const int dpi = GetDpiForWindow(h);
+        const auto s = [&](int v) { return MulDiv(v, dpi, 96); };
+        const auto pixel = [&](int x, int y) {
+            UpdateWindow(h);
+            HDC dc = GetDC(h); const auto color = GetPixel(dc, s(x), s(y)); ReleaseDC(h, dc);
+            return color;
+        };
+        SetFocus(h); SendMessageW(h, WM_UPDATEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS), 0);
+        SendMessageW(h, WM_MOUSELEAVE, 0, 0);
+        const COLORREF normal = id == backId ? RGB(240,242,245) : id == nextId ? RGB(0,98,232) : RGB(224,46,42);
+        check(pixel(15, 8) == normal, "incorrect normal button fill");
+        check(pixel(15, 3) == (id == backId ? RGB(69,75,84) : id == nextId ? RGB(0,73,175) : RGB(168,32,29)),
+            "focus contour does not match button role");
+        RECT rect{}; GetClientRect(h, &rect);
+        const LPARAM inside = MAKELPARAM(rect.right / 2, rect.bottom / 2);
+        for (const POINT point : {POINT{-20, 10}, POINT{rect.right + 20, 10}, POINT{10, -20}, POINT{10, rect.bottom + 20}}) {
+            SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, inside);
+            check(GetCapture() == h && (SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED), "native press/capture missing");
+            const LPARAM outside = MAKELPARAM(point.x, point.y);
+            SendMessageW(h, WM_MOUSEMOVE, MK_LBUTTON, outside);
+            check(!(SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED), "drag outside remains pressed");
+            check(pixel(15, 8) == normal, "drag outside retains hover or pressed fill");
+            SendMessageW(h, WM_MOUSEMOVE, MK_LBUTTON, inside);
+            check(SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED, "drag return lost native press");
+            SendMessageW(h, WM_MOUSEMOVE, MK_LBUTTON, outside);
+            SendMessageW(h, WM_LBUTTONUP, 0, outside);
+            check(GetCapture() != h, "release did not release capture");
+            check(pixel(1, 10) == RGB(247,248,250), "left margin paint artifact");
+            UpdateWindow(h);
+            HDC dc = GetDC(h);
+            check(GetPixel(dc, rect.right - 1, rect.bottom / 2) == RGB(247,248,250) &&
+                GetPixel(dc, rect.right / 2, rect.bottom - 1) == RGB(247,248,250), "right/bottom paint artifact");
+            ReleaseDC(h, dc);
+        }
+        SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, inside); ReleaseCapture();
+        check(!(SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED), "capture loss retains press");
+        EnableWindow(h, FALSE); UpdateWindow(h); EnableWindow(h, TRUE);
+        SetFocus(h);
+        captureWizard(gui.hwnd(), id == backId ? L"button-back-focus.bmp" : id == nextId ? L"button-primary-focus.bmp" : L"button-reset-focus.bmp");
+        IAccessible* acc = nullptr;
+        check(SUCCEEDED(AccessibleObjectFromWindow(h, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+            reinterpret_cast<void**>(&acc))), "button accessibility missing");
+        VARIANT self{}, role{}, state{}; self.vt = VT_I4; self.lVal = CHILDID_SELF;
+        const bool nativeRole = SUCCEEDED(acc->get_accRole(self, &role)) && role.vt == VT_I4 && role.lVal == ROLE_SYSTEM_PUSHBUTTON;
+        const bool defaultState = SUCCEEDED(acc->get_accState(self, &state)) && state.vt == VT_I4 &&
+            ((state.lVal & STATE_SYSTEM_DEFAULT) != 0) == ((SendMessageW(h, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON) != 0);
+        acc->Release(); check(nativeRole, "native pushbutton role changed");
+        check(defaultState, "accessible default state mismatch");
+        SendMessageW(h, BM_SETSTYLE, BS_DEFPUSHBUTTON, TRUE);
+        check((GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW &&
+            (SendMessageW(h, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON), "default promotion lost owner-draw or dialog semantics");
+        SendMessageW(h, BM_SETSTYLE, id == nextId ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
+    }
+    check(gui.backend.count(&Backend::resetCalls) == 0, "release outside activated Reset");
+    const auto back = child(gui.hwnd(), backId);
+    SendMessageW(back, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(10, 10));
+    SendMessageW(back, WM_LBUTTONUP, 0, MAKELPARAM(10, 10));
+    gui.until([&] { return IsWindowVisible(child(gui.hwnd(), urlId)); }, "valid inside release did not activate Back");
+    const auto next = child(gui.hwnd(), nextId); SetFocus(next);
+    SendMessageW(next, WM_KEYDOWN, VK_SPACE, 0); SendMessageW(next, WM_KEYUP, VK_SPACE, 0);
+    gui.until([&] { return IsWindowVisible(child(gui.hwnd(), secretId)); }, "Space did not activate Next");
+    std::cout << "[ EVIDENCE ] Three button roles, exact Reset RGB, role focus, four drag directions, return, outside release, capture loss and clean margins.\n";
+}
+
 // A single short, isolated regression check for the native switch skin.
 void modernToggleSwitches() {
     const auto checked = [](HWND h) { return SendMessageW(h, BM_GETCHECK, 0, 0) == BST_CHECKED; };
@@ -1115,7 +1217,27 @@ void modernToggleSwitches() {
     const auto exercise = [&](int id, const wchar_t* capture) {
         const auto h = child(gui.hwnd(), id);
         check(h && IsWindowVisible(h) && IsWindowEnabled(h), "wizard switch missing");
+        check((GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK) == BS_OWNERDRAW, "switch not owner-draw");
         const bool initial = checked(h);
+        SendMessageW(h, BM_SETCHECK, initial ? BST_UNCHECKED : BST_CHECKED, 0);
+        check(checked(h) != initial, "BM_SETCHECK did not update switch");
+        SendMessageW(h, BM_SETCHECK, initial ? BST_CHECKED : BST_UNCHECKED, 0);
+        RECT dragBounds{}; GetClientRect(h, &dragBounds);
+        const LPARAM inside = MAKELPARAM(dragBounds.right / 2, dragBounds.bottom / 2);
+        for (const POINT point : {POINT{-15,10}, POINT{dragBounds.right + 15,10}, POINT{10,-15}, POINT{10,dragBounds.bottom + 15}}) {
+            const LPARAM outside = MAKELPARAM(point.x, point.y);
+            SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, inside);
+            check(GetCapture() == h, "switch did not capture mouse");
+            SendMessageW(h, WM_MOUSEMOVE, MK_LBUTTON, outside);
+            check(!(SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED), "switch remains pressed outside");
+            SendMessageW(h, WM_MOUSEMOVE, MK_LBUTTON, inside);
+            check(SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED, "switch return lost press");
+            SendMessageW(h, WM_MOUSEMOVE, MK_LBUTTON, outside);
+            SendMessageW(h, WM_LBUTTONUP, 0, outside); UpdateWindow(h);
+            check(checked(h) == initial && GetCapture() != h, "outside release toggled switch or retained capture");
+        }
+        SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, inside); ReleaseCapture(); UpdateWindow(h);
+        check(checked(h) == initial && !(SendMessageW(h, BM_GETSTATE, 0, 0) & BST_PUSHED), "capture loss toggled or left pressed switch");
         space(h); check(checked(h) != initial, "Space did not toggle");
         space(h); check(checked(h) == initial, "Space did not restore");
         // Click on the text well beyond the switch track.
@@ -1127,6 +1249,8 @@ void modernToggleSwitches() {
         accessibility(h, text(h), true);
         check(checked(h) == initial, "accessible action did not restore");
         EnableWindow(h, FALSE); accessibility(h, text(h), false);
+        SendMessageW(h, BM_CLICK, 0, 0);
+        check(checked(h) == initial, "disabled switch toggled");
         captureWizard(gui.hwnd(), L"toggle-disabled.bmp");
         EnableWindow(h, TRUE);
         SetFocus(h); SendMessageW(h, WM_UPDATEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS), 0);
@@ -1188,6 +1312,8 @@ int main(int argc, char** argv) {
     }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"modern_button_drag", modernButtonDrag},
+        {"modern_button_startup", modernButtonStartup},
         {"modern_toggle_switches", modernToggleSwitches},
         {"wp06_scene_matrix", devSceneMatrix},
         {"wp06_preview_over_45_seconds", devLongPreview},

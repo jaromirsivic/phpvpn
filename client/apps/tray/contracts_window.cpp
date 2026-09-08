@@ -2,7 +2,6 @@
 #include <initguid.h>
 #include "contracts_window.h"
 #include "ui_controls.h"
-#include "contracts_paint.h"
 #include <windowsx.h>
 
 #pragma comment(lib, "oleacc.lib")
@@ -57,21 +56,26 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
     content_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Contracts rows", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
         0, 0, 1, 1, viewport_, nullptr, instance, this);
     error_ = control(window_, L"STATIC", L"", SS_NOPREFIX | SS_NOTIFY, 802);
-    check_ = control(window_, L"BUTTON", L"Check current configuration", WS_TABSTOP, checkId);
-    repeat_ = control(window_, L"BUTTON", L"Save draft again", WS_TABSTOP, repeatId);
-    ok_ = control(window_, L"BUTTON", L"OK", WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK);
+    check_ = control(window_, L"BUTTON", L"Check current configuration", WS_TABSTOP | BS_OWNERDRAW, checkId);
+    repeat_ = control(window_, L"BUTTON", L"Save draft again", WS_TABSTOP | BS_OWNERDRAW, repeatId);
+    ok_ = control(window_, L"BUTTON", L"OK", WS_TABSTOP | BS_OWNERDRAW, IDOK);
     bool complete = heading_ && description_ && local_ && localLabel_ && notice_ && header_ && viewport_ && content_ && error_ && check_ && repeat_ && ok_;
+    complete = attachModernButton(check_, resources_) && complete;
+    complete = attachModernButton(repeat_, resources_) && complete;
+    complete = attachModernButton(ok_, resources_, ButtonRole::primary) && complete;
     rows_.reserve(controller_.model()->rows().size());
     changing_ = true;
     for (const auto& source : controller_.model()->rows()) {
         rows_.emplace_back(); auto& row = rows_.back(); row.remote = source.remoteIp();
         row.identity = widen(controller_.model()->target(row.remote)->contractId());
         const auto base = firstControl + static_cast<int>(rows_.size() - 1) * 4;
-        row.controls[0] = control(content_, L"BUTTON", L"", WS_TABSTOP | BS_AUTOCHECKBOX, base);
+        row.controls[0] = control(content_, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, base);
         complete = attachToggleSwitch(row.controls[0], resources_) && complete;
         row.controls[1] = control(content_, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, base + 1);
-        row.controls[2] = control(content_, L"BUTTON", L"Random", WS_TABSTOP, base + 2);
-        row.controls[3] = control(content_, L"BUTTON", L"Password SHA", WS_TABSTOP, base + 3);
+        row.controls[2] = control(content_, L"BUTTON", L"Random", WS_TABSTOP | BS_OWNERDRAW, base + 2);
+        row.controls[3] = control(content_, L"BUTTON", L"Password SHA", WS_TABSTOP | BS_OWNERDRAW, base + 3);
+        complete = attachModernButton(row.controls[2], resources_, ButtonRole::neutral, ui::Color::surface) && complete;
+        complete = attachModernButton(row.controls[3], resources_, ButtonRole::neutral, ui::Color::surface) && complete;
         const wchar_t* names[]{L"Enabled", L"Key", L"Random", L"Password SHA"};
         for (std::size_t c = 0; c < 4; ++c) {
             complete = complete && row.controls[c];
@@ -405,11 +409,6 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
     }
     if (!self) return DefWindowProcW(h, m, w, l);
     switch (m) {
-    case WM_NOTIFY: {
-        const auto* draw=reinterpret_cast<NMCUSTOMDRAW*>(l);
-        if(draw && draw->hdr.hwndFrom==self->ok_ && draw->hdr.code==NM_CUSTOMDRAW) return paintContractsPrimary(*draw,self->resources_);
-        break;
-    }
     case WM_COMMAND: self->command(LOWORD(w), HIWORD(w)); return 0;
     case WM_TIMER: if (h == self->window_ && w == timer) self->poll(); return 0;
     case resultMessage: self->poll(); return 0;

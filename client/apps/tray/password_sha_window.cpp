@@ -1,6 +1,5 @@
 #include "password_sha_window.h"
 #include "ui_controls.h"
-#include "contracts_paint.h"
 #include "window_utils.h"
 #include <windowsx.h>
 
@@ -29,8 +28,8 @@ bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
     for (std::size_t i = 0; i < labels_.size(); ++i) labels_[i] = control(L"STATIC", texts[i], SS_NOPREFIX, 0);
     input_ = control(L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 501);
     hash_ = control(L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL | ES_READONLY, 502);
-    ok_ = control(L"BUTTON", L"OK", WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK);
-    bool complete = input_ && hash_ && ok_;
+    ok_ = control(L"BUTTON", L"OK", WS_TABSTOP | BS_OWNERDRAW, IDOK);
+    bool complete = input_ && hash_ && attachModernButton(ok_, resources_, ButtonRole::primary);
     for (auto label : labels_) complete = complete && label;
     if (!complete || !inputAdapter_.attach(input_, 510, [this](std::wstring_view text) { return update(text); })) { close(); return false; }
     SendMessageW(input_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"CHANGE-THIS-PASSWORD"));
@@ -100,7 +99,6 @@ LRESULT CALLBACK PasswordShaWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l
     if (m == WM_NCCREATE) { self = static_cast<PasswordShaWindow*>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams); self->window_ = h; SetWindowLongPtrW(h, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self)); }
     if (!self) return DefWindowProcW(h, m, w, l);
     switch (m) {
-    case WM_NOTIFY: { const auto* draw=reinterpret_cast<NMCUSTOMDRAW*>(l); if(draw && draw->hdr.hwndFrom==self->ok_ && draw->hdr.code==NM_CUSTOMDRAW) return paintContractsPrimary(*draw,self->resources_); break; }
     case WM_COMMAND:
         if ((LOWORD(w)==501 || LOWORD(w)==502) && HIWORD(w)==EN_SETFOCUS) {
             RECT area{}, target{}; GetClientRect(self->body_,&area); GetWindowRect(reinterpret_cast<HWND>(l),&target);

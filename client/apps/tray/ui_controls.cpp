@@ -3,8 +3,10 @@
 #include <limits>
 #include <commctrl.h>
 #include <string>
+#include <new>
 #include <objidl.h>
 #include <gdiplus.h>
+#include <oleacc.h>
 #pragma comment(lib, "gdiplus.lib")
 
 namespace phpvpn::tray {
@@ -93,24 +95,323 @@ void paintToggle(HWND window, HDC dc, const UiResources& resources) {
     }
     RestoreDC(dc, saved);
 }
+struct ToggleSwitch { const UiResources* resources; bool checked = false; };
+LRESULT accessibleResult(HWND window, WPARAM w, LPARAM l, bool toggle);
 LRESULT CALLBACK toggleProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
                                  UINT_PTR id, DWORD_PTR data) {
-    const auto& resources = *reinterpret_cast<const UiResources*>(data);
+    auto* toggle = reinterpret_cast<ToggleSwitch*>(data);
+    const auto& resources = *toggle->resources;
+    if (message == BM_CLICK && !IsWindowEnabled(window)) return 0;
+    if (message == BM_GETCHECK) return toggle->checked ? BST_CHECKED : BST_UNCHECKED;
+    if (message == BM_SETCHECK) {
+        const bool checked = w == BST_CHECKED;
+        if (toggle->checked != checked) {
+            toggle->checked = checked;
+            InvalidateRect(window, nullptr, FALSE);
+            NotifyWinEvent(EVENT_OBJECT_STATECHANGE, window, OBJID_CLIENT, CHILDID_SELF);
+        }
+        return 0;
+    }
+    if (message == WM_GETOBJECT && static_cast<LONG>(l) == OBJID_CLIENT)
+        return accessibleResult(window, w, l, true);
+    if (message == WM_GETDLGCODE)
+        return (DefSubclassProc(window, message, w, l) & ~(DLGC_DEFPUSHBUTTON | DLGC_UNDEFPUSHBUTTON)) | DLGC_BUTTON;
+    if (message == BM_SETSTYLE) w = (w & ~BS_TYPEMASK) | BS_OWNERDRAW;
     if (message == WM_PAINT) {
         PAINTSTRUCT paint{}; const auto dc = BeginPaint(window, &paint);
         paintToggle(window, dc, resources); EndPaint(window, &paint); return 0;
     }
     if (message == WM_PRINTCLIENT) { paintToggle(window, reinterpret_cast<HDC>(w), resources); return 0; }
     if (message == WM_ERASEBKGND) return 1;
-    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, toggleProcedure, id);
+    if (message == WM_NCDESTROY) { RemoveWindowSubclass(window, toggleProcedure, id); delete toggle; }
     const auto result = DefSubclassProc(window, message, w, l);
     switch (message) {
     case BM_SETCHECK: case BM_SETSTATE: case WM_ENABLE: case WM_SETFOCUS: case WM_KILLFOCUS:
     case WM_UPDATEUISTATE: case WM_SETTEXT: case WM_SETFONT: case WM_THEMECHANGED: case WM_SIZE:
-        InvalidateRect(window, nullptr, FALSE); break;
+    case WM_MOUSEMOVE: case WM_MOUSELEAVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+    case WM_CAPTURECHANGED: case WM_CANCELMODE: case BM_SETSTYLE:
+        if (IsWindow(window)) InvalidateRect(window, nullptr, FALSE); break;
     default: break;
     }
     return result;
+}
+LRESULT CALLBACK toggleParentProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
+                                      UINT_PTR id, DWORD_PTR) {
+    DWORD_PTR data = 0;
+    if (message == WM_COMMAND && l && HIWORD(w) == BN_CLICKED &&
+        GetWindowSubclass(reinterpret_cast<HWND>(l), toggleProcedure, 0, &data)) {
+        if (!IsWindowEnabled(reinterpret_cast<HWND>(l))) return 0;
+        // BUTTON owns click qualification, capture and Space/BM_CLICK activation.
+        // Commit exactly once, before the application's BN_CLICKED handler reads it.
+        auto* toggle = reinterpret_cast<ToggleSwitch*>(data);
+        SendMessageW(reinterpret_cast<HWND>(l), BM_SETCHECK, toggle->checked ? BST_UNCHECKED : BST_CHECKED, 0);
+    }
+    if (message == WM_DRAWITEM && l) {
+        const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(l);
+        if (draw->CtlType == ODT_BUTTON && GetWindowSubclass(draw->hwndItem, toggleProcedure, 0, &data)) {
+            InvalidateRect(draw->hwndItem, nullptr, FALSE); UpdateWindow(draw->hwndItem); return TRUE;
+        }
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, toggleParentProcedure, id);
+    return DefSubclassProc(window, message, w, l);
+}
+constexpr UINT_PTR modernButtonId = 0x50425634;
+struct ModernButton {
+    const UiResources* resources;
+    ButtonRole role;
+    ui::Color background;
+    bool hover = false;
+    bool isDefault = false;
+};
+// Owner-draw BUTTON retains its standard MSAA provider, except Windows derives
+// STATE_SYSTEM_DEFAULT from BS_DEFPUSHBUTTON. Forward everything to that provider
+// and supply the semantic default bit kept by our dialog-code adapter.
+class ButtonAccessible final : public IAccessible {
+public:
+    ButtonAccessible(HWND window, IAccessible* native, bool toggle = false) : window_(window), native_(native), toggle_(toggle) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (iid != IID_IUnknown && iid != IID_IDispatch && iid != IID_IAccessible) return E_NOINTERFACE;
+        *out = static_cast<IAccessible*>(this); AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&references_); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const auto count = InterlockedDecrement(&references_);
+        if (!count) delete this;
+        return count;
+    }
+    HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT* p) override { return native_->GetTypeInfoCount(p); }
+    HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT i, LCID l, ITypeInfo** p) override { return native_->GetTypeInfo(i,l,p); }
+    HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID r, LPOLESTR* n, UINT c, LCID l, DISPID* p) override { return native_->GetIDsOfNames(r,n,c,l,p); }
+    HRESULT STDMETHODCALLTYPE Invoke(DISPID id, REFIID r, LCID l, WORD flags, DISPPARAMS* args,
+        VARIANT* result, EXCEPINFO* exception, UINT* error) override {
+        if ((id == DISPID_ACC_STATE || id == DISPID_ACC_ROLE || id == DISPID_ACC_DEFAULTACTION) &&
+            (flags & DISPATCH_PROPERTYGET) && args && args->cArgs <= 1 && result) {
+            VARIANT self{}; self.vt = VT_I4; self.lVal = CHILDID_SELF;
+            const auto child = args->cArgs ? args->rgvarg[0] : self;
+            if (id == DISPID_ACC_STATE) return get_accState(child, result);
+            if (id == DISPID_ACC_ROLE) return get_accRole(child, result);
+            VariantInit(result); result->vt = VT_BSTR; return get_accDefaultAction(child, &result->bstrVal);
+        }
+        return native_->Invoke(id,r,l,flags,args,result,exception,error);
+    }
+    HRESULT STDMETHODCALLTYPE get_accParent(IDispatch** p) override { return native_->get_accParent(p); }
+    HRESULT STDMETHODCALLTYPE get_accChildCount(long* p) override { return native_->get_accChildCount(p); }
+    HRESULT STDMETHODCALLTYPE get_accChild(VARIANT c, IDispatch** p) override { return native_->get_accChild(c,p); }
+    HRESULT STDMETHODCALLTYPE get_accName(VARIANT c, BSTR* p) override { return native_->get_accName(c,p); }
+    HRESULT STDMETHODCALLTYPE get_accValue(VARIANT c, BSTR* p) override { return native_->get_accValue(c,p); }
+    HRESULT STDMETHODCALLTYPE get_accDescription(VARIANT c, BSTR* p) override { return native_->get_accDescription(c,p); }
+    HRESULT STDMETHODCALLTYPE get_accRole(VARIANT c, VARIANT* p) override {
+        const auto result = native_->get_accRole(c,p);
+        if (toggle_ && SUCCEEDED(result) && p && p->vt == VT_I4 && c.vt == VT_I4 && c.lVal == CHILDID_SELF)
+            p->lVal = ROLE_SYSTEM_CHECKBUTTON;
+        return result;
+    }
+    HRESULT STDMETHODCALLTYPE get_accState(VARIANT c, VARIANT* p) override {
+        const auto result = native_->get_accState(c,p);
+        if (SUCCEEDED(result) && p && p->vt == VT_I4 && c.vt == VT_I4 && c.lVal == CHILDID_SELF) {
+            p->lVal &= ~STATE_SYSTEM_DEFAULT;
+            if (toggle_) {
+                p->lVal &= ~STATE_SYSTEM_CHECKED;
+                if (IsWindow(window_) && SendMessageW(window_, BM_GETCHECK, 0, 0) == BST_CHECKED) p->lVal |= STATE_SYSTEM_CHECKED;
+            } else if (IsWindow(window_) && (SendMessageW(window_, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON))
+                p->lVal |= STATE_SYSTEM_DEFAULT;
+        }
+        return result;
+    }
+    HRESULT STDMETHODCALLTYPE get_accHelp(VARIANT c, BSTR* p) override { return native_->get_accHelp(c,p); }
+    HRESULT STDMETHODCALLTYPE get_accHelpTopic(BSTR* p, VARIANT c, long* t) override { return native_->get_accHelpTopic(p,c,t); }
+    HRESULT STDMETHODCALLTYPE get_accKeyboardShortcut(VARIANT c, BSTR* p) override { return native_->get_accKeyboardShortcut(c,p); }
+    HRESULT STDMETHODCALLTYPE get_accFocus(VARIANT* p) override { return native_->get_accFocus(p); }
+    HRESULT STDMETHODCALLTYPE get_accSelection(VARIANT* p) override { return native_->get_accSelection(p); }
+    HRESULT STDMETHODCALLTYPE get_accDefaultAction(VARIANT c, BSTR* p) override {
+        if (toggle_ && c.vt == VT_I4 && c.lVal == CHILDID_SELF) {
+            if (!p) return E_POINTER;
+            *p = SysAllocString(SendMessageW(window_, BM_GETCHECK, 0, 0) == BST_CHECKED ? L"Uncheck" : L"Check");
+            return *p ? S_OK : E_OUTOFMEMORY;
+        }
+        return native_->get_accDefaultAction(c,p);
+    }
+    HRESULT STDMETHODCALLTYPE accSelect(long f, VARIANT c) override { return native_->accSelect(f,c); }
+    HRESULT STDMETHODCALLTYPE accLocation(long* x,long* y,long* w,long* h,VARIANT c) override { return native_->accLocation(x,y,w,h,c); }
+    HRESULT STDMETHODCALLTYPE accNavigate(long d,VARIANT c,VARIANT* p) override { return native_->accNavigate(d,c,p); }
+    HRESULT STDMETHODCALLTYPE accHitTest(long x,long y,VARIANT* p) override { return native_->accHitTest(x,y,p); }
+    HRESULT STDMETHODCALLTYPE accDoDefaultAction(VARIANT c) override { return native_->accDoDefaultAction(c); }
+    HRESULT STDMETHODCALLTYPE put_accName(VARIANT c,BSTR p) override { return native_->put_accName(c,p); }
+    HRESULT STDMETHODCALLTYPE put_accValue(VARIANT c,BSTR p) override { return native_->put_accValue(c,p); }
+private:
+    ~ButtonAccessible() { native_->Release(); }
+    LONG references_ = 1;
+    HWND window_;
+    IAccessible* native_;
+    bool toggle_;
+};
+LRESULT accessibleResult(HWND window, WPARAM w, LPARAM l, bool toggle) {
+    IAccessible* native = nullptr;
+    if (SUCCEEDED(CreateStdAccessibleObject(window, OBJID_CLIENT, IID_IAccessible, reinterpret_cast<void**>(&native)))) {
+        auto* accessible = new (std::nothrow) ButtonAccessible(window, native, toggle);
+        if (accessible) {
+            const auto result = LresultFromObject(IID_IAccessible, w, accessible);
+            accessible->Release(); return result;
+        }
+        native->Release();
+    }
+    return DefSubclassProc(window, WM_GETOBJECT, w, l);
+}
+void paintModernButton(HWND window, HDC dc, const ModernButton& button) {
+    const auto& resources = *button.resources;
+    PaintBuffer buffer(dc); dc = buffer.dc();
+    const int saved = SaveDC(dc);
+    RECT bounds{}; GetClientRect(window, &bounds);
+    FillRect(dc, &bounds, resources.brush(button.background));
+    const auto s = [&](int value) { return scaleForDpi(value, resources.dpi()); };
+    const bool enabled = IsWindowEnabled(window) != FALSE;
+    const auto state = SendMessageW(window, BM_GETSTATE, 0, 0);
+    const bool pressed = (state & BST_PUSHED) != 0;
+    const bool primary = button.role == ButtonRole::primary, reset = button.role == ButtonRole::reset;
+    const auto fill = !enabled ? (primary ? ui::Color::buttonPrimaryDisabled : reset ?
+        ui::Color::buttonResetDisabled : ui::Color::disabledBackground) : primary ?
+        (pressed ? ui::Color::primaryPressed : button.hover ? ui::Color::primaryHover : ui::Color::primary) : reset ?
+        (pressed ? ui::Color::buttonResetPressed : button.hover ? ui::Color::buttonResetHover : ui::Color::buttonReset) :
+        (pressed ? ui::Color::buttonNeutralPressed : button.hover ? ui::Color::buttonNeutralHover : ui::Color::buttonNeutral);
+    const auto textColor = !enabled ? ui::Color::disabledText : primary || reset ? ui::Color::primaryText : ui::Color::text;
+    // A single contiguous contour: focus changes its thickness, default only
+    // its shade. Neither state adds a detached ring or changes the outer size.
+    const bool isDefault = button.isDefault;
+    const bool focused = enabled && GetFocus() == window &&
+        !(SendMessageW(window, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS);
+    const int inset = s(2);
+    const auto contour = primary ? ui::Color::primaryPressed : reset ?
+        ui::Color::buttonResetPressed : ui::Color::buttonNeutralFocus;
+    const auto border = enabled && (isDefault || focused) ? contour :
+        primary || reset ? fill : ui::Color::border;
+    paintRoundedShape(dc, {inset, inset, bounds.right - inset, bounds.bottom - inset}, s(12), resources,
+        focused ? border : fill, border);
+    if (focused) {
+        const int inner = inset + s(3);
+        paintRoundedShape(dc, {inner, inner, bounds.right - inner, bounds.bottom - inner}, s(6), resources,
+            fill, fill);
+    }
+    const int length = GetWindowTextLengthW(window);
+    std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+    text.resize(GetWindowTextW(window, text.data(), length + 1));
+    SelectObject(dc, resources.font(ui::Font::label));
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, resources.color(textColor));
+    RECT label = bounds; InflateRect(&label, -s(6), 0);
+    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &label,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    RestoreDC(dc, saved);
+}
+LRESULT CALLBACK modernButtonProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
+                                       UINT_PTR id, DWORD_PTR data) {
+    auto* button = reinterpret_cast<ModernButton*>(data);
+    if (message == WM_GETOBJECT && static_cast<LONG>(l) == OBJID_CLIENT) {
+        IAccessible* native = nullptr;
+        if (SUCCEEDED(CreateStdAccessibleObject(window, OBJID_CLIENT, IID_IAccessible,
+            reinterpret_cast<void**>(&native)))) {
+            auto* accessible = new (std::nothrow) ButtonAccessible(window, native);
+            if (accessible) {
+                const auto result = LresultFromObject(IID_IAccessible, w, accessible);
+                accessible->Release(); return result;
+            }
+            native->Release();
+        }
+        return DefSubclassProc(window, message, w, l);
+    }
+    if (message == WM_GETDLGCODE) {
+        const auto native = DefSubclassProc(window, message, w, l);
+        return (native & ~(DLGC_DEFPUSHBUTTON | DLGC_UNDEFPUSHBUTTON)) |
+            DLGC_BUTTON | (button->isDefault ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON);
+    }
+    if (message == BM_SETSTYLE) {
+        // Dialog navigation promotes/demotes buttons through BM_SETSTYLE.
+        // Keep that semantic state without ever restoring a system paint style.
+        const auto type = w & BS_TYPEMASK;
+        if (type == BS_PUSHBUTTON || type == BS_DEFPUSHBUTTON) {
+            button->isDefault = type == BS_DEFPUSHBUTTON;
+            NotifyWinEvent(EVENT_OBJECT_STATECHANGE, window, OBJID_CLIENT, CHILDID_SELF);
+        }
+        const auto result = DefSubclassProc(window, message, (w & ~BS_TYPEMASK) | BS_OWNERDRAW, l);
+        InvalidateRect(window, nullptr, FALSE);
+        return result;
+    }
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(window, modernButtonProcedure, id);
+        delete button;
+        return DefSubclassProc(window, message, w, l);
+    }
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint{}; const auto dc = BeginPaint(window, &paint);
+        paintModernButton(window, dc, *button); EndPaint(window, &paint); return 0;
+    }
+    if (message == WM_PRINTCLIENT) { paintModernButton(window, reinterpret_cast<HDC>(w), *button); return 0; }
+    if (message == WM_ERASEBKGND) return 1;
+    if (message == WM_MOUSEMOVE) {
+        // Captured mouse moves also arrive with negative/out-of-client coordinates.
+        RECT bounds{}; GetClientRect(window, &bounds);
+        const POINT point{static_cast<short>(LOWORD(l)), static_cast<short>(HIWORD(l))};
+        const bool hover = IsWindowEnabled(window) && PtInRect(&bounds, point);
+        if (hover != button->hover) {
+            button->hover = hover;
+            if (hover) {
+                TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
+            }
+            InvalidateRect(window, nullptr, FALSE);
+        }
+    }
+    if (message == WM_MOUSELEAVE || (message == WM_ENABLE && !w)) {
+        button->hover = false; InvalidateRect(window, nullptr, FALSE);
+    }
+    if (message == WM_CAPTURECHANGED || message == WM_CANCELMODE) {
+        POINT point{}; RECT bounds{}; GetClientRect(window, &bounds);
+        button->hover = IsWindowEnabled(window) && GetCursorPos(&point) && ScreenToClient(window, &point) &&
+            PtInRect(&bounds, point);
+    }
+    const auto result = DefSubclassProc(window, message, w, l);
+    switch (message) {
+    case BM_SETSTATE: case BM_SETSTYLE: case WM_STYLECHANGED: case WM_ENABLE:
+    case WM_SETFOCUS: case WM_KILLFOCUS: case WM_UPDATEUISTATE: case WM_SETTEXT:
+    case WM_SETFONT: case WM_THEMECHANGED: case WM_SIZE: case WM_CAPTURECHANGED:
+    case WM_CANCELMODE: case WM_MOUSEMOVE: case WM_MOUSELEAVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+        if (IsWindow(window)) InvalidateRect(window, nullptr, FALSE); break;
+    default: break;
+    }
+    return result;
+}
+// Native BUTTON can draw synchronously during state changes, outside WM_PAINT.
+// Intercept that path too, including row buttons whose parent is the table pane.
+LRESULT CALLBACK modernButtonParentProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
+                                             UINT_PTR id, DWORD_PTR) {
+    if (message == WM_DRAWITEM && l) {
+        const auto* draw = reinterpret_cast<const DRAWITEMSTRUCT*>(l);
+        DWORD_PTR data = 0;
+        if (draw->CtlType == ODT_BUTTON && GetWindowSubclass(draw->hwndItem,
+            modernButtonProcedure, modernButtonId, &data)) {
+            // Native owner-draw state notifications never invoke the system
+            // renderer. Repaint the entire client with an unshifted paint DC.
+            InvalidateRect(draw->hwndItem, nullptr, FALSE);
+            UpdateWindow(draw->hwndItem);
+            return TRUE;
+        }
+    }
+    if (message == WM_NOTIFY && l) {
+        const auto* draw = reinterpret_cast<const NMCUSTOMDRAW*>(l);
+        DWORD_PTR data = 0;
+        if (draw->hdr.code == NM_CUSTOMDRAW && GetWindowSubclass(draw->hdr.hwndFrom,
+            modernButtonProcedure, modernButtonId, &data)) {
+            if (draw->dwDrawStage == CDDS_PREPAINT) {
+                // The native pressed-state DC can have a shifted origin and a
+                // partial clip. Never paint our client geometry through that DC.
+                // WM_PAINT owns the complete skin, including the corner margins.
+                InvalidateRect(draw->hdr.hwndFrom, nullptr, FALSE);
+                return CDRF_SKIPDEFAULT;
+            }
+            return CDRF_DODEFAULT;
+        }
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, modernButtonParentProcedure, id);
+    return DefSubclassProc(window, message, w, l);
 }
 }
 PaintBuffer::PaintBuffer(HDC target) : target_(target) {
@@ -153,8 +454,29 @@ void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resou
     SelectObject(dc, pen); SelectObject(dc, brush);
 }
 bool attachToggleSwitch(HWND window, const UiResources& resources) {
-    return window && SetWindowSubclass(window, toggleProcedure, 0,
-        reinterpret_cast<DWORD_PTR>(&resources));
+    if (!window || (GetWindowLongPtrW(window, GWL_STYLE) & BS_TYPEMASK) != BS_OWNERDRAW) return false;
+    DWORD_PTR existing = 0;
+    if (GetWindowSubclass(window, toggleProcedure, 0, &existing)) return true;
+    auto* toggle = new (std::nothrow) ToggleSwitch{&resources};
+    if (!toggle) return false;
+    if (!SetWindowSubclass(GetParent(window), toggleParentProcedure, 0, 0) ||
+        !SetWindowSubclass(window, toggleProcedure, 0, reinterpret_cast<DWORD_PTR>(toggle))) {
+        delete toggle; return false;
+    }
+    InvalidateRect(window, nullptr, FALSE); return true;
+}
+bool attachModernButton(HWND window, const UiResources& resources, ButtonRole role, ui::Color background) {
+    if (!window || (GetWindowLongPtrW(window, GWL_STYLE) & BS_TYPEMASK) != BS_OWNERDRAW) return false;
+    DWORD_PTR existing = 0;
+    if (GetWindowSubclass(window, modernButtonProcedure, modernButtonId, &existing)) return true;
+    auto* button = new (std::nothrow) ModernButton{&resources, role, background, false, role == ButtonRole::primary};
+    if (!button) return false;
+    if (!SetWindowSubclass(GetParent(window), modernButtonParentProcedure, modernButtonId, 0) ||
+        !SetWindowSubclass(window, modernButtonProcedure, modernButtonId, reinterpret_cast<DWORD_PTR>(button))) {
+        delete button; return false;
+    }
+    InvalidateRect(window, nullptr, FALSE);
+    return true;
 }
 bool positionControls(HWND parent, std::span<const ControlPlacement> children, const WindowPositionApi& api) {
     if (children.empty()) return true;

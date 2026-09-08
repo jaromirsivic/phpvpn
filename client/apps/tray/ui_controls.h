@@ -42,7 +42,16 @@ int measuredButtonWidth(HDC dc, HFONT font, std::wstring_view text, int dpi);
 void paintCard(HDC dc, Rect rect, const UiResources& resources,
                ui::Color fill = ui::Color::surface, ui::Color border = ui::Color::border);
 void invalidateChanged(HWND window, Rect region, bool changed);
-// Retains the native auto-checkbox input, state and accessibility provider.
+// Create BUTTON with BS_OWNERDRAW. Native BUTTON qualifies activation, while
+// the shared adapter maintains two-state BM_GETCHECK/BM_SETCHECK semantics and
+// exposes the checkbox role/state through the standard accessibility provider.
 // Resources must outlive the control, as they do for the containing window.
 bool attachToggleSwitch(HWND window, const UiResources& resources);
+enum class ButtonRole { neutral, primary, reset };
+// Only the presentation is replaced. BUTTON keeps its native input, dialog
+// input and accessibility provider. Create with BS_OWNERDRAW before attaching,
+// while the containing window is hidden. Primary starts as the default action.
+// Dialog promotion/demotion is retained without replacing the owner-draw style.
+bool attachModernButton(HWND window, const UiResources& resources, ButtonRole role = ButtonRole::neutral,
+                        ui::Color background = ui::Color::background);
 } // namespace phpvpn::tray

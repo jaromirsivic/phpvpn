@@ -252,12 +252,17 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
             0, 0, 1, 1, window_, nullptr, instance, nullptr);
         path_ = CreateWindowExW(0, L"EDIT", widen(configPath).c_str(), WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL,
             0, 0, 1, 1, window_, nullptr, instance, nullptr);
-        CreateWindowExW(0, L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        CreateWindowExW(0, L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kReset)), instance, nullptr);
-        CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_CANCEL), instance, nullptr);
-        CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+        CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_SAVE), instance, nullptr);
+    }
+    if (save_ && (!attachModernButton(GetDlgItem(window_, kReset), resources_, ButtonRole::reset) ||
+        !attachModernButton(GetDlgItem(window_, IDC_CANCEL), resources_) ||
+        !attachModernButton(GetDlgItem(window_, IDC_SAVE), resources_, ButtonRole::primary))) {
+        DestroyWindow(window_); return;
     }
     updateFonts();
     layout();
@@ -378,26 +383,6 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             SetTextColor(dc,self->resources_.color(reinterpret_cast<HWND>(lParam)==self->path_?ui::Color::secondaryText:ui::Color::text));
             SetBkColor(dc,self->resources_.color(background));
             return reinterpret_cast<LRESULT>(self->resources_.brush(background));
-        }
-        case WM_NOTIFY: {
-            const auto* custom=reinterpret_cast<NMCUSTOMDRAW*>(lParam);
-            if(custom && custom->hdr.code==NM_CUSTOMDRAW && custom->dwDrawStage==CDDS_PREPAINT &&
-               (custom->hdr.idFrom==IDC_SAVE || custom->hdr.idFrom==kReset)) {
-                PaintBuffer buffer(custom->hdc);
-                auto buffered = *custom; buffered.hdc = buffer.dc(); custom = &buffered;
-                const bool primary=custom->hdr.idFrom==IDC_SAVE;
-                const bool enabled=IsWindowEnabled(custom->hdr.hwndFrom)!=FALSE;
-                const auto fill=!enabled?ui::Color::disabledBackground:primary?ui::Color::primary:ui::Color::background;
-                const auto text=!enabled?ui::Color::disabledText:primary?ui::Color::primaryText:ui::Color::primary;
-                FillRect(custom->hdc,&custom->rc,self->resources_.brush(fill));
-                SetBkMode(custom->hdc,TRANSPARENT);SetTextColor(custom->hdc,self->resources_.color(text));
-                const auto old=SelectObject(custom->hdc,self->resources_.font(ui::Font::label));
-                RECT rect=custom->rc;DrawTextW(custom->hdc,primary?L"Save":L"Reset",-1,&rect,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-                SelectObject(custom->hdc,old);
-                if((custom->uItemState&CDIS_FOCUS)!=0){InflateRect(&rect,-3,-3);DrawFocusRect(custom->hdc,&rect);}
-                return CDRF_SKIPDEFAULT;
-            }
-            break;
         }
         case WM_DPICHANGED:
             applyDpiRect(window, lParam);

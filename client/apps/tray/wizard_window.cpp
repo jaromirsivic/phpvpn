@@ -104,8 +104,13 @@ bool WizardWindow::open(HINSTANCE instance, std::function<void()> onConfirmed) {
         0, 0, 1, 1, window_, nullptr, instance, this);
     steps_ = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0, 0, 1, 1, window_, nullptr, instance, nullptr);
     for (const auto& [id, text] : {std::pair{resetId, L"Reset"}, {backId, L"Back"}, {nextId, wizardText::verify}})
-        CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | (id == nextId ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON),
+        CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
+    if (!attachModernButton(GetDlgItem(window_, resetId), resources_, ButtonRole::reset) ||
+        !attachModernButton(GetDlgItem(window_, backId), resources_) ||
+        !attachModernButton(GetDlgItem(window_, nextId), resources_, ButtonRole::primary)) {
+        destroy(); return false;
+    }
     sizeAndCenter(window_, {1000, 680}); render();
     lastContact_ = lastHeartbeat_ = nowMs(); lastPoll_ = 0;
     if (!SetTimer(window_, 1, 250, nullptr)) { destroy(); return false; }
@@ -389,7 +394,7 @@ void WizardWindow::destroy() {
 }
 HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD style, int id, int height) {
     const int margin = scaleForDpi(inCard_ ? 48 : 24, dpi_);
-    if (type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_AUTOCHECKBOX) {
+    if (type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
         style |= BS_MULTILINE;
         HDC dc = GetDC(body_); auto old = SelectObject(dc, font_);
         RECT bounds{0, 0, std::max(20, contentWidth_ - 2 * margin - scaleForDpi(54, dpi_)), 0};
@@ -413,7 +418,7 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
         // In particular, do not reset EDIT undo/selection during resize or polling.
         if (current != text) SetWindowTextW(child, text.c_str());
     }
-    if (created && type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_AUTOCHECKBOX) {
+    if (created && type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
         if (!attachToggleSwitch(child, resources_)) { DestroyWindow(child); return nullptr; }
     }
     EnableWindow(child, TRUE);
@@ -514,7 +519,7 @@ void WizardWindow::render() {
         auto field = add(L"EDIT", widen(model_.secretEditorText()), WS_TABSTOP | ES_AUTOHSCROLL, secretId);
         EnableWindow(field, !locked && !model_.useDefaultSecret());
         label(model_.secretLiteralMode() ? wizardText::secretLiteralHint : wizardText::secretHint);
-        auto box = add(L"BUTTON", wizardText::defaultSecret, WS_TABSTOP | BS_AUTOCHECKBOX, defaultSecretId);
+        auto box = add(L"BUTTON", wizardText::defaultSecret, WS_TABSTOP | BS_OWNERDRAW, defaultSecretId);
         SendMessageW(box, BM_SETCHECK, model_.useDefaultSecret() ? BST_CHECKED : BST_UNCHECKED, 0);
         if (model_.useDefaultSecret()) label(wizardText::defaultSecretHint);
         separator();
@@ -527,14 +532,14 @@ void WizardWindow::render() {
         beginCard();
         label(wizardText::ipLabel); auto ipField = add(L"EDIT", widen(model_.fields().virtualIp), WS_TABSTOP | ES_AUTOHSCROLL, ipId);
         EnableWindow(ipField, !locked && !model_.autoDetectIpAddress());
-        auto automatic = add(L"BUTTON", wizardText::automaticIp, WS_TABSTOP | BS_AUTOCHECKBOX, automaticIpId);
+        auto automatic = add(L"BUTTON", wizardText::automaticIp, WS_TABSTOP | BS_OWNERDRAW, automaticIpId);
         SendMessageW(automatic, BM_SETCHECK, model_.autoDetectIpAddress() ? BST_CHECKED : BST_UNCHECKED, 0);
         if (model_.autoDetectIpAddress() && !model_.hasSuggestedIp()) label(wizardText::noSuggestion);
         separator();
         label(wizardText::keyLabel);
         auto field = add(L"EDIT", widen(model_.fields().accessKey), WS_TABSTOP | ES_AUTOHSCROLL, keyId);
         EnableWindow(field, !locked && !model_.useDefaultAccessKey());
-        auto box = add(L"BUTTON", wizardText::defaultKey, WS_TABSTOP | BS_AUTOCHECKBOX, defaultKeyId);
+        auto box = add(L"BUTTON", wizardText::defaultKey, WS_TABSTOP | BS_OWNERDRAW, defaultKeyId);
         SendMessageW(box, BM_SETCHECK, model_.useDefaultAccessKey() ? BST_CHECKED : BST_UNCHECKED, 0);
         label(wizardText::keyHint);
         if (model_.useDefaultAccessKey()) label(wizardText::defaultKeyHint);
@@ -544,7 +549,7 @@ void WizardWindow::render() {
         label(wizardText::contractsHeading, true);
         label(wizardText::contractsDescription);
         beginCard();
-        auto box = add(L"BUTTON", wizardText::addContracts, WS_TABSTOP | BS_AUTOCHECKBOX, contractsId);
+        auto box = add(L"BUTTON", wizardText::addContracts, WS_TABSTOP | BS_OWNERDRAW, contractsId);
         SendMessageW(box, BM_SETCHECK, model_.createContracts() ? BST_CHECKED : BST_UNCHECKED, 0);
         EnableWindow(box, !locked && model_.contractsAllowed());
         separator();
@@ -842,27 +847,6 @@ LRESULT CALLBACK WizardWindow::procedure(HWND window, UINT message, WPARAM wPara
                 return 1;
             }
             break;
-        case WM_NOTIFY: {
-            const auto* custom = reinterpret_cast<NMCUSTOMDRAW*>(lParam);
-            if (custom && custom->hdr.code == NM_CUSTOMDRAW && custom->dwDrawStage == CDDS_PREPAINT &&
-                (custom->hdr.idFrom == nextId || custom->hdr.idFrom == resetId)) {
-                PaintBuffer buffer(custom->hdc);
-                auto buffered = *custom; buffered.hdc = buffer.dc(); custom = &buffered;
-                const bool primary = custom->hdr.idFrom == nextId, enabled = IsWindowEnabled(custom->hdr.hwndFrom) != FALSE;
-                const auto fill = !enabled ? ui::Color::disabledBackground : primary ? ui::Color::primary : ui::Color::background;
-                FillRect(custom->hdc, &custom->rc, self->resources_.brush(fill));
-                SetBkMode(custom->hdc, TRANSPARENT);
-                SetTextColor(custom->hdc, self->resources_.color(!enabled ? ui::Color::disabledText : primary ? ui::Color::primaryText : ui::Color::primary));
-                const auto old = SelectObject(custom->hdc, self->font_);
-                wchar_t text[128]{}; GetWindowTextW(custom->hdr.hwndFrom, text, 128);
-                RECT rect = custom->rc;
-                DrawTextW(custom->hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-                SelectObject(custom->hdc, old);
-                if ((custom->uItemState & CDIS_FOCUS) != 0) { InflateRect(&rect, -3, -3); DrawFocusRect(custom->hdc, &rect); }
-                return CDRF_SKIPDEFAULT;
-            }
-            break;
-        }
         case WM_COMMAND: self->command(LOWORD(wParam), HIWORD(wParam)); return 0;
         case WM_DRAWITEM:
             if (const auto* item = reinterpret_cast<DRAWITEMSTRUCT*>(lParam); item && item->hwndItem == self->steps_) { self->drawSteps(*item); return TRUE; }
