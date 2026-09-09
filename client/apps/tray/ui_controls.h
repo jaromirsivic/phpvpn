@@ -24,7 +24,7 @@ private:
 // GDI+ coverage antialiasing for curves, GDI ClearType for text and integer
 // FillRect/DrawFocusRect for sharp axial lines. No scaling of raster assets.
 void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
-                       ui::Color fill, ui::Color border, bool ellipse = false);
+                       ui::Color fill, ui::Color border, bool ellipse = false, int physicalStroke = 0);
 struct ControlPlacement { HWND window; Rect rect; };
 // One completed layout frame for a composited top-level window, including all
 // descendants. Nested layout/scroll calls publish only at the outer boundary.
@@ -69,6 +69,8 @@ enum class ButtonRole { neutral, primary, reset };
 bool attachModernTextBox(HWND window, const UiResources& resources,
                          ui::Color background = ui::Color::surface);
 void setTextBoxInvalid(HWND window, bool invalid);
+// Changes only the area outside a modern control's active rounded shape.
+void setModernControlBackground(HWND window, ui::Color background);
 // Only the presentation is replaced. BUTTON keeps its native input, dialog
 // input and accessibility provider. Create with BS_OWNERDRAW before attaching,
 // while the containing window is hidden. Primary starts as the default action.

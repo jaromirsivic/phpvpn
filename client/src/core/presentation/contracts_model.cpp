@@ -16,7 +16,7 @@ std::string_view ContractRow::keyText() const noexcept {
     return key_.empty() ? std::string_view{} : std::string_view(reinterpret_cast<const char*>(key_.data()), key_.size());
 }
 bool ContractRow::dirty() const noexcept {
-    return generated_ || enabled_ != originalEnabled_ || !key_.equals(originalKey_);
+    return enabled_ != originalEnabled_ || !key_.equals(originalKey_);
 }
 Result<std::unique_ptr<ContractsModel>> ContractsModel::create(CryptoProvider& crypto,
     std::string_view document, std::string configPath, std::string revisionToken) {
@@ -127,7 +127,6 @@ Status ContractsModel::applyPasswordKey(const ContractTarget& target, std::strin
     if (!accepts(target)) return fail(ErrorCode::invalid_argument);
     if (!isValidContractKey(key)) return fail(ErrorCode::config_invalid_key, std::string(kContractKeyError));
     PHPVPN_TRY(setKey(target.remoteIp_, key));
-    editableRow(target.remoteIp_)->generated_ = true;
     return ok();
 }
 Result<std::shared_ptr<const ContractsCandidate>> ContractsModel::prepareSave(const ContractsEnvelopeSizer& envelopeSizer) {

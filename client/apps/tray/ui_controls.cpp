@@ -572,10 +572,11 @@ void PaintBuffer::finish() {
     bitmap_ = nullptr; memory_ = nullptr; previous_ = nullptr;
 }
 void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
-                       ui::Color fill, ui::Color border, bool ellipse) {
-    if (smoothShape(dc, rect, diameter, resources, fill, border, ellipse)) return;
+                       ui::Color fill, ui::Color border, bool ellipse, int physicalStroke) {
+    if (smoothShape(dc, rect, diameter, resources, fill, border, ellipse, static_cast<float>(physicalStroke))) return;
+    UniquePen fixedPen(physicalStroke > 0 ? CreatePen(PS_SOLID, physicalStroke, resources.color(border)) : nullptr);
     const auto brush = SelectObject(dc, resources.brush(fill));
-    const auto pen = SelectObject(dc, resources.pen(border));
+    const auto pen = SelectObject(dc, fixedPen.get() ? fixedPen.get() : resources.pen(border));
     if (ellipse) Ellipse(dc, rect.left, rect.top, rect.right, rect.bottom);
     else RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, diameter, diameter);
     SelectObject(dc, pen); SelectObject(dc, brush);
@@ -604,6 +605,18 @@ bool attachModernButton(HWND window, const UiResources& resources, ButtonRole ro
     }
     InvalidateRect(window, nullptr, FALSE);
     return true;
+}
+void setModernControlBackground(HWND window, ui::Color background) {
+    DWORD_PTR data = 0;
+    ui::Color* current = nullptr;
+    if (GetWindowSubclass(window, modernButtonProcedure, modernButtonId, &data))
+        current = &reinterpret_cast<ModernButton*>(data)->background;
+    else if (GetWindowSubclass(window, textBoxProcedure, textBoxId, &data))
+        current = &reinterpret_cast<ModernTextBox*>(data)->background;
+    if (current && *current != background) {
+        *current = background;
+        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME);
+    }
 }
 thread_local LayoutFrame* LayoutFrame::active_ = nullptr;
 bool attachModernTextBox(HWND window, const UiResources& resources, ui::Color background) {

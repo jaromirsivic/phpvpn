@@ -37,7 +37,7 @@ public:
 private:
     friend class ContractsModel;
     Ipv4Address remoteIp_;
-    bool enabled_ = false, originalEnabled_ = false, keyValid_ = true, generated_ = false;
+    bool enabled_ = false, originalEnabled_ = false, keyValid_ = true;
     SecureBuffer key_, originalKey_;
 };
 

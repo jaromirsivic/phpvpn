@@ -143,7 +143,7 @@ PHPVPN_TEST(ContractsModel, total_key_budget_exact_plus_one_and_size_overflow) {
     PHPVPN_REQUIRE_ERROR(checkedContractKeyTextSize(maximum, 0, 1), ErrorCode::config_too_large);
     PHPVPN_REQUIRE_ERROR(checkedContractKeyTextSize(0, 1, 0), ErrorCode::config_too_large);
 }
-PHPVPN_TEST(ContractsModel, random_confirmation_failure_and_generated_dirty_even_if_equal) {
+PHPVPN_TEST(ContractsModel, random_confirmation_failure_and_restored_key_is_clean) {
     Crypto crypto;
     auto created = ContractsModel::create(crypto, document());
     PHPVPN_REQUIRE_OK(created);
@@ -167,7 +167,7 @@ PHPVPN_TEST(ContractsModel, random_confirmation_failure_and_generated_dirty_even
     PHPVPN_CHECK_EQ(m.row(target->remoteIp())->keyText(), "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
     PHPVPN_CHECK(!m.row(target->remoteIp())->enabled());
     PHPVPN_REQUIRE_OK(m.setKey(target->remoteIp(), old));
-    PHPVPN_CHECK(m.dirty());
+    PHPVPN_CHECK(!m.dirty());
 }
 PHPVPN_TEST(ContractsModel, multiple_targets_last_confirmed_frozen_candidate_and_stale_generations) {
     Crypto crypto;
@@ -184,7 +184,7 @@ PHPVPN_TEST(ContractsModel, multiple_targets_last_confirmed_frozen_candidate_and
     PHPVPN_REQUIRE_OK(m.setFocus(ContractFocus{other.remoteIp(), ContractColumn::random}));
     const std::string original(m.row(first.remoteIp())->keyText());
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(first, original));
-    PHPVPN_CHECK(m.dirty()); // confirmed same hash is still a generator action
+    PHPVPN_CHECK(!m.dirty()); // confirming the original hash does not change the row
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(first, std::string(64, 'a')));
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(other, std::string(64, 'c')));
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(same, std::string(64, 'b')));

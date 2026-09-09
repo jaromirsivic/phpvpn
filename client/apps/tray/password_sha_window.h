@@ -20,6 +20,7 @@ private:
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK bodyProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
     bool update(std::wstring_view text);
+    void randomPassword();
     void layout();
     void resources();
     CryptoProvider& crypto_;
@@ -30,7 +31,7 @@ private:
     ContractsEdit inputAdapter_;
     UiResources resources_;
     HINSTANCE instance_ = nullptr;
-    HWND window_ = nullptr, parent_ = nullptr, body_ = nullptr, input_ = nullptr, hash_ = nullptr, default_ = nullptr, ok_ = nullptr;
+    HWND window_ = nullptr, parent_ = nullptr, body_ = nullptr, input_ = nullptr, hash_ = nullptr, default_ = nullptr, random_ = nullptr, ok_ = nullptr;
     int scroll_ = 0;
     std::array<HWND, 6> labels_{};
 };

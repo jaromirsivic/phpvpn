@@ -6,7 +6,7 @@
 namespace phpvpn::tray {
 namespace {
 constexpr wchar_t className[] = L"PhpVpnPasswordSha";
-constexpr int defaultId = 503;
+constexpr int defaultId = 503, randomId = 504;
 }
 bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
     if (window_) { reactivateWindow(window_); return true; }
@@ -24,7 +24,7 @@ bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
     if(!body_ || !SetWindowSubclass(body_,bodyProcedure,2,reinterpret_cast<DWORD_PTR>(this))) { close(); return false; }
     auto control = [&](const wchar_t* kind, const wchar_t* text, DWORD style, int id) {
         const bool modernText = std::wstring_view(kind) == L"EDIT" && !(style & ES_MULTILINE);
-        auto child = CreateWindowExW(0, kind, text, WS_CHILD | (modernText ? 0 : WS_VISIBLE) | style, 0, 0, 1, 1, (id==IDOK || id==defaultId)?window_:body_,
+        auto child = CreateWindowExW(0, kind, text, WS_CHILD | (modernText ? 0 : WS_VISIBLE) | style, 0, 0, 1, 1, (id==IDOK || id==defaultId || id==randomId)?window_:body_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
         if (modernText && child) {
             if (!attachModernTextBox(child, resources_, ui::Color::background)) { DestroyWindow(child); return HWND{}; }
@@ -38,8 +38,10 @@ bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
     input_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 501);
     hash_ = control(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL | ES_READONLY, 502);
     default_ = control(L"BUTTON", L"Default", WS_TABSTOP | BS_OWNERDRAW, defaultId);
+    random_ = control(L"BUTTON", L"Random", WS_TABSTOP | BS_OWNERDRAW, randomId);
     ok_ = control(L"BUTTON", L"OK", WS_TABSTOP | BS_OWNERDRAW, IDOK);
     bool complete = input_ && hash_ && attachModernButton(default_, resources_, ButtonRole::reset)
+        && attachModernButton(random_, resources_, ButtonRole::reset)
         && attachModernButton(ok_, resources_, ButtonRole::primary);
     for (auto label : labels_) complete = complete && label;
     if (!complete || !inputAdapter_.attach(input_, 510, [this](std::wstring_view text) { return update(text); })) { close(); return false; }
@@ -60,10 +62,37 @@ bool PasswordShaWindow::update(std::wstring_view text) {
     EnableWindow(ok_, model_.valid());
     return error != PasswordKeyError::tooLong && error != PasswordKeyError::unsupportedControl;
 }
+void PasswordShaWindow::randomPassword() {
+    constexpr std::wstring_view alphabet = L"GHJKMNPQRSTUVWXYZ";
+    constexpr auto limit = 256 - (256 % alphabet.size());
+    SecureBuffer bytes(64);
+    std::array<wchar_t, 64> password{};
+    struct Wiper {
+        std::array<wchar_t, 64>& value;
+        ~Wiper() { secureWipe(value.data(), value.size() * sizeof(wchar_t)); }
+    } wipe{password};
+    std::size_t used = 0;
+    while (used < password.size()) {
+        if (!crypto_.randomBytes(bytes.mutableSpan())) {
+            SetWindowTextW(labels_[5], L"A random password could not be generated. The current password has been kept.");
+            return;
+        }
+        for (auto byte : bytes.span()) {
+            // Reject 255 for this 17-character alphabet, so every character
+            // has exactly 15 possible byte values and no modulo bias.
+            if (byte >= limit) continue;
+            password[used++] = alphabet[byte % alphabet.size()];
+            if (used == password.size()) break;
+        }
+    }
+    const std::wstring_view text(password.data(), password.size());
+    inputAdapter_.set(text);
+    update(text);
+}
 bool PasswordShaWindow::translate(MSG& message) const {
     if (!window_ || (message.hwnd != window_ && !IsChild(window_, message.hwnd))) return false;
     if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) { SendMessageW(window_, WM_CLOSE, 0, 0); return true; }
-    if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN && GetFocus() != default_ && GetFocus() != ok_) {
+    if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN && GetFocus() != default_ && GetFocus() != random_ && GetFocus() != ok_) {
         SendMessageW(window_, WM_COMMAND, IDOK, 0); return true;
     }
     return IsDialogMessageW(window_, &message) != FALSE;
@@ -73,7 +102,7 @@ void PasswordShaWindow::resources() {
     for (auto h : labels_) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
     SendMessageW(labels_[0], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::card)), TRUE);
     SendMessageW(labels_[3], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::hint)), TRUE);
-    for (auto h : {input_, hash_, default_, ok_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(h == hash_ ? ui::Font::mono : ui::Font::value)), TRUE);
+    for (auto h : {input_, hash_, default_, random_, ok_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(h == hash_ ? ui::Font::mono : ui::Font::value)), TRUE);
 }
 void PasswordShaWindow::layout() {
     if (!ok_) return;
@@ -83,6 +112,7 @@ void PasswordShaWindow::layout() {
     positionControls(window_, std::vector<ControlPlacement>{
         {body_, {0, 0, r.right, footer}},
         {default_, {margin, footer+s(16), margin+s(104), footer+s(52)}},
+        {random_, {margin+s(116), footer+s(16), margin+s(220), footer+s(52)}},
         {ok_, {r.right-margin-s(104), footer+s(16), r.right-margin, footer+s(52)}}});
     SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS}; info.nMax=s(296)-1; info.nPage=footer;
     scroll_=std::clamp(scroll_,0,(std::max)(0,info.nMax+1-footer)); info.nPos=scroll_; SetScrollInfo(body_,SB_VERT,&info,TRUE);
@@ -129,6 +159,7 @@ LRESULT CALLBACK PasswordShaWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l
             if(target.top<0) self->scroll_+=target.top; else if(target.bottom>area.bottom) self->scroll_+=target.bottom-area.bottom;
             self->layout(); return 0;
         }
+        if (LOWORD(w) == randomId) { self->randomPassword(); return 0; }
         if (LOWORD(w) == defaultId) {
             // Captured numeric/canonical pair, with no Wizard candidate-range restriction.
             auto password = widen(self->target_.contractId());
@@ -173,7 +204,7 @@ LRESULT CALLBACK PasswordShaWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l
         self->inputAdapter_.clear(); SetWindowTextW(self->hash_, L""); SendMessageW(self->hash_, EM_EMPTYUNDOBUFFER, 0, 0);
         self->model_.clear(); self->window_ = nullptr; return 0;
     case WM_NCDESTROY:
-        self->body_ = self->input_ = self->hash_ = self->default_ = self->ok_ = nullptr; self->labels_ = {}; self->resources_.clear();
+        self->body_ = self->input_ = self->hash_ = self->default_ = self->random_ = self->ok_ = nullptr; self->labels_ = {}; self->resources_.clear();
         SetWindowLongPtrW(h, GWLP_USERDATA, 0); break;
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: {
         const auto dc = reinterpret_cast<HDC>(w); SetTextColor(dc, self->resources_.color(ui::Color::text));

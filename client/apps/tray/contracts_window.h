@@ -28,9 +28,10 @@ private:
     struct Row {
         Ipv4Address remote;
         std::wstring identity;
-        std::array<HWND, 4> controls{};
+        std::array<HWND, 3> controls{};
         ContractsEdit edit;
         bool lastValid = true;
+        bool lastDirty = false;
     };
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK fieldProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -73,5 +74,6 @@ private:
     int x_ = 0, y_ = 0, width_ = 0, keyWidth_ = 260, rowHeight_ = 48;
     int bodyScroll_ = 0;
     std::wstring localError_;
+    std::wstring saveText_ = L"Save";
 };
 } // namespace phpvpn::tray
