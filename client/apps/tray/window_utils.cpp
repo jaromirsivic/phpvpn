@@ -1,6 +1,7 @@
 #include "window_utils.h"
 #include "ui_controls.h"
 #include <commctrl.h>
+#include <filesystem>
 #include <shellscalingapi.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -62,6 +63,39 @@ ScopedWindowPlacement::ScopedWindowPlacement(const WindowPlacementContext& conte
     currentPlacement = context;
 }
 ScopedWindowPlacement::~ScopedWindowPlacement() { currentPlacement = previous_; }
+std::wstring pathWithExistingCasing(std::wstring_view path) {
+    const std::wstring original(path);
+    if (original.empty()) return original;
+    try {
+        const std::filesystem::path source(original);
+        if (!source.is_absolute()) return original;
+        auto current = source.root_path();
+        auto display = current;
+        const auto relative = source.relative_path();
+        auto part = relative.begin();
+        const auto end = relative.end();
+        for (; part != end; ++part) {
+            const auto name = part->native();
+            if (name == L"." || name == L".." || name.find_first_of(L"*?") != std::wstring::npos)
+                return original;
+            WIN32_FIND_DATAW found{};
+            const auto candidate = current / *part;
+            const HANDLE search = FindFirstFileW(candidate.c_str(), &found);
+            if (search == INVALID_HANDLE_VALUE) {
+                for (; part != end; ++part) display /= *part;
+                return display.native();
+            }
+            FindClose(search);
+            if (!*found.cFileName || std::wstring_view(found.cFileName) == L"." ||
+                std::wstring_view(found.cFileName) == L"..") return original;
+            current /= found.cFileName;
+            display /= found.cFileName;
+        }
+        return display.native();
+    } catch (...) {
+        return original;
+    }
+}
 std::vector<MonitorGeometry> availableMonitors() {
     std::vector<MonitorGeometry> result;
     EnumDisplayMonitors(nullptr, nullptr, collectMonitor, reinterpret_cast<LPARAM>(&result));
@@ -117,5 +151,18 @@ void applyDpiRect(HWND window, LPARAM lParam) {
     // Accept the OS DPI transition, then perform only necessary work-area repair.
     const auto recommended = asRect(*reinterpret_cast<const RECT*>(lParam));
     place(window, usableWindowRect(recommended, availableMonitors()));
+}
+void setMinimumClientTrackSize(HWND window, MINMAXINFO& info, Size clientDip) {
+    const UINT dpi = GetDpiForWindow(window);
+    RECT outer{0, 0, scaleForDpi(clientDip.width, static_cast<int>(dpi)),
+        scaleForDpi(clientDip.height, static_cast<int>(dpi))};
+    if (!AdjustWindowRectExForDpi(&outer, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)),
+        GetMenu(window) != nullptr, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE)), dpi)) return;
+    info.ptMinTrackSize = {outer.right - outer.left, outer.bottom - outer.top};
+    MONITORINFO monitor{sizeof(monitor)};
+    if (GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) {
+        info.ptMinTrackSize.x = (std::min)(info.ptMinTrackSize.x, monitor.rcWork.right - monitor.rcWork.left);
+        info.ptMinTrackSize.y = (std::min)(info.ptMinTrackSize.y, monitor.rcWork.bottom - monitor.rcWork.top);
+    }
 }
 } // namespace phpvpn::tray

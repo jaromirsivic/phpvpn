@@ -9,7 +9,7 @@ inline constexpr std::array<MenuItem, 10> configurationMenu{{
     {MenuAction::toggle, L"Connect"}, {MenuAction::separator, L""},
     {MenuAction::wizard, L"Configuration Wizard"}, {MenuAction::contracts, L"Communication Contracts"},
     {MenuAction::edit, L"Edit Config"}, {MenuAction::separator, L""},
-    {MenuAction::info, L"Show Info"}, {MenuAction::statistics, L"Statistics"},
+    {MenuAction::info, L"Show Server Info"}, {MenuAction::statistics, L"Statistics"},
     {MenuAction::separator, L""}, {MenuAction::exit, L"Exit"}
 }};
 // Menus describe actions, never cached configuration availability. Every item

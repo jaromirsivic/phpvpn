@@ -285,15 +285,16 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
                    ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL;
     if (!save_) style |= ES_READONLY;
-    field_ = CreateWindowExW(save_ ? 0 : WS_EX_CLIENTEDGE, L"EDIT", nullptr, style,
+    field_ = CreateWindowExW(0, L"EDIT", nullptr, style,
         0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_TEXT_AREA), instance, nullptr);
     if (!field_) { DestroyWindow(window_); return; }
     SendMessageW(field_, EM_SETLIMITTEXT, kIpcMaxMessageBytes, 0);
     setContent(content);
+    heading_ = CreateWindowExW(0, L"STATIC", save_ ? L"Edit configuration" : L"Server information",
+        WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 1, 1, window_, nullptr, instance, nullptr);
     if (save_) {
-        heading_ = CreateWindowExW(0, L"STATIC", L"Edit configuration", WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
-            0, 0, 1, 1, window_, nullptr, instance, nullptr);
-        path_ = CreateWindowExW(0, L"EDIT", widen(configPath).c_str(), WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL,
+        const auto displayPath = pathWithExistingCasing(widen(configPath));
+        path_ = CreateWindowExW(0, L"EDIT", displayPath.c_str(), WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL,
             0, 0, 1, 1, window_, nullptr, instance, nullptr);
         CreateWindowExW(0, L"BUTTON", L"Reset", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kReset)), instance, nullptr);
@@ -301,10 +302,14 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_CANCEL), instance, nullptr);
         CreateWindowExW(0, L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_SAVE), instance, nullptr);
+    } else {
+        CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | BS_DEFPUSHBUTTON,
+            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDOK), instance, nullptr);
     }
-    if (save_ && (!attachModernButton(GetDlgItem(window_, kReset), resources_, ButtonRole::reset) ||
+    if ((save_ && (!attachModernButton(GetDlgItem(window_, kReset), resources_, ButtonRole::reset) ||
         !attachModernButton(GetDlgItem(window_, IDC_CANCEL), resources_) ||
-        !attachModernButton(GetDlgItem(window_, IDC_SAVE), resources_, ButtonRole::primary))) {
+        !attachModernButton(GetDlgItem(window_, IDC_SAVE), resources_, ButtonRole::primary))) ||
+        (!save_ && !attachModernButton(GetDlgItem(window_, IDOK), resources_, ButtonRole::primary))) {
         DestroyWindow(window_); return;
     }
     updateFonts();
@@ -326,7 +331,7 @@ void EditorWindow::updateFonts() {
     HFONT text = resources_.font(ui::Font::mono);
     HFONT button = resources_.font(ui::Font::label);
     SendMessageW(field_, WM_SETFONT, reinterpret_cast<WPARAM>(text), TRUE);
-    for (const int id : {IDC_SAVE, kReset, IDC_CANCEL}) {
+    for (const int id : {IDC_SAVE, kReset, IDC_CANCEL, IDOK}) {
         if (const HWND child = GetDlgItem(window_, id)) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(button), TRUE);
     }
     if (heading_) SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
@@ -345,19 +350,17 @@ void EditorWindow::layout() {
         if (!child) return;
         controls.push_back({child,rect});
     };
-    auto fieldRect = next.textArea;
-    if (save_) {
-        // The parent paints the continuous surface and frame. Keep the native
-        // EDIT (including both non-client scrollbars) inside the rounded corners.
-        const int inset = scaleForDpi(6, static_cast<int>(GetDpiForWindow(window_)));
-        fieldRect = {fieldRect.left + inset, fieldRect.top + inset,
-            std::max(fieldRect.left + inset, fieldRect.right - inset),
-            std::max(fieldRect.top + inset, fieldRect.bottom - inset)};
-    }
+    // The parent paints the continuous surface and frame. Keep the native EDIT,
+    // including both non-client scrollbars, inside the rounded corners.
+    const int inset = scaleForDpi(6, static_cast<int>(GetDpiForWindow(window_)));
+    const auto fieldRect = Rect{next.textArea.left + inset, next.textArea.top + inset,
+        std::max(next.textArea.left + inset, next.textArea.right - inset),
+        std::max(next.textArea.top + inset, next.textArea.bottom - inset)};
     move(field_, fieldRect);
     move(GetDlgItem(window_, IDC_SAVE), next.saveButton);
     move(GetDlgItem(window_, kReset), next.resetButton);
     move(GetDlgItem(window_, IDC_CANCEL), next.cancelButton);
+    move(GetDlgItem(window_, IDOK), next.saveButton);
     move(heading_,next.heading); move(path_,next.path);
     positionControls(window_,controls);
     oldClient_ = size;
@@ -373,7 +376,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
     if (!self) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
         case WM_COMMAND:
-            if (self->save_ && reinterpret_cast<HWND>(lParam) == self->field_ &&
+            if (reinterpret_cast<HWND>(lParam) == self->field_ &&
                 (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == EN_KILLFOCUS)) {
                 self->editorFocused_ = HIWORD(wParam) == EN_SETFOCUS;
                 const auto& area = self->oldLayout_.textArea;
@@ -388,6 +391,10 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             if (LOWORD(wParam) == kReset) { self->reset(); return 0; }
             if (LOWORD(wParam) == IDC_CANCEL || LOWORD(wParam) == IDCANCEL) {
                 self->requestClose();
+                return 0;
+            }
+            if (LOWORD(wParam) == IDOK && !self->save_) {
+                DestroyWindow(window);
                 return 0;
             }
             if ((LOWORD(wParam) == IDC_SAVE || LOWORD(wParam) == IDOK) && self->save_) {
@@ -421,10 +428,10 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             break;
         case WM_ACTIVATE:
             self->editorActive_ = LOWORD(wParam) != WA_INACTIVE;
-            if (self->save_) InvalidateRect(window, nullptr, FALSE);
+            InvalidateRect(window, nullptr, FALSE);
             break;
         case WM_LBUTTONDOWN:
-            if (self->save_ && self->field_ && IsWindowEnabled(self->field_)) {
+            if (self->field_ && IsWindowEnabled(self->field_)) {
                 const auto& area = self->oldLayout_.textArea;
                 RECT frame{area.left, area.top, area.right, area.bottom};
                 POINT point{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
@@ -438,20 +445,22 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
         case WM_PAINT: {
             PAINTSTRUCT ps{}; auto targetDc = BeginPaint(window,&ps); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(window,&r);
             FillRect(dc,&r,self->resources_.brush(ui::Color::background));
-            if(self->save_) {
-                const bool focused = self->editorFocused_ && self->editorActive_;
-                paintRoundedShape(dc, self->oldLayout_.textArea, scaleForDpi(12, self->resources_.dpi()),
-                    self->resources_, ui::Color::surface, focused ? ui::Color::focus : ui::Color::border,
-                    false, std::max(1, scaleForDpi(focused ? 2 : 1, self->resources_.dpi())));
-                const int top=self->oldLayout_.footer.top;
-                RECT line{0,top,r.right,top+std::max(1,scaleForDpi(1,self->resources_.dpi()))};
-                FillRect(dc,&line,self->resources_.brush(ui::Color::separator));
-            }
+            const bool focused = self->editorFocused_ && self->editorActive_;
+            const auto surface = self->save_ ? ui::Color::surface : ui::Color::disabledBackground;
+            const auto border = focused ? (self->save_ ? ui::Color::focus : ui::Color::buttonNeutralFocus)
+                                        : (self->save_ ? ui::Color::border : ui::Color::disabledBackground);
+            paintRoundedShape(dc, self->oldLayout_.textArea, scaleForDpi(12, self->resources_.dpi()),
+                self->resources_, surface, border, false,
+                std::max(1, scaleForDpi(focused ? 2 : 1, self->resources_.dpi())));
+            const int top=self->oldLayout_.footer.top;
+            RECT line{0,top,r.right,top+std::max(1,scaleForDpi(1,self->resources_.dpi()))};
+            FillRect(dc,&line,self->resources_.brush(ui::Color::separator));
             buffer.finish(); EndPaint(window,&ps); return 0;
         }
         case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC: {
             const bool header=reinterpret_cast<HWND>(lParam)==self->heading_ || reinterpret_cast<HWND>(lParam)==self->path_;
-            const auto background=header?ui::Color::background:ui::Color::surface;
+            const auto background=header?ui::Color::background:
+                (self->save_ ? ui::Color::surface : ui::Color::disabledBackground);
             HDC dc=reinterpret_cast<HDC>(wParam);
             SetTextColor(dc,self->resources_.color(reinterpret_cast<HWND>(lParam)==self->path_?ui::Color::secondaryText:ui::Color::text));
             SetBkColor(dc,self->resources_.color(background));
@@ -463,16 +472,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             self->layout();
             return 0;
         case WM_GETMINMAXINFO: {
-            const int dpi = static_cast<int>(GetDpiForWindow(window));
-            MONITORINFO monitor{};
-            monitor.cbSize = sizeof(monitor);
-            GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor);
-            RECT outer{0, 0, scaleForDpi(320, dpi), scaleForDpi(160, dpi)};
-            AdjustWindowRectExForDpi(&outer, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)),
-                                     FALSE, WS_EX_APPWINDOW, static_cast<UINT>(dpi));
-            auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-            info->ptMinTrackSize.x = std::min(outer.right - outer.left, monitor.rcWork.right - monitor.rcWork.left);
-            info->ptMinTrackSize.y = std::min(outer.bottom - outer.top, monitor.rcWork.bottom - monitor.rcWork.top);
+            setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam), {640, 360});
             return 0;
         }
         case WM_QUERYENDSESSION: return TRUE;

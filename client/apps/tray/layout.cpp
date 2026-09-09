@@ -113,25 +113,25 @@ EditorLayout computeEditorLayout(Size client, int dpi, bool editable) {
     const int buttonWidth = std::min(scaleForDpi(104, dpi), std::max(0, (width - 2 * margin - 2 * gap) / 3));
     const int buttonHeight = std::min(scaleForDpi(36, dpi), std::max(0, height - 2 * margin));
     EditorLayout layout;
-    int textBottom = height - margin;
+    layout.saveButton = {width - margin - buttonWidth, height - margin - buttonHeight,
+                         width - margin, height - margin};
     if (editable) {
-        layout.saveButton = {width - margin - buttonWidth, height - margin - buttonHeight,
-                               width - margin, height - margin};
         layout.cancelButton = {layout.saveButton.left - gap - buttonWidth, layout.saveButton.top,
                              layout.saveButton.left - gap, layout.saveButton.bottom};
         layout.resetButton = {margin, layout.saveButton.top, margin + buttonWidth, layout.saveButton.bottom};
-        layout.footer = {0, std::max(0, layout.saveButton.top - margin / 2), width, height};
-        textBottom = std::max(margin, layout.footer.top - margin / 2);
     }
-    int textTop = margin;
+    layout.footer = {0, std::max(0, layout.saveButton.top - margin / 2), width, height};
+    const int textBottom = std::max(margin, layout.footer.top - margin / 2);
+    const int headerTop = std::min(scaleForDpi(16, dpi), margin);
+    const int headerSpace = std::min(scaleForDpi(editable ? 72 : 44, dpi),
+        std::max(0, textBottom - headerTop));
+    layout.heading = {margin, headerTop, width - margin,
+        headerTop + std::min(scaleForDpi(36, dpi), headerSpace)};
     if (editable) {
-        const int headerTop = std::min(scaleForDpi(16, dpi), margin);
-        const int headerSpace = std::min(scaleForDpi(72, dpi), std::max(0, textBottom - headerTop));
-        layout.heading = {margin,headerTop,width-margin,headerTop+std::min(scaleForDpi(36,dpi),headerSpace)};
         const int pathTop = std::min(headerTop+scaleForDpi(40,dpi),headerTop+headerSpace);
         layout.path = {margin,pathTop,width-margin,std::min(pathTop+scaleForDpi(24,dpi),headerTop+headerSpace)};
-        textTop = headerTop + headerSpace;
     }
+    const int textTop = headerTop + headerSpace;
     layout.textArea = {margin, textTop, std::max(margin, width - margin), std::max(textTop, textBottom)};
     return layout;
 }

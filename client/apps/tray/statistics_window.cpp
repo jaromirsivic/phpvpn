@@ -209,9 +209,12 @@ LRESULT CALLBACK StatisticsWindow::procedure(HWND window, UINT message, WPARAM w
         self->layout();
         return 0;
     case WM_DPICHANGED:
-        self->updateResources();
         applyDpiRect(window, lParam);
+        self->updateResources();
         self->layout();
+        return 0;
+    case WM_GETMINMAXINFO:
+        setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam), {640, 480});
         return 0;
     case WM_SETTINGCHANGE:
     case WM_SYSCOLORCHANGE:

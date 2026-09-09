@@ -110,8 +110,10 @@ PHPVPN_TEST(TrayLayout, EditorReferenceTopPreservesHeaderAndFooterAtSupportedDpi
         PHPVPN_CHECK_EQ(l.textArea.bottom, scaleForDpi(460, dpi));
         PHPVPN_CHECK_EQ(l.saveButton.bottom, scaleForDpi(528, dpi));
         const auto info = computeEditorLayout(size, dpi, false);
-        PHPVPN_CHECK_EQ(info.textArea.top, scaleForDpi(32, dpi));
-        PHPVPN_CHECK_EQ(info.textArea.bottom, scaleForDpi(528, dpi));
+        PHPVPN_CHECK_EQ(info.textArea.top, scaleForDpi(60, dpi));
+        PHPVPN_CHECK_EQ(info.textArea.bottom, scaleForDpi(460, dpi));
+        PHPVPN_CHECK_EQ(info.saveButton.bottom, scaleForDpi(528, dpi));
+        PHPVPN_CHECK(inside(info.heading, size));
     }
 }
 PHPVPN_TEST(TrayLayout, WorkAreaClampingAndCenteringSupportsSecondaryMonitorCoordinates) {
@@ -144,10 +146,12 @@ PHPVPN_TEST(TrayLayout, RepeatedEdgeAndCornerResizesKeepControlsSeparateAndVisib
             PHPVPN_CHECK(layout.saveButton.bottom > layout.saveButton.top);
             PHPVPN_CHECK(layout.textArea.bottom <= layout.saveButton.top);
             const auto readOnly = computeEditorLayout(size, dpi, false);
-            PHPVPN_CHECK_EQ(readOnly.saveButton.right, 0);
+            PHPVPN_CHECK(readOnly.saveButton.right > readOnly.saveButton.left);
             PHPVPN_CHECK_EQ(readOnly.resetButton.right, 0);
             PHPVPN_CHECK_EQ(readOnly.cancelButton.right, 0);
             PHPVPN_CHECK(inside(readOnly.textArea, size));
+            PHPVPN_CHECK(inside(readOnly.heading, size));
+            PHPVPN_CHECK(readOnly.textArea.bottom <= readOnly.saveButton.top);
         }
     }
 }

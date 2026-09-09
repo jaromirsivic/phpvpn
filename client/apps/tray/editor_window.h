@@ -32,7 +32,14 @@ public:
     bool approvedDiscard(const EditorLifecycleSnapshot& approved);
     void endSession();
     std::uint64_t generation() const { return generation_; }
-    bool translate(MSG& message) const { return window_ && IsDialogMessageW(window_, &message); }
+    bool translate(MSG& message) const {
+        if (!window_ || (message.hwnd != window_ && !IsChild(window_, message.hwnd))) return false;
+        if (!save_ && message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
+            SendMessageW(window_, WM_COMMAND, IDOK, 0);
+            return true;
+        }
+        return IsDialogMessageW(window_, &message) != FALSE;
+    }
     HWND window() const { return window_; }
 private:
     static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);

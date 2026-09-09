@@ -9,12 +9,13 @@
 #include "layout.h"
 
 namespace phpvpn::tray {
+std::wstring pathWithExistingCasing(std::wstring_view path);
 inline std::wstring expectedConfigurationPath() {
     PWSTR path = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DONT_VERIFY, nullptr, &path)) || !path)
         return L"(the shared configuration path could not be resolved)";
-    const std::wstring result = std::wstring(path) + L"\\PHPVPN\\config.json";
-    CoTaskMemFree(path); return result;
+    const std::wstring result = std::wstring(path) + L"\\phpvpn\\config.json";
+    CoTaskMemFree(path); return pathWithExistingCasing(result);
 }
 inline std::wstring widen(std::string_view text) {
     if (text.empty()) return {};
@@ -55,6 +56,7 @@ void sizeAndCenter(HWND window, Size logicalClient, const WindowPlacementContext
 void ensureUsablePlacement(HWND window);
 void reactivateWindow(HWND window);
 void applyDpiRect(HWND window, LPARAM lParam);
+void setMinimumClientTrackSize(HWND window, MINMAXINFO& info, Size clientDip);
 inline HFONT makeFont(int dpi, int pixels, bool bold = false, bool mono = false) {
     return CreateFontW(-scaleForDpi(pixels, dpi), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
                        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
