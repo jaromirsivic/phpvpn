@@ -47,7 +47,7 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
     };
     heading_ = control(body_, L"STATIC", L"Communication contracts", SS_NOPREFIX);
-    description_ = control(body_, L"STATIC", L"Manage secure communication between this computer and other virtual IP addresses.", SS_NOPREFIX);
+    description_ = control(body_, L"STATIC", L"Manage secure communication between this computer and other virtual IP addresses using end-to-end encryption.", SS_NOPREFIX);
     localLabel_ = control(body_, L"STATIC", L"Your virtual IP", SS_NOPREFIX);
     local_ = control(body_, L"STATIC", widen(controller_.model()->localIp().toString()).c_str(), SS_NOPREFIX);
     notice_ = control(body_, L"STATIC", L"", SS_NOPREFIX);
@@ -112,8 +112,9 @@ bool ContractsWindow::createRows() {
             const auto name = row.identity + L" " + names[c];
             complete = SUCCEEDED(accessibility_->SetHwndPropStr(row.controls[c], static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, PROPID_ACC_NAME, name.c_str())) && complete;
         }
-        complete = row.edit.attach(row.controls[1], kMaxContractKeyTextBytes,
-            [this, remote = row.remote](std::wstring_view text) { return acceptKey(remote, text); }) && complete;
+        complete = row.edit.attach(row.controls[1], 128,
+            [this, remote = row.remote](std::wstring_view text) { return text.size() <= 128 && acceptKey(remote, text); }) && complete;
+        SendMessageW(row.controls[1], EM_SETLIMITTEXT, 128, 0);
         syncRow(row);
     }
     changing_ = false;
@@ -395,7 +396,7 @@ void ContractsWindow::layout() {
     const auto dc=GetDC(window_);
     const int headingBottom=s(24)+measureText(dc,resources_.font(ui::Font::heading),L"Communication contracts",(std::max)(1,textRight-margin),true).height;
     const int descriptionTop=(std::max)(s(64),headingBottom+s(4));
-    const int descriptionBottom=descriptionTop+measureText(dc,resources_.font(ui::Font::label),L"Manage secure communication between this computer and other virtual IP addresses.",(std::max)(1,textRight-margin),true).height;
+    const int descriptionBottom=descriptionTop+measureText(dc,resources_.font(ui::Font::label),L"Manage secure communication between this computer and other virtual IP addresses using end-to-end encryption.",(std::max)(1,textRight-margin),true).height;
     const int localTop=compact?descriptionBottom+s(12):s(28);
     const int tableTop=(std::max)(s(compact?140:104),compact?localTop+s(32):descriptionBottom+s(12))+(connectionActive_?s(28):0);
     const int errorLength=GetWindowTextLengthW(error_); std::wstring errorText(static_cast<std::size_t>(errorLength)+1,L'\0');
@@ -434,10 +435,10 @@ void ContractsWindow::layout() {
     const int tableWidth = (std::max)(1, bodyRight - margin), tableHeight = tableBottom - tableTop;
     const int inset = (std::max)(1, s(1));
     positionControls(table_, std::vector<ControlPlacement>{
-        {header_, {inset,inset,tableWidth-inset,s(40)}},
+        {header_, {0,0,tableWidth,s(40)}},
         {viewport_, {inset,s(40),tableWidth-inset,tableHeight-s(4)}}});
     // Clip the header's top corners together with the container. Leave the
-    // outline and bottom corners outside the scrolling child windows.
+    // bottom outline and corners outside the scrolling child windows.
     auto region = CreateRoundRectRgn(0, 0, tableWidth + 1, tableHeight + 1, s(16), s(16));
     if (region && !SetWindowRgn(table_, region, FALSE)) DeleteObject(region);
     std::vector<ControlPlacement> pagerPositions;
@@ -537,7 +538,8 @@ LRESULT CALLBACK ContractsWindow::fieldProcedure(HWND h, UINT m, WPARAM w, LPARA
 }
 void ContractsWindow::paint(HWND target) {
     PAINTSTRUCT p{}; auto targetDc = BeginPaint(target, &p); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(target, &r);
-    FillRect(dc, &r, resources_.brush(target == window_ || target == body_ || target == pager_ || target == header_ ? ui::Color::background : ui::Color::surface));
+    FillRect(dc, &r, resources_.brush(target == header_ ? ui::Color::contractsHeader :
+        target == window_ || target == body_ || target == pager_ ? ui::Color::background : ui::Color::surface));
     if (target == window_ && body_) {
         RECT bodyBounds{}; GetWindowRect(body_, &bodyBounds);
         MapWindowPoints(nullptr, window_, reinterpret_cast<POINT*>(&bodyBounds), 2);
@@ -546,13 +548,14 @@ void ContractsWindow::paint(HWND target) {
     }
     if (target == table_) paintCard(dc, {0,0,r.right,r.bottom}, resources_);
     if (target == header_ || target == content_) {
-        auto font = SelectObject(dc, resources_.font(target == header_ ? ui::Font::strongValue : ui::Font::label)); SetBkMode(dc, TRANSPARENT); SetTextColor(dc, resources_.color(ui::Color::text));
+        auto font = SelectObject(dc, resources_.font(target == header_ ? ui::Font::contractsHeader : ui::Font::label)); SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, resources_.color(target == header_ ? ui::Color::primaryText : ui::Color::text));
         const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
         if (target == header_) {
             const wchar_t* labels[]{L"Contract",L"Enabled",L"Key",L"Actions"};
             const int lefts[]{0,s(250),s(330),s(330)+keyWidth_};
-            for (int c = 0; c < 4; ++c) drawText(dc, labels[c], {lefts[c]+s(12)-x_,0,(c == 3 ? width_ : lefts[c+1])-x_,r.bottom}, DT_SINGLELINE | DT_VCENTER);
-            RECT line{0,r.bottom-1,r.right,r.bottom}; FillRect(dc, &line, resources_.brush(ui::Color::separator));
+            const int inset = (std::max)(1, s(1));
+            for (int c = 0; c < 4; ++c) drawText(dc, labels[c], {inset+lefts[c]+s(12)-x_,0,inset+(c == 3 ? width_ : lefts[c+1])-x_,r.bottom}, DT_SINGLELINE | DT_VCENTER);
         } else if (rowHeight_) {
             RECT clip{}; GetClipBox(dc,&clip);
             const auto first = static_cast<std::size_t>((std::max)(0L, clip.top) / rowHeight_);

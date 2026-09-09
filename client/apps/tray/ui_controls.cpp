@@ -69,7 +69,8 @@ bool textBoxEnabled(HWND window) {
 }
 ui::Color textBoxFill(HWND window, const ModernTextBox& box) {
     return !textBoxEnabled(window) ? ui::Color::disabledBackground :
-        box.invalid ? ui::Color::errorBackground : ui::Color::surface;
+        box.invalid ? ui::Color::errorBackground :
+        (GetWindowLongPtrW(window, GWL_STYLE) & ES_READONLY) ? ui::Color::disabledBackground : ui::Color::surface;
 }
 void repaintTextBox(HWND window) {
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME);
@@ -160,7 +161,7 @@ LRESULT CALLBACK textBoxProcedure(HWND window, UINT message, WPARAM w, LPARAM l,
     case WM_SETFONT: case WM_DPICHANGED_AFTERPARENT:
         textBoxFrame(window); break;
     case WM_SETFOCUS: case WM_KILLFOCUS: case WM_ENABLE: case WM_SETTEXT:
-    case WM_SIZE: case WM_THEMECHANGED: case WM_SYSCOLORCHANGE:
+    case WM_SIZE: case WM_THEMECHANGED: case WM_SYSCOLORCHANGE: case EM_SETREADONLY:
         repaintTextBox(window); break;
     }
     return result;
@@ -175,7 +176,8 @@ LRESULT CALLBACK textBoxParentProcedure(HWND window, UINT message, WPARAM w, LPA
         const auto fill = textBoxFill(field, box);
         const auto dc = reinterpret_cast<HDC>(w);
         SetBkColor(dc, box.resources->color(fill));
-        SetTextColor(dc, box.resources->color(textBoxEnabled(field) ? ui::Color::text : ui::Color::disabledText));
+        SetTextColor(dc, box.resources->color(!textBoxEnabled(field) ? ui::Color::disabledText :
+            (GetWindowLongPtrW(field, GWL_STYLE) & ES_READONLY) ? ui::Color::readOnlyText : ui::Color::text));
         return reinterpret_cast<LRESULT>(box.resources->brush(fill));
     }
     if (message == WM_NCDESTROY) RemoveWindowSubclass(window, textBoxParentProcedure, id);
@@ -609,7 +611,7 @@ bool attachModernTextBox(HWND window, const UiResources& resources, ui::Color ba
     const auto style = GetWindowLongPtrW(window, GWL_STYLE);
     wchar_t name[16]{}; GetClassNameW(window, name, 16);
     if (std::wstring_view(name) != L"Edit" && std::wstring_view(name) != L"EDIT") return false;
-    if ((style & (WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_READONLY)) ||
+    if ((style & (WS_VISIBLE | WS_BORDER | ES_MULTILINE)) ||
         (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_CLIENTEDGE)) return false;
     auto* box = new (std::nothrow) ModernTextBox{&resources, background};
     if (!box) return false;

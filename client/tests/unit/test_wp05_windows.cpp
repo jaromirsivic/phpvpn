@@ -1,5 +1,6 @@
 #include "harness.h"
 #include "contracts_fixture.h"
+#include "core/wizard/wizard_defaults.h"
 #include "wp03_dialog_test.h"
 #include "../../apps/tray/tray_application.h"
 #include "../../apps/tray/resource.h"
@@ -174,9 +175,34 @@ PHPVPN_TEST(WP05Windows, NativeRowsKeysChildrenAndImmutableTargets) {
 }
 PHPVPN_TEST(WP05Windows, PasswordUnicodeLimitPreservesSelectionAndResult) {
     contracts_test::Crypto crypto; auto model=ContractsModel::create(crypto,contracts_test::document()).value();
-    PasswordShaWindow window(crypto,model->target(model->rows()[0].remoteIp()).value(),[](const ContractTarget&,std::string_view){return true;});
+    PasswordShaWindow window(crypto,model->target(contracts_test::ip("10.99.99.20")).value(),[](const ContractTarget&,std::string_view){return true;});
     require(window.open(GetModuleHandleW(nullptr),nullptr)); const auto root=window.window(), input=field(root,501), hash=field(root,502);
     PHPVPN_CHECK_EQ(text(input),L""); PHPVPN_CHECK_EQ(text(hash),L"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    const auto dirtyBefore=model->dirty();
+    click(root,503);
+    PHPVPN_CHECK_EQ(text(input),L"10.99.99.2_10.99.99.20");
+    const auto defaultKey=defaultPayloadKey(crypto,contracts_test::ip("10.99.99.20"),model->localIp());
+    PHPVPN_REQUIRE_OK(defaultKey);
+    PHPVPN_CHECK_EQ(narrow(text(hash)),defaultKey.value());
+    PHPVPN_CHECK_EQ(model->dirty(),dirtyBefore);
+    PHPVPN_CHECK((GetWindowLongPtrW(hash,GWL_STYLE)&ES_READONLY)!=0 && IsWindowEnabled(hash));
+    PHPVPN_CHECK(GetNextDlgTabItem(root,input,FALSE)==hash);
+    PHPVPN_CHECK(GetNextDlgTabItem(root,hash,FALSE)==field(root,503));
+    PHPVPN_CHECK(GetNextDlgTabItem(root,field(root,503),FALSE)==field(root,IDOK));
+    PHPVPN_CHECK((GetWindowLongPtrW(hash,GWL_STYLE)&WS_BORDER)==0);
+    capture(root,L"password-micro010-default.bmp");
+    MINMAXINFO minimum{}; SendMessageW(root,WM_GETMINMAXINFO,0,reinterpret_cast<LPARAM>(&minimum));
+    const auto dpi=GetDpiForWindow(root);
+    RECT expectedMinimum{0,0,scaleForDpi(480,dpi),scaleForDpi(240,dpi)};
+    AdjustWindowRectExForDpi(&expectedMinimum,static_cast<DWORD>(GetWindowLongPtrW(root,GWL_STYLE)),FALSE,
+        static_cast<DWORD>(GetWindowLongPtrW(root,GWL_EXSTYLE)),dpi);
+    PHPVPN_CHECK_EQ(minimum.ptMinTrackSize.x,expectedMinimum.right-expectedMinimum.left);
+    PHPVPN_CHECK_EQ(minimum.ptMinTrackSize.y,expectedMinimum.bottom-expectedMinimum.top);
+    SetWindowPos(root,nullptr,0,0,minimum.ptMinTrackSize.x,minimum.ptMinTrackSize.y,SWP_NOMOVE|SWP_NOZORDER);
+    RECT body{},inputBounds{};GetClientRect(GetParent(input),&body);GetWindowRect(input,&inputBounds);
+    MapWindowPoints(nullptr,GetParent(input),reinterpret_cast<POINT*>(&inputBounds),2);
+    PHPVPN_CHECK(inputBounds.top>=0 && inputBounds.bottom<=body.bottom);
+    capture(root,L"password-micro010-minimum.bmp");
     std::wstring emoji; for(unsigned i=0;i<255;++i) emoji+=L"\xd83d\xde00";
     replace(input,emoji); const auto expected=text(hash); PHPVPN_CHECK_EQ(text(input).size(),510u);
     SendMessageW(input,EM_SETSEL,5,5); SendMessageW(input,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(L"x"));
@@ -454,15 +480,18 @@ PHPVPN_TEST(WP05Windows, RandomFailureAndPartialCreateFailureRetainSafeState) {
     PHPVPN_CHECK_EQ(text(field(root,802)),L"A random key could not be generated. The current key has been kept.");
     window.endSession();PHPVPN_CHECK_EQ(backend.saves.load(),0u);
 }
-PHPVPN_TEST(WP05Windows, WholeKeyBudgetAndIndependentEditorsDoNotRebase) {
+PHPVPN_TEST(WP05Windows, KeyInputLimitAndIndependentEditorsDoNotRebase) {
     Backend backend;ContractsWindow first(backend.pipe),second(backend.pipe);
     require(first.open(GetModuleHandleW(nullptr),nullptr,backend.stored,"synthetic","same"));require(second.open(GetModuleHandleW(nullptr),nullptr,backend.stored,"synthetic","same"));
     const auto key=field(first.window(),1001),next=field(first.window(),1005);
-    replace(key,std::wstring(kMaxContractKeyTextBytes-251*64,L'a'));
-    PHPVPN_CHECK_EQ(text(key).size(),kMaxContractKeyTextBytes-251*64);
-    const auto old=text(next);SendMessageW(next,EM_SETSEL,3,3);SendMessageW(next,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(L"x"));
-    DWORD begin=0,end=0;SendMessageW(next,EM_GETSEL,reinterpret_cast<WPARAM>(&begin),reinterpret_cast<LPARAM>(&end));
-    PHPVPN_CHECK_EQ(text(next),old);PHPVPN_CHECK_EQ(begin,3u);PHPVPN_CHECK_EQ(end,3u);
+    PHPVPN_CHECK_EQ(SendMessageW(key,EM_GETLIMITTEXT,0,0),128);
+    PHPVPN_CHECK_EQ(SendMessageW(next,EM_GETLIMITTEXT,0,0),128);
+    replace(key,std::wstring(128,L'a'));
+    PHPVPN_CHECK_EQ(text(key).size(),128u);
+    const auto old=text(key);SendMessageW(key,EM_SETSEL,3,3);SendMessageW(key,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(L"x"));
+    DWORD begin=0,end=0;SendMessageW(key,EM_GETSEL,reinterpret_cast<WPARAM>(&begin),reinterpret_cast<LPARAM>(&end));
+    PHPVPN_CHECK_EQ(text(key),old);PHPVPN_CHECK_EQ(begin,3u);PHPVPN_CHECK_EQ(end,3u);
+    replace(key,std::wstring(129,L'b'));PHPVPN_CHECK_EQ(text(key),old);
     replace(key,std::wstring(64,L'a'));click(first.window(),1000);
     replace(field(second.window(),1005),std::wstring(64,L'b'));click(second.window(),1004);
     click(first.window(),IDOK);require(until([&]{return !first.isOpen();}));

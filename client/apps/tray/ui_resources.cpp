@@ -6,12 +6,12 @@ namespace phpvpn::tray {
 namespace {
 int systemColor(ui::Color role) {
     switch (role) {
-        case ui::Color::text: case ui::Color::secondaryText: case ui::Color::border: case ui::Color::buttonNeutralFocus:
+        case ui::Color::text: case ui::Color::secondaryText: case ui::Color::readOnlyText: case ui::Color::border: case ui::Color::buttonNeutralFocus:
         case ui::Color::separator: case ui::Color::success: case ui::Color::error:
         case ui::Color::warning: case ui::Color::successBorder: case ui::Color::errorBorder: return COLOR_WINDOWTEXT;
         case ui::Color::primary: case ui::Color::primaryHover: case ui::Color::primaryPressed:
         case ui::Color::buttonReset: case ui::Color::buttonResetHover: case ui::Color::buttonResetPressed:
-        case ui::Color::selectedStep: case ui::Color::focus: return COLOR_HIGHLIGHT;
+        case ui::Color::selectedStep: case ui::Color::focus: case ui::Color::contractsHeader: return COLOR_HIGHLIGHT;
         case ui::Color::primaryText: return COLOR_HIGHLIGHTTEXT;
         case ui::Color::disabledText: return COLOR_GRAYTEXT;
         default: return COLOR_WINDOW;

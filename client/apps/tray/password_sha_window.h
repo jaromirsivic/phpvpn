@@ -30,7 +30,7 @@ private:
     ContractsEdit inputAdapter_;
     UiResources resources_;
     HINSTANCE instance_ = nullptr;
-    HWND window_ = nullptr, parent_ = nullptr, body_ = nullptr, input_ = nullptr, hash_ = nullptr, ok_ = nullptr;
+    HWND window_ = nullptr, parent_ = nullptr, body_ = nullptr, input_ = nullptr, hash_ = nullptr, default_ = nullptr, ok_ = nullptr;
     int scroll_ = 0;
     std::array<HWND, 6> labels_{};
 };

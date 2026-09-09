@@ -64,7 +64,7 @@ void invalidateChanged(HWND window, Rect region, bool changed);
 // Resources must outlive the control, as they do for the containing window.
 bool attachToggleSwitch(HWND window, const UiResources& resources);
 enum class ButtonRole { neutral, primary, reset };
-// Attach only to a hidden, borderless, editable single-line native EDIT.
+// Attach only to a hidden, borderless, single-line native EDIT, including read-only.
 // Keeps the original HWND, parent, ID and native text/accessibility provider.
 bool attachModernTextBox(HWND window, const UiResources& resources,
                          ui::Color background = ui::Color::surface);
