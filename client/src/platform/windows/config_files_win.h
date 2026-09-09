@@ -1,4 +1,5 @@
 #pragma once
+#include <windows.h>
 #include <functional>
 #include <memory>
 #include "platform/iface/config_files.h"
@@ -15,8 +16,12 @@ struct ConfigFileHooks {
     std::function<bool(ConfigFileStage)> proceed;
 };
 
+// Pure descriptor policy, shared by handle validation and nonprivileged tests.
+Result<bool> validateWindowsConfigDescriptor(PSECURITY_DESCRIPTOR descriptor,
+    bool directory);
+
 // Local NTFS path only. The existing parent directory must have a protected
-// SYSTEM/Administrators-only full-control DACL and SYSTEM/Administrators owner.
+// SYSTEM/Administrators full control, safe inherited read/execute and a privileged owner.
 // Ancestors are opened without delete sharing and reject reparse points.
 // This factory never creates or relaxes the directory or target permissions.
 Result<std::unique_ptr<ConfigFiles>> createWindowsConfigFiles(

@@ -22,8 +22,10 @@ std::filesystem::path configFilePath(const std::filesystem::path& dataDirectory)
 std::filesystem::path journalFilePath(const std::filesystem::path& dataDirectory);
 std::filesystem::path logDirectory(const std::filesystem::path& dataDirectory);
 
-// Restricts a directory to SYSTEM and the local Administrators group, so a
-// standard user cannot read the stored keys.
+// Startup normalization on every service start, not a one-time migration.
+// Creates the missing data directory, pins and inspects the existing NTFS tree,
+// grants SYSTEM/Administrators full control and Users read/execute, and enables
+// inheritance for future descendants. Rejects reparse points and outside links.
 Status restrictDirectoryToAdministrators(const std::filesystem::path& directory);
 
 }  // namespace phpvpn

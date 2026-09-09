@@ -566,3 +566,318 @@ PHPVPN_TEST(config_files, create_race_and_pinned_directory) {
     PHPVPN_CHECK_EQ(probeRead(fixture.path()), std::string("external"));
 }
 }  // namespace phpvpn
+
+namespace phpvpn {
+namespace {
+Result<bool> inspectSddl(const wchar_t* sddl, bool directory) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, nullptr))
+        return Error(ErrorCode::internal);
+    auto result = validateWindowsConfigDescriptor(descriptor, directory);
+    LocalFree(descriptor);
+    return result;
+}
+}
+PHPVPN_TEST(config_acl, canonical_and_safe_extra_reads_without_elevation) {
+    for (const auto* sddl : {
+        L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FRFX;;;BU)",
+        L"O:SYG:SYD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;OICI;FRFX;;;BU)(A;ID;GR;;;AU)",
+        L"O:BAG:BAD:P(A;;GA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)(A;;FR;;;BU)",
+        L"O:BAG:BAD:P(A;;0x00120089;;;SY)(A;;0x000d0176;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)"
+    }) {
+        auto result = inspectSddl(sddl, true);
+        PHPVPN_REQUIRE_OK(result);
+        PHPVPN_CHECK(result.value());
+    }
+    auto config = inspectSddl(L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)(A;;GR;;;AU)", false);
+    PHPVPN_REQUIRE_OK(config);
+    PHPVPN_CHECK(config.value());
+    auto internal = inspectSddl(L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)", false);
+    PHPVPN_REQUIRE_OK(internal);
+    PHPVPN_CHECK(internal.value());
+}
+PHPVPN_TEST(config_acl, rejects_mutation_inheritance_and_privileged_restriction) {
+    for (const auto* extra : {L"(A;;FW;;;BU)", L"(A;;FA;;;AU)", L"(A;;GW;;;WD)",
+        L"(A;;SD;;;BU)", L"(A;;WD;;;BU)", L"(A;;WO;;;BU)", L"(A;;0x40;;;BU)",
+        L"(A;;0x2;;;BU)", L"(A;;0x4;;;BU)", L"(A;;0x100;;;BU)", L"(A;;0x10;;;BU)",
+        L"(A;OI;FW;;;BU)", L"(A;CI;FW;;;BU)", L"(A;IO;FW;;;BU)", L"(A;ID;FW;;;BU)",
+        L"(D;;FW;;;BA)", L"(D;;FW;;;WD)"}) {
+        const auto sddl = std::wstring(L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)") + extra;
+        for (const bool directory : {false, true}) {
+            auto result = inspectSddl(sddl.c_str(), directory);
+            PHPVPN_REQUIRE_OK(result);
+            PHPVPN_CHECK(!result.value());
+        }
+    }
+    for (const auto* sddl : {L"O:BUG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)",
+        L"O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)",
+        L"O:BAG:BAD:P(A;;FR;;;SY)(A;;FA;;;BA)",
+        L"O:BAG:BAD:P(A;IO;FA;;;SY)(A;;FA;;;BA)", L"O:BAG:BAD:P"}) {
+        auto result = inspectSddl(sddl, true);
+        PHPVPN_REQUIRE_OK(result);
+        PHPVPN_CHECK(!result.value());
+    }
+    PHPVPN_REQUIRE_ERROR(validateWindowsConfigDescriptor(nullptr, true), ErrorCode::config_unreadable);
+}
+}  // namespace phpvpn
+
+namespace phpvpn {
+PHPVPN_TEST(config_acl, standard_token_effective_access) {
+    HANDLE process = nullptr;
+    PHPVPN_CHECK(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &process));
+    if (!process) return;
+    ProbeHandle processToken(process);
+    BYTE admins[SECURITY_MAX_SID_SIZE]{};
+    DWORD size = sizeof(admins);
+    PHPVPN_CHECK(CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins, &size));
+    SID_AND_ATTRIBUTES disabled{admins, 0};
+    HANDLE restricted = nullptr;
+    PHPVPN_CHECK(CreateRestrictedToken(process, DISABLE_MAX_PRIVILEGE, 1, &disabled,
+        0, nullptr, 0, nullptr, &restricted));
+    if (!restricted) return;
+    ProbeHandle restrictedToken(restricted);
+    HANDLE impersonation = nullptr;
+    PHPVPN_CHECK(DuplicateToken(restricted, SecurityImpersonation, &impersonation));
+    if (!impersonation) return;
+    ProbeHandle token(impersonation);
+    for (unsigned kind = 0; kind < 3; ++kind) {
+        const wchar_t* sddl = kind == 0 ? L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FRFX;;;BU)" :
+            L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)";
+        PSECURITY_DESCRIPTOR descriptor = nullptr;
+        PHPVPN_CHECK(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, nullptr));
+        if (!descriptor) return;
+        GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+        for (const DWORD request : {DWORD(FILE_GENERIC_READ), DWORD(FILE_TRAVERSE), DWORD(FILE_WRITE_DATA),
+            DWORD(FILE_APPEND_DATA), DWORD(FILE_DELETE_CHILD), DWORD(DELETE), DWORD(WRITE_DAC), DWORD(WRITE_OWNER),
+            DWORD(FILE_WRITE_ATTRIBUTES), DWORD(FILE_WRITE_EA)}) {
+            BYTE privileges[1024]{};
+            DWORD privilegeSize = sizeof(privileges), granted = 0;
+            BOOL allowed = FALSE;
+            PHPVPN_CHECK(AccessCheck(descriptor, impersonation, request, &mapping,
+                reinterpret_cast<PRIVILEGE_SET*>(privileges), &privilegeSize, &granted, &allowed));
+            const bool expected = (request == FILE_GENERIC_READ || request == FILE_TRAVERSE);
+            PHPVPN_CHECK_EQ(allowed != FALSE, expected);
+        }
+        LocalFree(descriptor);
+    }
+    std::cout << "[ EVIDENCE ] AccessCheck with nonadministrator token: directory/config reads, mutation denied, internal reads allowed\n";
+}
+}  // namespace phpvpn
+
+namespace phpvpn {
+PHPVPN_TEST(config_files, readonly_tree_actual_ntfs_access_and_publication) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    PHPVPN_REQUIRE_OK(restrictDirectoryToAdministrators(fixture.directory));
+    auto files = createWindowsConfigFiles(fixture.path());
+    PHPVPN_REQUIRE_OK(files);
+    PHPVPN_REQUIRE_OK(files.value()->publish("first", ConfigPublishMode::replace, kCommitA));
+    PHPVPN_REQUIRE_OK(files.value()->publish("second", ConfigPublishMode::replace, kCommitB));
+    const auto logDir = fixture.directory / "logs";
+    PHPVPN_CHECK(CreateDirectoryW(logDir.c_str(), nullptr));
+    probeWrite(logDir / "future.log", "future state");
+    probeWrite(fixture.directory / "ownership.json", "metadata");
+    HANDLE process = nullptr;
+    PHPVPN_CHECK(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &process));
+    if (!process) return;
+    ProbeHandle processToken(process);
+    BYTE admins[SECURITY_MAX_SID_SIZE]{};
+    DWORD size = sizeof(admins);
+    PHPVPN_CHECK(CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins, &size));
+    SID_AND_ATTRIBUTES disabled{admins, 0};
+    HANDLE restricted = nullptr;
+    PHPVPN_CHECK(CreateRestrictedToken(process, DISABLE_MAX_PRIVILEGE, 1, &disabled,
+        0, nullptr, 0, nullptr, &restricted));
+    if (!restricted) return;
+    ProbeHandle token(restricted);
+    {
+        struct Revert { ~Revert() { RevertToSelf(); } } revert;
+        const bool impersonated = ImpersonateLoggedOnUser(restricted) != FALSE;
+        PHPVPN_CHECK(impersonated);
+        if (!impersonated) return;
+        // Opening for each forbidden right exercises the NTFS access check without
+        // relying on an application choosing to respect a read-only attribute.
+        ProbeHandle folder(CreateFileW(fixture.directory.c_str(), FILE_LIST_DIRECTORY | FILE_TRAVERSE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+        PHPVPN_CHECK(folder.value != INVALID_HANDLE_VALUE);
+        PHPVPN_CHECK_EQ(probeRead(fixture.path()), std::string("second"));
+        PHPVPN_CHECK_EQ(probeRead(fixture.directory / "config.previous"), std::string("first"));
+        PHPVPN_CHECK(probeRead(fixture.directory / "config.publish-journal").starts_with("PHPVPN-CONFIG-1"));
+        PHPVPN_CHECK_EQ(probeRead(logDir / "future.log"), std::string("future state"));
+        PHPVPN_CHECK_EQ(probeRead(fixture.directory / "ownership.json"), std::string("metadata"));
+        const auto copy = fixture.outer.path / "copy.json";
+        PHPVPN_CHECK(CopyFileW(fixture.path().c_str(), copy.c_str(), TRUE));
+        for (const auto& path : {fixture.path(), fixture.directory / "config.previous",
+            fixture.directory / "config.publish-journal", logDir / "future.log"}) {
+            for (const DWORD right : {DWORD(GENERIC_WRITE), DWORD(DELETE), DWORD(WRITE_DAC), DWORD(WRITE_OWNER)}) {
+                ProbeHandle denied(CreateFileW(path.c_str(), right, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+                PHPVPN_CHECK(denied.value == INVALID_HANDLE_VALUE);
+                PHPVPN_CHECK_EQ(GetLastError(), DWORD(ERROR_ACCESS_DENIED));
+            }
+        }
+        ProbeHandle denied(CreateFileW((fixture.directory / "forbidden").c_str(), GENERIC_WRITE,
+            FILE_SHARE_READ, nullptr, CREATE_NEW, 0, nullptr));
+        PHPVPN_CHECK(denied.value == INVALID_HANDLE_VALUE);
+        PHPVPN_CHECK(!CreateDirectoryW((logDir / "forbidden").c_str(), nullptr));
+        PHPVPN_CHECK(!DeleteFileW(fixture.path().c_str()));
+        PHPVPN_CHECK(!MoveFileExW(fixture.path().c_str(), (fixture.directory / "renamed").c_str(), 0));
+    }
+    PHPVPN_REQUIRE_OK(files.value()->recover());
+    PHPVPN_CHECK_EQ(files.value()->readBounded(kMaxConfigFileBytes)->bytes, std::string("second"));
+    PHPVPN_REQUIRE_OK(files.value()->publish("third", ConfigPublishMode::replace, kCommitA));
+    std::cout << "[ EVIDENCE ] elevated NTFS fixture, restricted-token read/copy, mutation denied, publication after reads\n";
+}
+}  // namespace phpvpn
+
+namespace phpvpn {
+namespace {
+std::vector<unsigned char> securityBytes(const std::filesystem::path& path) {
+    constexpr DWORD parts = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    DWORD size = 0;
+    GetFileSecurityW(path.c_str(), parts, nullptr, 0, &size);
+    std::vector<unsigned char> bytes(size);
+    if (!size || !GetFileSecurityW(path.c_str(), parts, bytes.data(), size, &size)) return {};
+    return bytes;
+}
+bool setSddl(const std::filesystem::path& path, const std::wstring& sddl) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) return false;
+    const bool result = SetFileSecurityW(path.c_str(), OWNER_SECURITY_INFORMATION |
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, descriptor) != FALSE;
+    LocalFree(descriptor);
+    return result;
+}
+}
+PHPVPN_TEST(config_files, startup_migrates_legacy_and_explorer_acl_without_byte_or_identity_changes) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    const std::string original = "invalid or old configuration bytes\r\n";
+    probeWrite(fixture.path(), original);
+    PHPVPN_CHECK(CreateHardLinkW((fixture.directory / "config.previous").c_str(), fixture.path().c_str(), nullptr));
+    const auto nested = fixture.directory / "logs";
+    PHPVPN_CHECK(CreateDirectoryW(nested.c_str(), nullptr));
+    probeWrite(nested / "old.log", "old log");
+    ProbeHandle before(CreateFileW(fixture.path().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, 0, nullptr));
+    const auto oldIdentity = probeIdentity(before.value);
+    HANDLE token = nullptr;
+    PHPVPN_CHECK(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
+    if (!token) return;
+    ProbeHandle tokenHandle(token);
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<unsigned char> user(size);
+    PHPVPN_CHECK(GetTokenInformation(token, TokenUser, user.data(), size, &size));
+    LPWSTR userSid = nullptr;
+    PHPVPN_CHECK(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, &userSid));
+    if (!userSid) return;
+    const auto explorer = std::wstring(L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;") + userSid + L")";
+    LocalFree(userSid);
+    for (const bool extra : {false, true}) {
+        const std::wstring old = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)";
+        PHPVPN_CHECK(setSddl(fixture.directory, extra ? explorer : old));
+        PHPVPN_CHECK(setSddl(fixture.path(), extra ? explorer : old));
+        PHPVPN_CHECK(setSddl(nested / "old.log", extra ? explorer : old));
+        PHPVPN_REQUIRE_OK(restrictDirectoryToAdministrators(fixture.directory));
+        PHPVPN_CHECK_EQ(probeRead(fixture.path()), original);
+        PHPVPN_CHECK_EQ(probeRead(fixture.directory / "config.previous"), original);
+        for (const auto& path : {fixture.path(), fixture.directory / "config.previous", nested / "old.log"}) {
+            const auto descriptor = securityBytes(path);
+            PHPVPN_CHECK(!descriptor.empty());
+            auto valid = validateWindowsConfigDescriptor(const_cast<unsigned char*>(descriptor.data()), false);
+            PHPVPN_REQUIRE_OK(valid);
+            PHPVPN_CHECK(valid.value());
+        }
+        ProbeHandle after(CreateFileW(fixture.path().c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr));
+        PHPVPN_CHECK_EQ(probeIdentity(after.value), oldIdentity);
+        PHPVPN_REQUIRE_OK(createWindowsConfigFiles(fixture.path()));
+    }
+    std::cout << "[ EVIDENCE ] legacy/Explorer tree migrated without changing bytes or internal hardlink identity\n";
+}
+PHPVPN_TEST(config_files, startup_rejects_external_hardlinks_without_external_acl_change) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    const auto outside = fixture.outer.path / "outside";
+    probeWrite(outside, "outside content");
+    PHPVPN_CHECK(CreateHardLinkW(fixture.path().c_str(), outside.c_str(), nullptr));
+    const auto security = securityBytes(outside);
+    PHPVPN_CHECK(!security.empty());
+    PHPVPN_REQUIRE_ERROR(restrictDirectoryToAdministrators(fixture.directory), ErrorCode::config_unreadable);
+    PHPVPN_CHECK_EQ(securityBytes(outside), security);
+    PHPVPN_CHECK_EQ(probeRead(outside), std::string("outside content"));
+}
+PHPVPN_TEST(config_files, startup_rejects_reparse_without_external_acl_change) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    const auto outside = fixture.outer.path / "outside";
+    probeWrite(outside, "outside content");
+    if (!CreateSymbolicLinkW(fixture.path().c_str(), outside.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        std::cout << "[ NOT RUN ] startup reparse test requires symbolic-link privilege\n";
+        return;
+    }
+    const auto security = securityBytes(outside);
+    PHPVPN_REQUIRE_ERROR(restrictDirectoryToAdministrators(fixture.directory), ErrorCode::config_unreadable);
+    PHPVPN_CHECK_EQ(securityBytes(outside), security);
+    PHPVPN_CHECK_EQ(probeRead(outside), std::string("outside content"));
+}
+}  // namespace phpvpn
+
+namespace phpvpn {
+PHPVPN_TEST(config_acl, pinned_low_level_setter_does_not_propagate_to_uninspected_child) {
+    ProbeDirectory fixture;
+    const auto child = fixture.path / "child";
+    probeWrite(child, "unchanged");
+    const auto before = securityBytes(child);
+    PHPVPN_CHECK(!before.empty());
+    HANDLE token = nullptr;
+    PHPVPN_CHECK(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
+    if (!token) return;
+    ProbeHandle tokenHandle(token);
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<unsigned char> user(size);
+    PHPVPN_CHECK(GetTokenInformation(token, TokenUser, user.data(), size, &size));
+    LPWSTR userSid = nullptr;
+    PHPVPN_CHECK(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, &userSid));
+    if (!userSid) return;
+    const auto sddl = std::wstring(L"D:P(A;OICI;FA;;;") + userSid + L")(A;OICI;FRFX;;;BU)";
+    LocalFree(userSid);
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PHPVPN_CHECK(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr));
+    if (!descriptor) return;
+    ProbeHandle pinned(CreateFileW(fixture.path.c_str(), READ_CONTROL | WRITE_DAC,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    PHPVPN_CHECK(pinned.value != INVALID_HANDLE_VALUE);
+    PHPVPN_CHECK(SetFileSecurityW(fixture.path.c_str(), DACL_SECURITY_INFORMATION |
+        PROTECTED_DACL_SECURITY_INFORMATION, descriptor));
+    LocalFree(descriptor);
+    PHPVPN_CHECK_EQ(securityBytes(child), before);
+    PHPVPN_CHECK_EQ(probeRead(child), std::string("unchanged"));
+    std::cout << "[ EVIDENCE ] low-level ACL setter did not propagate into existing child on NTFS\n";
+}
+}  // namespace phpvpn
+
+namespace phpvpn {
+PHPVPN_TEST(config_files, safe_extra_read_ace_allows_save_unsafe_inherited_write_blocks_it) {
+    SecureFixture fixture;
+    if (!fixture.create()) return;
+    PHPVPN_REQUIRE_OK(restrictDirectoryToAdministrators(fixture.directory));
+    auto files = createWindowsConfigFiles(fixture.path());
+    PHPVPN_REQUIRE_OK(files);
+    PHPVPN_REQUIRE_OK(files.value()->publish("first", ConfigPublishMode::replace, kCommitA));
+    PHPVPN_CHECK(setSddl(fixture.directory,
+        L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;;GR;;;AU)"));
+    PHPVPN_CHECK(setSddl(fixture.path(),
+        L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)(A;;GR;;;AU)"));
+    PHPVPN_REQUIRE_OK(files.value()->publish("second", ConfigPublishMode::replace, kCommitB));
+    const auto journal = probeRead(fixture.directory / "config.publish-journal");
+    PHPVPN_CHECK(setSddl(fixture.directory,
+        L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)(A;OIIO;FW;;;AU)"));
+    PHPVPN_REQUIRE_ERROR(files.value()->publish("blocked", ConfigPublishMode::replace, kCommitA),
+        ErrorCode::config_directory_security_invalid);
+    PHPVPN_CHECK_EQ(probeRead(fixture.path()), std::string("second"));
+    PHPVPN_CHECK_EQ(probeRead(fixture.directory / "config.publish-journal"), journal);
+}
+}  // namespace phpvpn

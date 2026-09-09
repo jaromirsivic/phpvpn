@@ -46,7 +46,7 @@ struct Descriptor {
     ~Descriptor() { if (value) LocalFree(value); }
     bool create() {
         return ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)", SDDL_REVISION_1, &value, nullptr) != FALSE;
+            L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)", SDDL_REVISION_1, &value, nullptr) != FALSE;
     }
 };
 Error readError() { return Error(ErrorCode::config_unreadable, "the configuration file cannot be safely read"); }
@@ -72,33 +72,9 @@ Result<bool> inspectRestricted(HANDLE handle, bool directory) {
     if (GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION |
         DACL_SECURITY_INFORMATION, &owner, nullptr, &acl, nullptr, &descriptor.value) != ERROR_SUCCESS)
         return readError();
-    std::array<unsigned char, SECURITY_MAX_SID_SIZE> system{}, admins{};
-    DWORD systemSize = static_cast<DWORD>(system.size()), adminsSize = static_cast<DWORD>(admins.size());
-    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, system.data(), &systemSize) ||
-        !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins.data(), &adminsSize))
-        return readError();
-    SECURITY_DESCRIPTOR_CONTROL control = 0;
-    DWORD revision = 0;
-    if (!GetSecurityDescriptorControl(descriptor.value, &control, &revision)) return readError();
-    bool good = owner && (EqualSid(owner, system.data()) || EqualSid(owner, admins.data())) &&
-        (!directory || (control & SE_DACL_PROTECTED)) && acl && acl->AceCount == 2;
-    unsigned seen = 0;
-    if (good) {
-        for (DWORD i = 0; i < acl->AceCount; ++i) {
-            void* entry = nullptr;
-            if (!GetAce(acl, i, &entry)) return readError();
-            const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(entry);
-            if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE ||
-                (ace->Header.AceFlags & INHERIT_ONLY_ACE) ||
-                (ace->Mask & FILE_ALL_ACCESS) != FILE_ALL_ACCESS) { good = false; break; }
-            PSID sid = const_cast<DWORD*>(&ace->SidStart);
-            if (EqualSid(sid, system.data())) seen |= 1;
-            else if (EqualSid(sid, admins.data())) seen |= 2;
-            else { good = false; break; }
-        }
-    }
-    return good && seen == 3;
+    return validateWindowsConfigDescriptor(descriptor.value, directory);
 }
+
 bool restricted(HANDLE handle, bool directory) {
     return inspectRestricted(handle, directory).valueOr(false);
 }
@@ -450,6 +426,58 @@ private:
     std::mutex mutex_;
 };
 }  // namespace
+
+Result<bool> validateWindowsConfigDescriptor(PSECURITY_DESCRIPTOR descriptor, bool directory) {
+    if (!descriptor || !IsValidSecurityDescriptor(descriptor)) return readError();
+    PSID owner = nullptr;
+    PACL acl = nullptr;
+    BOOL present = FALSE, defaulted = FALSE;
+    if (!GetSecurityDescriptorOwner(descriptor, &owner, &defaulted) ||
+        !GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted)) return readError();
+    std::array<unsigned char, SECURITY_MAX_SID_SIZE> system{}, admins{};
+    DWORD systemSize = static_cast<DWORD>(system.size()), adminsSize = static_cast<DWORD>(admins.size());
+    if (!CreateWellKnownSid(WinLocalSystemSid, nullptr, system.data(), &systemSize) ||
+        !CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins.data(), &adminsSize))
+        return readError();
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    if (!GetSecurityDescriptorControl(descriptor, &control, &revision)) return readError();
+    bool good = owner && (EqualSid(owner, system.data()) || EqualSid(owner, admins.data())) &&
+        (!directory || (control & SE_DACL_PROTECTED)) && acl && IsValidAcl(acl);
+    DWORD systemRights = 0, adminRights = 0;
+    GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+    if (good) {
+        for (DWORD i = 0; i < acl->AceCount; ++i) {
+            void* entry = nullptr;
+            if (!GetAce(acl, i, &entry)) return readError();
+            const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(entry);
+            // Require unconditional privileged access. Denies and conditional/object
+            // ACEs are not evidence of the required effective full control.
+            if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE ||
+                ace->Header.AceSize < offsetof(ACCESS_ALLOWED_ACE, SidStart) + 8) return false;
+            PSID sid = const_cast<DWORD*>(&ace->SidStart);
+            const auto* rawSid = reinterpret_cast<const SID*>(sid);
+            if (GetSidLengthRequired(rawSid->SubAuthorityCount) >
+                ace->Header.AceSize - offsetof(ACCESS_ALLOWED_ACE, SidStart) || !IsValidSid(sid)) return false;
+            DWORD rights = ace->Mask;
+            MapGenericMask(&rights, &mapping);
+            const bool privileged = EqualSid(sid, system.data()) || EqualSid(sid, admins.data());
+            if (!privileged) {
+                // The complete data tree deliberately permits inherited read/execute.
+                // No ACE, including inherit-only ACEs, may grant a mutation right.
+                const DWORD allowed = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+                constexpr BYTE safeFlags = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
+                    NO_PROPAGATE_INHERIT_ACE | INHERIT_ONLY_ACE | INHERITED_ACE;
+                if ((rights & ~allowed) || (ace->Header.AceFlags & ~safeFlags)) return false;
+            } else if (!(ace->Header.AceFlags & INHERIT_ONLY_ACE)) {
+                if (EqualSid(sid, system.data())) systemRights |= rights;
+                else adminRights |= rights;
+            }
+        }
+    }
+    return good && (systemRights & FILE_ALL_ACCESS) == FILE_ALL_ACCESS &&
+        (adminRights & FILE_ALL_ACCESS) == FILE_ALL_ACCESS;
+}
 
 Result<std::unique_ptr<ConfigFiles>> createWindowsConfigFiles(
     const std::filesystem::path& fixedPath, ConfigFileHooks hooks) {

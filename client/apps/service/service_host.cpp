@@ -60,12 +60,9 @@ public:
             data = g_environment.dataDirectory;
         }
 
-        // The stored keys must not be readable by a standard user; the pipe
-        // stays deliberately public, which is a separate, documented decision.
+        // Local users deliberately read the complete data tree, including historical
+        // keys. Filesystem writes remain privileged and IPC publication validated.
         std::optional<Error> storageError;
-        std::error_code directoryError;
-        std::filesystem::create_directories(data, directoryError);
-        if (directoryError) storageError = Error(ErrorCode::config_write_failed);
         if (!storageError) {
             auto secured = restrictDirectoryToAdministrators(data);
             if (!secured) storageError = secured.error();

@@ -237,7 +237,9 @@ function New-ProtectedDirectory {
 
 $generation = Join-Path $installRoot $manifest.releaseVersion
 New-ProtectedDirectory $installRoot
-New-ProtectedDirectory $dataRoot
+# The service creates/migrates ProgramData through its pinned, no-reparse walker.
+# Recursive Set-Acl here could follow an untrusted child or alter an outside hardlink.
+# Do not touch the existing data tree before that validation.
 New-ProtectedDirectory $generation
 
 foreach ($entry in $manifest.files) {

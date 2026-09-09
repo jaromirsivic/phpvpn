@@ -35,7 +35,7 @@ constexpr ErrorInfo kErrors[] = {
     {ErrorCode::config_not_found,              "config_not_found",              "The configuration file does not exist.",                           false},
     {ErrorCode::config_read_failed,            "config_read_failed",            "The configuration file could not be read.",                        false},
     {ErrorCode::config_write_failed,           "config_write_failed",           "The configuration file could not be written.",                     false},
-    {ErrorCode::config_directory_security_invalid, "config_directory_security_invalid", "The configuration folder permissions do not match PHPVPN's required security settings.", false},
+    {ErrorCode::config_directory_security_invalid, "config_directory_security_invalid", "The configuration folder permissions allow unsafe changes or lack required security protection. Read-only access is permitted.", false},
     {ErrorCode::config_invalid_json,           "config_invalid_json",           "The configuration is not a valid JSON document.",                  false},
     {ErrorCode::config_invalid_value,          "config_invalid_value",          "A configuration value has an unexpected type or content.",         false},
     {ErrorCode::config_invalid_url,            "config_invalid_url",            "The server URL is not an absolute http or https URL.",             false},
