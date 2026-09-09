@@ -16,7 +16,7 @@ PHPVPN_TEST(ContractsModel, all_peers_numeric_order_self_and_address_boundaries)
         for (const auto& row : model.value()->rows()) {
             PHPVPN_CHECK(previous < row.remoteIp().value());
             previous = row.remoteIp().value();
-            PHPVPN_CHECK(!row.enabled() && row.keyValid() && !row.dirty());
+            PHPVPN_CHECK(!row.enabled() && row.keyText().empty() && !row.keyValid() && !row.keyErrorVisible() && !row.dirty());
         }
         PHPVPN_CHECK(!model.value()->dirty());
         PHPVPN_CHECK_EQ(model.value()->configPath(), "synthetic/config");
@@ -52,7 +52,7 @@ PHPVPN_TEST(ContractsModel, all_enabled_252_rows_publish_and_multiple_errors_are
     const auto pair = m.target(ip("10.20.30.2"));
     PHPVPN_REQUIRE_OK(pair);
     PHPVPN_CHECK_EQ(pair->contractId(), "10.20.30.2_10.20.30.10");
-    for (const auto& row : m.rows()) PHPVPN_REQUIRE_OK(m.setEnabled(row.remoteIp(), true));
+    for (const auto& row : m.rows()) { PHPVPN_REQUIRE_OK(m.setKey(row.remoteIp(), std::string(64, 'a'))); PHPVPN_REQUIRE_OK(m.setEnabled(row.remoteIp(), true)); }
     auto candidate = m.prepareSave(envelopeSize);
     PHPVPN_REQUIRE_OK(candidate);
     PHPVPN_CHECK_EQ(candidate.value()->dom().find("communicationContracts")->objectValue().size(), 252u);
@@ -75,12 +75,12 @@ PHPVPN_TEST(ContractsModel, exact_existing_key_shared_defaults_and_pair_vectors)
     const auto& m = *model.value();
     PHPVPN_CHECK(m.row(ip("10.99.99.3"))->enabled());
     PHPVPN_CHECK_EQ(m.row(ip("10.99.99.3"))->keyText(), "918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d");
-    PHPVPN_CHECK_EQ(m.row(ip("10.99.99.10"))->keyText(), "f41f0ed508411aef592228e9d73ae137a4d31933f038160c04ae1e8d70597ebe");
+    PHPVPN_CHECK_EQ(m.row(ip("10.99.99.10"))->keyText(), "");
     PHPVPN_CHECK(!m.row(ip("10.99.99.10"))->enabled());
-    PHPVPN_CHECK_EQ(crypto.hashCalls, 251u);
+    PHPVPN_CHECK_EQ(crypto.hashCalls, 0u);
     auto reverse = ContractsModel::create(crypto, document("10.99.99.3"));
     PHPVPN_REQUIRE_OK(reverse);
-    PHPVPN_CHECK_EQ(reverse.value()->row(ip("10.99.99.2"))->keyText(), m.row(ip("10.99.99.3"))->keyText());
+    PHPVPN_CHECK(reverse.value()->row(ip("10.99.99.2"))->keyText().empty());
     auto changed = makeDefaultEditorDocument();
     const auto pos = changed.find("918c4885");
     changed.replace(pos, 64, std::string(64, 'b'));
@@ -88,7 +88,19 @@ PHPVPN_TEST(ContractsModel, exact_existing_key_shared_defaults_and_pair_vectors)
     PHPVPN_REQUIRE_OK(exact);
     PHPVPN_CHECK_EQ(exact.value()->row(ip("10.99.99.3"))->keyText(), std::string(64, 'b'));
     crypto.failHash = true;
-    PHPVPN_REQUIRE_ERROR(ContractsModel::create(crypto, document()), ErrorCode::crypto_failed);
+    PHPVPN_REQUIRE_OK(ContractsModel::create(crypto, document()));
+    auto& editable = *model.value();
+    const auto peer = ip("10.99.99.3");
+    const std::string stored(editable.row(peer)->keyText());
+    PHPVPN_REQUIRE_OK(editable.setEnabled(peer, false));
+    PHPVPN_CHECK_EQ(editable.row(peer)->keyText(), stored);
+    PHPVPN_REQUIRE_OK(editable.setEnabled(peer, true));
+    PHPVPN_CHECK(!editable.dirty());
+    PHPVPN_REQUIRE_OK(editable.setEnabled(peer, false));
+    auto saved = editable.prepareSave(envelopeSize); PHPVPN_REQUIRE_OK(saved);
+    auto reloaded = ContractsModel::create(crypto, saved.value()->text()); PHPVPN_REQUIRE_OK(reloaded);
+    PHPVPN_CHECK(reloaded.value()->row(peer)->keyText().empty());
+    PHPVPN_CHECK(!reloaded.value()->row(peer)->enabled() && !reloaded.value()->dirty());
 }
 PHPVPN_TEST(ContractsModel, key_validation_all_rows_dirty_restore_and_focus) {
     Crypto crypto;
@@ -127,7 +139,7 @@ PHPVPN_TEST(ContractsModel, total_key_budget_exact_plus_one_and_size_overflow) {
     PHPVPN_REQUIRE_OK(created);
     auto& m = *created.value();
     const auto peer = m.rows().front().remoteIp();
-    const auto available = kMaxContractKeyTextBytes - m.keyTextBytes() + 64;
+    const auto available = kMaxContractKeyTextBytes - m.keyTextBytes() + m.row(peer)->keyText().size();
     const std::string large(available, 'a');
     PHPVPN_REQUIRE_OK(m.setKey(peer, large));
     PHPVPN_CHECK_EQ(m.keyTextBytes(), kMaxContractKeyTextBytes);
@@ -172,6 +184,7 @@ PHPVPN_TEST(ContractsModel, random_confirmation_failure_and_restored_key_is_clea
 PHPVPN_TEST(ContractsModel, multiple_targets_last_confirmed_frozen_candidate_and_stale_generations) {
     Crypto crypto;
     auto a = ContractsModel::create(crypto, document());
+    PHPVPN_REQUIRE_OK(a.value()->setKey(ip("10.99.99.10"), std::string(64, 'd')));
     auto b = ContractsModel::create(crypto, document());
     PHPVPN_REQUIRE_OK(a); PHPVPN_REQUIRE_OK(b);
     auto& m = *a.value();
@@ -184,7 +197,7 @@ PHPVPN_TEST(ContractsModel, multiple_targets_last_confirmed_frozen_candidate_and
     PHPVPN_REQUIRE_OK(m.setFocus(ContractFocus{other.remoteIp(), ContractColumn::random}));
     const std::string original(m.row(first.remoteIp())->keyText());
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(first, original));
-    PHPVPN_CHECK(!m.dirty()); // confirming the original hash does not change the row
+    PHPVPN_CHECK(m.dirty()); // the explicitly supplied working key differs from the empty baseline
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(first, std::string(64, 'a')));
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(other, std::string(64, 'c')));
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(same, std::string(64, 'b')));

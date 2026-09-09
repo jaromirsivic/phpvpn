@@ -52,15 +52,25 @@ bool PasswordShaWindow::open(HINSTANCE instance, HWND parent) {
 }
 bool PasswordShaWindow::update(std::wstring_view text) {
     const auto error = model_.update(crypto_, {reinterpret_cast<const char16_t*>(text.data()), text.size()});
+    auto key = widen(model_.key()); SetWindowTextW(hash_, key.c_str()); secureWipe(key.data(), key.size() * sizeof(wchar_t));
+    refreshStatus();
+    return error != PasswordKeyError::tooLong && error != PasswordKeyError::unsupportedControl;
+}
+void PasswordShaWindow::setTargetEnabled(bool enabled) {
+    if (targetEnabled_ == enabled) return;
+    targetEnabled_ = enabled;
+    if (window_) refreshStatus();
+}
+void PasswordShaWindow::refreshStatus() {
+    const auto error = model_.error();
     const wchar_t* notice = L"";
     if (error == PasswordKeyError::tooLong) notice = L"Password must contain at most 255 Unicode characters.";
     else if (error == PasswordKeyError::invalidUtf16) notice = L"Password contains an incomplete Unicode character.";
     else if (error == PasswordKeyError::unsupportedControl) notice = L"Password contains an unsupported control character.";
     else if (error == PasswordKeyError::cryptoFailed) notice = L"The SHA-256 key could not be generated.";
+    if (!targetEnabled_) notice = L"Enable this contract to apply the key. Your password is kept.";
     SetWindowTextW(labels_[5], notice);
-    auto key = widen(model_.key()); SetWindowTextW(hash_, key.c_str()); secureWipe(key.data(), key.size() * sizeof(wchar_t));
-    EnableWindow(ok_, model_.valid());
-    return error != PasswordKeyError::tooLong && error != PasswordKeyError::unsupportedControl;
+    EnableWindow(ok_, targetEnabled_ && model_.valid());
 }
 void PasswordShaWindow::randomPassword() {
     constexpr std::wstring_view alphabet = L"ghjkmnpqrstuvwxyz";
@@ -168,7 +178,7 @@ LRESULT CALLBACK PasswordShaWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l
             secureWipe(password.data(), password.size() * sizeof(wchar_t));
             return 0;
         }
-        if (LOWORD(w) == IDOK && self->model_.valid()) {
+        if (LOWORD(w) == IDOK && self->targetEnabled_ && self->model_.valid()) {
             if (self->apply_ && self->apply_(self->target_, self->model_.key())) self->close();
             return 0;
         }

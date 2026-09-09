@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <limits>
 #include "core/base/hex.h"
-#include "core/wizard/wizard_defaults.h"
 
 namespace phpvpn {
 namespace {
@@ -18,7 +17,7 @@ std::string_view ContractRow::keyText() const noexcept {
 bool ContractRow::dirty() const noexcept {
     return enabled_ != originalEnabled_ || !key_.equals(originalKey_);
 }
-Result<std::unique_ptr<ContractsModel>> ContractsModel::create(CryptoProvider& crypto,
+Result<std::unique_ptr<ContractsModel>> ContractsModel::create(CryptoProvider&,
     std::string_view document, std::string configPath, std::string revisionToken) {
     auto parsed = ContractsDocument::parse(document);
     if (!parsed) return parsed.error();
@@ -40,12 +39,10 @@ Result<std::unique_ptr<ContractsModel>> ContractsModel::create(CryptoProvider& c
         if (const auto key = model->document_->existingKey(remote)) {
             row.key_.assign(asBytes(*key));
             row.enabled_ = row.originalEnabled_ = true;
-        } else {
-            auto derived = defaultPayloadKey(crypto, model->localIp(), remote);
-            if (!derived) return Error(ErrorCode::crypto_failed);
-            KeyTextWiper wipe{*derived};
-            row.key_.assign(asBytes(*derived));
         }
+        // Missing JSON keys stay genuinely absent in both working and baseline
+        // buffers. Default derivation is an explicit Password SHA action only.
+        row.keyValid_ = isValidContractKey(row.keyText());
         row.originalKey_ = row.key_;
         model->keyTextBytes_ += row.key_.size();
         model->rows_.push_back(std::move(row));

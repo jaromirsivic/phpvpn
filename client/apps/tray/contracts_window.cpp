@@ -101,7 +101,7 @@ bool ContractsWindow::createRows() {
         row.controls[0] = control(content_, L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, base);
         complete = attachToggleSwitch(row.controls[0], resources_) && complete;
         row.controls[1] = control(content_, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, base + 1);
-        setTextBoxInvalid(row.controls[1], !source.keyValid());
+        setTextBoxInvalid(row.controls[1], source.keyErrorVisible());
         row.controls[2] = control(content_, L"BUTTON", L"Change", WS_TABSTOP | BS_OWNERDRAW, base + 2);
         complete = attachModernButton(row.controls[2], resources_, ButtonRole::neutral, ui::Color::surface) && complete;
         const wchar_t* names[]{L"Enabled", L"Key", L"Change"};
@@ -228,6 +228,8 @@ void ContractsWindow::syncRow(Row& row) {
 bool ContractsWindow::acceptKey(Ipv4Address remote, std::wstring_view text) {
     if (changing_) return true;
     if (!controller_.model() || controller_.model()->frozen()) return false;
+    const auto* source = controller_.model()->row(remote);
+    if (!source || !source->enabled()) return false;
     std::wstring wide(text); auto utf8 = narrow(wide); secureWipe(wide.data(), wide.size() * sizeof(wchar_t));
     if ((!text.empty() && utf8.empty()) || text.find(L'\0') != std::wstring_view::npos || text.find_first_of(L"\r\n") != std::wstring_view::npos) {
         localError_ = L"Key contains unsupported text."; refresh(); return false;
@@ -266,16 +268,19 @@ void ContractsWindow::command(int id, int code) {
     }
     const auto target = controller_.model()->target(row.remote); if (!target) return;
     if (column == 2) {
+        if (!controller_.model()->row(row.remote)->enabled()) return;
         std::erase_if(children_, [](const auto& child) { return !child->window(); });
         auto child = std::make_unique<PasswordShaWindow>(*crypto_, *target, [this](const ContractTarget& captured, std::string_view key) {
             if (ending_ || !controller_.model()) return false;
+            const auto* source = controller_.model()->row(captured.remoteIp());
+            if (!source || !source->enabled()) return false;
             auto applied = controller_.model()->applyPasswordKey(captured, key); if (!applied) return false;
             controller_.changed();
             for (auto& targetRow : rows_) if (targetRow.remote == captured.remoteIp()) syncRow(targetRow);
             localError_.clear(); refresh(); return true;
         }, [this](const ContractTarget& target) {
             if (ending_ || !window_ || !controller_.model() || controller_.model()->frozen()) return;
-            focusContract(target.remoteIp(), 2);
+            focusContract(target.remoteIp(), controller_.model()->row(target.remoteIp())->enabled() ? 2 : 1);
         });
         if (child->open(instance_, window_)) children_.push_back(std::move(child));
         else { localError_ = L"Password SHA could not be opened."; refresh(); }
@@ -335,6 +340,10 @@ void ContractsWindow::refresh() {
         EnableWindow(row.controls[0], !snapshot.saving && !snapshot.unknown);
         EnableWindow(row.controls[1], !snapshot.saving && !snapshot.unknown);
         const auto* source = controller_.model()->row(row.remote);
+        const bool readOnly = !source->enabled();
+        if (((GetWindowLongPtrW(row.controls[1], GWL_STYLE) & ES_READONLY) != 0) != readOnly)
+            SendMessageW(row.controls[1], EM_SETREADONLY, readOnly, 0);
+        EnableWindow(row.controls[2], source->enabled() && !snapshot.saving && !snapshot.unknown);
         const bool dirty = source->dirty();
         const auto background = dirty ? ui::Color::contractsChanged : ui::Color::surface;
         setModernControlBackground(row.controls[1], background);
@@ -346,7 +355,7 @@ void ContractsWindow::refresh() {
             InvalidateRect(content_, &area, FALSE);
             InvalidateRect(row.controls[0], nullptr, FALSE);
         }
-        const bool valid = source->keyValid();
+        const bool valid = !source->keyErrorVisible();
         setTextBoxInvalid(row.controls[1], !valid);
         if (valid != row.lastValid) {
             row.lastValid = valid; InvalidateRect(row.controls[1], nullptr, FALSE);
@@ -354,6 +363,10 @@ void ContractsWindow::refresh() {
                 PROPID_ACC_DESCRIPTION, valid ? L"" : L"Invalid: Key must contain exactly 64 lowercase hexadecimal characters.");
             NotifyWinEvent(EVENT_OBJECT_DESCRIPTIONCHANGE,row.controls[1],OBJID_CLIENT,CHILDID_SELF);
         }
+    }
+    for (const auto& child : children_) if (child->window()) {
+        const auto* source = controller_.model()->row(child->remoteIp());
+        child->setTargetEnabled(source && source->enabled() && !snapshot.saving && !snapshot.unknown);
     }
     if (message != previous || saveTextChanged) { layout(); reveal(GetFocus()); }
 }
@@ -666,7 +679,7 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
         const auto field = reinterpret_cast<HWND>(l); bool invalid = false, changedToggle = false;
         if (self->controller_.model()) for (const auto& row : self->rows_)
             if (row.controls[0] == field) changedToggle = self->controller_.model()->row(row.remote)->dirty();
-        if (self->controller_.model()) for (const auto& row : self->rows_) if (row.controls[1] == field) invalid = !self->controller_.model()->row(row.remote)->keyValid();
+        if (self->controller_.model()) for (const auto& row : self->rows_) if (row.controls[1] == field) invalid = self->controller_.model()->row(row.remote)->keyErrorVisible();
         const auto color = invalid ? ui::Color::errorBackground : changedToggle ? ui::Color::contractsChanged : h == self->window_ || h == self->body_ || h == self->pager_ ? ui::Color::background : ui::Color::surface;
         const auto dc = reinterpret_cast<HDC>(w); SetTextColor(dc,self->resources_.color(invalid ? ui::Color::error : ui::Color::text)); SetBkColor(dc,self->resources_.color(color));
         return reinterpret_cast<LRESULT>(self->resources_.brush(color));

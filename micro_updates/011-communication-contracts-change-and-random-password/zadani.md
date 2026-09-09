@@ -166,6 +166,40 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 - Při existujícím neznámém nebo probíhajícím ukládacím stavu zachovat současné bezpečnostní chování lifecycle. Nové tlačítko nesmí umožnit obejít ochranu proti zavření během ukládání ani zvláštní hlášku pro neznámý výsledek.
 - Tlačítka **Cancel** a **Save** musí zůstat celá viditelná, správně zarovnaná a nepřekrývající se při podporovaném DPI a minimální velikosti okna.
 
+## Chování Key a Change při vypnutém Enabled
+
+- Pokud je přepínač **Enabled** daného kontraktu v poloze vypnuto, jeho pole **Key** přepnout do read-only režimu.
+- Read-only Key nesmí přijímat zápis z klávesnice, vložení ze schránky ani jinou editační operaci.
+- Hodnotu Key při vypnutí Enabled nesmazat, nepřepsat ani jinak nezměnit. Vypnutí kontraktu pouze zabrání její další editaci.
+- Read-only Key musí zůstat čitelný, fokusovatelný, označitelný a kopírovatelný, včetně Ctrl+C a standardního kontextového menu nativního pole.
+- Pro read-only stav použít konzistentní vizuální styl již používaný aplikací pro pole pouze ke čtení. Text musí zůstat dostatečně kontrastní.
+- Tlačítko **Change** daného řádku při vypnutém Enabled nastavit jako disabled.
+- Po opětovném zapnutí Enabled okamžitě vrátit Key do editovatelného stavu a tlačítko Change znovu aktivovat.
+- Zachovat aktuální pracovní hodnotu Key i při opakovaném vypínání a zapínání Enabled.
+- Samotná změna Enabled se nadále počítá jako změna kontraktu, ovlivní žluté zvýraznění řádku a počet na tlačítku Save podle stávajících pravidel.
+- Pokud uživatel před vypnutím Enabled změnil Key, zůstane tato rozpracovaná hodnota zachována a kontrakt zůstane změněný. Vypnutí nesmí vrátit Key na výchozí hodnotu.
+- Stav read-only a disabled musí být správně obnoven při vytvoření řádku, změně stránky, návratu na dřívější stránku, překreslení a resize okna.
+- Již otevřený dialog **Password SHA** pro kontrakt, který uživatel následně vypne, nesmí umožnit obejít zákaz změny Key. Dokud je cílový kontrakt vypnutý, dialog nesmí aplikovat nový klíč přes OK, Default ani Random.
+- Preferovat řešení, které zachová případný rozpracovaný obsah již otevřeného dialogu a po opětovném zapnutí kontraktu umožní bezpečně pokračovat. Pokud architektura vyžaduje jiné řešení, nesmí dojít k tiché aplikaci změny ani ke změně Key vypnutého kontraktu.
+- Omezení se vztahuje pouze na uživatelskou editaci Key v okně Communication contracts. Samotné přepnutí Enabled nesmí Key okamžitě odstranit. K odstranění z JSONu dojde až prostřednictvím existujícího Save workflow pro vypnutý kontrakt.
+
+## Chování chybějícího Key při načtení a po uložení
+
+- Při načtení okna přesně rozlišit klíč skutečně uložený v konfiguračním JSONu od klíče, který lze pouze odvodit výchozím pravidlem.
+- Pokud pro kontrakt není v načteném JSONu uložen žádný Key, nevypočítávat při načtení automaticky `defaultPayloadKey` a nezobrazovat odvozenou hodnotu jako skutečný obsah konfigurace.
+- Takový kontrakt načíst jako vypnutý s prázdnou pracovní i výchozí hodnotou Key.
+- Vypnutý kontrakt s chybějícím klíčem zobrazí prázdný read-only textbox Key bez červené chybové indikace. Neaktivní prázdný klíč neblokuje uložení.
+- Po zapnutí tohoto kontraktu se Key stane editovatelným, Change se aktivuje a prázdný Key se okamžitě zobrazí současným červeným validačním stylem jako neplatný.
+- Zapnutý kontrakt s prázdným nebo jinak neplatným Key zablokuje Save podle současných validačních pravidel, dokud uživatel nevytvoří platný klíč.
+- Uživatel může platný klíč zadat ručně nebo přes Change zvolit Default, Random či vlastní heslo. Odvozený výchozí klíč vznikne pouze po výslovném použití akce Default, nikoli automaticky při načtení.
+- Pokud uživatel nově zapnutý prázdný kontrakt znovu vypne dříve, než nastaví klíč, vrátí se na původní prázdný read-only stav. Pokud se Enabled i Key shodují s načteným stavem, kontrakt přestane být dirty, zmizí žluté zvýraznění a sníží se počet změn.
+- Pokud byl Key v načteném JSONu skutečně uložen, po dočasném vypnutí Enabled jej ponechat viditelný v read-only textboxu a držet jej v pracovním modelu.
+- Opětovné zapnutí před Save obnoví editaci přesně stejné pracovní hodnoty Key. Dočasné přepnutí ji nesmí smazat ani nahradit defaultem.
+- Uložení kontraktu ve vypnutém stavu odstraní jeho Key z výsledného konfiguračního JSONu podle současného významu vypnutého kontraktu.
+- Po zavření a novém načtení takto uložené konfigurace je dříve odstraněný Key skutečně nepřítomný. Řádek se proto zobrazí jako vypnutý s prázdným read-only Key a nepoužije se automatická výchozí hodnota.
+- Změna se vztahuje na prezentační pracovní model a workflow Communication contracts. Neměnit definici explicitní akce Default ani pravidlo `minNumericIp_maxNumericIp`, které tato akce používá.
+- Zachovat bezpečné mazání citlivých pracovních bufferů a nepřidávat zbytečné kopie klíčů.
+
 ## Akceptační kritéria
 
 1. Celou tabulku **Communication contracts** obtahuje souvislá linka o tloušťce jednoho fyzického pixelu ve stejné barvě jako tmavá hlavička.
@@ -193,7 +227,18 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 23. Pokud nejsou žádné změny, **Save** zobrazuje pouze tento text a je disabled.
 24. Vedle Save je neutrální enabled tlačítko **Cancel**. Bez změn zavře okno přímo, s neuloženými změnami použije stejné potvrzení `Discard unsaved changes?` jako systémové zavření.
 25. Všechny čtyři rohy obrysu jsou spojité, symetrické a antialiasované bez děr, useknutých pixelů a nečisté návaznosti na hlavičku.
-26. Ostatní workflow, validace, ukládání, IPC, síťová komunikace a nedotčené části GUI zůstávají beze změny.
+26. Při Enabled vypnuto je Key read-only, ale lze jej fokusovat, označit a kopírovat, a Change je disabled.
+27. Po opětovném zapnutí Enabled je Key znovu editovatelný a Change enabled, přičemž pracovní hodnota Key zůstane zachována.
+28. Přepnutí Enabled nemění ani nemaže Key a nadále správně ovlivňuje dirty stav, žluté zvýraznění a počet změn.
+29. Read-only a disabled stav zůstává správný napříč stránkováním, překreslením a resize.
+30. Již otevřený Password SHA dialog nemůže aplikovat nový klíč na kontrakt, který byl mezitím vypnutý.
+31. Chybějící Key v načteném JSONu se nezobrazuje jako automaticky odvozený default. Vypnutý řádek má prázdný read-only Key.
+32. Zapnutí řádku s chybějícím Key zpřístupní editaci a Change, zobrazí červenou validaci prázdného pole a zablokuje Save do zadání platného klíče.
+33. Explicitní akce Default nadále vytvoří správný výchozí klíč, ale pouze na vědomou volbu uživatele.
+34. Dočasné vypnutí kontraktu s uloženým Key zachová jeho pracovní hodnotu a opětovné zapnutí před Save ji obnoví beze změny.
+35. Uložení vypnutého kontraktu odstraní jeho Key z JSONu. Po novém načtení je pole prázdné a žádný default se automaticky nedopočítá.
+36. Návrat nově zapnutého prázdného kontraktu do původního vypnutého stavu správně zruší dirty stav, žluté zvýraznění i jeho započtení na Save.
+37. Ostatní workflow, validace, ukládání, IPC, síťová komunikace a nedotčené části GUI zůstávají beze změny.
 
 ## Omezení implementace a ověření
 

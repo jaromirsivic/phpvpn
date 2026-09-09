@@ -55,6 +55,13 @@ private:
         auto& self = *reinterpret_cast<ContractsEdit*>(data);
         if (m == WM_NCDESTROY) { self.field_ = nullptr; RemoveWindowSubclass(h, procedure, 1); }
         if (self.bypass_) return DefSubclassProc(h, m, w, l);
+        // Native read-only still permits some programmatic edit messages.
+        // Block them before preflight can mutate the working model. Copy and
+        // selection remain native, while set()/clear() use the explicit bypass.
+        if ((GetWindowLongPtrW(h, GWL_STYLE) & ES_READONLY) &&
+            (m == WM_SETTEXT || m == EM_REPLACESEL || m == WM_PASTE || m == WM_CUT ||
+             m == WM_CLEAR || m == WM_UNDO || m == EM_UNDO ||
+             (m == WM_CHAR && (w >= 32 || w == 0 || w == VK_BACK)))) return 0;
         if (m == WM_SETTEXT || m == EM_REPLACESEL) {
             const auto* text = reinterpret_cast<const wchar_t*>(l);
             const auto n = text ? wcsnlen(text, self.bound_ + 1) : 0;

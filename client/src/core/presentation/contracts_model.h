@@ -34,6 +34,7 @@ public:
     std::string_view keyText() const noexcept;
     bool keyValid() const noexcept { return keyValid_; }
     bool dirty() const noexcept;
+    bool keyErrorVisible() const noexcept { return !keyValid_ && (enabled_ || !key_.empty()); }
 private:
     friend class ContractsModel;
     Ipv4Address remoteIp_;

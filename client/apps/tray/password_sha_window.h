@@ -16,10 +16,13 @@ public:
     bool translate(MSG& message) const;
     HWND window() const { return window_; }
     void close();
+    Ipv4Address remoteIp() const { return target_.remoteIp(); }
+    void setTargetEnabled(bool enabled);
 private:
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK bodyProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
     bool update(std::wstring_view text);
+    void refreshStatus();
     void randomPassword();
     void layout();
     void resources();
@@ -33,6 +36,7 @@ private:
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr, parent_ = nullptr, body_ = nullptr, input_ = nullptr, hash_ = nullptr, default_ = nullptr, random_ = nullptr, ok_ = nullptr;
     int scroll_ = 0;
+    bool targetEnabled_ = true;
     std::array<HWND, 6> labels_{};
 };
 } // namespace phpvpn::tray
