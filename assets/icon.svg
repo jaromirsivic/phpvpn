@@ -1,0 +1,48 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Dvoubarevný kruh</title>
+  <desc id="description">
+    Kruh rozdělený na modrou levou polovinu a fialovou pravou polovinu
+    s kontrastními vnějšími oblouky na bílém pozadí.
+  </desc>
+
+  <rect
+    x="4"
+    y="4"
+    width="504"
+    height="504"
+    fill="#FFFFFF"
+    stroke="#808080"
+    stroke-width="8"
+  />
+
+  <path
+    d="M 256 96 A 160 160 0 0 0 256 416 Z"
+    fill="#0033CC"
+  />
+  <path
+    d="M 256 96 A 160 160 0 0 1 256 416 Z"
+    fill="#CC66FF"
+  />
+
+  <path
+    d="M 256 96 A 160 160 0 0 0 256 416"
+    fill="none"
+    stroke="#CC66FF"
+    stroke-width="32"
+    stroke-linecap="butt"
+  />
+  <path
+    d="M 256 96 A 160 160 0 0 1 256 416"
+    fill="none"
+    stroke="#0033CC"
+    stroke-width="32"
+    stroke-linecap="butt"
+  />
+</svg>

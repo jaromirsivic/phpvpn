@@ -550,10 +550,10 @@ void wizardStableFieldsAndWarning() {
     captureWizard(gui.hwnd(), L"wizard-identity.bmp");
     HWND warning = nullptr;
     EnumChildWindows(gui.hwnd(), [](HWND window, LPARAM value) -> BOOL {
-        if (text(window) == wizardText::warning) *reinterpret_cast<HWND*>(value) = window;
+        if (text(window) == wizardText::defaultKeyWarning) *reinterpret_cast<HWND*>(value) = window;
         return TRUE;
     }, reinterpret_cast<LPARAM>(&warning));
-    check(warning != nullptr, "full destructive-message warning missing");
+    check(warning != nullptr, "default access-key warning missing");
     RECT bounds{}, body{}; GetWindowRect(warning, &bounds); GetWindowRect(GetParent(warning), &body);
     check(bounds.left >= body.left && bounds.right <= body.right && bounds.top >= body.top && bounds.bottom <= body.bottom,
           "identity warning not entirely visible at default size");

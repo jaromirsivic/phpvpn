@@ -529,10 +529,15 @@ void WizardWindow::render() {
         label(model_.secretLiteralMode() ? wizardText::secretLiteralHint : wizardText::secretHint);
         auto box = add(L"BUTTON", wizardText::defaultSecret, WS_TABSTOP | BS_OWNERDRAW, defaultSecretId);
         SendMessageW(box, BM_SETCHECK, model_.useDefaultSecret() ? BST_CHECKED : BST_UNCHECKED, 0);
-        if (model_.useDefaultSecret()) label(wizardText::defaultSecretHint);
         separator();
         label(wizardText::secretCheck);
         endCard();
+        if (model_.useDefaultSecret() || model_.fields().serverSecret == kDefaultServerSecret) {
+            beginCard(ui::Color::warningBackground);
+            label(wizardText::defaultSecretWarningHeading, true);
+            label(wizardText::defaultSecretWarning);
+            endCard();
+        }
     } else if (step == WizardStep::identity) {
         label(wizardText::identityHeading, true);
         label(wizardText::identityPrefix + widen(model_.view().context->vpnCidr.toString()) +
@@ -550,9 +555,13 @@ void WizardWindow::render() {
         auto box = add(L"BUTTON", wizardText::defaultKey, WS_TABSTOP | BS_OWNERDRAW, defaultKeyId);
         SendMessageW(box, BM_SETCHECK, model_.useDefaultAccessKey() ? BST_CHECKED : BST_UNCHECKED, 0);
         label(wizardText::keyHint);
-        if (model_.useDefaultAccessKey()) label(wizardText::defaultKeyHint);
         endCard();
-        beginCard(ui::Color::warningBackground); label(wizardText::warning); endCard();
+        if (model_.useDefaultAccessKey()) {
+            beginCard(ui::Color::warningBackground);
+            label(wizardText::defaultKeyWarningHeading, true);
+            label(wizardText::defaultKeyWarning);
+            endCard();
+        }
     } else if (step == WizardStep::contracts) {
         label(wizardText::contractsHeading, true);
         label(wizardText::contractsDescription);
@@ -788,7 +797,12 @@ void WizardWindow::command(int id, int notification) {
         auto text = inputText(GetDlgItem(body_, id));
         if (!text) { error(WizardIpc::safeError(text.error())); return; }
         if (id == urlId) model_.setUrl(std::move(text).value());
-        if (id == secretId) model_.setSecretEditor(std::move(text).value());
+        if (id == secretId) {
+            const bool wasDefault = model_.fields().serverSecret == kDefaultServerSecret;
+            model_.setSecretEditor(std::move(text).value());
+            const bool isDefault = model_.fields().serverSecret == kDefaultServerSecret;
+            if (wasDefault != isDefault) render();
+        }
         if (id == keyId) model_.setAccessKey(std::move(text).value());
         if (id == ipId) {
             model_.setIp(std::move(text).value());
