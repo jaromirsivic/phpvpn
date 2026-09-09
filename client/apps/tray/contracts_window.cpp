@@ -54,7 +54,6 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
     notice_ = control(body_, L"STATIC", L"", SS_NOPREFIX);
     table_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Contracts table", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
         0, 0, 1, 1, body_, nullptr, instance, this);
-    header_ = createWindow_(0, paneClass, L"Contracts table header", WS_CHILD | WS_VISIBLE, 0, 0, 1, 1, table_, nullptr, instance, this);
     viewport_ = createWindow_(WS_EX_CONTROLPARENT, paneClass, L"Communication contracts table",
         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_VSCROLL | WS_HSCROLL, 0, 0, 1, 1, table_, nullptr, instance, this);
     // Only the current page owns native row controls. The controller's model
@@ -66,10 +65,12 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
     error_ = control(window_, L"STATIC", L"", SS_NOPREFIX | SS_NOTIFY, 802);
     check_ = control(window_, L"BUTTON", L"Check current configuration", WS_TABSTOP | BS_OWNERDRAW, checkId);
     repeat_ = control(window_, L"BUTTON", L"Save draft again", WS_TABSTOP | BS_OWNERDRAW, repeatId);
+    cancel_ = control(window_, L"BUTTON", L"Cancel", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL);
     ok_ = control(window_, L"BUTTON", L"Save", WS_TABSTOP | BS_OWNERDRAW, IDOK);
-    bool complete = heading_ && description_ && local_ && localLabel_ && notice_ && table_ && pager_ && header_ && viewport_ && content_ && error_ && check_ && repeat_ && ok_;
+    bool complete = heading_ && description_ && local_ && localLabel_ && notice_ && table_ && pager_ && viewport_ && content_ && error_ && check_ && repeat_ && cancel_ && ok_;
     complete = attachModernButton(check_, resources_) && complete;
     complete = attachModernButton(repeat_, resources_) && complete;
+    complete = attachModernButton(cancel_, resources_) && complete;
     complete = attachModernButton(ok_, resources_, ButtonRole::primary) && complete;
     if (!complete || !createRows() || !createPager()) { endSession(); ending_ = false; return false; }
     fonts(); sizeAndCenter(window_, ui::contractsClient); layout(); refresh();
@@ -282,6 +283,7 @@ void ContractsWindow::command(int id, int code) {
 }
 void ContractsWindow::save(bool repeat) {
     if (!window_ || !controller_.model() || lifecycleSnapshot().saving) return;
+    if (!repeat && !controller_.model()->dirty()) return;
     if (repeat) {
         if (!controller_.canRepeat()) return;
         const auto before = lifecycleSnapshot();
@@ -313,7 +315,7 @@ void ContractsWindow::refresh() {
     const auto snapshot = lifecycleSnapshot();
     EnableWindow(viewport_, !snapshot.saving && !snapshot.unknown);
     EnableWindow(pager_, !snapshot.saving && !snapshot.unknown);
-    EnableWindow(ok_, controller_.model()->canPrepareSave());
+    EnableWindow(ok_, changes > 0 && controller_.model()->canPrepareSave());
     ShowWindow(ok_, snapshot.unknown ? SW_HIDE : SW_SHOW);
     ShowWindow(check_, snapshot.unknown ? SW_SHOW : SW_HIDE);
     ShowWindow(repeat_, controller_.canRepeat() ? SW_SHOW : SW_HIDE);
@@ -386,7 +388,7 @@ bool ContractsWindow::translate(MSG& message) const {
 }
 void ContractsWindow::fonts() {
     if (!resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)), false)) return;
-    for (auto h : {description_, localLabel_, notice_, error_, ok_, check_, repeat_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
+    for (auto h : {description_, localLabel_, notice_, error_, cancel_, ok_, check_, repeat_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
     SendMessageW(local_,WM_SETFONT,reinterpret_cast<WPARAM>(resources_.font(ui::Font::strongValue)),TRUE);
     SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
     for (auto& row : rows_) for (std::size_t c = 0; c < 3; ++c) SendMessageW(row.controls[c], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(c == 1 ? ui::Font::mono : ui::Font::label)), TRUE);
@@ -401,7 +403,8 @@ void ContractsWindow::layout() {
     const bool compact = r.right < s(900);
     const int textRight = compact ? right : right-s(180);
     const auto dc=GetDC(window_);
-    const int saveWidth = (std::min)((std::max)(1, right-margin),
+    const int cancelWidth = s(104), buttonGap = s(8);
+    const int saveWidth = (std::min)((std::max)(1, right-margin-cancelWidth-buttonGap),
         (std::max)(s(180), measuredButtonWidth(dc, resources_.font(ui::Font::label), saveText_, resources_.dpi())));
     const int headingBottom=s(24)+measureText(dc,resources_.font(ui::Font::heading),L"Communication contracts",(std::max)(1,textRight-margin),true).height;
     const int descriptionTop=(std::max)(s(64),headingBottom+s(4));
@@ -411,7 +414,7 @@ void ContractsWindow::layout() {
     const int errorLength=GetWindowTextLengthW(error_); std::wstring errorText(static_cast<std::size_t>(errorLength)+1,L'\0');
     GetWindowTextW(error_,errorText.data(),errorLength+1); errorText.resize(errorLength);
     const int errorHeight=errorText.empty()?0:measureText(dc,resources_.font(ui::Font::label),errorText,(std::max)(1,right-margin),true).height+s(12); ReleaseDC(window_,dc);
-    const bool stackActions=IsWindowVisible(check_) && right-margin<s(528);
+    const bool stackActions=IsWindowVisible(check_) && right-margin<s(528)+cancelWidth+buttonGap;
     const int footer = (std::max)(0,static_cast<int>(r.bottom)-s(stackActions?148:60)-errorHeight);
     const int buttonTop=static_cast<int>(r.bottom)-s(44);
     positionControls(window_, std::vector<ControlPlacement>{
@@ -419,6 +422,7 @@ void ContractsWindow::layout() {
         {error_, {margin,footer+s(6),right,footer+(std::max)(s(6),errorHeight)}},
         {check_, {margin,buttonTop-s(stackActions?88:0),margin+s(236),buttonTop-s(stackActions?88:0)+s(36)}},
         {repeat_, {margin+s(stackActions?0:244),buttonTop-s(stackActions?44:0),margin+s(stackActions?164:408),buttonTop-s(stackActions?44:0)+s(36)}},
+        {cancel_, {right-saveWidth-buttonGap-cancelWidth,buttonTop,right-saveWidth-buttonGap,buttonTop+s(36)}},
         {ok_, {right-saveWidth,buttonTop,right,buttonTop+s(36)}}});
     // Reserve the possible body scrollbar before determining wrapped rows.
     const int pagerColumns = (std::max)(1, (right - margin - GetSystemMetricsForDpi(SM_CXVSCROLL, resources_.dpi())) / s(40));
@@ -442,22 +446,10 @@ void ContractsWindow::layout() {
     for(auto& placement:bodyPositions) { placement.rect.top-=bodyScroll_; placement.rect.bottom-=bodyScroll_; placement.rect.right=(std::min)(placement.rect.right,bodyRight); }
     positionControls(body_,bodyPositions);
     const int tableWidth = (std::max)(1, bodyRight - margin), tableHeight = tableBottom - tableTop;
-    const int inset = 1;
+    // The table owns the complete antialiased shape and header. Native children
+    // stay in its rectangular interior, clear of the bottom corner arcs.
     positionControls(table_, std::vector<ControlPlacement>{
-        {header_, {inset,inset,tableWidth-inset,s(40)}},
-        {viewport_, {inset,s(40),tableWidth-inset,tableHeight-s(4)}}});
-    // Clip the header's top corners together with the container. Leave the
-    // bottom outline and corners outside the scrolling child windows.
-    auto region = CreateRoundRectRgn(0, 0, tableWidth + 1, tableHeight + 1, s(16), s(16));
-    if (region && !SetWindowRgn(table_, region, FALSE)) DeleteObject(region);
-    // Keep child fills inside the one-physical-pixel rounded outline.
-    for (auto child : {header_, viewport_}) {
-        RECT bounds{}; GetWindowRect(child, &bounds);
-        MapWindowPoints(nullptr, table_, reinterpret_cast<POINT*>(&bounds), 2);
-        auto inner = CreateRoundRectRgn(1-bounds.left, 1-bounds.top,
-            tableWidth-1-bounds.left, tableHeight-1-bounds.top, s(16)-2, s(16)-2);
-        if (inner && !SetWindowRgn(child, inner, FALSE)) DeleteObject(inner);
-    }
+        {viewport_, {1,s(40),tableWidth-1,tableHeight-s(8)-1}}});
     std::vector<ControlPlacement> pagerPositions;
     const int columns = pagerColumns;
     for (std::size_t i = 0; i < pageButtons_.size(); ++i) {
@@ -490,7 +482,7 @@ void ContractsWindow::layout() {
     SetScrollInfo(viewport_,SB_HORZ,&horizontal,TRUE);
     SetWindowPos(content_, nullptr, -x_, -y_, width_, static_cast<int>(rows_.size())*rowHeight_, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     if (oldWidth!=width_ || oldRowHeight!=rowHeight_) rowPositions();
-    InvalidateRect(header_, nullptr, FALSE); InvalidateRect(viewport_, nullptr, FALSE);
+    InvalidateRect(table_, nullptr, FALSE); InvalidateRect(viewport_, nullptr, FALSE);
     layingOut_ = false;
 }
 void ContractsWindow::rowPositions() {
@@ -512,7 +504,7 @@ void ContractsWindow::scroll(bool horizontal, int position) {
     auto& value = horizontal ? x_ : y_; if (value == position) return;
     value = position; SetScrollPos(viewport_, horizontal ? SB_HORZ : SB_VERT, position, TRUE);
     SetWindowPos(content_, nullptr, -x_, -y_, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
-    InvalidateRect(viewport_, nullptr, FALSE); if (horizontal) InvalidateRect(header_, nullptr, FALSE);
+    InvalidateRect(viewport_, nullptr, FALSE); if (horizontal) InvalidateRect(table_, nullptr, FALSE);
 }
 void ContractsWindow::scrollBody(int position) {
     SCROLLINFO info{sizeof(info),SIF_ALL}; GetScrollInfo(body_,SB_VERT,&info);
@@ -555,25 +547,26 @@ LRESULT CALLBACK ContractsWindow::fieldProcedure(HWND h, UINT m, WPARAM w, LPARA
 }
 void ContractsWindow::paint(HWND target) {
     PAINTSTRUCT p{}; auto targetDc = BeginPaint(target, &p); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(target, &r);
-    FillRect(dc, &r, resources_.brush(target == header_ ? ui::Color::contractsHeader :
-        target == window_ || target == body_ || target == pager_ ? ui::Color::background : ui::Color::surface));
+    FillRect(dc, &r, resources_.brush(target == table_ || target == window_ || target == body_ || target == pager_ ? ui::Color::background : ui::Color::surface));
     if (target == window_ && body_) {
         RECT bodyBounds{}; GetWindowRect(body_, &bodyBounds);
         MapWindowPoints(nullptr, window_, reinterpret_cast<POINT*>(&bodyBounds), 2);
         const RECT divider{0, bodyBounds.bottom, r.right, bodyBounds.bottom + 1};
         FillRect(dc, &divider, resources_.brush(ui::Color::separator));
     }
-    if (target == table_) paintRoundedShape(dc, {0,0,r.right,r.bottom}, scaleForDpi(16, resources_.dpi()),
-        resources_, ui::Color::surface, ui::Color::contractsHeader, false, 1);
-    if (target == header_ || target == content_) {
-        auto font = SelectObject(dc, resources_.font(target == header_ ? ui::Font::contractsHeader : ui::Font::label)); SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, resources_.color(target == header_ ? ui::Color::primaryText : ui::Color::text));
+    if (target == table_) paintContractsTable(dc, {0,0,r.right,r.bottom}, scaleForDpi(40, resources_.dpi()), resources_);
+    if (target == table_ || target == content_) {
+        auto font = SelectObject(dc, resources_.font(target == table_ ? ui::Font::contractsHeader : ui::Font::label)); SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, resources_.color(target == table_ ? ui::Color::primaryText : ui::Color::text));
         const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
-        if (target == header_) {
+        if (target == table_) {
             const wchar_t* labels[]{L"Contract",L"Enabled",L"Key",L"Actions"};
             const int lefts[]{0,s(250),s(330),s(330)+keyWidth_};
-            const int inset = 0;
-            for (int c = 0; c < 4; ++c) drawText(dc, labels[c], {inset+lefts[c]+s(12)-x_,0,inset+(c == 3 ? width_ : lefts[c+1])-x_,r.bottom}, DT_SINGLELINE | DT_VCENTER);
+            const int inset = 1;
+            const int saved = SaveDC(dc);
+            IntersectClipRect(dc, 1, 1, r.right-1, scaleForDpi(40, resources_.dpi()));
+            for (int c = 0; c < 4; ++c) drawText(dc, labels[c], {inset+lefts[c]+s(12)-x_,0,inset+(c == 3 ? width_ : lefts[c+1])-x_,s(40)}, DT_SINGLELINE | DT_VCENTER);
+            RestoreDC(dc, saved);
         } else if (rowHeight_) {
             RECT clip{}; GetClipBox(dc,&clip);
             const auto first = static_cast<std::size_t>((std::max)(0L, clip.top) / rowHeight_);
@@ -665,7 +658,7 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
         return 0;
     case WM_NCDESTROY:
         if (!(GetWindowLongPtrW(h,GWL_STYLE) & WS_CHILD)) {
-            self->body_ = self->table_ = self->pager_ = self->viewport_ = self->content_ = self->header_ = self->heading_ = self->description_ = self->local_ = self->localLabel_ = self->notice_ = self->error_ = self->ok_ = self->check_ = self->repeat_ = nullptr;
+            self->body_ = self->table_ = self->pager_ = self->viewport_ = self->content_ = self->heading_ = self->description_ = self->local_ = self->localLabel_ = self->notice_ = self->error_ = self->cancel_ = self->ok_ = self->check_ = self->repeat_ = nullptr;
             self->resources_.clear();
         }
         SetWindowLongPtrW(h,GWLP_USERDATA,0); break;

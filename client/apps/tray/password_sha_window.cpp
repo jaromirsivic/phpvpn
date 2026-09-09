@@ -63,7 +63,7 @@ bool PasswordShaWindow::update(std::wstring_view text) {
     return error != PasswordKeyError::tooLong && error != PasswordKeyError::unsupportedControl;
 }
 void PasswordShaWindow::randomPassword() {
-    constexpr std::wstring_view alphabet = L"GHJKMNPQRSTUVWXYZ";
+    constexpr std::wstring_view alphabet = L"ghjkmnpqrstuvwxyz";
     constexpr auto limit = 256 - (256 % alphabet.size());
     SecureBuffer bytes(64);
     std::array<wchar_t, 64> password{};

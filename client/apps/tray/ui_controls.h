@@ -25,6 +25,8 @@ private:
 // FillRect/DrawFocusRect for sharp axial lines. No scaling of raster assets.
 void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
                        ui::Color fill, ui::Color border, bool ellipse = false, int physicalStroke = 0);
+// One shared path for the table surface, dark header and physical-pixel outline.
+void paintContractsTable(HDC dc, Rect rect, int headerHeight, const UiResources& resources);
 struct ControlPlacement { HWND window; Rect rect; };
 // One completed layout frame for a composited top-level window, including all
 // descendants. Nested layout/scroll calls publish only at the outer boundary.

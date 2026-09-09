@@ -16,6 +16,7 @@ Upravit okno **Communication contracts** a navazující dialog **Password SHA** 
 
 - `communication-contracts-current.png` zachycuje současnou tabulku **Communication contracts**, její nevýrazný vnější okraj a dvě samostatné řádkové akce **Random** a **Password SHA**.
 - `password-sha-current.png` zachycuje současný dialog **Password SHA** s tlačítkem **Default** vlevo a tlačítkem **OK** vpravo.
+- `communication-contracts-border-after-011.png` zachycuje stav po první implementaci mikro-updatu 011. Dokumentuje nespojité a nedostatečně vyhlazené zaoblené rohy obrysu tabulky, zejména chybějící pixely vpravo dole, nečistý levý dolní roh a nepřesnou návaznost na tmavou hlavičku.
 
 Referenční obrázky popisují výchozí stav. Nejsou samostatnými instrukcemi. Při rozporu platí text tohoto zadání.
 
@@ -45,6 +46,16 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 - Zachovat správné vykreslení při podporovaném DPI, resize okna, stránkování a překreslení.
 - Neměnit barvu hlavičky, datových řádků ani oddělovačů mezi řádky.
 
+### Doladění obrysu po první implementaci
+
+- Zaoblené rohy zachovat jako preferovaný výsledek. Rovné rohy použít pouze jako poslední záložní řešení, pokud by čisté zaoblení nebylo v použité Win32 architektuře spolehlivě realizovatelné.
+- Opravit oba spodní rohy tak, aby linka tvořila uzavřený souvislý oblouk bez mezer, utržených konců, schodů a chybějících pixelů. Zvláštní pozornost věnovat výrazně poškozenému pravému dolnímu rohu.
+- Opravit horní hranu a horní rohy tak, aby obrys pixelově přesně navazoval na tmavou hlavičku bez světlého vlasového proužku, přesahu nebo rozdílného oblouku.
+- Zajistit konzistentní antialiasing všech oblouků. Levá hrana a levé rohy nesmějí působit zubatěji než pravá strana.
+- Sjednotit geometrii viditelného antialiasovaného obrysu, výplně, hlavičky a ořezání child oken. Současná kombinace GDI+ cesty a několika celočíselných Win32 regionů s odlišnými rozměry, insety a poloměry nesmí odřezávat antialiasované pixely ani vytvářet mezery.
+- Hlavička, viewport ani scrollbary nesmějí viditelný obrys překreslovat. Pravá a spodní hrana musí správně respektovat souřadnicové konvence použitých kreslicích API.
+- Preferovat jediné místo odpovědné za finální vykreslení vnějšího tvaru namísto několika téměř shodných překrývajících se geometrií.
+
 ## Jediná řádková akce Change
 
 - Ve sloupci **Actions** odstranit z každého viditelného řádku samostatná tlačítka **Random** a **Password SHA**.
@@ -70,9 +81,9 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 - Po každém stisknutí **Random** vytvořit nové heslo o přesné délce 64 znaků.
 - Každou pozici hesla vybírat pouze z této přesné 17znakové sady:
 
-  `GHJKMNPQRSTUVWXYZ`
+  `ghjkmnpqrstuvwxyz`
 
-- Nepoužívat žádné jiné znaky, zejména číslice, malá písmena, mezery, interpunkci ani jiné speciální znaky.
+- Nepoužívat žádné jiné znaky, zejména číslice, velká písmena, mezery, interpunkci ani jiné speciální znaky.
 - Jednotlivé pozice vybírat náhodně s možností opakování stejného znaku.
 - Použít kryptograficky bezpečný zdroj náhodnosti. Pokud již aplikace obsahuje vhodnou bezpečnou implementaci generování náhodných hodnot, znovu ji použít nebo nad ní vytvořit úzce zaměřenou sdílenou pomocnou funkci.
 - Nepoužívat slabý nebo předvídatelný generátor založený například pouze na čase procesu.
@@ -121,6 +132,7 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 ## Počet změněných kontraktů na tlačítku Save
 
 - Pokud není změněný žádný kontrakt, tlačítko má přesný text **Save** bez závorky a bez nulového počtu.
+- Pokud není změněný žádný kontrakt, tlačítko **Save** je disabled.
 - Pokud je změněn alespoň jeden kontrakt, tlačítko zobrazí přesný formát:
 
   `Save (N changes)`
@@ -136,6 +148,23 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 - Rozšíření tlačítka nesmí narušit jeho pravé zarovnání, okraje patičky, minimální velikost okna ani ostatní prvky layoutu.
 - Pro neočekávaně vysoký počet zajistit odolný layout. Text nesmí přetéct do sousedních prvků ani být vykreslen mimo tlačítko.
 - Samotné ukládací chování tlačítka **Save** se nemění.
+- Při alespoň jedné změně je **Save** enabled pouze tehdy, pokud současně vyhovuje všem dosavadním podmínkám pro bezpečné uložení. Existující blokace při neplatném klíči, probíhajícím ukládání nebo jiném nebezpečném stavu zůstává zachována.
+
+## Tlačítko Cancel
+
+- Vedle tlačítka **Save** přidat sekundární tlačítko s přesným textem **Cancel**.
+- **Cancel** umístit nalevo od **Save** a oddělit je běžnou malou mezerou používanou mezi souvisejícími tlačítky aplikace.
+- **Cancel** použije současný neutrální moderní styl tlačítek. **Save** zůstane primární modré tlačítko.
+- **Cancel** zůstane enabled i tehdy, když neexistuje žádná změna a **Save** je disabled.
+- Kliknutí na **Cancel** bez neuložených změn okamžitě zavře okno stejnou bezpečnou cestou jako současné zavření křížkem.
+- Kliknutí na **Cancel** při alespoň jednom neuloženém změněném kontraktu zobrazí stejný potvrzovací dialog jako současné zavření křížkem, včetně přesného textu:
+
+  `Discard unsaved changes?`
+
+- Potvrzení dialogu zahodí pracovní změny a zavře okno. Zamítnutí ponechá okno i všechny pracovní změny beze změny.
+- Zavření systémovým křížkem a klávesou Escape nadále používá stejné existující potvrzovací workflow.
+- Při existujícím neznámém nebo probíhajícím ukládacím stavu zachovat současné bezpečnostní chování lifecycle. Nové tlačítko nesmí umožnit obejít ochranu proti zavření během ukládání ani zvláštní hlášku pro neznámý výsledek.
+- Tlačítka **Cancel** a **Save** musí zůstat celá viditelná, správně zarovnaná a nepřekrývající se při podporovaném DPI a minimální velikosti okna.
 
 ## Akceptační kritéria
 
@@ -146,7 +175,7 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 5. **Change** otevře existující dialog **Password SHA** pro správný a neměnný cílový kontrakt.
 6. V levé části patičky dialogu jsou v pořadí **Default** a **Random**, obě v červeném stylu. **OK** zůstává vpravo.
 7. Každé stisknutí **Random** vloží do pole Password přesně 64 znaků.
-8. Vygenerované heslo obsahuje výhradně znaky `GHJKMNPQRSTUVWXYZ` a dovoluje jejich opakování.
+8. Vygenerované heslo obsahuje výhradně malá písmena `ghjkmnpqrstuvwxyz` a dovoluje jejich opakování.
 9. Generování používá kryptograficky bezpečný a nezaujatý výběr znaků.
 10. Po stisknutí **Random** se SHA-256 key bezprostředně přepočítá z nového hesla stejným postupem jako při ruční editaci.
 11. Náhodné heslo lze po vygenerování ručně editovat a hash se při změnách nadále automaticky aktualizuje.
@@ -161,7 +190,10 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 20. Počet odpovídá unikátním změněným kontraktům napříč všemi stránkami. Změna obou polí jednoho kontraktu zvýší počet pouze o jeden.
 21. Počet i žluté zvýraznění se aktualizují bezprostředně a správně reagují také na vrácení hodnot do výchozího stavu.
 22. Rozšířené tlačítko Save zůstává celé viditelné, správně zarovnané a funkční při podporovaných velikostech okna a DPI.
-23. Ostatní workflow, validace, ukládání, IPC, síťová komunikace a nedotčené části GUI zůstávají beze změny.
+23. Pokud nejsou žádné změny, **Save** zobrazuje pouze tento text a je disabled.
+24. Vedle Save je neutrální enabled tlačítko **Cancel**. Bez změn zavře okno přímo, s neuloženými změnami použije stejné potvrzení `Discard unsaved changes?` jako systémové zavření.
+25. Všechny čtyři rohy obrysu jsou spojité, symetrické a antialiasované bez děr, useknutých pixelů a nečisté návaznosti na hlavičku.
+26. Ostatní workflow, validace, ukládání, IPC, síťová komunikace a nedotčené části GUI zůstávají beze změny.
 
 ## Omezení implementace a ověření
 

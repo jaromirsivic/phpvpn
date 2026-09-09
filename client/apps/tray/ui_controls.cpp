@@ -20,7 +20,7 @@ struct GraphicsRuntime {
     ~GraphicsRuntime() { if (token) Gdiplus::GdiplusShutdown(token); }
 };
 bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
-                 ui::Color fill, ui::Color border, bool ellipse, float physicalStroke = 0) {
+                 ui::Color fill, ui::Color border, bool ellipse, float physicalStroke = 0, int headerHeight = 0) {
     static GraphicsRuntime runtime;
     if (!runtime.token) return false;
     const auto color = [&](ui::Color role) {
@@ -30,6 +30,7 @@ bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
     Gdiplus::Graphics graphics(dc);
     if (graphics.GetLastStatus() != Gdiplus::Ok ||
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias) != Gdiplus::Ok) return false;
+    if (headerHeight > 0 && graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf) != Gdiplus::Ok) return false;
     // Geometry is in physical pixels, as are the existing DPI-aware layouts.
     // Half-pixel stroke centres keep straight sections on exact pixel bounds.
     const float stroke = physicalStroke > 0 ? physicalStroke : static_cast<float>(std::max(1, scaleForDpi(1, resources.dpi())));
@@ -53,7 +54,21 @@ bool smoothShape(HDC dc, Rect rect, int diameter, const UiResources& resources,
     Gdiplus::SolidBrush brush(color(fill));
     Gdiplus::Pen pen(color(border), stroke);
     if (brush.GetLastStatus() != Gdiplus::Ok || pen.GetLastStatus() != Gdiplus::Ok) return false;
-    if (graphics.FillPath(&brush, &path) != Gdiplus::Ok) return false;
+    if (headerHeight > 0) {
+        // Disjoint rectangular clips partition the fill, not the outer path.
+        // Each edge pixel receives coverage once, then the same path is stroked.
+        Gdiplus::SolidBrush headerBrush(color(border));
+        const auto saved = graphics.Save();
+        graphics.SetClip(Gdiplus::Rect(rect.left, rect.top, rect.right-rect.left, headerHeight), Gdiplus::CombineModeIntersect);
+        const auto topResult = graphics.FillPath(&headerBrush, &path);
+        graphics.Restore(saved);
+        const auto lower = graphics.Save();
+        graphics.SetClip(Gdiplus::Rect(rect.left, rect.top+headerHeight, rect.right-rect.left,
+            rect.bottom-rect.top-headerHeight), Gdiplus::CombineModeIntersect);
+        const auto bottomResult = graphics.FillPath(&brush, &path);
+        graphics.Restore(lower);
+        if (topResult != Gdiplus::Ok || bottomResult != Gdiplus::Ok) return false;
+    } else if (graphics.FillPath(&brush, &path) != Gdiplus::Ok) return false;
     return fill == border || graphics.DrawPath(&pen, &path) == Gdiplus::Ok;
 }
 constexpr UINT_PTR textBoxId = 0x50425639;
@@ -580,6 +595,17 @@ void paintRoundedShape(HDC dc, Rect rect, int diameter, const UiResources& resou
     if (ellipse) Ellipse(dc, rect.left, rect.top, rect.right, rect.bottom);
     else RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, diameter, diameter);
     SelectObject(dc, pen); SelectObject(dc, brush);
+}
+void paintContractsTable(HDC dc, Rect rect, int headerHeight, const UiResources& resources) {
+    const int diameter = scaleForDpi(16, resources.dpi());
+    if (smoothShape(dc, rect, diameter, resources, ui::Color::surface,
+        ui::Color::contractsHeader, false, 1.0f, headerHeight)) return;
+    // Native fallback retains rounded corners and the same one-pixel pen.
+    paintRoundedShape(dc, rect, diameter, resources, ui::Color::surface, ui::Color::contractsHeader, false, 1);
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, rect.left, rect.top, rect.right, rect.top+headerHeight);
+    paintRoundedShape(dc, rect, diameter, resources, ui::Color::contractsHeader, ui::Color::contractsHeader, false, 1);
+    RestoreDC(dc, saved);
 }
 bool attachToggleSwitch(HWND window, const UiResources& resources) {
     if (!window || (GetWindowLongPtrW(window, GWL_STYLE) & BS_TYPEMASK) != BS_OWNERDRAW) return false;

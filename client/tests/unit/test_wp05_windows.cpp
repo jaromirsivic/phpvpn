@@ -193,7 +193,7 @@ PHPVPN_TEST(WP05Windows, PasswordUnicodeLimitPreservesSelectionAndResult) {
     click(root,504);
     const auto randomPassword=text(input);
     PHPVPN_CHECK_EQ(randomPassword.size(),64u);
-    PHPVPN_CHECK(randomPassword.find_first_not_of(L"GHJKMNPQRSTUVWXYZ")==std::wstring::npos);
+    PHPVPN_CHECK(randomPassword.find_first_not_of(L"ghjkmnpqrstuvwxyz")==std::wstring::npos);
     PasswordKeyModel expectedRandom;
     PHPVPN_CHECK(expectedRandom.update(crypto,{reinterpret_cast<const char16_t*>(randomPassword.data()),randomPassword.size()})==PasswordKeyError::none);
     PHPVPN_CHECK_EQ(narrow(text(hash)),expectedRandom.key());
@@ -455,24 +455,29 @@ PHPVPN_TEST(WP05Windows, RealSessionBroadcastOnIsolatedDesktopNeverWaitsForReade
 PHPVPN_TEST(WP05Windows, SmallCidrResizeTabOrderAndVisualCapture) {
     Backend backend; ContractsWindow window(backend.pipe); require(window.open(GetModuleHandleW(nullptr),nullptr,contracts_test::document("192.0.2.2","192.0.2.0/29"),"synthetic","one"));
     const auto root=window.window();
-    unsigned count=0;EnumChildWindows(root,[](HWND h,LPARAM p)->BOOL{if(GetDlgCtrlID(h)>=1000)++*reinterpret_cast<unsigned*>(p);return TRUE;},reinterpret_cast<LPARAM>(&count)); PHPVPN_CHECK_EQ(count,16u);
+    unsigned count=0;EnumChildWindows(root,[](HWND h,LPARAM p)->BOOL{if(GetDlgCtrlID(h)>=1000)++*reinterpret_cast<unsigned*>(p);return TRUE;},reinterpret_cast<LPARAM>(&count)); PHPVPN_CHECK_EQ(count,12u);
+    PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK))); PHPVPN_CHECK(IsWindowEnabled(field(root,IDCANCEL)));
+    click(root,1000); PHPVPN_CHECK(IsWindowEnabled(field(root,IDOK))); PHPVPN_CHECK_EQ(text(field(root,IDOK)),L"Save (1 change)");
+    dialogs::answer(IDNO,[&]{click(root,IDCANCEL);}); PHPVPN_CHECK(window.isOpen());
+    click(root,1000); PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK))); PHPVPN_CHECK_EQ(text(field(root,IDOK)),L"Save");
     capture(root,L"contracts-29.bmp");
     const auto first=field(root,1000); HWND cursor=first;
-    for(int id=1001;id<1016;++id){cursor=GetNextDlgTabItem(root,cursor,FALSE);PHPVPN_CHECK_EQ(cursor,field(root,id));}
-    PHPVPN_CHECK_EQ(GetNextDlgTabItem(root,cursor,FALSE),field(root,IDOK));
-    PHPVPN_CHECK_EQ(GetNextDlgTabItem(root,field(root,IDOK),TRUE),cursor);
-    click(root,1003);const auto password=top(L"PhpVpnPasswordSha");require(password!=nullptr);capture(password,L"password-empty.bmp");
+    for(int id=1001;id<1015;++id){if((id-1000)%4==3)continue;cursor=GetNextDlgTabItem(root,cursor,FALSE);PHPVPN_CHECK_EQ(cursor,field(root,id));}
+    PHPVPN_CHECK_EQ(GetNextDlgTabItem(root,cursor,FALSE),field(root,IDCANCEL));
+    PHPVPN_CHECK_EQ(GetNextDlgTabItem(root,field(root,IDCANCEL),TRUE),cursor);
+    click(root,1002);const auto password=top(L"PhpVpnPasswordSha");require(password!=nullptr);capture(password,L"password-empty.bmp");
     replace(field(password,501),L"hello");capture(password,L"password-hello.bmp");resizeClient(password,480,320);SetFocus(field(password,502));
     RECT client{},button{};GetClientRect(password,&client);GetWindowRect(field(password,IDOK),&button);MapWindowPoints(nullptr,password,reinterpret_cast<POINT*>(&button),2);PHPVPN_CHECK(button.bottom<=client.bottom);
-    capture(password,L"password-small.bmp");SendMessageW(password,WM_CLOSE,0,0);PHPVPN_CHECK_EQ(GetFocus(),field(root,1003));
-    resizeClient(root,480,320);SetFocus(field(root,1015));capture(root,L"contracts-small.bmp");
-    RECT viewport{},focused{};const auto table=GetParent(GetParent(field(root,1015)));
-    GetClientRect(table,&viewport);GetWindowRect(field(root,1015),&focused);MapWindowPoints(nullptr,table,reinterpret_cast<POINT*>(&focused),2);
+    capture(password,L"password-small.bmp");SendMessageW(password,WM_CLOSE,0,0);PHPVPN_CHECK_EQ(GetFocus(),field(root,1002));
+    resizeClient(root,480,320);SetFocus(field(root,1014));capture(root,L"contracts-small.bmp");
+    RECT viewport{},focused{};const auto table=GetParent(GetParent(field(root,1014)));
+    GetClientRect(table,&viewport);GetWindowRect(field(root,1014),&focused);MapWindowPoints(nullptr,table,reinterpret_cast<POINT*>(&focused),2);
     PHPVPN_CHECK(focused.top>=0 && focused.bottom<=viewport.bottom && focused.left>=0 && focused.right<=viewport.right);
     GetClientRect(root,&client);GetWindowRect(field(root,IDOK),&button);MapWindowPoints(nullptr,root,reinterpret_cast<POINT*>(&button),2);PHPVPN_CHECK(button.bottom<=client.bottom && button.right<=client.right);
-    resizeClient(root,320,213);SetFocus(field(root,1014));SetFocus(field(root,1015));capture(root,L"contracts-tiny.bmp");
-    const auto body=GetParent(table);GetClientRect(body,&viewport);GetWindowRect(field(root,1015),&focused);MapWindowPoints(nullptr,body,reinterpret_cast<POINT*>(&focused),2);
+    resizeClient(root,320,213);SetFocus(field(root,1013));SetFocus(field(root,1014));capture(root,L"contracts-tiny.bmp");
+    const auto body=GetParent(table);GetClientRect(body,&viewport);GetWindowRect(field(root,1014),&focused);MapWindowPoints(nullptr,body,reinterpret_cast<POINT*>(&focused),2);
     PHPVPN_CHECK(focused.top>=0 && focused.bottom<=viewport.bottom);
+    click(root,IDCANCEL); PHPVPN_CHECK(!window.isOpen());
     window.endSession();
     require(!window.open(GetModuleHandleW(nullptr),nullptr,backend.stored,"synthetic","terminal"));
 }
