@@ -75,5 +75,6 @@ private:
     int bodyScroll_ = 0;
     std::wstring localError_;
     std::wstring saveText_ = L"Save";
+    bool validationNotice_ = false;
 };
 } // namespace phpvpn::tray

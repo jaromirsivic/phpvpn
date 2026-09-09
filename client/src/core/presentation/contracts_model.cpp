@@ -15,7 +15,8 @@ std::string_view ContractRow::keyText() const noexcept {
     return key_.empty() ? std::string_view{} : std::string_view(reinterpret_cast<const char*>(key_.data()), key_.size());
 }
 bool ContractRow::dirty() const noexcept {
-    return enabled_ != originalEnabled_ || !key_.equals(originalKey_);
+    // Disabled keys are retained only as a draft, buildCandidate omits them.
+    return enabled_ != originalEnabled_ || (enabled_ && !key_.equals(originalKey_));
 }
 Result<std::unique_ptr<ContractsModel>> ContractsModel::create(CryptoProvider&,
     std::string_view document, std::string configPath, std::string revisionToken) {

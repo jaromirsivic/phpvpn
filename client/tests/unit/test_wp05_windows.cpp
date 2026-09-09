@@ -458,6 +458,9 @@ PHPVPN_TEST(WP05Windows, SmallCidrResizeTabOrderAndVisualCapture) {
     unsigned count=0;EnumChildWindows(root,[](HWND h,LPARAM p)->BOOL{if(GetDlgCtrlID(h)>=1000)++*reinterpret_cast<unsigned*>(p);return TRUE;},reinterpret_cast<LPARAM>(&count)); PHPVPN_CHECK_EQ(count,12u);
     PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK))); PHPVPN_CHECK(IsWindowEnabled(field(root,IDCANCEL)));
     click(root,1000); PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK))); PHPVPN_CHECK_EQ(text(field(root,IDOK)),L"Save (1 change)");
+    capture(root,L"contracts-validation-footer.bmp");
+    SendMessageW(root,WM_COMMAND,MAKEWPARAM(802,STN_CLICKED),reinterpret_cast<LPARAM>(field(root,802)));
+    PHPVPN_CHECK_EQ(GetFocus(),field(root,1001));
     dialogs::answer(IDNO,[&]{click(root,IDCANCEL);}); PHPVPN_CHECK(window.isOpen());
     click(root,1000); PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK))); PHPVPN_CHECK_EQ(text(field(root,IDOK)),L"Save");
     const auto key=field(root,1001); const auto originalKey=text(key); PHPVPN_CHECK(originalKey.empty());
@@ -478,7 +481,8 @@ PHPVPN_TEST(WP05Windows, SmallCidrResizeTabOrderAndVisualCapture) {
     PHPVPN_CHECK_EQ(text(field(password,502)),draftHash);
     click(root,1000); PHPVPN_CHECK(IsWindowEnabled(field(password,IDOK)));
     click(password,IDOK); PHPVPN_CHECK_EQ(text(key),draftHash);
-    click(root,1000); PHPVPN_CHECK_EQ(text(key),draftHash); PHPVPN_CHECK(window.lifecycleSnapshot().dirty);
+    click(root,1000); PHPVPN_CHECK_EQ(text(key),draftHash); PHPVPN_CHECK(!window.lifecycleSnapshot().dirty);
+    PHPVPN_CHECK_EQ(text(field(root,IDOK)),L"Save"); PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK)));
     click(root,1000); replace(key,originalKey);
     click(root,1002); const auto resumed=top(L"PhpVpnPasswordSha"); require(resumed!=nullptr); resizeClient(resumed,480,320);
     RECT client{},button{};GetClientRect(resumed,&client);GetWindowRect(field(resumed,IDOK),&button);MapWindowPoints(nullptr,resumed,reinterpret_cast<POINT*>(&button),2);PHPVPN_CHECK(button.bottom<=client.bottom);

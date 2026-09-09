@@ -30,6 +30,7 @@ bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view docu
     bodyScroll_ = 0;
     page_ = 0;
     saveText_ = L"Save";
+    validationNotice_ = false;
     comInitialised_ = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
     if (FAILED(CoCreateInstance(CLSID_AccPropServices, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&accessibility_)))) { endSession(); ending_ = false; return false; }
     for (const auto* name : {rootClass, paneClass}) {
@@ -325,9 +326,14 @@ void ContractsWindow::refresh() {
     ShowWindow(check_, snapshot.unknown ? SW_SHOW : SW_HIDE);
     ShowWindow(repeat_, controller_.canRepeat() ? SW_SHOW : SW_HIDE);
     EnableWindow(check_, !snapshot.checking);
+    const auto blockingFocus = controller_.model()->firstBlockingFocus();
+    const bool validationNotice = localError_.empty() && blockingFocus.has_value();
+    const bool noticeStyleChanged = validationNotice != validationNotice_;
+    validationNotice_ = validationNotice;
+    if (noticeStyleChanged) SendMessageW(error_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(validationNotice_ ? ui::Font::strongValue : ui::Font::label)), TRUE);
     std::wstring message = controller_.notice();
     if (!localError_.empty()) message = localError_;
-    else if (auto focus = controller_.model()->firstBlockingFocus()) message = widen(kContractKeyError) + L"\nFirst invalid peer: " + widen(focus->remoteIp.toString());
+    else if (blockingFocus) message = widen(kContractKeyError) + L"\nFirst invalid peer: " + widen(blockingFocus->remoteIp.toString());
     const int length = GetWindowTextLengthW(error_);
     std::wstring previous(static_cast<std::size_t>(length)+1,L'\0'); GetWindowTextW(error_,previous.data(),length+1); previous.resize(length);
     if (message != previous) SetWindowTextW(error_, message.c_str());
@@ -368,7 +374,7 @@ void ContractsWindow::refresh() {
         const auto* source = controller_.model()->row(child->remoteIp());
         child->setTargetEnabled(source && source->enabled() && !snapshot.saving && !snapshot.unknown);
     }
-    if (message != previous || saveTextChanged) { layout(); reveal(GetFocus()); }
+    if (message != previous || saveTextChanged || noticeStyleChanged) { layout(); reveal(GetFocus()); }
 }
 void ContractsWindow::setConnectionActive(bool active) { if (connectionActive_ != active) { connectionActive_ = active; refresh(); layout(); } }
 void ContractsWindow::closeChildren() { for (auto& child : children_) child->close(); children_.clear(); }
@@ -401,7 +407,7 @@ bool ContractsWindow::translate(MSG& message) const {
 }
 void ContractsWindow::fonts() {
     if (!resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)), false)) return;
-    for (auto h : {description_, localLabel_, notice_, error_, cancel_, ok_, check_, repeat_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
+    for (auto h : {description_, localLabel_, notice_, error_, cancel_, ok_, check_, repeat_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(h == error_ && validationNotice_ ? ui::Font::strongValue : ui::Font::label)), TRUE);
     SendMessageW(local_,WM_SETFONT,reinterpret_cast<WPARAM>(resources_.font(ui::Font::strongValue)),TRUE);
     SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
     for (auto& row : rows_) for (std::size_t c = 0; c < 3; ++c) SendMessageW(row.controls[c], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(c == 1 ? ui::Font::mono : ui::Font::label)), TRUE);
@@ -426,7 +432,7 @@ void ContractsWindow::layout() {
     const int tableTop=(std::max)(s(compact?140:104),compact?localTop+s(32):descriptionBottom+s(12))+(connectionActive_?s(28):0);
     const int errorLength=GetWindowTextLengthW(error_); std::wstring errorText(static_cast<std::size_t>(errorLength)+1,L'\0');
     GetWindowTextW(error_,errorText.data(),errorLength+1); errorText.resize(errorLength);
-    const int errorHeight=errorText.empty()?0:measureText(dc,resources_.font(ui::Font::label),errorText,(std::max)(1,right-margin),true).height+s(12); ReleaseDC(window_,dc);
+    const int errorHeight=errorText.empty()?0:measureText(dc,resources_.font(validationNotice_ ? ui::Font::strongValue : ui::Font::label),errorText,(std::max)(1,right-margin),true).height+s(12); ReleaseDC(window_,dc);
     const bool stackActions=IsWindowVisible(check_) && right-margin<s(528)+cancelWidth+buttonGap;
     const int footer = (std::max)(0,static_cast<int>(r.bottom)-s(stackActions?148:60)-errorHeight);
     const int buttonTop=static_cast<int>(r.bottom)-s(44);
@@ -681,7 +687,7 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
             if (row.controls[0] == field) changedToggle = self->controller_.model()->row(row.remote)->dirty();
         if (self->controller_.model()) for (const auto& row : self->rows_) if (row.controls[1] == field) invalid = self->controller_.model()->row(row.remote)->keyErrorVisible();
         const auto color = invalid ? ui::Color::errorBackground : changedToggle ? ui::Color::contractsChanged : h == self->window_ || h == self->body_ || h == self->pager_ ? ui::Color::background : ui::Color::surface;
-        const auto dc = reinterpret_cast<HDC>(w); SetTextColor(dc,self->resources_.color(invalid ? ui::Color::error : ui::Color::text)); SetBkColor(dc,self->resources_.color(color));
+        const auto dc = reinterpret_cast<HDC>(w); SetTextColor(dc,self->resources_.color(invalid || (field == self->error_ && self->validationNotice_) ? ui::Color::error : ui::Color::text)); SetBkColor(dc,self->resources_.color(color));
         return reinterpret_cast<LRESULT>(self->resources_.brush(color));
     }
     case WM_ERASEBKGND: return 1;

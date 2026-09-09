@@ -118,6 +118,17 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 - Stav změn držet napříč stránkami podle stabilní identity kontraktu, nikoli podle čísla aktuálně viditelného řádku.
 - Pouhá změna stránky, fokusu, resize nebo otevření a zavření dialogu bez potvrzení nesmí změnit počet upravených kontraktů.
 
+### Dirty stav podle skutečného dopadu na JSON
+
+- Dirty stav řádku musí odpovídat tomu, zda by Save skutečně změnil výsledný konfigurační JSON, nikoli pouze tomu, zda se během relace změnila interní pracovní hodnota.
+- Pokud byl kontrakt v načtené konfiguraci vypnutý, tedy jeho Key v JSONu chyběl, a aktuálně je znovu vypnutý, považovat jej za nezměněný i tehdy, když jej uživatel mezitím zapnul a zadal pracovní Key.
+- V tomto stavu se kontrakt nezapočítává na tlačítku Save, řádek není žlutě zvýrazněn a při absenci jiných změn je Save disabled s textem **Save**.
+- Pracovní Key lze v paměti formuláře zachovat. Pokud uživatel kontrakt ve stejné relaci znovu zapne, hodnota se obnoví a kontrakt se znovu stane změněným.
+- Pokud byl kontrakt v načtené konfiguraci zapnutý a uživatel jej vypne, kontrakt zůstává změněný bez ohledu na pracovní Key, protože Save odstraní jeho klíč z JSONu.
+- Pokud je kontrakt aktuálně zapnutý, změna Key oproti načtené hodnotě se nadále započítává.
+- Ekvivalentní pravidlo pro řádek je: kontrakt je dirty, pokud se změnil Enabled, nebo pokud je aktuálně Enabled a Key se liší od původního Key.
+- Stejné pravidlo použít jednotně pro celkový dirty stav okna, počet změn na Save, žluté zvýraznění řádku, potvrzení při zavření a rozhodnutí, zda má Save co uložit.
+
 ## Žluté zvýraznění změněného řádku
 
 - Každý řádek změněného kontraktu podbarvit celý lehce až středně žlutou barvou, aby byla neuložená změna patrná na první pohled.
@@ -149,6 +160,22 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 - Pro neočekávaně vysoký počet zajistit odolný layout. Text nesmí přetéct do sousedních prvků ani být vykreslen mimo tlačítko.
 - Samotné ukládací chování tlačítka **Save** se nemění.
 - Při alespoň jedné změně je **Save** enabled pouze tehdy, pokud současně vyhovuje všem dosavadním podmínkám pro bezpečné uložení. Existující blokace při neplatném klíči, probíhajícím ukládání nebo jiném nebezpečném stavu zůstává zachována.
+
+## Vzhled validační zprávy v patičce
+
+- Pokud je Save blokováno kvůli prvnímu zapnutému kontraktu s neplatným Key, patička nad tlačítky nadále zobrazí stávající dvouřádkovou zprávu:
+
+  `Key must contain exactly 64 lowercase hexadecimal characters.`
+
+  `First invalid peer: <IP address>`
+
+- Text obou řádků vykreslit červenou chybovou barvou používanou aplikací.
+- Červená barva je povinná a musí mít dobrý kontrast vůči pozadí patičky.
+- Oba řádky preferovaně zobrazit tučně nebo polotučně, aby byla blokující chyba snadno rozpoznatelná. Pokud by zvolená váha způsobovala ořez nebo chybné zalamování při podporovaném DPI, upravit měření a layout tak, aby se celý text bezpečně zobrazil.
+- Barva a váha musí platit pro oba řádky včetně textu **First invalid peer** a IP adresy.
+- Zachovat současné přesné znění, pořadí řádků, IP adresu prvního neplatného kontraktu a možnost kliknutím na zprávu přesunout fokus na příslušný Key.
+- Červený styl použít pouze pro tento blokující validační stav a další skutečné chyby, ne automaticky pro neutrální informační oznámení zobrazovaná stejnou oblastí.
+- Při odstranění chyby musí červený text okamžitě zmizet nebo se vrátit do stylu následujícího relevantního oznámení bez zbytkových pixelů.
 
 ## Tlačítko Cancel
 
@@ -238,7 +265,12 @@ Neredesignovat jiné části oken a neměnit datový model, ukládací workflow,
 34. Dočasné vypnutí kontraktu s uloženým Key zachová jeho pracovní hodnotu a opětovné zapnutí před Save ji obnoví beze změny.
 35. Uložení vypnutého kontraktu odstraní jeho Key z JSONu. Po novém načtení je pole prázdné a žádný default se automaticky nedopočítá.
 36. Návrat nově zapnutého prázdného kontraktu do původního vypnutého stavu správně zruší dirty stav, žluté zvýraznění i jeho započtení na Save.
-37. Ostatní workflow, validace, ukládání, IPC, síťová komunikace a nedotčené části GUI zůstávají beze změny.
+37. Původně vypnutý kontrakt, který byl zapnut, dostal pracovní Key a byl znovu vypnut, se nepovažuje za změněný, protože výsledný JSON zůstane stejný.
+38. Zachovaný pracovní Key tohoto nezměněného vypnutého kontraktu se po opětovném zapnutí ve stejné relaci obnoví a kontrakt se znovu stane změněným.
+39. Dirty stav řádku, celého okna, žluté zvýraznění, počet na Save a potvrzení při zavření používají stejné pravidlo podle skutečného dopadu na JSON.
+40. Dvouřádková blokující zpráva o neplatném Key a prvním neplatném peeru je celá červená a preferovaně tučná nebo polotučná, bez ořezu při podporovaném DPI.
+41. Kliknutí na validační zprávu nadále přesune fokus na Key uvedeného prvního neplatného peeru.
+42. Ostatní workflow, validace, ukládání, IPC, síťová komunikace a nedotčené části GUI zůstávají beze změny.
 
 ## Omezení implementace a ověření
 

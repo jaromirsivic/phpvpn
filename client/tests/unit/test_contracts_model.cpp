@@ -124,6 +124,13 @@ PHPVPN_TEST(ContractsModel, key_validation_all_rows_dirty_restore_and_focus) {
         PHPVPN_REQUIRE_ERROR(m.prepareSave(envelopeSize), ErrorCode::config_invalid_key);
         PHPVPN_REQUIRE_OK(m.setEnabled(peer, false));
     }
+    PHPVPN_REQUIRE_OK(m.setKey(peer, std::string(64, 'b')));
+    PHPVPN_CHECK(!m.row(peer)->dirty() && !m.dirty());
+    PHPVPN_REQUIRE_OK(m.setEnabled(peer, true));
+    PHPVPN_CHECK(m.row(peer)->dirty() && m.dirty());
+    PHPVPN_REQUIRE_OK(m.setEnabled(peer, false));
+    PHPVPN_CHECK(!m.dirty());
+    PHPVPN_CHECK_EQ(m.row(peer)->keyText(), std::string(64, 'b'));
     PHPVPN_REQUIRE_OK(m.setKey(peer, original));
     PHPVPN_CHECK(!m.dirty());
     PHPVPN_CHECK_EQ(m.focus(), std::optional(focus));
@@ -197,7 +204,7 @@ PHPVPN_TEST(ContractsModel, multiple_targets_last_confirmed_frozen_candidate_and
     PHPVPN_REQUIRE_OK(m.setFocus(ContractFocus{other.remoteIp(), ContractColumn::random}));
     const std::string original(m.row(first.remoteIp())->keyText());
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(first, original));
-    PHPVPN_CHECK(m.dirty()); // the explicitly supplied working key differs from the empty baseline
+    PHPVPN_CHECK(!m.dirty()); // disabled working keys do not affect the JSON
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(first, std::string(64, 'a')));
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(other, std::string(64, 'c')));
     PHPVPN_REQUIRE_OK(m.applyPasswordKey(same, std::string(64, 'b')));
