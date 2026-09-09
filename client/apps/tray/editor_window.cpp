@@ -15,6 +15,45 @@ namespace {
 constexpr wchar_t kClass[] = L"PhpVpnTrayEditor";
 constexpr int kReset = 304;
 constexpr UINT_PTR kResetTimer = 1;
+std::string prettyEditorJson(const std::string& text) {
+    if (!Json::parse(text)) return text;
+    // Reflow only whitespace after validation. Retain exact number tokens
+    // (including decimals beyond double precision), escapes and member order.
+    std::string result;
+    result.reserve(text.size());
+    int depth = 0;
+    bool quoted = false, escaped = false;
+    char previous = 0;
+    const auto newline = [&] {
+        result.push_back('\n');
+        result.append(static_cast<std::size_t>(depth) * 2, ' ');
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quoted) {
+            result.push_back(c);
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') quoted = false;
+            continue;
+        }
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        if (c == '}' || c == ']') {
+            --depth;
+            if (previous != '{' && previous != '[') newline();
+        }
+        result.push_back(c);
+        if (c == '"') quoted = true;
+        else if (c == '{' || c == '[') {
+            ++depth;
+            const auto next = text.find_first_not_of(" \t\r\n", i + 1);
+            if (next != std::string::npos && text[next] != '}' && text[next] != ']') newline();
+        } else if (c == ',') newline();
+        else if (c == ':') result.push_back(' ');
+        previous = c;
+    }
+    return result;
+}
 }
 struct EditorWindow::ResetTask {
     std::uint64_t generation = 0;
@@ -107,7 +146,10 @@ void EditorWindow::setContent(const std::string& content) {
     changingContent_ = true;
     ++draftGeneration_;
     document_.load(content);
-    const auto presentation = document_.presentation();
+    auto presentation = document_.presentation();
+    if (save_ && !document_.literal()) {
+        presentation = prettyEditorJson(content);
+    }
     std::string crlf;
     crlf.reserve(presentation.size());
     char previous = 0;
@@ -243,8 +285,9 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
                    ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL;
     if (!save_) style |= ES_READONLY;
-    field_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", nullptr, style,
+    field_ = CreateWindowExW(save_ ? 0 : WS_EX_CLIENTEDGE, L"EDIT", nullptr, style,
         0, 0, 1, 1, window_, reinterpret_cast<HMENU>(IDC_TEXT_AREA), instance, nullptr);
+    if (!field_) { DestroyWindow(window_); return; }
     SendMessageW(field_, EM_SETLIMITTEXT, kIpcMaxMessageBytes, 0);
     setContent(content);
     if (save_) {
@@ -302,7 +345,16 @@ void EditorWindow::layout() {
         if (!child) return;
         controls.push_back({child,rect});
     };
-    move(field_, next.textArea);
+    auto fieldRect = next.textArea;
+    if (save_) {
+        // The parent paints the continuous surface and frame. Keep the native
+        // EDIT (including both non-client scrollbars) inside the rounded corners.
+        const int inset = scaleForDpi(6, static_cast<int>(GetDpiForWindow(window_)));
+        fieldRect = {fieldRect.left + inset, fieldRect.top + inset,
+            std::max(fieldRect.left + inset, fieldRect.right - inset),
+            std::max(fieldRect.top + inset, fieldRect.bottom - inset)};
+    }
+    move(field_, fieldRect);
     move(GetDlgItem(window_, IDC_SAVE), next.saveButton);
     move(GetDlgItem(window_, kReset), next.resetButton);
     move(GetDlgItem(window_, IDC_CANCEL), next.cancelButton);
@@ -321,6 +373,14 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
     if (!self) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
         case WM_COMMAND:
+            if (self->save_ && reinterpret_cast<HWND>(lParam) == self->field_ &&
+                (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == EN_KILLFOCUS)) {
+                self->editorFocused_ = HIWORD(wParam) == EN_SETFOCUS;
+                const auto& area = self->oldLayout_.textArea;
+                RECT frame{area.left, area.top, area.right, area.bottom};
+                InvalidateRect(window, &frame, FALSE);
+                return 0;
+            }
             if (reinterpret_cast<HWND>(lParam) == self->field_ && HIWORD(wParam) == EN_CHANGE && !self->changingContent_) {
                 ++self->draftGeneration_;
                 return 0;
@@ -359,6 +419,18 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
         case WM_TIMER:
             if (wParam == kResetTimer) { self->pollLifecycle(); return 0; }
             break;
+        case WM_ACTIVATE:
+            self->editorActive_ = LOWORD(wParam) != WA_INACTIVE;
+            if (self->save_) InvalidateRect(window, nullptr, FALSE);
+            break;
+        case WM_LBUTTONDOWN:
+            if (self->save_ && self->field_ && IsWindowEnabled(self->field_)) {
+                const auto& area = self->oldLayout_.textArea;
+                RECT frame{area.left, area.top, area.right, area.bottom};
+                POINT point{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
+                if (PtInRect(&frame, point)) { SetFocus(self->field_); return 0; }
+            }
+            break;
         case WM_SIZE: self->layout(); return 0;
         case WM_SETTINGCHANGE: case WM_SYSCOLORCHANGE:
             self->updateFonts(); self->layout(); break;
@@ -367,6 +439,10 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             PAINTSTRUCT ps{}; auto targetDc = BeginPaint(window,&ps); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(window,&r);
             FillRect(dc,&r,self->resources_.brush(ui::Color::background));
             if(self->save_) {
+                const bool focused = self->editorFocused_ && self->editorActive_;
+                paintRoundedShape(dc, self->oldLayout_.textArea, scaleForDpi(12, self->resources_.dpi()),
+                    self->resources_, ui::Color::surface, focused ? ui::Color::focus : ui::Color::border,
+                    false, std::max(1, scaleForDpi(focused ? 2 : 1, self->resources_.dpi())));
                 const int top=self->oldLayout_.footer.top;
                 RECT line{0,top,r.right,top+std::max(1,scaleForDpi(1,self->resources_.dpi()))};
                 FillRect(dc,&line,self->resources_.brush(ui::Color::separator));
@@ -411,6 +487,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             self->save_ = {}; self->pollSave_ = {}; self->abandonSave_ = {};
             self->window_ = nullptr;
             self->field_ = nullptr;
+            self->editorFocused_ = self->editorActive_ = false;
             return 0;
         case WM_NCDESTROY:
             self->heading_=self->path_=nullptr;

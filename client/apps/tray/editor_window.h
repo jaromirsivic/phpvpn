@@ -54,6 +54,7 @@ private:
     SaveOperation saveOperation_;
     HWND window_ = nullptr;
     HWND field_ = nullptr;
+    bool editorFocused_ = false, editorActive_ = false;
     UiResources resources_;
     HINSTANCE instance_ = nullptr;
     HWND heading_ = nullptr, path_ = nullptr;
