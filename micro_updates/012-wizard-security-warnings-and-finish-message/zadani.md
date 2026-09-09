@@ -109,6 +109,80 @@ Neměnit ikony informačních ani jiných dialogů. Vzhled nevyhovující ikony 
 - Zachovat stávající ovládání dialogu, tlačítko `OK`, modalitu a následný aplikační workflow.
 - Neměnit ikonu tohoto dialogu ani ikony ostatních dialogů.
 
+## Navazující zpřesnění po první implementaci
+
+Tato část zachycuje uživatelem schválené změny po ručním ověření první implementace mikro-updatu 012. Při případném rozporu s obecnějším pravidlem výše má tato část přednost.
+
+### Priorita chyby ve druhém kroku
+
+- Pokud je v kroku `Server secret` aktivní jakákoli chyba, červený chybový panel musí mít přednost před žlutým panelem `Default server secret in use`.
+- Červený panel zobrazit bezprostředně pod bílým panelem kroku.
+- Po dobu aktivní chyby žlutý panel úplně skrýt, i když je zaškrtnutý `Use default server secret` nebo je aktuální hodnota přesně `CHANGE_THIS_SERVER_SECRET`.
+- Po zániku chyby žlutý panel znovu zobrazit, pokud nadále platí alespoň jedna z jeho původních podmínek viditelnosti.
+- Skrytý žlutý panel nesmí zabírat místo v layoutu.
+
+### Cílená zpráva při neověřeném autentizačním tagu server secretu
+
+- Následující změnu použít pouze pro chybu `crypto_tag_mismatch` vzniklou při ověřování kroku `Server secret`. Neměnit globální popis stejného chybového kódu v jiných částech aplikace.
+- Zachovat nadpis červeného panelu:
+
+  `Could not complete this action`
+
+- Místo obecného popisu `An authentication tag did not verify.` a obecného doporučení zobrazit následující cílenou zprávu:
+
+  `You are trying to use the server secret “<current server secret>”, but the server does not recognize it. Please contact the server administrator to obtain the valid server secret configured in the SERVER_SECRET variable on the server.`
+
+- Zástupný text `<current server secret>` nahradit přesnou hodnotou právě viditelnou v textboxu Wizardu pro tento pokus. Při použití výchozí hodnoty se tedy zobrazí `CHANGE_THIS_SERVER_SECRET`.
+- Hodnotu bezpečně vložit mezi otevírací a uzavírací uvozovku. Zobrazení nesmí umožnit formátovací injekci, rozbití layoutu ani záměnu hodnoty s okolním textem. Zachovat uživatelsky viditelnou reprezentaci textboxu, zejména v režimu JSON string literal.
+- Pod cílenou zprávou zachovat dosavadní diagnostické údaje `HTTP status`, pokud byl pro danou chybu dostupný, a `Server URL` s adresou skutečně kontaktovanou při daném pokusu.
+- Zachovat dosavadní červené označení pole server secretu a ostatní bezpečné chybové chování.
+
+### Priorita chyby ve třetím kroku
+
+- Pokud je v kroku `IP and access key` aktivní jakákoli chyba verifikace, červený chybový panel musí mít přednost před žlutým panelem `Default access key in use`.
+- Červený panel zobrazit bezprostředně pod bílým panelem kroku.
+- Po dobu aktivní chyby žlutý panel úplně skrýt, i když je zaškrtnutý `Use default access key`.
+- Po zániku chyby žlutý panel znovu zobrazit, pokud checkbox `Use default access key` zůstává zaškrtnutý.
+- Skrytý žlutý panel nesmí zabírat místo v layoutu.
+
+### Doplnění chyby konfliktu virtuální IP
+
+- Pro chybu, při které je zvolená virtuální IP již použita lokálním komunikačním kontraktem, zachovat nadpis:
+
+  `Could not complete this action`
+
+- Zachovat příčinu a preferované bezpečné řešení v tomto znění:
+
+  `This IP is already used by a local communication contract.`
+
+  `Choose another virtual IP, or correct the conflicting contract through Edit Config before opening a new wizard.`
+
+- Na konec chybové zprávy přidat jako nový odstavec přesně tento text:
+
+  `Alternatively, you may use Reset to start with a new default configuration. This will likely resolve the conflict. However, completing the wizard after a reset will replace the current configuration and remove all existing communication contracts.`
+
+- Text musí přesně rozlišovat přípravu resetovaného konceptu od zápisu. Samotný `Reset` připraví nový výchozí návrh, existující konfigurace a kontrakty se nahradí až po následném úspěšném dokončení Wizardu.
+- Toto doplnění použít pouze pro konkrétní chybu lokálního konfliktu IP, nikoli pro ostatní chyby adresy nebo Access Key.
+
+### Čtvrtý krok Communication contracts
+
+- Z běžné bílé oblasti odstranit dosavadní informační text:
+
+  `Existing contracts and keys are kept. Default keys are publicly predictable.`
+
+- Stejný text beze změny přesunout do samostatného žlutého panelu.
+- Žlutý panel zobrazit pouze tehdy, když současně platí obě podmínky:
+  - checkbox `Add missing default communication contracts` je zaškrtnutý,
+  - hodnota `To add on Finish` je větší než nula.
+- Při odškrtnutém checkboxu panel skrýt bez ohledu na počet chybějících kontraktů.
+- Při hodnotě `To add on Finish` rovné nule panel skrýt i tehdy, když checkbox zůstává zaškrtnutý.
+- Viditelnost aktualizovat okamžitě při změně checkboxu. Skrytý panel nesmí zabírat místo v layoutu.
+- Z kroku úplně odstranit text:
+
+  `Finish saves the configuration and closes this wizard. It does not connect the VPN.`
+
+- Odstraněný text ničím nenahrazovat. Informaci o následném připojení poskytuje až schválený dialog po úspěšném `Finish`.
+
 ## Vizuální a interakční požadavky
 
 - Nové žluté panely mají navázat na existující vizuální styl varovných panelů tray aplikace.
@@ -144,6 +218,16 @@ Neměnit ikony informačních ani jiných dialogů. Vzhled nevyhovující ikony 
 12. Úspěšné `Finish` zobrazí přesný text `The configuration was saved. To connect to the VPN server, click Connect.`.
 13. Ikona dialogu i všechny ostatní ikony zůstávají beze změny.
 14. Funkční chování konfigurace, ověřování a síťové komunikace zůstává beze změny.
+15. Při aktivní chybě ve druhém kroku je žlutý panel server secretu skrytý a červený panel je bezprostředně pod bílou oblastí.
+16. Po zániku chyby ve druhém kroku se žlutý panel vrátí pouze podle původních podmínek pro výchozí server secret.
+17. Chyba `crypto_tag_mismatch` ve druhém kroku zobrazuje schválenou cílenou zprávu s přesnou aktuálně viditelnou hodnotou secretu v uvozovkách.
+18. Pod cílenou zprávou zůstává dostupný HTTP status a kontaktovaná Server URL, pokud byly pro pokus poskytnuty.
+19. Při aktivní chybě verifikace ve třetím kroku je žlutý panel Access Key skrytý a červený panel je bezprostředně pod bílou oblastí.
+20. Po zániku chyby ve třetím kroku se žlutý panel vrátí právě tehdy, když zůstává zaškrtnutý `Use default access key`.
+21. Chyba lokálního konfliktu virtuální IP obsahuje schválenou alternativu přes Reset a přesně upozorňuje, že k nahrazení konfigurace a odstranění kontraktů dojde až po dokončení Wizardu.
+22. Ve čtvrtém kroku se text `Existing contracts and keys are kept. Default keys are publicly predictable.` zobrazuje ve žlutém panelu pouze při zaškrtnutém přidání výchozích kontraktů a kladné hodnotě `To add on Finish`.
+23. Žlutý panel čtvrtého kroku je skrytý při odškrtnutí checkboxu nebo při nulové hodnotě `To add on Finish`.
+24. Text `Finish saves the configuration and closes this wizard. It does not connect the VPN.` se ve čtvrtém kroku již nezobrazuje.
 
 ## Omezení implementace a ověření
 

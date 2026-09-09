@@ -598,7 +598,8 @@ void wizardProductionFinish(bool lost) {
     gui.until([&] { return gui.hwnd() && child(gui.hwnd(), urlId); }, "production Wizard action failed");
     gui.nextTo(secretId); gui.nextTo(ipId); gui.nextTo(contractsId);
     captureWizard(gui.hwnd(), L"wizard-contracts.bmp");
-    check(allText(gui.hwnd()).find(wizardText::finishHint) != std::wstring::npos, "Finish hint promises wrong action");
+    check(allText(gui.hwnd()).find(L"Finish saves the configuration and closes this wizard. It does not connect the VPN.") == std::wstring::npos,
+          "removed Finish hint is still visible");
     click(gui.hwnd(), nextId);
     if (lost) {
         gui.until([&] { return text(child(gui.hwnd(), nextId)) == L"Verify save" && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "lost Finish did not offer Verify save", 6500);
@@ -854,8 +855,12 @@ void fix2PreferencesAndContractPreview() {
         check(IsWindowVisible(child(gui.hwnd(), contractsId)) && SendMessageW(child(gui.hwnd(), contractsId), BM_GETCHECK, 0, 0) == BST_CHECKED,
               "edit contracts checkbox is not visible and checked");
         check(allText(gui.hwnd()).find(L"Missing defaults:\n" + std::to_wstring(13 - count)) != std::wstring::npos, "wrong missing count");
+        check((allText(gui.hwnd()).find(wizardText::contractsHint) != std::wstring::npos) == (count < 13),
+              "contracts warning visibility does not match additions");
         click(gui.hwnd(), contractsId);
         check(allText(gui.hwnd()).find(L"To add on Finish:\n0") != std::wstring::npos, "unchecked contracts still advertised additions");
+        check(allText(gui.hwnd()).find(wizardText::contractsHint) == std::wstring::npos,
+              "unchecked contracts still show the warning");
         footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
         gui.escape();
     }

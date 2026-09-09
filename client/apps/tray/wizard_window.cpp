@@ -478,6 +478,27 @@ void WizardWindow::render() {
     layout(); cursorY_ = scaleForDpi(20, dpi_);
     const auto step = model_.step();
     const bool locked = model_.busy() || primary_.busy() || control_.busy() || closing_ || resetting_ || disconnecting_;
+    const auto renderErrorPanel = [&] {
+        if (!model_.error()) return;
+        const auto& failure = *model_.error();
+        beginCard(ui::Color::errorBackground);
+        label(L"Could not complete this action", true);
+        std::wstring text = widen(failure.description) + L"\n" + widen(failure.suggestedAction);
+        if (failure.code == "timeout" || failure.code == "transport_timeout") text = wizardText::timeout;
+        if (failure.code == "wizard_connection_interrupted") text = wizardText::interrupted;
+        if (step == WizardStep::serverUrl && model_.fields().serverUrl.find("MODIFY-THIS-URL") != std::string::npos)
+            text = wizardText::urlPlaceholder;
+        if (step == WizardStep::serverSecret && failure.code == "crypto_tag_mismatch" &&
+            failure.field == "serverSecret")
+            text = wizardText::secretMismatchPrefix + widen(model_.secretEditorText()) + wizardText::secretMismatchSuffix;
+        if (step == WizardStep::identity && failure.code == "wizard_contract_self_conflict")
+            text = wizardText::contractConflict;
+        if (failure.httpStatus) text += L"\nHTTP status: " + std::to_wstring(*failure.httpStatus);
+        if (failure.serverUrl) text += L"\nServer URL: " + widen(*failure.serverUrl);
+        if (failure.configPath) text += L"\nConfiguration: " + widen(*failure.configPath);
+        label(text);
+        endCard();
+    };
     std::wstring steps = L"CONFIGURE THIS COMPUTER\n\n";
     if (step == WizardStep::disconnectGate) steps += L"Disconnect VPN\n\n";
     constexpr const wchar_t* names[]{L"1  Server URL", L"2  Server secret", L"3  IP and access key"};
@@ -532,7 +553,8 @@ void WizardWindow::render() {
         separator();
         label(wizardText::secretCheck);
         endCard();
-        if (model_.useDefaultSecret() || model_.fields().serverSecret == kDefaultServerSecret) {
+        renderErrorPanel();
+        if (!model_.error() && (model_.useDefaultSecret() || model_.fields().serverSecret == kDefaultServerSecret)) {
             beginCard(ui::Color::warningBackground);
             label(wizardText::defaultSecretWarningHeading, true);
             label(wizardText::defaultSecretWarning);
@@ -556,7 +578,8 @@ void WizardWindow::render() {
         SendMessageW(box, BM_SETCHECK, model_.useDefaultAccessKey() ? BST_CHECKED : BST_UNCHECKED, 0);
         label(wizardText::keyHint);
         endCard();
-        if (model_.useDefaultAccessKey()) {
+        renderErrorPanel();
+        if (!model_.error() && model_.useDefaultAccessKey()) {
             beginCard(ui::Color::warningBackground);
             label(wizardText::defaultKeyWarningHeading, true);
             label(wizardText::defaultKeyWarning);
@@ -599,8 +622,11 @@ void WizardWindow::render() {
         if (columns) cursorY_ = rowBottom;
         endCard();
         if (!model_.contractsAllowed()) label(wizardText::contractsUnsupported);
-        label(wizardText::contractsHint);
-        label(wizardText::finishHint);
+        if (model_.shouldAddDefaultContracts() && model_.missingContractCount() > 0) {
+            beginCard(ui::Color::warningBackground);
+            label(wizardText::contractsHint);
+            endCard();
+        }
     } else if (step == WizardStep::finished) {
         label(wizardText::savedHeading, true); label(wizardText::saved);
     }
@@ -621,21 +647,7 @@ void WizardWindow::render() {
         }
     }
     for (int id : {urlId, secretId, ipId, keyId}) setTextBoxInvalid(GetDlgItem(body_, id), id == invalidField);
-    if (model_.error()) {
-        const auto& failure = *model_.error();
-        beginCard(ui::Color::errorBackground);
-        label(L"Could not complete this action", true);
-        std::wstring text = widen(failure.description) + L"\n" + widen(failure.suggestedAction);
-        if (failure.code == "timeout" || failure.code == "transport_timeout") text = wizardText::timeout;
-        if (failure.code == "wizard_connection_interrupted") text = wizardText::interrupted;
-        if (step == WizardStep::serverUrl && model_.fields().serverUrl.find("MODIFY-THIS-URL") != std::string::npos)
-            text = wizardText::urlPlaceholder;
-        if (failure.httpStatus) text += L"\nHTTP status: " + std::to_wstring(*failure.httpStatus);
-        if (failure.serverUrl) text += L"\nServer URL: " + widen(*failure.serverUrl);
-        if (failure.configPath) text += L"\nConfiguration: " + widen(*failure.configPath);
-        label(text);
-        endCard();
-    }
+    if (step != WizardStep::serverSecret && step != WizardStep::identity) renderErrorPanel();
     if (locked) label(model_.committing() ? wizardText::saving : closing_ ? L"Closing this session…" : resetting_ ? L"Stopping the current check and resetting…" : disconnecting_ ? wizardText::waitingDisconnect :
         step == WizardStep::serverUrl ? wizardText::checkingUrl : step == WizardStep::serverSecret ? wizardText::checkingSecret : step == WizardStep::identity ? wizardText::checkingIdentity : L"Waiting for the service…");
     contentHeight_ = cursorY_;
