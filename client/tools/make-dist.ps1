@@ -118,6 +118,149 @@ function ConvertTo-CanonicalJson {
     throw "The canonical writer does not support $($Value.GetType().FullName)."
 }
 
+function Test-IsEphemeralCngHandleException {
+    param([System.Exception]$Exception)
+
+    # .NET Framework wraps the RSACng constructor's exact ArgumentException in
+    # MethodInvocationException. Match the stable exception contract rather
+    # than treating an arbitrary private-key failure as permission to fall back.
+    $candidate = $Exception
+    while ($null -ne $candidate) {
+        if ($candidate -is [System.ArgumentException] -and
+            $candidate.HResult -eq -2147024809 -and
+            $candidate.ParamName -eq "keyHandleOpenOptions") {
+            return $true
+        }
+        $candidate = $candidate.InnerException
+    }
+    return $false
+}
+
+function Get-CertificateCngBinding {
+    param([System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+
+    if (-not ("PhpVpn.CngCertificateBindingReader" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
+
+namespace PhpVpn
+{
+    public sealed class CngCertificateBinding
+    {
+        public string ContainerName { get; private set; }
+        public string ProviderName { get; private set; }
+        public bool MachineKey { get; private set; }
+        public bool Silent { get; private set; }
+
+        internal CngCertificateBinding(string containerName, string providerName,
+                                       bool machineKey, bool silent)
+        {
+            ContainerName = containerName;
+            ProviderName = providerName;
+            MachineKey = machineKey;
+            Silent = silent;
+        }
+    }
+
+    public static class CngCertificateBindingReader
+    {
+        private const uint CertKeyProvInfoProperty = 2;
+        private const uint CryptMachineKeyset = 0x20;
+        private const uint CryptSilent = 0x40;
+        private const uint CertNCryptKeySpec = 0xffffffff;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct CryptKeyProvInfo
+        {
+            public IntPtr ContainerName;
+            public IntPtr ProviderName;
+            public uint ProviderType;
+            public uint Flags;
+            public uint ProviderParameterCount;
+            public IntPtr ProviderParameters;
+            public uint KeySpec;
+        }
+
+        [DllImport("crypt32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CertGetCertificateContextProperty(
+            IntPtr certificateContext, uint propertyId, IntPtr data, ref uint dataSize);
+
+        public static CngCertificateBinding Read(X509Certificate2 certificate)
+        {
+            if (certificate == null)
+                throw new ArgumentNullException("certificate");
+
+            uint dataSize = 0;
+            if (!CertGetCertificateContextProperty(certificate.Handle,
+                                                    CertKeyProvInfoProperty,
+                                                    IntPtr.Zero,
+                                                    ref dataSize))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+
+            if (dataSize < Marshal.SizeOf(typeof(CryptKeyProvInfo)))
+                throw new InvalidOperationException("The certificate private-key binding is incomplete.");
+
+            IntPtr data = Marshal.AllocHGlobal(checked((int)dataSize));
+            try
+            {
+                if (!CertGetCertificateContextProperty(certificate.Handle,
+                                                        CertKeyProvInfoProperty,
+                                                        data,
+                                                        ref dataSize))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+
+                CryptKeyProvInfo info = (CryptKeyProvInfo)Marshal.PtrToStructure(
+                    data, typeof(CryptKeyProvInfo));
+                // ProviderType zero identifies a CNG KSP. Windows may persist
+                // either the documented NCrypt marker or zero in KeySpec for a
+                // certificate whose key is already identified by that KSP.
+                if (info.ProviderType != 0 ||
+                    (info.KeySpec != 0 && info.KeySpec != CertNCryptKeySpec))
+                    throw new NotSupportedException("The certificate private key is not bound to a CNG key storage provider.");
+                if (info.ContainerName == IntPtr.Zero || info.ProviderName == IntPtr.Zero)
+                    throw new InvalidOperationException("The certificate CNG private-key binding is incomplete.");
+
+                string containerName = Marshal.PtrToStringUni(info.ContainerName);
+                string providerName = Marshal.PtrToStringUni(info.ProviderName);
+                if (String.IsNullOrWhiteSpace(containerName) || String.IsNullOrWhiteSpace(providerName))
+                    throw new InvalidOperationException("The certificate CNG private-key binding is incomplete.");
+
+                return new CngCertificateBinding(
+                    containerName,
+                    providerName,
+                    (info.Flags & CryptMachineKeyset) != 0,
+                    (info.Flags & CryptSilent) != 0);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(data);
+            }
+        }
+    }
+}
+"@
+    }
+
+    return [PhpVpn.CngCertificateBindingReader]::Read($Certificate)
+}
+
+function Test-ByteArrayEqual {
+    param([byte[]]$Left, [byte[]]$Right)
+
+    if ($null -eq $Left -or $null -eq $Right -or $Left.Length -ne $Right.Length) {
+        return $false
+    }
+    $difference = 0
+    for ($index = 0; $index -lt $Left.Length; ++$index) {
+        $difference = $difference -bor ($Left[$index] -bxor $Right[$index])
+    }
+    return $difference -eq 0
+}
+
 # ---------------------------------------------------------------- build inputs
 
 $binaries = @("phpvpn-service.exe", "phpvpn-tray.exe", "phpvpn.exe")
@@ -214,39 +357,138 @@ $canonical = ConvertTo-CanonicalJson $manifest
 $manifestBytes = [System.Text.Encoding]::UTF8.GetBytes($canonical)
 [System.IO.File]::WriteAllBytes((Join-Path $OutputDirectory "release-manifest.json"), $manifestBytes)
 
+$signaturePath = Join-Path $OutputDirectory "release-manifest.sig"
+$certificatePath = Join-Path $OutputDirectory "release-signing.cer"
+Remove-Item -LiteralPath $signaturePath, $certificatePath -Force -ErrorAction SilentlyContinue
+
 $certificate = Get-Item "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction SilentlyContinue
 if ($null -eq $certificate) {
     throw "The signing certificate $CertificateThumbprint is not present in Cert:\CurrentUser\My."
 }
-if (-not $certificate.HasPrivateKey) {
-    throw "The signing certificate $CertificateThumbprint has no usable private key."
+try {
+    if (-not $certificate.HasPrivateKey) {
+        throw "The signing certificate $CertificateThumbprint has no usable private key."
+    }
+
+    $publicKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+    if ($null -eq $publicKey) {
+        throw "Only an RSA signing certificate is supported."
+    }
+    $privateKey = $null
+    $cngKey = $null
+    $usedCngCompatibilityPath = $false
+    try {
+        try {
+            $privateKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
+        } catch {
+            if (-not (Test-IsEphemeralCngHandleException $_.Exception)) {
+                throw "The signing certificate private key could not be opened through the standard RSA provider path."
+            }
+
+            try {
+                $binding = Get-CertificateCngBinding $certificate
+            } catch {
+                throw "The signing certificate's CNG provider binding could not be obtained safely."
+            }
+
+            $openOptions = [System.Security.Cryptography.CngKeyOpenOptions]::None
+            if ($binding.MachineKey) {
+                $openOptions = $openOptions -bor [System.Security.Cryptography.CngKeyOpenOptions]::MachineKey
+            }
+            if ($binding.Silent) {
+                $openOptions = $openOptions -bor [System.Security.Cryptography.CngKeyOpenOptions]::Silent
+            }
+
+            try {
+                $provider = New-Object System.Security.Cryptography.CngProvider($binding.ProviderName)
+                $cngKey = [System.Security.Cryptography.CngKey]::Open($binding.ContainerName,
+                                                                     $provider,
+                                                                     $openOptions)
+                if ($cngKey.AlgorithmGroup -ne [System.Security.Cryptography.CngAlgorithmGroup]::Rsa) {
+                    throw "not-rsa"
+                }
+                $privateKey = New-Object System.Security.Cryptography.RSACng($cngKey)
+            } catch {
+                throw "The certificate-bound CNG private key could not be opened as RSA."
+            }
+            $usedCngCompatibilityPath = $true
+        }
+
+        if ($null -eq $privateKey) {
+            throw "The signing certificate has no usable RSA private key."
+        }
+
+        try {
+            $certificateParameters = $publicKey.ExportParameters($false)
+            $privateKeyParameters = $privateKey.ExportParameters($false)
+        } catch {
+            throw "The opened private key could not be verified against the signing certificate's public key."
+        }
+        if (-not (Test-ByteArrayEqual $certificateParameters.Modulus $privateKeyParameters.Modulus) -or
+            -not (Test-ByteArrayEqual $certificateParameters.Exponent $privateKeyParameters.Exponent)) {
+            throw "The opened private key does not match the signing certificate's public key."
+        }
+
+        try {
+            $signature = $privateKey.SignData($manifestBytes,
+                                              [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+                                              [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        } catch {
+            throw "Signing the release manifest failed."
+        }
+
+        $detached = [ordered]@{
+            algorithm   = "RSA-PKCS1-SHA256"
+            thumbprint  = $certificate.Thumbprint.ToUpperInvariant()
+            subject     = $certificate.Subject
+            signature   = [Convert]::ToBase64String($signature)
+        }
+        $detachedBytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-CanonicalJson $detached))
+
+        # Prepare both public artifacts completely before publishing either one.
+        try {
+            $certificateBytes = $certificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+        } catch {
+            throw "The public signing certificate could not be exported."
+        }
+        $signatureTemporaryPath = Join-Path $OutputDirectory ([System.IO.Path]::GetRandomFileName())
+        $certificateTemporaryPath = Join-Path $OutputDirectory ([System.IO.Path]::GetRandomFileName())
+        try {
+            [System.IO.File]::WriteAllBytes($signatureTemporaryPath, $detachedBytes)
+            [System.IO.File]::WriteAllBytes($certificateTemporaryPath, $certificateBytes)
+            Move-Item -LiteralPath $signatureTemporaryPath -Destination $signaturePath
+            Move-Item -LiteralPath $certificateTemporaryPath -Destination $certificatePath
+        } catch {
+            Remove-Item -LiteralPath $signaturePath, $certificatePath -Force -ErrorAction SilentlyContinue
+            throw "The release signature artifacts could not be published safely."
+        } finally {
+            Remove-Item -LiteralPath $signatureTemporaryPath, $certificateTemporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Remove-Item -LiteralPath $signaturePath, $certificatePath -Force -ErrorAction SilentlyContinue
+        throw
+    } finally {
+        if ($null -ne $privateKey) {
+            $privateKey.Dispose()
+        }
+        if ($null -ne $cngKey) {
+            $cngKey.Dispose()
+        }
+        $publicKey.Dispose()
+    }
+
+    $signingSubject = $certificate.Subject
+} finally {
+    $certificate.Dispose()
 }
 
-$privateKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
-if ($null -eq $privateKey) {
-    throw "Only an RSA signing certificate is supported."
+if ($usedCngCompatibilityPath) {
+    Write-Host "Signing key  : used the Windows PowerShell CNG compatibility path"
 }
-$signature = $privateKey.SignData($manifestBytes,
-                                  [System.Security.Cryptography.HashAlgorithmName]::SHA256,
-                                  [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
-
-$detached = [ordered]@{
-    algorithm   = "RSA-PKCS1-SHA256"
-    thumbprint  = $certificate.Thumbprint.ToUpperInvariant()
-    subject     = $certificate.Subject
-    signature   = [Convert]::ToBase64String($signature)
-}
-$detachedBytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-CanonicalJson $detached))
-[System.IO.File]::WriteAllBytes((Join-Path $OutputDirectory "release-manifest.sig"), $detachedBytes)
-
-# The public certificate travels with the package so the installer can pin the
-# identity without contacting anything.
-[System.IO.File]::WriteAllBytes((Join-Path $OutputDirectory "release-signing.cer"),
-                                $certificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
 
 Write-Host ""
 Write-Host "Package       : $OutputDirectory"
 Write-Host "Release       : $releaseVersion ($architecture)"
 Write-Host "Wintun        : $driverVersion"
-Write-Host "Signed by     : $($certificate.Subject)"
+Write-Host "Signed by     : $signingSubject"
 Write-Host "Files         : $($files.Count) plus the manifest, the signature and the certificate"
