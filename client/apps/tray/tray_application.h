@@ -11,6 +11,7 @@
 #include "window_utils.h"
 #include "ui_resources.h"
 #include "shell_adapter.h"
+#include "system_dialog.h"
 
 namespace phpvpn::tray {
 // Explicit, owned runtime dependencies. No production default exists here.
@@ -57,7 +58,7 @@ private:
     void showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason = {});
     void openEditor(const std::string& text, const std::string& path);
     void advanceExit();
-    void showError(const wchar_t* message) { MessageBoxW(window_, message, L"PHPVPN", MB_OK | MB_ICONERROR); }
+    void showError(const wchar_t* message) { showSystemMessage(window_, message, L"PHPVPN", SystemDialogIcon::error); }
     bool connectedOrConnecting() const {
         return snapshot_.state == "connected" || snapshot_.state == "connecting" || snapshot_.state == "recovering";
     }

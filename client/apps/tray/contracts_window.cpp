@@ -1,6 +1,7 @@
 #include "window_utils.h"
 #include <initguid.h>
 #include "contracts_window.h"
+#include "system_dialog.h"
 #include "ui_controls.h"
 #include <windowsx.h>
 
@@ -293,7 +294,7 @@ void ContractsWindow::save(bool repeat) {
     if (repeat) {
         if (!controller_.canRepeat()) return;
         const auto before = lifecycleSnapshot();
-        if (MessageBoxW(window_, L"Replace the current whole configuration with your draft?", L"Save draft again", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES || !window_ || lifecycleSnapshot() != before) return;
+        if (!confirmSystemAction(window_, L"Replace the current whole configuration with your draft?", L"Save draft again") || !window_ || lifecycleSnapshot() != before) return;
     }
     auto prepared = controller_.prepare(repeat);
     if (!prepared) { refresh(); return; }
@@ -304,7 +305,7 @@ void ContractsWindow::poll() {
     if (event == ContractsEvent::saved) { endSession(); ending_ = false; return; }
     if (event == ContractsEvent::matched) {
         const auto before = lifecycleSnapshot();
-        MessageBoxW(window_, L"The current configuration matches your changes.", L"Communication contracts", MB_OK | MB_ICONINFORMATION);
+        showSystemMessage(window_, L"The current configuration matches your changes.", L"Communication contracts", SystemDialogIcon::information);
         if (window_ && lifecycleSnapshot() == before) { endSession(); ending_ = false; }
         return;
     }
@@ -384,7 +385,7 @@ void ContractsWindow::close() {
     if (before.saving) return;
     if (before.unknown || before.dirty) {
         const auto* message = before.unknown ? L"The file may already have changed. Close without checking the save result?" : L"Discard unsaved changes?";
-        if (MessageBoxW(window_, message, L"Communication contracts", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+        if (!confirmSystemAction(window_, message, L"Communication contracts")) return;
     }
     approvedDiscard(before);
 }

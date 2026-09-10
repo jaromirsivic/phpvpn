@@ -1,4 +1,5 @@
 #include "wizard_window.h"
+#include "system_dialog.h"
 #include "wizard_layout.h"
 #include "wizard_text.h"
 #include "ui_controls.h"
@@ -195,15 +196,15 @@ void WizardWindow::finish() {
 void WizardWindow::cancel(bool reset) {
     if (!window_ || endingSession_) return;
     if (model_.committing()) {
-        MessageBoxW(window_, L"The service is saving the configuration. Wait for its receipt before closing or resetting.", L"Configuration Wizard", MB_OK | MB_ICONINFORMATION); return;
+        showSystemMessage(window_, L"The service is saving the configuration. Wait for its receipt before closing or resetting.", L"Configuration Wizard", SystemDialogIcon::information); return;
     }
     if (control_.busy() || closing_ || resetting_) return;
     const auto approved = lifecycleSnapshot();
-    if (reset && MessageBoxW(window_, L"Reset this entire wizard to the default settings? Your file will change only after Finish.",
-        L"Configuration Wizard", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    if (reset && !confirmSystemAction(window_, L"Reset this entire wizard to the default settings? Your file will change only after Finish.",
+        L"Configuration Wizard")) return;
     if (endingSession_ || !window_ || lifecycleSnapshot() != approved) return;
     if (model_.step() == WizardStep::commitUnknown && reset) {
-        MessageBoxW(window_, L"First verify the previous save. Its result is unknown and the file may already have changed.", L"Configuration Wizard", MB_OK | MB_ICONINFORMATION); return;
+        showSystemMessage(window_, L"First verify the previous save. Its result is unknown and the file may already have changed.", L"Configuration Wizard", SystemDialogIcon::information); return;
     }
     ++operationGeneration_;
     if (model_.view().sessionId.empty()) {
@@ -226,7 +227,7 @@ void WizardWindow::confirm(const WizardReceipt& receipt) {
     closing_ = true;
     render();
     const auto confirmedGeneration = windowGeneration_;
-    MessageBoxW(window_, wizardText::saved, wizardText::savedHeading, MB_OK | MB_ICONINFORMATION);
+    showSystemMessage(window_, wizardText::saved, wizardText::savedHeading, SystemDialogIcon::information);
     if (endingSession_ || !window_ || windowGeneration_ != confirmedGeneration) return;
     if (!send(WizardCommand::close, control_)) {
         const auto callback = onConfirmed_;
@@ -330,10 +331,10 @@ void WizardWindow::receive(WizardReader& reader) {
         } else { model_.commitUnknown(); }
     } else if (command == WizardCommand::get_config_state) {
         model_.commitUnknown();
-        MessageBoxW(window_, (L"The service restarted. The previous save cannot be confirmed here. Current configuration: " +
+        showSystemMessage(window_, (L"The service restarted. The previous save cannot be confirmed here. Current configuration: " +
             widen(value.find("availability")->stringValue()) + L"\n" + widen(value.find("configPath")->stringValue()) +
             L"\nUse Edit Config to inspect the file before starting a new wizard. No save was repeated.").c_str(),
-            L"Save result unknown", MB_OK | MB_ICONWARNING);
+            L"Save result unknown", SystemDialogIcon::warning);
     }
     render();
 }

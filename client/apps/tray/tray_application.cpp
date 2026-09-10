@@ -291,7 +291,7 @@ void TrayApplication::finishCommand() {
 void TrayApplication::showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason) {
     const auto text = L"The configuration is " + widen(availability) + L".\n" + widen(reason) + L"\nExpected configuration: " + widen(path) +
         L"\nOpen Configuration Wizard to create or reset it, or copy a configuration supplied by your administrator to this path. Edit Config can repair readable UTF-8 text.";
-    MessageBoxW(window_, text.c_str(), L"PHPVPN configuration", MB_OK | MB_ICONWARNING);
+    showSystemMessage(window_, text.c_str(), L"PHPVPN configuration", SystemDialogIcon::warning);
 }
 void TrayApplication::openEditor(const std::string& text, const std::string& path) {
     editor_.open(instance_, L"PHPVPN configuration", text, [this](const std::string& content) {
@@ -346,7 +346,7 @@ void TrayApplication::finishConfigAction() {
         if (availability == "missing") {
             const auto text = L"No configuration exists at:\n" + widen(path) +
                 L"\nCreate the default configuration now and open Edit Config? The file will be written immediately.\nYou can also choose No and use Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
-            if (MessageBoxW(window_, text.c_str(), L"Create configuration", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+            if (!confirmSystemAction(window_, text.c_str(), L"Create configuration")) return;
             WizardRequest create; create.command = WizardCommand::create_default_config;
             if (config_.request(create, window_, kConfigMessage)) configAction_ = action;
             else showError(L"The default configuration request could not be sent.");
@@ -376,7 +376,7 @@ void TrayApplication::finishConfigAction() {
             availability == "encoding_error" ? L"The configuration is not valid UTF-8. Save it as UTF-8 in an external editor and try again." :
             availability == "too_large" ? L"The configuration exceeds the 512 KiB limit." : L"Resolve the configuration error before opening Communication contracts.";
         const auto text = L"The configuration is " + widen(availability) + L".\n" + widen(path) + L"\n" + actionText;
-        MessageBoxW(window_, text.c_str(), L"Communication contracts", MB_OK | MB_ICONWARNING); return;
+        showSystemMessage(window_, text.c_str(), L"Communication contracts", SystemDialogIcon::warning); return;
     }
     showConfigWarning(availability, path, reason && reason->isString() ? reason->stringValue() : std::string_view{});
 }
@@ -422,10 +422,10 @@ void TrayApplication::advanceExit() {
         exitConfirming_ = true;
         const auto text = unknown && dirty ? L"Discard unsaved changes?\nThe file may already have changed. Close without checking the save result?" :
             unknown ? L"The file may already have changed. Close without checking the save result?" : L"Discard unsaved changes?";
-        const auto answer = MessageBoxW(window_, text, L"Exit PHPVPN", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+        const bool approved = confirmSystemAction(window_, text, L"Exit PHPVPN");
         exitConfirming_ = false;
         if (endingSession_) return;
-        if (answer != IDYES) { exitRequested_ = false; exitApproval_.reset(); KillTimer(window_, kExitTimer); return; }
+        if (!approved) { exitRequested_ = false; exitApproval_.reset(); KillTimer(window_, kExitTimer); return; }
         exitApproval_ = ExitApproval{editor,wizard,contracts};
     }
     // Modal re-entry may edit, start a save, close or recreate any participant.

@@ -1,4 +1,5 @@
 #include "editor_window.h"
+#include "system_dialog.h"
 #include "core/ipc/ipc_protocol.h"
 #include "core/ipc/wizard_ipc.h"
 #include "core/crypto/crypto_provider.h"
@@ -89,15 +90,15 @@ bool EditorWindow::finishSave(const SaveResult& result) {
     updateEnabled();
     const auto generation = generation_;
     if (result.outcome == SaveOutcome::confirmed) {
-        MessageBoxW(window_, L"The configuration was stored. It takes effect on the next connection attempt.",
-            L"Edit Config", MB_OK | MB_ICONINFORMATION);
+        showSystemMessage(window_, L"The configuration was stored. It takes effect on the next connection attempt.",
+            L"Edit Config", SystemDialogIcon::information);
         // A modal message pumps session-end and other generation changes.
         if (window_ && generation == generation_ && !endingSession_) DestroyWindow(window_);
     } else {
         const auto text = unknown_ ? L"The file may already have changed. The save result is unknown. Close this editor and open Edit Config to inspect the current configuration. The save will not be retried automatically." :
             result.outcome == SaveOutcome::notSent ? L"The save was not sent. Your text has been preserved." :
             L"The service rejected the configuration before publication. Your text has been preserved.";
-        MessageBoxW(window_, text, L"Edit Config", MB_OK | (unknown_ ? MB_ICONWARNING : MB_ICONERROR));
+        showSystemMessage(window_, text, L"Edit Config", unknown_ ? SystemDialogIcon::warning : SystemDialogIcon::error);
         if (window_ && generation == generation_ && !endingSession_) SetFocus(field_);
     }
     return true;
@@ -110,9 +111,9 @@ bool EditorWindow::approvedDiscard(const EditorLifecycleSnapshot& approved) {
 void EditorWindow::requestClose() {
     if (saving_ || endingSession_) return;
     const auto approved = lifecycleSnapshot();
-    if ((approved.dirty || approved.unknown) && MessageBoxW(window_, approved.unknown ?
+    if ((approved.dirty || approved.unknown) && !confirmSystemAction(window_, approved.unknown ?
         L"The file may already have changed. Close without checking the save result?" : L"Discard unsaved changes?",
-        L"Edit Config", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+        L"Edit Config")) return;
     approvedDiscard(approved);
 }
 void EditorWindow::clearDraft() {
@@ -166,9 +167,9 @@ void EditorWindow::setContent(const std::string& content) {
 void EditorWindow::reset() {
     if (!save_ || saving_ || unknown_ || endingSession_ || resetTask_) return;
     const auto expected = lifecycleSnapshot();
-    if (MessageBoxW(window_,
+    if (!confirmSystemAction(window_,
         L"Restore the default configuration in this editor? The file will change only after you choose Save.",
-        L"Edit Config", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+        L"Edit Config")) return;
     if (endingSession_ || lifecycleSnapshot() != expected) return;
     auto task = std::make_shared<ResetTask>();
     task->generation = generation_;
@@ -177,8 +178,8 @@ void EditorWindow::reset() {
     if (!SetTimer(window_, kResetTimer, 50, nullptr)) {
         resetTask_.reset();
         updateEnabled();
-        MessageBoxW(window_, L"The default configuration could not be loaded. Your text has been preserved.",
-                    L"Edit Config", MB_OK | MB_ICONERROR);
+        showSystemMessage(window_, L"The default configuration could not be loaded. Your text has been preserved.",
+                          L"Edit Config", SystemDialogIcon::error);
         return;
     }
     try {
@@ -224,8 +225,8 @@ void EditorWindow::reset() {
         KillTimer(window_, kResetTimer);
         resetTask_.reset();
         updateEnabled();
-        MessageBoxW(window_, L"The default configuration could not be loaded. Your text has been preserved.",
-                    L"Edit Config", MB_OK | MB_ICONERROR);
+        showSystemMessage(window_, L"The default configuration could not be loaded. Your text has been preserved.",
+                          L"Edit Config", SystemDialogIcon::error);
     }
 }
 void EditorWindow::pollReset() {
@@ -237,7 +238,7 @@ void EditorWindow::pollReset() {
     if (task->generation != generation_) return;
     if (!task->error.empty()) {
         const auto message = task->error + L"\n\nYour text has been preserved.";
-        MessageBoxW(window_, message.c_str(), L"Edit Config", MB_OK | MB_ICONERROR);
+        showSystemMessage(window_, message.c_str(), L"Edit Config", SystemDialogIcon::error);
         return;
     }
     setContent(task->document);
@@ -405,19 +406,19 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
                 text.resize(static_cast<std::size_t>(length));
                 const auto utf8 = narrow(text);
                 if (!text.empty() && utf8.empty()) {
-                    MessageBoxW(window, L"The edited text contains an invalid Unicode sequence. Correct it before saving.", L"Edit Config", MB_OK | MB_ICONERROR);
+                    showSystemMessage(window, L"The edited text contains an invalid Unicode sequence. Correct it before saving.", L"Edit Config", SystemDialogIcon::error);
                     return 0;
                 }
                 auto document = self->document_.edited(utf8, SendMessageW(self->field_, EM_GETMODIFY, 0, 0) != 0);
                 if (!document) {
-                    MessageBoxW(window, L"Enter a complete JSON string literal, including its surrounding quotes. The file has not been changed.", L"Edit Config", MB_OK | MB_ICONERROR);
+                    showSystemMessage(window, L"Enter a complete JSON string literal, including its surrounding quotes. The file has not been changed.", L"Edit Config", SystemDialogIcon::error);
                     return 0;
                 }
                 const auto save = self->save_;
                 const auto generation = self->generation_;
                 if (save(*document) && self->window_ && generation == self->generation_ && !self->endingSession_) {
-                    MessageBoxW(window, L"The configuration was stored. It takes effect on the next connection attempt.",
-                                L"Edit Config", MB_OK | MB_ICONINFORMATION);
+                    showSystemMessage(window, L"The configuration was stored. It takes effect on the next connection attempt.",
+                                      L"Edit Config", SystemDialogIcon::information);
                     DestroyWindow(window);
                 }
                 return 0;

@@ -1,6 +1,8 @@
 // Version, description, manifest and icon resource shared by every executable,
 // plan_client.md chapter 5.
 
+// Define RT_MANIFEST as numeric resource type 24, not a named resource.
+#include <windows.h>
 #include <winver.h>
 
 #define PHPVPN_RC_MANIFEST_ID 1

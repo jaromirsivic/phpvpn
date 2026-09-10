@@ -43,6 +43,7 @@ phpvpn_add_version_resource(phpvpn-cli "phpvpn console client" "phpvpn" "phpvpn.
 add_executable(phpvpn-tray WIN32
     tray/main.cpp
     tray/tray_application.cpp
+    tray/system_dialog.cpp
     tray/window_utils.cpp
     tray/ui_resources.cpp
     tray/ui_controls.cpp
@@ -63,7 +64,7 @@ add_executable(phpvpn-tray WIN32
     tray/tray.rc
 )
 target_include_directories(phpvpn-tray PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tray)
-target_link_libraries(phpvpn-tray PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+target_link_libraries(phpvpn-tray PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)
 set_target_properties(phpvpn-tray PROPERTIES OUTPUT_NAME "phpvpn-tray")
 # The tray already declares the three state icons, so the shared resource only
 # adds the version block and the manifest that enables the visual styles.

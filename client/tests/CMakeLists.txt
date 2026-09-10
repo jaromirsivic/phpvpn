@@ -47,6 +47,7 @@ add_executable(phpvpn-client-tests
     ../apps/tray/status_reader.cpp
     ../apps/tray/wizard_reader.cpp
     ../apps/tray/tray_application.cpp
+    ../apps/tray/system_dialog.cpp
     ../apps/tray/progress_window.cpp
     ../apps/tray/statistics_window.cpp
     ../apps/tray/editor_window.cpp
@@ -61,7 +62,8 @@ target_include_directories(phpvpn-client-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
     ${CMAKE_SOURCE_DIR}/apps/service
 )
-target_link_libraries(phpvpn-client-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+target_link_libraries(phpvpn-client-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)
+target_link_options(phpvpn-client-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/apps/app.manifest")
 
 add_test(NAME phpvpn-client-tests COMMAND phpvpn-client-tests)
 
@@ -120,6 +122,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         unit/test_wp03_save_windows.cpp
         unit/test_wp05_windows.cpp
         ../apps/tray/tray_application.cpp
+        ../apps/tray/system_dialog.cpp
         ../apps/tray/wizard_reader.cpp
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
@@ -146,6 +149,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ui/tray_ui_tests.cpp
         ui/dev_preview.inc
         ../apps/tray/tray_application.cpp
+        ../apps/tray/system_dialog.cpp
         ../apps/tray/window_utils.cpp
         ../apps/tray/ui_resources.cpp
         ../apps/tray/ui_controls.cpp
