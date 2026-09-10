@@ -404,20 +404,26 @@ PHPVPN_TEST(WP03Windows, StatisticsNativeExactValuesStaleAndFocusScroll) {
     StatisticsWindow stats;
     stats.open(GetModuleHandleW(nullptr), {});
     PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500)), L"-");
+    PHPVPN_CHECK(FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Disconnected)") != nullptr);
     auto s = connected();
     stats.onSnapshot(s, false);
     pump(10);
+    PHPVPN_CHECK(FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Connected)") != nullptr);
     capture(stats.window(), L"statistics.bmp");
     for (auto field : kCounterFields)
         s.counters.*field.member = UINT64_MAX;
     stats.onSnapshot(s, false);
-    for (int i = 0; i < 9; ++i)
-        PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500 + i)),
-                        std::wstring(L"18,446,744,073,709,551,615") + (statisticsFields[i].bytes ? L" B" : L""));
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
+        const auto expected = statisticsFields[i].addCounterIndex != kNoStatisticsCounter
+                                  ? L"36893.49 PB"
+                              : statisticsFields[i].bytes ? L"18446.74 PB" : L"18,446,744,073,709,551,615";
+        PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500 + static_cast<int>(i))), expected);
+    }
     stats.onSnapshot({}, true);
+    PHPVPN_CHECK(FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Connected)") != nullptr);
     SetWindowPos(stats.window(), nullptr, 0, 0, 480, 360, SWP_NOMOVE | SWP_NOZORDER);
-    for (int i = 0; i < 9; ++i) {
-        const auto value = GetDlgItem(stats.window(), 500 + i);
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
+        const auto value = GetDlgItem(stats.window(), 500 + static_cast<int>(i));
         SetFocus(value);
         RECT client{};
         GetClientRect(stats.window(), &client);

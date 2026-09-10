@@ -42,17 +42,15 @@ void StatisticsWindow::open(HINSTANCE instance, const TrayStatus &snapshot, bool
                                    nullptr, instance, nullptr);
         };
         heading_ = label(L"Statistics");
+        connectionStatus_ = label(L"(Disconnected)");
         description_ = label(L"Read-only global service counters for the current VPN connection.");
         freshness_ = label(L"");
         const wchar_t *titles[]{L"Data polling", L"Serialized data", L"IPv4 traffic"};
         for (std::size_t i = 0; i < 3; ++i)
             titles_[i] = label(titles[i]);
-        for (std::size_t i = 0; i < 9; ++i) {
+        for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
             const auto &field = statisticsFields[i];
             labels_[i] = label(field.label);
-            keys_[i] = CreateWindowExW(0, L"EDIT", widen(kCounterFields[field.counterIndex].key).c_str(),
-                                       WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL, 0, 0, 1, 1, window_,
-                                       nullptr, instance, nullptr);
             values_[i] = CreateWindowExW(
                 0, L"EDIT", L"-", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_READONLY | ES_AUTOHSCROLL | ES_RIGHT, 0, 0, 1,
                 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(500 + i)), instance, nullptr);
@@ -87,21 +85,21 @@ void StatisticsWindow::updateResources() {
             SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(role)), TRUE);
     };
     font(heading_, ui::Font::heading);
+    font(connectionStatus_, ui::Font::card);
     font(description_, ui::Font::subtitle);
     font(freshness_, ui::Font::hint);
     for (auto h : titles_)
         font(h, ui::Font::card);
     for (auto h : labels_)
         font(h, ui::Font::label);
-    for (auto h : keys_)
-        font(h, ui::Font::mono);
     for (auto h : values_)
         font(h, ui::Font::counter);
     SendMessageW(window_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(resources_.icon(2)));
 }
 void StatisticsWindow::refresh() {
     bool changed = setText(freshness_, model_.freshness());
-    for (std::size_t i = 0; i < 9; ++i)
+    changed = setText(connectionStatus_, model_.connectionStatus()) || changed;
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i)
         changed = setText(values_[i], model_.value(i)) || changed;
     if (changed || layout_.height == 0)
         layout();
@@ -117,6 +115,10 @@ void StatisticsWindow::layout() {
     HDC dc = GetDC(window_);
     const int width = client.right, margin = scaleForDpi(width < scaleForDpi(760, dpi) ? 16 : 32, dpi);
     StatisticsMetrics metrics;
+    metrics.headingWidth = measureText(dc, resources_.font(ui::Font::heading), L"Statistics", 1, false).width;
+    metrics.statusWidth = std::max(
+        measureText(dc, resources_.font(ui::Font::card), L"(Connected)", 1, false).width,
+        measureText(dc, resources_.font(ui::Font::card), L"(Disconnected)", 1, false).width);
     metrics.descriptionHeight =
         measureText(dc, resources_.font(ui::Font::subtitle),
                     L"Read-only global service counters for the current VPN connection.", width - 2 * margin, true)
@@ -124,13 +126,10 @@ void StatisticsWindow::layout() {
     if (*model_.freshness())
         metrics.freshnessHeight =
             measureText(dc, resources_.font(ui::Font::hint), model_.freshness(), width - 2 * margin, true).height;
-    for (std::size_t i = 0; i < 9; ++i) {
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
         metrics.valueWidths[i] = measureText(dc, resources_.font(ui::Font::counter), model_.value(i), 1, false).width;
         metrics.labelWidths[i] =
             measureText(dc, resources_.font(ui::Font::label), statisticsFields[i].label, 1, false).width;
-        metrics.keyWidths[i] = measureText(dc, resources_.font(ui::Font::mono),
-                                           widen(kCounterFields[statisticsFields[i].counterIndex].key), 1, false)
-                                   .width;
     }
     layout_ = computeStatisticsLayout(width, dpi, metrics);
     ReleaseDC(window_, dc);
@@ -155,13 +154,13 @@ void StatisticsWindow::layout() {
         children.push_back({h, r});
     };
     add(heading_, layout_.heading);
+    add(connectionStatus_, layout_.connectionStatus);
     add(description_, layout_.description);
     add(freshness_, layout_.freshness);
     for (std::size_t i = 0; i < 3; ++i)
         add(titles_[i], layout_.titles[i]);
-    for (std::size_t i = 0; i < 9; ++i) {
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
         add(labels_[i], layout_.rows[i].label);
-        add(keys_[i], layout_.rows[i].key);
         add(values_[i], layout_.rows[i].value);
     }
     positionControls(window_, children);
@@ -181,7 +180,7 @@ LRESULT CALLBACK StatisticsWindow::fieldProcedure(HWND h, UINT m, WPARAM w, LPAR
     if (m == WM_SETFOCUS) {
         RECT client{};
         GetClientRect(self->window_, &client);
-        for (std::size_t i = 0; i < 9; ++i)
+        for (std::size_t i = 0; i < statisticsFields.size(); ++i)
             if (h == self->values_[i])
                 self->scroll(revealScrollPosition(self->scroll_, client.bottom, self->layout_.height,
                                                   self->layout_.rows[i].value));
@@ -225,15 +224,14 @@ LRESULT CALLBACK StatisticsWindow::procedure(HWND window, UINT message, WPARAM w
         HDC dc = reinterpret_cast<HDC>(wParam);
         HWND h = reinterpret_cast<HWND>(lParam);
         auto background = ui::Color::surface, color = ui::Color::text;
-        if (h == self->heading_ || h == self->description_ || h == self->freshness_)
+        if (h == self->heading_ || h == self->connectionStatus_ || h == self->description_ || h == self->freshness_)
             background = ui::Color::background;
         if (h == self->description_)
             color = ui::Color::secondaryText;
         if (h == self->freshness_)
             color = ui::Color::warning;
-        for (auto key : self->keys_)
-            if (key == h)
-                color = ui::Color::secondaryText;
+        if (h == self->connectionStatus_)
+            color = self->model_.connected() ? ui::Color::success : ui::Color::error;
         SetTextColor(dc, self->resources_.color(color));
         SetBkColor(dc, self->resources_.color(background));
         return reinterpret_cast<LRESULT>(self->resources_.brush(background));
@@ -286,10 +284,9 @@ LRESULT CALLBACK StatisticsWindow::procedure(HWND window, UINT message, WPARAM w
         self->window_ = nullptr;
         return 0;
     case WM_NCDESTROY:
-        self->heading_ = self->description_ = self->freshness_ = nullptr;
+        self->heading_ = self->connectionStatus_ = self->description_ = self->freshness_ = nullptr;
         self->titles_ = {};
         self->labels_ = {};
-        self->keys_ = {};
         self->values_ = {};
         self->layout_ = {};
         self->resources_.clear();
@@ -316,14 +313,23 @@ void StatisticsWindow::paint() {
         RECT native{r.left, r.top, r.right, r.bottom};
         FillRect(dc, &native, resources_.brush(ui::Color::separator));
     };
-    for (std::size_t i : {0u, 1u, 3u, 5u, 7u}) {
+    const auto separator = [&](std::size_t i) {
         const auto &row = layout_.rows[i];
-        const int y = std::max(row.key.bottom, row.value.bottom) + scaleForDpi(8, dpi);
+        const int y = std::max(row.label.bottom, row.value.bottom) + scaleForDpi(8, dpi);
         line({row.label.left, y, row.value.right, y + std::max(1, scaleForDpi(1, dpi))});
-    }
+    };
+    for (std::size_t i : {0u, 1u, 3u, 4u})
+        separator(i);
+    if (client.right < scaleForDpi(760, dpi))
+        for (std::size_t i : {6u, 7u, 8u})
+            separator(i);
+    else
+        for (std::size_t i : {6u, 8u})
+            separator(i);
     if (client.right >= scaleForDpi(760, dpi)) {
-        const int x = (layout_.rows[5].value.right + layout_.rows[7].label.left) / 2;
-        line({x, layout_.rows[5].label.top, x + std::max(1, scaleForDpi(1, dpi)), layout_.rows[8].value.bottom});
+        const int x = (layout_.rows[6].value.right + layout_.rows[8].label.left) / 2;
+        line({x, layout_.rows[6].label.top, x + std::max(1, scaleForDpi(1, dpi)),
+              layout_.cards[2].bottom - scaleForDpi(20, dpi)});
     }
     buffer.finish(); EndPaint(window_, &ps);
 }

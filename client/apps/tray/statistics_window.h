@@ -28,9 +28,9 @@ class StatisticsWindow {
     StatisticsModel model_;
     UiResources resources_;
     StatisticsLayout layout_;
-    HWND heading_ = nullptr, description_ = nullptr, freshness_ = nullptr;
+    HWND heading_ = nullptr, connectionStatus_ = nullptr, description_ = nullptr, freshness_ = nullptr;
     std::array<HWND, 3> titles_{};
-    std::array<HWND, 9> labels_{}, keys_{}, values_{};
+    std::array<HWND, 10> labels_{}, values_{};
     int scroll_ = 0, scrollMax_ = 0;
     bool layingOut_ = false;
 };

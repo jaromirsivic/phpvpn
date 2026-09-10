@@ -113,28 +113,46 @@ PHPVPN_TEST(WP03Models, ConfigRetainsOnlyValidatedSavedDetailsIndependentOfActiv
     PHPVPN_CHECK(!consumeProgressConfig(std::move(document)).available);
     PHPVPN_CHECK_EQ(model.view().stage, ProgressStage::succeeded);
 }
-PHPVPN_TEST(WP03Models, StatisticsPreservesExactNineUint64AndStaleSnapshot) {
+PHPVPN_TEST(WP03Models, StatisticsFormatsTenValuesAndPreservesStaleSnapshot) {
     StatisticsModel model;
     PHPVPN_CHECK_EQ(std::wstring(model.freshness()), L"Waiting for service status");
-    for (std::size_t i = 0; i < 9; ++i)
+    PHPVPN_CHECK_EQ(std::wstring(model.connectionStatus()), L"(Disconnected)");
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i)
         PHPVPN_CHECK_EQ(model.value(i), L"-");
     auto s = ready();
     for (std::size_t i = 0; i < 9; ++i)
         s.counters.*kCounterFields[i].member = 1000 + i;
     model.update(s, false);
-    for (std::size_t i = 0; i < 9; ++i)
-        PHPVPN_CHECK_EQ(model.value(i), ui::englishInteger(1000 + statisticsFields[i].counterIndex) +
-                                            (statisticsFields[i].bytes ? L" B" : L""));
+    const std::array<std::wstring, 10> expected{{L"1,001", L"1,002", L"1,000", L"1.00 kB", L"1.00 kB",
+                                                 L"2.01 kB", L"1,005", L"1.01 kB", L"1,006", L"1.01 kB"}};
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i)
+        PHPVPN_CHECK_EQ(model.value(i), expected[i]);
+    PHPVPN_CHECK_EQ(std::wstring(model.connectionStatus()), L"(Connected)");
     model.update({}, true);
-    PHPVPN_CHECK_EQ(model.value(0), L"1,000");
+    PHPVPN_CHECK_EQ(model.value(0), L"1,001");
+    PHPVPN_CHECK_EQ(std::wstring(model.connectionStatus()), L"(Connected)");
     PHPVPN_CHECK_EQ(std::wstring(model.freshness()), L"Service status unavailable. Showing the last received values.");
     for (auto field : kCounterFields)
         s.counters.*field.member = (std::numeric_limits<std::uint64_t>::max)();
     model.update(s, false);
-    for (std::size_t i = 0; i < 9; ++i)
-        PHPVPN_CHECK_EQ(model.value(i),
-                        std::wstring(L"18,446,744,073,709,551,615") + (statisticsFields[i].bytes ? L" B" : L""));
+    for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
+        const auto expectedMaximum = statisticsFields[i].addCounterIndex != kNoStatisticsCounter
+                                         ? L"36893.49 PB"
+                                     : statisticsFields[i].bytes ? L"18446.74 PB"
+                                                                 : L"18,446,744,073,709,551,615";
+        PHPVPN_CHECK_EQ(model.value(i), expectedMaximum);
+    }
     PHPVPN_CHECK_EQ(std::wstring(model.freshness()), L"");
+
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(0), L"0 B");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(999), L"999 B");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(1000), L"1.00 kB");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(1500), L"1.50 kB");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(1000000), L"1.00 MB");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(1234567), L"1.23 MB");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(1000000000), L"1.00 GB");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(999994), L"999.99 kB");
+    PHPVPN_CHECK_EQ(formatStatisticsBytes(999995), L"1.00 MB");
 }
 PHPVPN_TEST(WP03Models, NarrowLayoutsAndMeasuredLongCountersDoNotOverlap) {
     for (int dpi : {96, 120, 144, 192}) {
@@ -148,19 +166,23 @@ PHPVPN_TEST(WP03Models, NarrowLayoutsAndMeasuredLongCountersDoNotOverlap) {
             PHPVPN_CHECK(l.countdown.bottom < l.height);
         }
         StatisticsMetrics metrics;
+        metrics.headingWidth = p(120);
+        metrics.statusWidth = p(150);
         metrics.descriptionHeight = p(48);
         metrics.valueWidths.fill(p(340));
-        metrics.keyWidths.fill(p(270));
         metrics.labelWidths.fill(p(140));
         for (int width : {480, 1000}) {
             const auto l = computeStatisticsLayout(p(width), dpi, metrics);
             for (const auto &r : l.rows) {
-                PHPVPN_CHECK(r.key.bottom <= r.value.top);
+                PHPVPN_CHECK(r.label.bottom <= r.value.top);
                 PHPVPN_CHECK(r.value.right <= p(width));
                 PHPVPN_CHECK(r.value.left < r.value.right);
             }
+            PHPVPN_CHECK(l.heading.right <= l.connectionStatus.left);
             PHPVPN_CHECK(l.cards[0].bottom < l.cards[2].top);
             PHPVPN_CHECK(l.cards[1].bottom < l.cards[2].top);
+            if (width == 1000)
+                PHPVPN_CHECK_EQ(l.cards[0].bottom, l.cards[1].bottom);
         }
     }
 }

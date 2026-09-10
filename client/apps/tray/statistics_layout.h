@@ -5,17 +5,17 @@
 
 namespace phpvpn::tray {
 struct StatisticsRowLayout {
-    Rect label, key, value;
+    Rect label, value;
 };
 struct StatisticsLayout {
-    Rect heading, description, freshness;
+    Rect heading, connectionStatus, description, freshness;
     std::array<Rect, 3> cards, titles;
-    std::array<StatisticsRowLayout, 9> rows;
+    std::array<StatisticsRowLayout, 10> rows;
     int height = 0;
 };
 struct StatisticsMetrics {
-    int descriptionHeight = 24, freshnessHeight = 0;
-    std::array<int, 9> valueWidths{}, keyWidths{}, labelWidths{};
+    int headingWidth = 0, statusWidth = 0, descriptionHeight = 24, freshnessHeight = 0;
+    std::array<int, 10> valueWidths{}, labelWidths{};
 };
 inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const StatisticsMetrics &metrics) {
     const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
@@ -23,7 +23,9 @@ inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const Statis
     const int m = std::min(p(narrow ? 16 : 32), width / 8), pad = p(20), gap = p(24), right = width - m;
     StatisticsLayout l;
     int y = m;
-    l.heading = {m, y, right, y + p(36)};
+    l.heading = {m, y, std::min(right, m + metrics.headingWidth), y + p(36)};
+    l.connectionStatus = {std::min(right, l.heading.right + p(8)), y + p(5),
+                          std::min(right, l.heading.right + p(8) + metrics.statusWidth), y + p(33)};
     y += p(44);
     l.description = {m, y, right, y + metrics.descriptionHeight};
     y += metrics.descriptionHeight + p(24);
@@ -33,16 +35,14 @@ inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const Statis
     }
     const int half = narrow ? right - m : (right - m - gap) / 2;
     auto row = [&](std::size_t i, int left, int top, int available) {
-        const bool stacked =
-            metrics.valueWidths[i] + std::max(metrics.keyWidths[i], metrics.labelWidths[i]) + p(16) > available;
+        const bool stacked = metrics.valueWidths[i] + metrics.labelWidths[i] + p(16) > available;
         auto &r = l.rows[i];
         const int valueWidth = std::min(available, metrics.valueWidths[i] + p(8));
-        r.label = {left, top, left + available - (stacked ? 0 : valueWidth + p(12)), top + p(24)};
-        // Technical keys remain readable/selectable via their native read-only field.
-        r.key = {left, top + p(24), r.label.right, top + p(44)};
-        const int valueTop = stacked ? top + p(48) : top + p(6);
+        r.label = {left, top + (stacked ? 0 : p(6)),
+                   left + available - (stacked ? 0 : valueWidth + p(12)), top + p(stacked ? 24 : 30)};
+        const int valueTop = stacked ? top + p(28) : top;
         r.value = {stacked ? left : left + available - valueWidth, valueTop, left + available, valueTop + p(36)};
-        return stacked ? p(104) : p(60);
+        return stacked ? p(80) : p(52);
     };
     auto card = [&](std::size_t index, int left, int top, int cardWidth, std::size_t first, std::size_t count) {
         l.titles[index] = {left + pad, top + pad, left + cardWidth - pad, top + pad + p(28)};
@@ -53,7 +53,7 @@ inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const Statis
         return next + pad;
     };
     const int first = card(0, m, y, half, 0, 3);
-    const int second = card(1, narrow ? m : m + half + gap, narrow ? first + gap : y, half, 3, 2);
+    const int second = card(1, narrow ? m : m + half + gap, narrow ? first + gap : y, half, 3, 3);
     if (!narrow) {
         const int bottom = std::max(first, second);
         l.cards[0].bottom = l.cards[1].bottom = bottom;
@@ -62,14 +62,14 @@ inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const Statis
     l.titles[2] = {m + pad, y + pad, right - pad, y + pad + p(28)};
     int next = y + pad + p(44), end = next;
     if (narrow) {
-        for (std::size_t i = 5; i < 9; ++i)
+        for (std::size_t i = 6; i < 10; ++i)
             end += row(i, m + pad, end, std::max(1, right - m - 2 * pad));
     } else {
         const int available = (right - m - 2 * pad - gap) / 2;
         int leftEnd = next, rightEnd = next;
-        for (std::size_t i = 5; i < 7; ++i)
+        for (std::size_t i = 6; i < 8; ++i)
             leftEnd += row(i, m + pad, leftEnd, available);
-        for (std::size_t i = 7; i < 9; ++i)
+        for (std::size_t i = 8; i < 10; ++i)
             rightEnd += row(i, m + pad + available + gap, rightEnd, available);
         end = std::max(leftEnd, rightEnd);
     }
