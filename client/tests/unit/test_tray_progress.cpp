@@ -128,6 +128,15 @@ PHPVPN_TEST(TrayProgress, ClosingStopsOnlyLocalReadsAndRemoteDisconnectClosesPen
     disconnected.phase = "idle";
     model.onSnapshot(disconnected, 500);
     PHPVPN_CHECK(model.view().closeRequested);
+    model = ProgressModel{true};
+    model.onSnapshot(TrayStatus{}, 500);
+    model.onTick(999999);
+    PHPVPN_CHECK(!model.view().closeRequested);
+    model.onCommandFailure();
+    disconnected.tunnelReady = "no";
+    model.onSnapshot(disconnected, 1000000);
+    PHPVPN_CHECK_EQ(model.view().stage, ProgressStage::failed);
+    PHPVPN_CHECK(!model.successDeadlineMs());
 }
 
 PHPVPN_TEST(TrayPolling, ProgressAndExtraStatisticsReadNeverMoveFiveSecondDeadlines) {

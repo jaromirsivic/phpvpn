@@ -145,30 +145,55 @@ PHPVPN_TEST(WP05Windows, NativeRowsKeysChildrenAndImmutableTargets) {
     require(window.open(GetModuleHandleW(nullptr),nullptr,contracts_test::document(),"Z:\\synthetic\\config.json","one"));
     const auto root = window.window();
     PHPVPN_CHECK_EQ(text(root),L"Communication contracts");
-    unsigned count = 0; EnumChildWindows(root,[](HWND h,LPARAM p)->BOOL { const auto id=GetDlgCtrlID(h); if(id>=1000 && id<2008) ++*reinterpret_cast<unsigned*>(p); return TRUE; },reinterpret_cast<LPARAM>(&count));
-    PHPVPN_CHECK_EQ(count,1008u); PHPVPN_CHECK(!window.lifecycleSnapshot().dirty);
-    const auto key = field(root,1001); const auto original = text(key);
-    replace(key,std::wstring(65,L'a')); PHPVPN_CHECK_EQ(text(key).size(),65u); PHPVPN_CHECK(IsWindowEnabled(field(root,IDOK)));
-    click(root,1000); PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK)));
+    const auto rowControls = [&] {
+        unsigned count = 0;
+        EnumChildWindows(root,[](HWND h,LPARAM p)->BOOL {
+            const auto id=GetDlgCtrlID(h);
+            if(id>=1000 && id<1080) ++*reinterpret_cast<unsigned*>(p);
+            return TRUE;
+        },reinterpret_cast<LPARAM>(&count));
+        return count;
+    };
+    // The model has 252 peers, while only 20 rows with three controls each
+    // are materialized on the current page. Disabled keys are read-only.
+    PHPVPN_CHECK_EQ(rowControls(),60u); PHPVPN_CHECK(!window.lifecycleSnapshot().dirty);
+    auto key = field(root,1001);
+    PHPVPN_CHECK((GetWindowLongPtrW(key,GWL_STYLE)&ES_READONLY)!=0);
+    replace(key,L"blocked"); PHPVPN_CHECK(text(key).empty());
+    click(root,1000);
+    replace(key,std::wstring(65,L'a')); PHPVPN_CHECK_EQ(text(key).size(),65u);
+    PHPVPN_CHECK(!IsWindowEnabled(field(root,IDOK)));
     replace(key,std::wstring(64,L'a')); PHPVPN_CHECK(IsWindowEnabled(field(root,IDOK)));
-    dialogs::answer(IDNO,[&] { click(root,1002); }); PHPVPN_CHECK_EQ(text(key),std::wstring(64,L'a'));
-    dialogs::answer(IDYES,[&] { click(root,1002); }); PHPVPN_CHECK(text(key)!=std::wstring(64,L'a'));
-    click(root,1003); const auto first = top(L"PhpVpnPasswordSha"); require(first!=nullptr);
-    click(root,1003); const auto second = top(L"PhpVpnPasswordSha"); require(second && first!=second);
+    click(root,1002); const auto first = top(L"PhpVpnPasswordSha"); require(first!=nullptr);
+    click(root,1002); const auto second = top(L"PhpVpnPasswordSha"); require(second && first!=second);
     PHPVPN_CHECK_EQ(text(first),L"Password SHA - Contract 10.99.99.2_10.99.99.3"); PHPVPN_CHECK_EQ(text(first),text(second));
     PHPVPN_CHECK(GetWindowLongPtrW(first,GWL_EXSTYLE)&WS_EX_APPWINDOW); PHPVPN_CHECK(IsWindowEnabled(root));
-    click(root,1007);const auto different=top(L"PhpVpnPasswordSha");
+    click(root,1004); click(root,1006);const auto different=top(L"PhpVpnPasswordSha");
     PHPVPN_CHECK_EQ(text(different),L"Password SHA - Contract 10.99.99.2_10.99.99.4");
     IAccessible* accessible=nullptr;require(SUCCEEDED(AccessibleObjectFromWindow(different,static_cast<DWORD>(OBJID_WINDOW),IID_IAccessible,reinterpret_cast<void**>(&accessible))));
     VARIANT self{};self.vt=VT_I4;self.lVal=CHILDID_SELF;BSTR title=nullptr;require(SUCCEEDED(accessible->get_accName(self,&title)));
     PHPVPN_CHECK_EQ(std::wstring(title,SysStringLen(title)),text(different));SysFreeString(title);accessible->Release();
     replace(field(first,501),L"first"); const auto firstHash=text(field(first,502));
     replace(field(second,501),L"second"); const auto secondHash=text(field(second,502));
-    SetFocus(field(root,2007)); PHPVPN_CHECK_EQ(text(first),text(second));
+    const auto lastPage = FindWindowExW(GetParent(field(root,900)),nullptr,L"BUTTON",L"13");
+    require(lastPage!=nullptr); click(root,GetDlgCtrlID(lastPage));
+    require(until([&] { return rowControls()==36u; }));
+    PHPVPN_CHECK_EQ(text(first),text(second));
     PHPVPN_CHECK_EQ(text(different),L"Password SHA - Contract 10.99.99.2_10.99.99.4");
-    click(first,IDOK); PHPVPN_CHECK_EQ(text(key),firstHash); click(second,IDOK); PHPVPN_CHECK_EQ(text(key),secondHash);
-    click(root,1003); const auto unconfirmed=top(L"PhpVpnPasswordSha"); replace(field(unconfirmed,501),L"discard child");
-    click(root,IDOK); PHPVPN_CHECK(!IsWindow(unconfirmed)&&!IsWindow(different)); require(until([&] { return !window.isOpen(); }));
+    click(first,IDOK); require(until([&] { return rowControls()==60u; }));
+    key=field(root,1001); PHPVPN_CHECK_EQ(text(key),firstHash);
+    click(second,IDOK); PHPVPN_CHECK_EQ(text(key),secondHash);
+    click(root,1004); // Leave the other Password draft unconfirmed and disabled.
+    click(root,1002); const auto unconfirmed=top(L"PhpVpnPasswordSha"); replace(field(unconfirmed,501),L"discard child");
+    window.setConnectionActive(true); dialogs::dialogTexts.clear();
+    dialogs::answer(IDOK,[&] {
+        click(root,IDOK); PHPVPN_CHECK(!IsWindow(unconfirmed)&&!IsWindow(different));
+        require(until([&] { return !window.isOpen(); }));
+    });
+    PHPVPN_CHECK(std::any_of(dialogs::dialogTexts.begin(),dialogs::dialogTexts.end(),[](const auto& value) {
+        return value.find(L"Configuration saved")!=std::wstring::npos;
+    }));
+    PHPVPN_CHECK_EQ(backend.connects.load(),0u); PHPVPN_CHECK_EQ(backend.disconnects.load(),0u);
     PHPVPN_CHECK_EQ(backend.saves.load(),1u); PHPVPN_CHECK_EQ(backend.documents.load(),0u);
     auto saved=ContractsDocument::parse(backend.stored); PHPVPN_CHECK(saved && saved.value()->existingKey(contracts_test::ip("10.99.99.3"))==narrow(secondHash));
     PHPVPN_CHECK_EQ(backend.unexpected.load(),0u);
@@ -241,12 +266,16 @@ PHPVPN_TEST(WP05Windows, ManualLoadSingleReadReopenAndCommonExitNoDiscard) {
 PHPVPN_TEST(WP05Windows, UnknownCheckMatchAndConfirmedRepeatAreExplicit) {
     Backend backend; backend.invalidReply=true;
     ContractsWindow window(backend.pipe); require(window.open(GetModuleHandleW(nullptr),nullptr,backend.stored,"synthetic","one"));
-    click(window.window(),1000); click(window.window(),IDOK); require(until([&] { return window.lifecycleSnapshot().unknown; }));
+    window.setConnectionActive(true); dialogs::dialogTexts.clear();
+    click(window.window(),1000); replace(field(window.window(),1001),std::wstring(64,L'a'));
+    click(window.window(),IDOK); require(until([&] { return window.lifecycleSnapshot().unknown; }));
     PHPVPN_CHECK_EQ(backend.saves.load(),1u); PHPVPN_CHECK_EQ(backend.documents.load(),0u);
+    PHPVPN_CHECK(dialogs::dialogTexts.empty());
     dialogs::answer(IDOK,[&] { click(window.window(),800); require(until([&] { return !window.isOpen(); })); });
     PHPVPN_CHECK_EQ(backend.documents.load(),1u); PHPVPN_CHECK_EQ(backend.saves.load(),1u);
     backend.publish=false; require(window.open(GetModuleHandleW(nullptr),nullptr,contracts_test::document(),"synthetic","two"));
-    replace(field(window.window(),1001),std::wstring(64,L'c')); click(window.window(),1000); click(window.window(),IDOK);
+    window.setConnectionActive(false);
+    click(window.window(),1000); replace(field(window.window(),1001),std::wstring(64,L'c')); click(window.window(),IDOK);
     require(until([&] { return window.lifecycleSnapshot().unknown; })); click(window.window(),800);
     require(until([&] { return IsWindowVisible(field(window.window(),801))!=FALSE; }));
     PHPVPN_CHECK_EQ(backend.saves.load(),2u); backend.invalidReply=false; backend.publish=true;

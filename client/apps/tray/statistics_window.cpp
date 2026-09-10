@@ -6,6 +6,7 @@
 namespace phpvpn::tray {
 namespace {
 constexpr wchar_t kClass[] = L"PhpVpnStatistics";
+constexpr UINT_PTR kDurationTimer = 1;
 bool setText(HWND window, const std::wstring &value) {
     const int n = GetWindowTextLengthW(window);
     std::wstring old(n + 1, L'\0');
@@ -57,6 +58,7 @@ void StatisticsWindow::open(HINSTANCE instance, const TrayStatus &snapshot, bool
             SetWindowSubclass(values_[i], fieldProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
         }
         updateResources();
+        SetTimer(window_, kDurationTimer, 1000, nullptr);
     }
     model_.update(snapshot, unavailable);
     refresh();
@@ -117,7 +119,7 @@ void StatisticsWindow::layout() {
     StatisticsMetrics metrics;
     metrics.headingWidth = measureText(dc, resources_.font(ui::Font::heading), L"Statistics", 1, false).width;
     metrics.statusWidth = std::max(
-        measureText(dc, resources_.font(ui::Font::card), L"(Connected)", 1, false).width,
+        measureText(dc, resources_.font(ui::Font::card), model_.connectionStatus(), 1, false).width,
         measureText(dc, resources_.font(ui::Font::card), L"(Disconnected)", 1, false).width);
     metrics.descriptionHeight =
         measureText(dc, resources_.font(ui::Font::subtitle),
@@ -199,6 +201,9 @@ LRESULT CALLBACK StatisticsWindow::procedure(HWND window, UINT message, WPARAM w
     if (!self)
         return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
+    case WM_TIMER:
+        if (wParam == kDurationTimer) self->refresh(); // Local text only, no IPC.
+        return 0;
     case WM_PAINT:
         self->paint();
         return 0;
@@ -281,6 +286,7 @@ LRESULT CALLBACK StatisticsWindow::procedure(HWND window, UINT message, WPARAM w
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        KillTimer(window, kDurationTimer);
         self->window_ = nullptr;
         return 0;
     case WM_NCDESTROY:

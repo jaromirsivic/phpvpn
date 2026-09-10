@@ -1096,6 +1096,7 @@ PHPVPN_TEST(runtime, connected_failure_keeps_successes_and_disconnect_closes_acc
     PHPVPN_REQUIRE_OK(fixture.engine.connect());
     PHPVPN_CHECK(dataGate.await());
     const auto before = fixture.engine.status();
+    PHPVPN_CHECK(before.connectionStartedAtUtc.has_value());
     PHPVPN_CHECK_EQ(before.counters.dataPollsTotal, std::uint64_t(2));
     PHPVPN_CHECK_EQ(before.counters.serializedDataResponseBodyBytes, fixture.transport.dataResponseBytes.load());
     PHPVPN_REQUIRE_OK(fixture.engine.connect());
@@ -1115,13 +1116,21 @@ PHPVPN_TEST(runtime, connected_failure_keeps_successes_and_disconnect_closes_acc
     dataGate.release();
     PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::recovering; }));
     const auto failed = fixture.engine.status();
+    PHPVPN_CHECK_EQ(failed.connectionStartedAtUtc, before.connectionStartedAtUtc);
     PHPVPN_CHECK(allChecks(failed, CheckpointResult::success, CheckpointResult::success, CheckpointResult::success));
     PHPVPN_CHECK_EQ(failed.lastError->code, std::string("communication_failed"));
     PHPVPN_CHECK_EQ(failed.counters.serializedDataResponseBodyBytes, before.counters.serializedDataResponseBodyBytes + 73);
+    fixture.clock.now += 10000;
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::connected; }));
+    PHPVPN_CHECK_EQ(fixture.engine.status().connectionStartedAtUtc, before.connectionStartedAtUtc);
     PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
     PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
     PHPVPN_CHECK_EQ(fixture.engine.status().counters.serializedDataResponseBodyBytes, std::uint64_t(0));
     PHPVPN_CHECK_EQ(fixture.engine.diagnostics().counters.dataPollsTotal, std::uint64_t(0));
+    PHPVPN_CHECK(!fixture.engine.status().connectionStartedAtUtc);
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::connected; }));
+    PHPVPN_CHECK(fixture.engine.status().connectionStartedAtUtc != before.connectionStartedAtUtc);
 }
 
 PHPVPN_TEST(runtime, disconnect_cancels_inflight_bootstrap_and_new_connect_resets) {

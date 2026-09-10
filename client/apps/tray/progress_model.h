@@ -31,6 +31,8 @@ struct ProgressView {
 
 class ProgressModel {
   public:
+    explicit ProgressModel(bool disconnect = false) : disconnect_(disconnect) {}
+    void onCommandFailure();
     void onSnapshot(const TrayStatus &status, std::int64_t nowMs);
     void onTick(std::int64_t nowMs);
     // Called once after the visible success heading has actually painted.
@@ -42,6 +44,7 @@ class ProgressModel {
 
   private:
     ProgressView view_;
+    bool disconnect_ = false;
     std::optional<std::int64_t> successDeadlineMs_;
 };
 } // namespace phpvpn::tray

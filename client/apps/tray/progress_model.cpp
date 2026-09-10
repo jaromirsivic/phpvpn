@@ -30,6 +30,19 @@ void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/)
     view_.statusUnavailable = !status.valid;
     if (!status.valid)
         return; // Delivery failure is not a bootstrap result.
+    if (disconnect_) {
+        // The reply can still carry the previous connection's error while the
+        // accepted Disconnect waits for teardown. Keep observing the service.
+        const bool failed = status.phase != "stopping" &&
+            (status.state == "error" || (status.state == "disconnected" && status.hasError));
+        view_.errorCode = failed ? "disconnect_unconfirmed" : "";
+        if (status.state == "disconnected" && status.phase == "idle" &&
+            status.tunnelReady == "no" && !status.hasError) {
+            view_.stage = ProgressStage::succeeded;
+            view_.shield = Shield::green;
+        }
+        return;
+    }
     view_.serverUrl = status.serverUrl;
     view_.serverSecret = status.serverSecret;
     view_.accessKey = status.accessKey;
@@ -46,6 +59,12 @@ void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/)
     } else if (status.state == "disconnected" && status.phase == "idle") {
         view_.closeRequested = true;
     }
+}
+void ProgressModel::onCommandFailure() {
+    if (!disconnect_ || view_.stage != ProgressStage::connecting || view_.closeRequested) return;
+    view_.stage = ProgressStage::failed;
+    view_.shield = Shield::grey;
+    view_.errorCode = "disconnect_unconfirmed";
 }
 void ProgressModel::onSuccessPresented(std::int64_t nowMs) {
     if (view_.stage != ProgressStage::succeeded || view_.closeRequested || successDeadlineMs_ || nowMs < 0)

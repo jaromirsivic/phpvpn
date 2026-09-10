@@ -44,7 +44,7 @@ TrayApplication::TrayApplication(TrayRuntime runtime)
       statusReader_(runtime_.pipeName), commands_(runtime_.pipeName),
       disconnect_(runtime_.pipeName), info_(runtime_.pipeName), config_(runtime_.pipeName),
       editor_(runtime_.pipeName), infoWindow_(runtime_.pipeName), wizard_(runtime_.pipeName),
-      contracts_(runtime_.pipeName), progress_(runtime_.pipeName) {}
+      contracts_(runtime_.pipeName), progress_(runtime_.pipeName), disconnectProgress_(runtime_.pipeName) {}
 TrayApplication::~TrayApplication() {
     endSession();
     commands_.stop(); disconnect_.stop(); info_.stop(); config_.stop(); statusReader_.stop();
@@ -94,6 +94,7 @@ int TrayApplication::run() {
         if (editor_.translate(message)) continue;
         if (infoWindow_.translate(message) || wizard_.translate(message)) continue;
         if (progress_.translate(message) || statistics_.translate(message)) continue;
+        if (disconnectProgress_.translate(message)) continue;
         if (contracts_.translate(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
@@ -210,8 +211,24 @@ void TrayApplication::updateIcon() {
     shellIcon_.publish(window_, kTrayMessage, resources_.icon(state), runtime_.tooltipOverride.empty() ? tip : runtime_.tooltipOverride);
 }
 void TrayApplication::startCommand(IpcCommand command, const std::string& payload) {
+    if (endingSession_ || exitRequested_) return;
+    if ((command == IpcCommand::connect || command == IpcCommand::disconnect) &&
+        disconnectProgress_.disconnectPending()) {
+        reactivateWindow(disconnectProgress_.window());
+        return;
+    }
     if (command == IpcCommand::disconnect) {
         if (!disconnect_.request(command, {}, window_, kDisconnectMessage)) showError(L"Disconnect is already being processed. Waiting for its result.");
+        else {
+            disconnectPending_ = true;
+            connectSuperseded_ = pendingCommand_ == IpcCommand::connect;
+            progress_.endSession();
+            disconnectProgress_.open(instance_, true);
+        }
+        return;
+    }
+    if (command == IpcCommand::connect && disconnectPending_) {
+        showError(L"Disconnect is already being processed. Waiting for its result.");
         return;
     }
     if (pendingCommand_) { showError(L"A configuration command is already being processed. Wait for its result and choose this action again."); return; }
@@ -248,6 +265,11 @@ void TrayApplication::finishCommand() {
     if (!response || !pendingCommand_) return;
     const auto command = *pendingCommand_;
     pendingCommand_.reset();
+    if (command == IpcCommand::connect && connectSuperseded_) {
+        connectSuperseded_ = false;
+        statusReader_.stop(); statusReader_.request(window_, kStatusMessage);
+        return;
+    }
     // These extra reads do not restart or replace the periodic tray timer.
     if (command == IpcCommand::connect || command == IpcCommand::disconnect) {
         // Discard any read initiated before the command. It may otherwise
@@ -382,8 +404,13 @@ void TrayApplication::finishConfigAction() {
 }
 void TrayApplication::finishDisconnect() {
     auto response = disconnect_.take(); if (!response) return;
+    disconnectPending_ = false;
     const auto status = parseStatusResponse(*response);
-    if (!status.valid) { showError(L"The service did not confirm Disconnect. Try Disconnect again or check the service status."); return; }
+    disconnectProgress_.onDisconnectReply(status);
+    if (!status.valid) {
+        if (!disconnectProgress_.window()) showError(L"The service did not confirm Disconnect. Try Disconnect again or check the service status.");
+        return;
+    }
     onSnapshot(status); progress_.onSnapshot(status);
     statusReader_.stop(); statusReader_.request(window_, kStatusMessage);
 }
@@ -447,6 +474,7 @@ void TrayApplication::endSession() {
     pendingCommand_.reset(); configAction_.reset(); saveOperation_.reset();
     editor_.endSession(); wizard_.endSession(); contracts_.endSession();
     progress_.endSession(); infoWindow_.endSession();
+    disconnectProgress_.endSession();
     if (statistics_.window()) DestroyWindow(statistics_.window());
     shellIcon_.remove();
     if (window_) DestroyWindow(window_);

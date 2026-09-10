@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <optional>
 
 namespace phpvpn::tray {
 
@@ -50,6 +51,7 @@ struct TrayStatus {
     std::string errorDescription;
     bool errorRecoverable = false;
     TrafficCountersView counters;
+    std::optional<std::int64_t> connectionStartedAtUtcMs;
     bool valid = false;
 };
 

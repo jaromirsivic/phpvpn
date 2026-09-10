@@ -298,11 +298,19 @@ void ContractsWindow::save(bool repeat) {
     }
     auto prepared = controller_.prepare(repeat);
     if (!prepared) { refresh(); return; }
+    notifyAfterSave_ = connectionActive_ && controller_.model()->dirty();
     closeChildren(); controller_.dispatch(window_, resultMessage); refresh();
 }
 void ContractsWindow::poll() {
     const auto event = controller_.poll();
-    if (event == ContractsEvent::saved) { endSession(); ending_ = false; return; }
+    if (event == ContractsEvent::saved) {
+        const auto before = lifecycleSnapshot();
+        if (notifyAfterSave_)
+            showSystemMessage(window_, L"Your changes have been saved. Disconnect and connect again to apply them.",
+                L"Configuration saved", SystemDialogIcon::information, L"Configuration saved");
+        if (window_ && lifecycleSnapshot() == before) { endSession(); ending_ = false; }
+        return;
+    }
     if (event == ContractsEvent::matched) {
         const auto before = lifecycleSnapshot();
         showSystemMessage(window_, L"The current configuration matches your changes.", L"Communication contracts", SystemDialogIcon::information);

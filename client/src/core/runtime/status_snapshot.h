@@ -43,6 +43,7 @@ struct StatusSnapshot {
     ConnectionState state = ConnectionState::disconnected;
     ConnectionPhase phase = ConnectionPhase::idle;
     std::string stateChangedAtUtc;
+    std::optional<std::string> connectionStartedAtUtc;
     CheckpointResult serverUrlCheck = CheckpointResult::pending;
     CheckpointResult serverSecretCheck = CheckpointResult::pending;
     CheckpointResult accessKeyCheck = CheckpointResult::pending;

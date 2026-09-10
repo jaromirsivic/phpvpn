@@ -93,6 +93,9 @@ private:
     WizardWindow wizard_;
     ContractsWindow contracts_;
     ProgressWindow progress_;
+    ProgressWindow disconnectProgress_;
+    bool connectSuperseded_ = false;
+    bool disconnectPending_ = false;
     StatisticsWindow statistics_;
 };
 

@@ -71,6 +71,9 @@ PHPVPN_TEST(TrayStatus, RejectsInvalidEnumsVersionsAndMalformedError) {
     member(status(document), "stateChangedAt") = JsonValue::makeString("not-a-time");
     PHPVPN_CHECK(!parseStatusResponse(Json::serialize(document)).valid);
     document = fixture();
+    member(status(document), "connectionStartedAt") = JsonValue::makeString("not-a-time");
+    PHPVPN_CHECK(!parseStatusResponse(Json::serialize(document)).valid);
+    document = fixture();
     member(document, "ipcVersion") = JsonValue::makeInteger(2);
     PHPVPN_CHECK(!parseStatusResponse(Json::serialize(document)).valid);
     document = fixture();

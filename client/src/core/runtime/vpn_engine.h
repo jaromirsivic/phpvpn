@@ -152,6 +152,7 @@ private:
     ConnectionState state_ = ConnectionState::disconnected;
     ConnectionPhase phase_ = ConnectionPhase::idle;
     std::string stateChangedAtUtc_;
+    std::optional<std::string> connectionStartedAtUtc_;
     CheckpointResult serverUrlCheck_ = CheckpointResult::pending;
     CheckpointResult serverSecretCheck_ = CheckpointResult::pending;
     CheckpointResult accessKeyCheck_ = CheckpointResult::pending;

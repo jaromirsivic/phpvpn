@@ -335,12 +335,24 @@ PHPVPN_TEST(WP03Windows, OneConfigPerOpenAndIndependentStatusWithNoDisconnect) {
               << ", maximum simultaneous status=" << backend.maximum << ", other=" << backend.other << "\n";
 }
 PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesInBounds) {
+    for (bool disconnect : {false, true}) {
     Backend backend;
     ProgressWindow progress(backend.pipe);
-    progress.open(GetModuleHandleW(nullptr));
-    PHPVPN_CHECK(until([&] { return backend.configs == 1; }));
+    progress.open(GetModuleHandleW(nullptr), disconnect);
+    if (!disconnect) PHPVPN_CHECK(until([&] { return backend.configs == 1; }));
+    else {
+        pump(10);
+        capture(progress.window(), L"disconnect-waiting.bmp");
+        SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+        PHPVPN_CHECK(progress.window() != nullptr);
+        progress.onDisconnectReply(connected());
+        progress.onSnapshot({});
+        PHPVPN_CHECK_EQ(progress.model().view().stage, ProgressStage::connecting);
+    }
     ShowWindow(progress.window(), SW_MINIMIZE);
-    progress.onSnapshot(connected());
+    auto completed = connected();
+    if (disconnect) { completed.state = "disconnected"; completed.phase = "idle"; completed.tunnelReady = "no"; }
+    progress.onSnapshot(completed);
     pump(100);
     PHPVPN_CHECK(!progress.model().successDeadlineMs());
     ShowWindow(progress.window(), SW_HIDE);
@@ -352,7 +364,7 @@ PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesIn
     if (!progress.model().successDeadlineMs())
         return;
     const auto first = *progress.model().successDeadlineMs() - 3000;
-    capture(progress.window(), L"connect-success.bmp");
+    capture(progress.window(), disconnect ? L"disconnect-success.bmp" : L"connect-success.bmp");
     bool two = false, one = false;
     const auto limit = GetTickCount64() + 4000;
     while (progress.window() && GetTickCount64() < limit) {
@@ -365,10 +377,11 @@ PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesIn
     PHPVPN_CHECK(!progress.window());
     PHPVPN_CHECK(elapsed >= 3000 && elapsed <= 3500);
     PHPVPN_CHECK(two && one);
-    PHPVPN_CHECK_EQ(backend.configs.load(), 1u);
+    PHPVPN_CHECK_EQ(backend.configs.load(), disconnect ? 0u : 1u);
     PHPVPN_CHECK_EQ(backend.other.load(), 0u);
     std::cout << "WP03 success: get-config=" << backend.configs << ", get-status=" << backend.statuses
               << ", other=" << backend.other << "\n";
+    }
 }
 PHPVPN_TEST(WP03Windows, FailureFreezesAndBadConfigDoesNotBecomeBootstrapFailure) {
     Backend backend;
@@ -406,9 +419,13 @@ PHPVPN_TEST(WP03Windows, StatisticsNativeExactValuesStaleAndFocusScroll) {
     PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500)), L"-");
     PHPVPN_CHECK(FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Disconnected)") != nullptr);
     auto s = connected();
+    s.connectionStartedAtUtcMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() - 254035000;
     stats.onSnapshot(s, false);
     pump(10);
-    PHPVPN_CHECK(FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Connected)") != nullptr);
+    const auto duration = FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Connected for 2d 22h 33m 55s)");
+    PHPVPN_CHECK(duration != nullptr);
+    PHPVPN_CHECK(until([&] { return windowText(duration) != L"(Connected for 2d 22h 33m 55s)"; }, 2200));
     capture(stats.window(), L"statistics.bmp");
     for (auto field : kCounterFields)
         s.counters.*field.member = UINT64_MAX;
@@ -420,7 +437,7 @@ PHPVPN_TEST(WP03Windows, StatisticsNativeExactValuesStaleAndFocusScroll) {
         PHPVPN_CHECK_EQ(windowText(GetDlgItem(stats.window(), 500 + static_cast<int>(i))), expected);
     }
     stats.onSnapshot({}, true);
-    PHPVPN_CHECK(FindWindowExW(stats.window(), nullptr, L"STATIC", L"(Connected)") != nullptr);
+    PHPVPN_CHECK(windowText(duration).starts_with(L"(Connected for 2d 22h 33m "));
     SetWindowPos(stats.window(), nullptr, 0, 0, 480, 360, SWP_NOMOVE | SWP_NOZORDER);
     for (std::size_t i = 0; i < statisticsFields.size(); ++i) {
         const auto value = GetDlgItem(stats.window(), 500 + static_cast<int>(i));

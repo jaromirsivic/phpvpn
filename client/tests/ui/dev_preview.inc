@@ -105,6 +105,10 @@ struct DevBackend : Backend {
             case IpcCommand::get_status: ++statuses; if (unavailable) return {}; break;
             default: ++unexpected; return {};
             }
+            if (status.state == ConnectionState::connected && !status.connectionStartedAtUtc)
+                status.connectionStartedAtUtc = status.stateChangedAtUtc;
+            if (status.state == ConnectionState::connecting || status.state == ConnectionState::disconnected)
+                status.connectionStartedAtUtc.reset();
             return IpcProtocol::buildStatusResponse(request->requestId, status);
         }
         if (auto request = WizardIpc::parseRequest(bytes)) {

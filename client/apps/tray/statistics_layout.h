@@ -27,6 +27,10 @@ inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const Statis
     l.connectionStatus = {std::min(right, l.heading.right + p(8)), y + p(5),
                           std::min(right, l.heading.right + p(8) + metrics.statusWidth), y + p(33)};
     y += p(44);
+    if (l.heading.right + p(8) + metrics.statusWidth > right) {
+        l.connectionStatus = {m, y, right, y + p(28)};
+        y += p(36);
+    }
     l.description = {m, y, right, y + metrics.descriptionHeight};
     y += metrics.descriptionHeight + p(24);
     if (metrics.freshnessHeight) {

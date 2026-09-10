@@ -13,7 +13,11 @@ class ProgressWindow {
   public:
     explicit ProgressWindow(std::wstring pipeName) : reader_(pipeName), detailsReader_(std::move(pipeName)) {}
     ~ProgressWindow();
-    void open(HINSTANCE instance);
+    void open(HINSTANCE instance, bool disconnect = false);
+    void onDisconnectReply(const TrayStatus& snapshot);
+    bool disconnectPending() const {
+        return window_ && disconnect_ && model_.view().stage == ProgressStage::connecting;
+    }
     void endSession();
     void onSnapshot(const TrayStatus &snapshot);
     bool translate(MSG &message) const;
@@ -46,5 +50,6 @@ class ProgressWindow {
          countdown_ = nullptr;
     int scroll_ = 0, scrollMax_ = 0;
     bool readPending_ = false, layingOut_ = false;
+    bool disconnect_ = false, waitingForReply_ = false;
 };
 } // namespace phpvpn::tray

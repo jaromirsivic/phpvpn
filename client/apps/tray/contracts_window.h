@@ -76,5 +76,6 @@ private:
     std::wstring localError_;
     std::wstring saveText_ = L"Save";
     bool validationNotice_ = false;
+    bool notifyAfterSave_ = false;
 };
 } // namespace phpvpn::tray

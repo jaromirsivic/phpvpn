@@ -176,6 +176,8 @@ std::string IpcProtocol::buildStatusResponse(std::string_view requestId,
     status.emplace_back("state", JsonValue::makeString(connectionStateName(snapshot.state)));
     status.emplace_back("phase", JsonValue::makeString(connectionPhaseName(snapshot.phase)));
     status.emplace_back("stateChangedAt", JsonValue::makeString(snapshot.stateChangedAtUtc));
+    status.emplace_back("connectionStartedAt", snapshot.connectionStartedAtUtc
+        ? JsonValue::makeString(*snapshot.connectionStartedAtUtc) : JsonValue::makeNull());
     status.emplace_back("serverUrlCheck", JsonValue::makeString(checkpointResultName(snapshot.serverUrlCheck)));
     status.emplace_back("serverSecretCheck", JsonValue::makeString(checkpointResultName(snapshot.serverSecretCheck)));
     status.emplace_back("accessKeyCheck", JsonValue::makeString(checkpointResultName(snapshot.accessKeyCheck)));

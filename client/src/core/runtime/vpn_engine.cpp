@@ -257,6 +257,8 @@ void VpnEngine::setState(ConnectionState state, ConnectionPhase phase) {
     state_ = state;
     phase_ = phase;
     stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
+    if (state == ConnectionState::connected && !connectionStartedAtUtc_)
+        connectionStartedAtUtc_ = stateChangedAtUtc_;
 }
 
 void VpnEngine::setPhase(ConnectionPhase phase) {
@@ -503,6 +505,7 @@ void VpnEngine::runNetworkThread() {
                 serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = CheckpointResult::pending;
                 packetsReceived_ = packetsSent_ = 0;
                 state_ = ConnectionState::disconnected;
+                connectionStartedAtUtc_.reset();
                 phase_ = ConnectionPhase::idle;
                 stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
             }
@@ -518,6 +521,7 @@ void VpnEngine::runNetworkThread() {
                 packetsReceived_ = packetsSent_ = 0;
                 lastError_.reset();
                 state_ = ConnectionState::connecting;
+                connectionStartedAtUtc_.reset();
                 connectCommandPending_ = false;
                 phase_ = ConnectionPhase::health;
                 stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
@@ -638,6 +642,7 @@ void VpnEngine::runNetworkThread() {
         counters_.reset();
         serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = CheckpointResult::pending;
         state_ = ConnectionState::disconnected;
+        connectionStartedAtUtc_.reset();
         phase_ = ConnectionPhase::idle;
         stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
         connectCommandPending_ = false;
@@ -652,6 +657,7 @@ StatusSnapshot VpnEngine::status() const {
     snapshot.state = state_;
     snapshot.phase = phase_;
     snapshot.stateChangedAtUtc = stateChangedAtUtc_;
+    snapshot.connectionStartedAtUtc = connectionStartedAtUtc_;
     snapshot.serverUrlCheck = serverUrlCheck_;
     snapshot.serverSecretCheck = serverSecretCheck_;
     snapshot.accessKeyCheck = accessKeyCheck_;

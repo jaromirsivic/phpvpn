@@ -1,6 +1,7 @@
 #pragma once
 #include "status_model.h"
 #include "ui_style.h"
+#include <chrono>
 
 namespace phpvpn::tray {
 inline constexpr std::size_t kNoStatisticsCounter = kCounterFields.size();
@@ -101,6 +102,7 @@ class StatisticsModel {
         if (snapshot.valid) {
             counters_ = snapshot.counters;
             connected_ = snapshot.state == "connected";
+            connectionStartedAtUtcMs_ = snapshot.connectionStartedAtUtcMs;
             valid_ = true;
         }
         stale_ = unavailable || !snapshot.valid;
@@ -123,10 +125,20 @@ class StatisticsModel {
     bool valid() const { return valid_; }
     bool stale() const { return stale_; }
     bool connected() const { return connected_; }
-    const wchar_t *connectionStatus() const { return connected_ ? L"(Connected)" : L"(Disconnected)"; }
+    std::wstring connectionStatus() const {
+        if (!connected_) return L"(Disconnected)";
+        if (!connectionStartedAtUtcMs_) return L"(Connected)";
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto seconds = now > *connectionStartedAtUtcMs_ ? (now - *connectionStartedAtUtcMs_) / 1000 : 0;
+        return L"(Connected for " + std::to_wstring(seconds / 86400) + L"d " +
+            std::to_wstring(seconds / 3600 % 24) + L"h " + std::to_wstring(seconds / 60 % 60) +
+            L"m " + std::to_wstring(seconds % 60) + L"s)";
+    }
 
   private:
     TrafficCountersView counters_;
+    std::optional<std::int64_t> connectionStartedAtUtcMs_;
     bool valid_ = false, stale_ = false, connected_ = false;
 };
 } // namespace phpvpn::tray

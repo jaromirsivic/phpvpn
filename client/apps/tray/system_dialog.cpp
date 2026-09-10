@@ -16,7 +16,7 @@ PCWSTR taskDialogIcon(SystemDialogIcon icon) noexcept {
 
 HRESULT runTaskDialog(HWND owner, const wchar_t* text, const wchar_t* title,
                       TASKDIALOG_COMMON_BUTTON_FLAGS buttons, int defaultButton,
-                      PCWSTR icon, int& selectedButton) noexcept {
+                      PCWSTR icon, int& selectedButton, const wchar_t* heading = nullptr) noexcept {
     TASKDIALOGCONFIG configuration{};
     configuration.cbSize = sizeof(configuration);
     configuration.hwndParent = owner;
@@ -27,6 +27,7 @@ HRESULT runTaskDialog(HWND owner, const wchar_t* text, const wchar_t* title,
     configuration.dwCommonButtons = buttons;
     configuration.pszWindowTitle = title;
     configuration.pszContent = text;
+    configuration.pszMainInstruction = heading;
     configuration.pszMainIcon = icon;
     configuration.nDefaultButton = defaultButton;
     return TaskDialogIndirect(&configuration, &selectedButton, nullptr, nullptr);
@@ -35,10 +36,10 @@ HRESULT runTaskDialog(HWND owner, const wchar_t* text, const wchar_t* title,
 } // namespace
 
 void showSystemMessage(HWND owner, const wchar_t* text, const wchar_t* title,
-                       SystemDialogIcon icon) noexcept {
+                       SystemDialogIcon icon, const wchar_t* heading) noexcept {
     int selectedButton = 0;
     (void)runTaskDialog(owner, text, title, TDCBF_OK_BUTTON, IDOK,
-                        taskDialogIcon(icon), selectedButton);
+                        taskDialogIcon(icon), selectedButton, heading);
 }
 
 bool confirmSystemAction(HWND owner, const wchar_t* text, const wchar_t* title) noexcept {

@@ -29,11 +29,13 @@ ProgressWindow::~ProgressWindow() {
     if (window_)
         DestroyWindow(window_);
 }
-void ProgressWindow::open(HINSTANCE instance) {
+void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
     reader_.stop();
     detailsReader_.stop();
     readPending_ = false;
-    model_ = ProgressModel{};
+    disconnect_ = disconnect;
+    waitingForReply_ = disconnect;
+    model_ = ProgressModel{disconnect};
     details_ = {};
     scroll_ = 0;
     instance_ = instance;
@@ -48,7 +50,7 @@ void ProgressWindow::open(HINSTANCE instance) {
                                   WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, 1, 1, nullptr, nullptr, instance, this);
         if (!window_)
             return;
-        sizeAndCenter(window_, ui::connectClient);
+        sizeAndCenter(window_, disconnect_ ? Size{760, 340} : ui::connectClient);
         auto label = [&](const wchar_t *text) {
             return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 1, 1, window_,
                                    nullptr, instance, nullptr);
@@ -75,18 +77,35 @@ void ProgressWindow::open(HINSTANCE instance) {
             checkIcons_[i] = label(L"");
         }
         panelHeading_ = label(L"");
+        SetWindowSubclass(panelHeading_, headingProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
         panelAction_ = label(L"");
         countdown_ = label(L"");
     }
+    SetWindowTextW(window_, disconnect_ ? L"PHPVPN disconnection" : L"PHPVPN connection");
+    for (auto h : {detailsHeading_, checksHeading_, labels_[0], labels_[1], fields_[0], fields_[1],
+                  checks_[0], checks_[1], checks_[2], checkLabels_[0], checkLabels_[1], checkLabels_[2],
+                  checkIcons_[0], checkIcons_[1], checkIcons_[2]})
+        ShowWindow(h, disconnect_ ? SW_HIDE : SW_SHOW);
     updateResources();
     refresh();
     polling_.start(nowMs());
     SetTimer(window_, kTimer, kProgressIntervalMs, nullptr);
     reactivateWindow(window_);
     // One separate read per local Connect. It cannot change the bootstrap model.
-    if (!detailsReader_.request(IpcCommand::get_config, {}, window_, kDetailsMessage))
+    if (!disconnect_ && !detailsReader_.request(IpcCommand::get_config, {}, window_, kDetailsMessage))
         details_ = {};
     // First status read is due in 500 ms. The command reply seeds the view.
+}
+void ProgressWindow::onDisconnectReply(const TrayStatus& snapshot) {
+    if (!window_ || !disconnect_ || !waitingForReply_) return;
+    waitingForReply_ = false;
+    if (!snapshot.valid) {
+        model_.onCommandFailure();
+        polling_.stop();
+        refresh();
+        return;
+    }
+    onSnapshot(snapshot);
 }
 void ProgressWindow::endSession() {
     // Workers own shared transport state. Revoke delivery before destroying
@@ -134,6 +153,26 @@ void ProgressWindow::refresh() {
     const auto &v = model_.view();
     const bool success = v.stage == ProgressStage::succeeded, failure = v.stage == ProgressStage::failed;
     const auto &error = progressErrorText(v.statusUnavailable ? "status_unavailable" : v.errorCode);
+    if (disconnect_) {
+        const bool issue = failure || v.statusUnavailable || !v.errorCode.empty();
+        setText(heading_, L"Disconnect");
+        setText(description_, L"VPN connection status");
+        setText(panelHeading_, success ? L"Disconnected" : issue ? L"Disconnect not confirmed" : L"Disconnecting...");
+        setText(panelAction_, success ? L"You have been disconnected successfully."
+            : issue ? L"The service did not confirm Disconnect. Try Disconnect again or check the service status."
+                    : L"Please wait while the VPN disconnects.");
+        setText(countdown_, success ? L"Closing in " + std::to_wstring(v.closingSeconds) +
+            (v.closingSeconds == 1 ? L" second" : L" seconds") : L"");
+        ShowWindow(panelHeading_, SW_SHOW);
+        ShowWindow(panelAction_, SW_SHOW);
+        ShowWindow(countdown_, success ? SW_SHOW : SW_HIDE);
+        EnableMenuItem(GetSystemMenu(window_, FALSE), SC_CLOSE,
+            MF_BYCOMMAND | (success || issue ? MF_ENABLED : MF_GRAYED));
+        SendMessageW(window_, WM_SETICON, ICON_SMALL,
+            reinterpret_cast<LPARAM>(resources_.icon(static_cast<std::size_t>(v.shield))));
+        layout();
+        return;
+    }
     setText(heading_, success ? L"Successfully connected" : failure ? L"Connection failed" : L"Connecting");
     setText(description_, success                          ? L"The VPN connection is ready."
                           : failure || v.statusUnavailable ? widen(error.description)
@@ -201,6 +240,15 @@ void ProgressWindow::layout() {
                                     textHeight(description_, ui::Font::subtitle, contentWidth, 24),
                                     textHeight(panelAction_, ui::Font::label, panelWidth, 24), success,
                                     textHeight(panelHeading_, ui::Font::card, panelWidth, 28));
+    if (disconnect_) {
+        // Remove Connect's details/checkpoints card and move the result panel up.
+        const int shift = layout_.panel.top - layout_.card.top;
+        for (auto* r : {&layout_.panel, &layout_.panelHeading, &layout_.panelAction, &layout_.countdown}) {
+            r->top -= shift; r->bottom -= shift;
+        }
+        layout_.height -= shift;
+        layout_.card = layout_.separator = {};
+    }
     ReleaseDC(window_, dc);
     scrollMax_ = std::max(0, layout_.height - static_cast<int>(client.bottom));
     scroll_ = std::clamp(scroll_, 0, scrollMax_);
@@ -277,7 +325,8 @@ LRESULT CALLBACK ProgressWindow::headingProcedure(HWND h, UINT m, WPARAM w, LPAR
         GetClientRect(self->window_, &client);
         MapWindowPoints(self->window_, nullptr, reinterpret_cast<POINT *>(&client), 2);
         if (IntersectRect(&visible, &heading, &client))
-            self->model_.onSuccessPresented(nowMs());
+            if ((!self->disconnect_ && h == self->heading_) || (self->disconnect_ && h == self->panelHeading_))
+                self->model_.onSuccessPresented(nowMs());
     }
     if (m == WM_NCDESTROY)
         RemoveWindowSubclass(h, headingProcedure, 1);
@@ -306,7 +355,8 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
                 setText(self->countdown_,
                         L"Closing in " + std::to_wstring(seconds) + (seconds == 1 ? L" second" : L" seconds"));
             }
-            if (self->polling_.onTimer(nowMs()) && !self->readPending_) {
+            if (!self->waitingForReply_ && self->polling_.onTimer(nowMs()) && !self->readPending_ &&
+                self->model_.view().stage == ProgressStage::connecting) {
                 self->readPending_ = true;
                 self->reader_.request(window, kSnapshotMessage);
             }
@@ -326,6 +376,10 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         return 0;
     case WM_SIZE:
         self->layout();
+        return 0;
+    case WM_GETMINMAXINFO:
+        if (self->disconnect_)
+            setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam), {400, 280});
         return 0;
     case WM_VSCROLL: {
         SCROLLINFO s{sizeof(s), SIF_ALL};
@@ -389,6 +443,11 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
             const bool success = v.stage == ProgressStage::succeeded;
             color = success ? ui::Color::success : ui::Color::error;
             background = success ? ui::Color::successBackground : ui::Color::errorBackground;
+            if (self->disconnect_ && v.stage == ProgressStage::connecting &&
+                !v.statusUnavailable && v.errorCode.empty()) {
+                color = ui::Color::warning;
+                background = ui::Color::warningBackground;
+            }
         }
         SetTextColor(dc, self->resources_.color(color));
         SetBkColor(dc, self->resources_.color(background));
@@ -406,6 +465,8 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         }
         break;
     case WM_CLOSE:
+        if (self->disconnectPending() && !self->model_.view().statusUnavailable &&
+            self->model_.view().errorCode.empty()) return 0;
         self->model_.onClose();
         DestroyWindow(window);
         return 0;
@@ -445,15 +506,16 @@ void ProgressWindow::paint() {
         r.bottom -= scroll_;
         return r;
     };
-    paintCard(dc, shifted(layout_.card), resources_);
+    if (!disconnect_) paintCard(dc, shifted(layout_.card), resources_);
     const auto line = shifted(layout_.separator);
     RECT r{line.left, line.top, line.right, line.bottom};
     FillRect(dc, &r, resources_.brush(ui::Color::separator));
     const auto &v = model_.view();
-    if (v.stage != ProgressStage::connecting || v.statusUnavailable)
+    const bool waiting = disconnect_ && v.stage == ProgressStage::connecting && !v.statusUnavailable && v.errorCode.empty();
+    if (disconnect_ || v.stage != ProgressStage::connecting || v.statusUnavailable)
         paintCard(dc, shifted(layout_.panel), resources_,
-                  v.stage == ProgressStage::succeeded ? ui::Color::successBackground : ui::Color::errorBackground,
-                  v.stage == ProgressStage::succeeded ? ui::Color::successBorder : ui::Color::errorBorder);
+                  v.stage == ProgressStage::succeeded ? ui::Color::successBackground : waiting ? ui::Color::warningBackground : ui::Color::errorBackground,
+                  v.stage == ProgressStage::succeeded ? ui::Color::successBorder : waiting ? ui::Color::warning : ui::Color::errorBorder);
     buffer.finish(); EndPaint(window_, &ps);
 }
 } // namespace phpvpn::tray

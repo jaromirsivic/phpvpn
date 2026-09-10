@@ -23,6 +23,7 @@ StatusSnapshot fixture(std::uint64_t value) {
     StatusSnapshot snapshot;
     snapshot.clientVersion = "1.0.0";
     snapshot.stateChangedAtUtc = "2026-09-04T18:52:31.412Z";
+    snapshot.connectionStartedAtUtc = "2026-09-04T18:52:30.000Z";
     snapshot.state = ConnectionState::recovering;
     snapshot.phase = ConnectionPhase::access_key_check;
     snapshot.serverUrlCheck = CheckpointResult::success;
@@ -46,13 +47,14 @@ PHPVPN_TEST(StatusContract, ServiceToTrayFullUnsignedRangeAndObjectOrder) {
         const auto* status = document.value().find("status");
         PHPVPN_CHECK(status != nullptr);
         if (!status) return;
-        PHPVPN_CHECK_EQ(status->objectValue().size(), 22U);
+        PHPVPN_CHECK_EQ(status->objectValue().size(), 23U);
         PHPVPN_CHECK(status->find("packetsSent") == nullptr);
         PHPVPN_CHECK(status->find("packetsReceived") == nullptr);
         for (int order = 0; order != 2; ++order) {
             const auto parsed = tray::parseStatusResponse(Json::serialize(document.value()));
             PHPVPN_CHECK(parsed.valid);
             PHPVPN_CHECK_EQ(parsed.state, "recovering");
+            PHPVPN_CHECK(parsed.connectionStartedAtUtcMs.has_value());
             PHPVPN_CHECK_EQ(parsed.serverUrl, tray::CheckpointResult::success);
             PHPVPN_CHECK_EQ(parsed.serverSecret, tray::CheckpointResult::success);
             PHPVPN_CHECK_EQ(parsed.accessKey, tray::CheckpointResult::failed);

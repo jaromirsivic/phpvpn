@@ -40,7 +40,7 @@ TrayStatus parseStatusResponse(std::string_view json) {
         !nonemptyString(root.find("requestId")) || !Uuid::isValidV4(root.find("requestId")->stringValue())) return result;
     const auto* status = root.find("status");
     // client.md, get-status: a complete v1 snapshot, never a partial update.
-    if (!status || !status->isObject() || status->objectValue().size() != 22 ||
+    if (!status || !status->isObject() || status->objectValue().size() != 23 ||
         !versionOne(status->find("ipcVersion")) ||
         !nonemptyString(status->find("clientVersion")) ||
         !nonemptyString(status->find("stateChangedAt")) ||
@@ -54,6 +54,16 @@ TrayStatus parseStatusResponse(std::string_view json) {
         if (!stringIn(status->find(name), {"pending", "success", "failed"})) return result;
     }
     if (!Iso8601::isValid(status->find("stateChangedAt")->stringValue())) return result;
+    const auto* started = status->find("connectionStartedAt");
+    if (!started) return result;
+    if (!started->isNull()) {
+        if (!started->isString()) return result;
+        result.connectionStartedAtUtcMs = Iso8601::parse(started->stringValue());
+        if (!result.connectionStartedAtUtcMs) return TrayStatus{};
+    }
+    const auto& state = status->find("state")->stringValue();
+    if ((state == "connected" && !result.connectionStartedAtUtcMs) ||
+        ((state == "disconnected" || state == "connecting") && result.connectionStartedAtUtcMs)) return TrayStatus{};
     for (const auto& field : kCounterFields) {
         const auto* value = status->find(field.key);
         if (!unsignedNumber(value)) return TrayStatus{};
