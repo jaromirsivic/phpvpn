@@ -34,22 +34,22 @@ Aktuální stav rozhodnutí má přednost před historickými komentáři níže
 | ID | Téma | Stav |
 |---|---|---|
 | T01 | Platforma, build, členění a přenosnost | analýza uzavřena, D01 doplněno v client.md (Architektura, Sestavení klienta), TT01 bez nového testu, build a linkerové mapy NOT RUN, viz [T01](T01.md) a [report D01](../../.superpowers/sdd/plan-v003/task-1-report.md) |
-| T02 | Konfigurační schéma, CIDR a runtime limity | uzavřeno, viz T02.md |
-| T03 | Kryptografie, wire parsery a payload IPv4 | uzavřeno, viz T03.md |
+| T02 | Konfigurační schéma, CIDR a runtime limity | D02 doplněno v Konfiguračním souboru, TT02 doplněno a ověřeno, 24 testů bez selhání, viz [report T02](../../.superpowers/sdd/plan-v003/task-2-report.md) |
+| T03 | Kryptografie, wire parsery a payload IPv4 | D03 doplněno, TT03 ověřeno, 57 cílených testů PASS, viz [report úlohy 3](../../.superpowers/sdd/plan-v003/task-3-report.md) |
 | T04 | Časová synchronizace | uzavřeno s R01, viz T04.md |
-| T05 | Fronty, plánování a backpressure | uzavřeno s R02, viz T05.md |
-| T06 | VPN role, bootstrap, recovery a checkpointy | uzavřeno s R03, viz T06.md |
+| T05 | Fronty, plánování a backpressure | D04 doplněno, současné fronty/plánování v TT05 ověřeny, 14 testů PASS bez nového testu, B01–B05 a integrační deferred/error scénáře zůstávají nedodané/neověřené tímto blokem, viz [report úlohy 4](../../.superpowers/sdd/plan-v003/task-4-report.md) |
+| T06 | VPN role, bootstrap, recovery a checkpointy | D05 doplněno, TT06 doplněno o dva lifecycle testy, závěrečných 38 cílených testů PASS, D13 zůstává samostatným krokem R03, viz [T06](T06.md) a [report úlohy 5](../../.superpowers/sdd/plan-v003/task-5-report.md) |
 | T07 | HTTP deadline, rušení a izolovaná diagnostika | uzavřeno, viz T07.md |
 | T08 | Wintun, síťové vlastnictví a reconciliation | analýza dokončena, R04 odloženo bez realizace, viz T08.md |
 | T09 | Instalace, upgrade, rollback a distribuce | uzavřeno s R05, viz T09.md |
-| T10 | IPC framing, dostupnost a bezpečné chyby | uzavřeno, viz T10.md |
+| T10 | IPC framing, dostupnost a bezpečné chyby | D06 doplněno v client.md, Implementační meze lokálního řízení. TT09 bez změny suite, běhy a meze důkazu viz [report úlohy 6](../../.superpowers/sdd/plan-v003/task-6-report.md). |
 | T11 | Provozní čítače a status/diagnostics | uzavřeno, viz T11.md |
 | T12 | ConfigStore, UTF-8, repair a atomická publikace | uzavřeno, viz T12.md |
 | T13 | ACL datového stromu a startup default | uzavřeno s R06, viz T13.md |
 | T14 | Default secret, access klíče a testovací profily | uzavřeno, viz T14.md |
 | T15 | Wizard metadata, identity a aditivní kontrakty | uzavřeno s R07, viz T15.md |
-| T16 | Wizard probe, jednorázové pokusy, epochy a lease | uzavřeno, viz T16.md |
-| T17 | Wizard Finish, receipts a návazné okno | uzavřeno s vazbou na R07, viz T17.md |
+| T16 | Wizard probe, jednorázové pokusy, epochy a lease | D07 doplněno: rozpočty Next 45/75/105 s, IPC start 5000 ms a odkazy. TT13 doplněna nativní UI/pipe/runtime vazba ztracený start → cancel-attempt → opožděný start, 0 HTTP. Cílené testy PASS, viz [report 7](../../.superpowers/sdd/plan-v003/task-7-report.md). |
+| T17 | Wizard Finish, receipts a návazné okno | D07 doplněno: kapacita 128, živá relace a nejméně 600000 ms po uzavření, pending/neterminální záznamy neexpirují jen časem. R07 zachováno. Službové testy PASS, Finish call counts převzaty z historické akceptace. Nový UI běh nedokončen kvůli ovládání TaskDialog v harnessu, viz [report 7](../../.superpowers/sdd/plan-v003/task-7-report.md). |
 | T18 | Menu, singleton oken a nezávislý Disconnect | uzavřeno s vazbou na R07, viz T18.md |
 | T19 | Ikony, sdílený rendering, monitor/DPI a přístupnost | uzavřeno s R08, viz T19.md |
 | T20 | Connect progress a bezpečná prezentace výsledku | uzavřeno, viz T20.md |
@@ -60,8 +60,8 @@ Aktuální stav rozhodnutí má přednost před historickými komentáři níže
 | T25 | Random, Password SHA a cílové identity | uzavřeno, viz T25.md |
 | T26 | Ruční Exit a systémový konec relace | uzavřeno, viz T26.md |
 | T27 | Izolovaný GUI runner | uzavřeno, viz T27.md |
-| T28 | Testovací brány, runtime/visual evidence a dokumentační autorita | uzavřeno, viz T28.md |
-| T29 | Logování a provozní bezpečnost | uzavřeno, viz T29.md |
+| T28 | Testovací brány, runtime/visual evidence a dokumentační autorita | D09 redakčně doplněno v client.md a tray_UX.md, aktuální kontrakt oddělen od datované historie. UX14 zachovává runtime/vizuální meze. Bez nového testu, pouze textové a odkazové kontroly, runtime/visual NOT RUN. TT19 zůstává samostatné, R04 odložené a backpressure nedodané. Viz [T28](T28.md) a [report D09](../../.superpowers/sdd/plan-v003/task-9-report.md). |
+| T29 | Logování a provozní bezpečnost | D08 doplněno v client.md, Logování a diagnostika. TT20 doplněno, izolovaný logger test PASS (1 test, 0 selhání). Event Log a zvláštní startup warning nejsou dodané. Viz [report 8](../../.superpowers/sdd/plan-v003/task-8-report.md). |
 
 ## Pravidla uzavření
 

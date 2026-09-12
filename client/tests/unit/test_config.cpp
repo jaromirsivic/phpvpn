@@ -239,6 +239,56 @@ PHPVPN_TEST(config, rejects_a_non_positive_runtime_limit) {
                       .ok());
 }
 
+PHPVPN_TEST(config, runtime_boundaries_in_full_and_every_repair_mode) {
+    // Explicit numbers pin the documented contract independently of its constants.
+    for (const bool timeout : {false, true}) {
+        for (const bool exceeds : {false, true}) {
+            const std::string runtime = timeout
+                ? "{\"responseTimeoutSeconds\":" + std::to_string(2147483 + exceeds) + "}"
+                : "{\"maxResponseBodyBytes\":4096,\"maxNdjsonLineBytes\":" +
+                    std::to_string(4096 + exceeds) + "}";
+            for (unsigned missing = 0; missing < 4; ++missing) {
+                auto document = documentWith({}, runtime);
+                for (const auto& field : {
+                    std::pair{1U, std::string(R"("virtualIp":"10.99.99.2",)")},
+                    std::pair{2U, std::string(R"(,"accessKey":")") + kAccessKey + "\""}}) {
+                    if (missing & field.first)
+                        document.erase(document.find(field.second), field.second.size());
+                }
+                if (missing == 0) {
+                    ConfigWarnings warnings;
+                    const auto full = parseAndValidateConfig(document, warnings);
+                    if (exceeds) {
+                        PHPVPN_REQUIRE_ERROR(full, ErrorCode::config_invalid_limit);
+                    } else {
+                        PHPVPN_REQUIRE_OK(full);
+                        PHPVPN_CHECK_EQ(full.value()->runtime.responseTimeoutSeconds,
+                            timeout ? 2147483 : 30);
+                        if (!timeout) {
+                            PHPVPN_CHECK_EQ(full.value()->runtime.maxResponseBodyBytes, 4096);
+                            PHPVPN_CHECK_EQ(full.value()->runtime.maxNdjsonLineBytes, 4096);
+                        }
+                    }
+                }
+                const auto repair = analyzeWizardDocument(document);
+                if (exceeds) {
+                    PHPVPN_REQUIRE_ERROR(repair, ErrorCode::config_invalid_limit);
+                } else {
+                    PHPVPN_REQUIRE_OK(repair);
+                    PHPVPN_CHECK_EQ(repair->hasVirtualIp, (missing & 1) == 0);
+                    PHPVPN_CHECK_EQ(repair->hasAccessKey, (missing & 2) == 0);
+                    PHPVPN_CHECK_EQ(repair->context.runtime.responseTimeoutSeconds,
+                        timeout ? 2147483 : 30);
+                    if (!timeout) {
+                        PHPVPN_CHECK_EQ(repair->context.runtime.maxResponseBodyBytes, 4096);
+                        PHPVPN_CHECK_EQ(repair->context.runtime.maxNdjsonLineBytes, 4096);
+                    }
+                }
+            }
+        }
+    }
+}
+
 PHPVPN_TEST(config, rejects_an_invalid_prefix_length) {
     ConfigWarnings warnings;
     const char* invalid[] = {"10.99.99.0/8", "10.99.99.0/30", "10.99.99.0/33", "10.99.99.1/24"};

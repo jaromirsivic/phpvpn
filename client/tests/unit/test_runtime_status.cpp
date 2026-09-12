@@ -2,6 +2,9 @@
 #include "core/config/config_defaults.h"
 #include "core/wizard/probe_client.h"
 #include "core/wizard/wizard_service.h"
+#include "../../apps/tray/wizard_window.h"
+#include "../../apps/tray/window_utils.h"
+#include "platform/windows/ipc_pipe.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -31,6 +34,14 @@ struct VpnEngineTestAccess {
         std::lock_guard<std::mutex> lock(engine.commandMutex_);
         return engine.commands_.size();
     }
+    static std::thread::id networkThread(VpnEngine& engine) {
+        return engine.thread_.get_id();
+    }
+    // Call only before Connect, behind a transport gate, after published
+    // Disconnect, or after shutdown. The network writer owns these pointers.
+    static unsigned tunnelRoles(VpnEngine& engine) {
+        return unsigned(bool(engine.inputWorker_)) + unsigned(bool(engine.outputWorker_));
+    }
 };
 namespace {
 constexpr const char* kConfig = R"({"masterSetup":{"serverUrl":"https://runtime.invalid/secret-path","serverSecret":"runtime-fixture-secret","vpnCidr":"10.99.99.0/24","virtualIp":"10.99.99.2","accessKey":"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},"communicationContracts":{"10.99.99.3":{"payloadKey":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"}}})";
@@ -45,7 +56,8 @@ ClientConfigPtr fixtureConfig() {
 class TestClock final : public Clock {
 public:
     std::atomic<std::int64_t> now{0};
-    std::int64_t monotonicMs() override { return now.load(); }
+    std::atomic<unsigned> reads{0};
+    std::int64_t monotonicMs() override { ++reads; return now.load(); }
     std::int64_t systemUtcMs() override { return *Iso8601::parse(kTimestamp) + now.load(); }
 };
 
@@ -143,6 +155,7 @@ public:
     std::atomic<std::uint64_t> dataRequestBytes{0}, dataResponseBytes{0};
     bool badHealthTag = false, badInfo = false, badMac = false, badPacket = false, badPayloadTag = false;
     bool defer = false;
+    bool swappedPayloadAad = false;
     std::vector<PacketBytes> incoming;
     Status configure(const TransportSettings&) override { return ok(); }
     void cancelCurrentRequest() override { if (cancel) cancel(); }
@@ -215,7 +228,9 @@ private:
             if (badPacket) payload[16] ^= 1;
             std::vector<std::uint8_t> iv(12, 8), ciphertext;
             const auto ivText = Base64Url::encode(iv);
-            const auto aad = dataAad(kMessageId, "10.99.99.3", "10.99.99.2", ivText);
+            const auto aad = swappedPayloadAad
+                ? dataAad(kMessageId, "10.99.99.2", "10.99.99.3", ivText)
+                : dataAad(kMessageId, "10.99.99.3", "10.99.99.2", ivText);
             GcmTag tag{};
             (void)crypto_.aesGcmSeal(config_->contracts.front().payloadKey.span(), iv,
                                    asBytes(aad), payload, ciphertext, tag);
@@ -236,21 +251,48 @@ private:
     ClientConfigPtr config_;
 };
 
+struct TunnelActivity {
+    std::atomic<int> readers{0}, writers{0}, stopped{0}, destroyed{0};
+    std::atomic<bool> distinctThreads{true};
+};
+
 class IdleTunnel final : public Tunnel {
 public:
+    explicit IdleTunnel(TunnelActivity& activity)
+        : activity_(activity), networkThread_(std::this_thread::get_id()) {}
+    ~IdleTunnel() override { ++activity_.destroyed; }
     Result<TunnelReadResult> receive(std::span<std::uint8_t>, std::int64_t timeoutMs) override {
         std::unique_lock<std::mutex> lock(mutex_);
+        if (reader_ == std::thread::id{}) {
+            reader_ = std::this_thread::get_id();
+            ++activity_.readers;
+        }
+        if (reader_ != std::this_thread::get_id() || reader_ == networkThread_ || reader_ == writer_)
+            activity_.distinctThreads.store(false);
         signal_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [&] { return stopped_; });
         return TunnelReadResult{stopped_ ? TunnelReadStatus::stopped : TunnelReadStatus::empty, 0};
     }
-    Status send(std::span<const std::uint8_t>) override { return ok(); }
+    Status send(std::span<const std::uint8_t>) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (writer_ == std::thread::id{}) {
+            writer_ = std::this_thread::get_id();
+            ++activity_.writers;
+        }
+        if (writer_ != std::this_thread::get_id() || writer_ == networkThread_ || writer_ == reader_)
+            activity_.distinctThreads.store(false);
+        return ok();
+    }
     void signalStop() override {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!stopped_) ++activity_.stopped;
         stopped_ = true;
         signal_.notify_all();
     }
     std::uint64_t oversizedReceiveCount() const override { return 0; }
 private:
+    TunnelActivity& activity_;
+    const std::thread::id networkThread_;
+    std::thread::id reader_, writer_;
     std::mutex mutex_;
     std::condition_variable signal_;
     bool stopped_ = false;
@@ -260,6 +302,8 @@ class FakeDriver final : public TunnelDriver {
 public:
     std::atomic<int> starts{0};
     std::atomic<int> loads{0}, opens{0};
+    std::atomic<int> creates{0}, ends{0}, closes{0};
+    TunnelActivity activity;
     bool loaded = false;
     ErrorCode failure = ErrorCode::none;
     Status loadAndVerify(const std::wstring&) override {
@@ -268,15 +312,15 @@ public:
         loaded = true;
         return ok();
     }
-    Result<TunnelAdapterInfo> createAdapter(const std::wstring&, const std::wstring&, const std::wstring&) override { return TunnelAdapterInfo{123, "fixture-adapter", true}; }
+    Result<TunnelAdapterInfo> createAdapter(const std::wstring&, const std::wstring&, const std::wstring&) override { ++creates; return TunnelAdapterInfo{123, "fixture-adapter", true}; }
     Result<TunnelAdapterInfo> openAdapter(const std::wstring&) override {
         ++opens;
         if (!loaded) return Error(ErrorCode::tunnel_library_missing);
         return TunnelAdapterInfo{123, "fixture-adapter", false};
     }
-    Result<std::shared_ptr<Tunnel>> startSession(std::uint32_t) override { ++starts; return std::shared_ptr<Tunnel>(new IdleTunnel); }
-    void endSession() override {}
-    void closeAdapter() override {}
+    Result<std::shared_ptr<Tunnel>> startSession(std::uint32_t) override { ++starts; return std::shared_ptr<Tunnel>(new IdleTunnel(activity)); }
+    void endSession() override { ++ends; }
+    void closeAdapter() override { ++closes; }
     std::uint32_t runningDriverVersion() const override { return 1; }
 };
 
@@ -447,6 +491,102 @@ PHPVPN_TEST(runtime, worker_counts_handoff_retry_and_verified_queue_admission) {
     crypto.failRandom = true;
     PHPVPN_CHECK(!worker.exchangeData(outgoing, incoming, outDrops, inDrops, true).ok());
     PHPVPN_CHECK_EQ(counters.snapshot().dataPollsTotal, countBeforeBuildFailure);
+}
+
+PHPVPN_TEST(runtime, worker_rejects_whole_batch_when_second_packet_has_wrong_addresses) {
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    NetworkWorker worker(crypto, transport, clock);
+    TrafficCounters counters;
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(), &counters));
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
+    DropCounters outDrops, inDrops;
+    // Both headers/checksums are valid. Only the second packet's addresses
+    // disagree with the authenticated incoming record (.3 -> .2).
+    transport.incoming = {packet(40, true), packet(100, false)};
+    for (const auto& bytes : transport.incoming) {
+        Ipv4PacketView view;
+        PHPVPN_CHECK(validateIpv4Packet(bytes, view));
+    }
+    auto result = worker.exchangeData(outgoing, incoming, outDrops, inDrops, false);
+    PHPVPN_REQUIRE_OK(result);
+    PHPVPN_CHECK_EQ(result.value().batchesRejected, std::size_t(1));
+    PHPVPN_CHECK_EQ(result.value().packetsReceived, std::size_t(0));
+    PHPVPN_CHECK_EQ(incoming.statistics().itemCount, std::size_t(0));
+    PHPVPN_CHECK_EQ(incoming.statistics().occupiedBytes, std::int64_t(0));
+    PHPVPN_CHECK_EQ(counters.snapshot().ipv4PacketsReceived, std::uint64_t(0));
+    PHPVPN_CHECK_EQ(counters.snapshot().ipv4BytesReceived, std::uint64_t(0));
+    PHPVPN_CHECK_EQ(inDrops.total(), std::uint64_t(1));
+    PHPVPN_CHECK_EQ(inDrops.totalForReason(DropReason::batch_invalid), std::uint64_t(1));
+}
+
+PHPVPN_TEST(runtime, worker_uses_one_peer_key_in_both_directions_and_binds_aad) {
+    ObservedCrypto crypto;
+    const auto config = fixtureConfig();
+    ScriptedTransport transport(*crypto.actual, config);
+    TestClock clock;
+    NetworkWorker worker(crypto, transport, clock);
+    TrafficCounters counters;
+    PHPVPN_REQUIRE_OK(worker.configure(config, &counters));
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
+    DropCounters outDrops, inDrops;
+    const auto peer = *Ipv4Address::parse("10.99.99.3");
+    DropReason reason{};
+    const auto sent = packet(100, false);
+    const auto received = packet(40, true);
+    PHPVPN_CHECK(outgoing.tryEnqueue(peer, sent, reason));
+    transport.incoming = {received};
+    unsigned verifiedOutgoing = 0;
+    const auto verifyRequest = [&](std::string_view request) {
+        const auto start = request.find('\n') + 1;
+        auto parsed = DataRecord::parse(request.substr(start, request.find('\n', start) - start));
+        PHPVPN_REQUIRE_OK(parsed);
+        const auto& record = parsed.value();
+        PHPVPN_CHECK_EQ(record.src, std::string_view("10.99.99.2"));
+        PHPVPN_CHECK_EQ(record.dst, std::string_view("10.99.99.3"));
+        std::vector<std::uint8_t> iv, tag, ciphertext;
+        PHPVPN_CHECK(Base64Url::decode(record.iv, iv));
+        PHPVPN_CHECK(Base64Url::decode(record.tag, tag));
+        PHPVPN_CHECK(Base64Url::decode(record.ciphertext, ciphertext));
+        // Spell out the wire AAD independently of the production builder.
+        const auto prefix = std::string("PHPVPN-DATA\ndata\n") + std::string(record.messageId);
+        const auto aad = prefix + "\n10.99.99.2\n10.99.99.3\n" + std::string(record.iv);
+        const auto swapped = prefix + "\n10.99.99.3\n10.99.99.2\n" + std::string(record.iv);
+        const auto key = config->contracts.front().payloadKey.span();
+        auto opened = crypto.actual->aesGcmOpen(key, iv, asBytes(aad), ciphertext, tag);
+        PHPVPN_REQUIRE_OK(opened);
+        auto packets = PayloadBatch::decodeAndValidate(opened.value().span(), config->virtualIp, peer);
+        PHPVPN_REQUIRE_OK(packets);
+        PHPVPN_CHECK_EQ(packets.value(), std::vector<PacketBytes>{sent});
+        PHPVPN_CHECK(!crypto.actual->aesGcmOpen(key, iv, asBytes(swapped), ciphertext, tag).ok());
+        ++verifiedOutgoing;
+    };
+    transport.hook = [&](HttpAction action, std::string_view request, int) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data) verifyRequest(request);
+        return {};
+    };
+    auto result = worker.exchangeData(outgoing, incoming, outDrops, inDrops, true);
+    PHPVPN_REQUIRE_OK(result);
+    PHPVPN_CHECK_EQ(verifiedOutgoing, 1u);
+    PHPVPN_CHECK_EQ(result.value().packetsSent, std::size_t(1));
+    PHPVPN_CHECK_EQ(result.value().packetsReceived, std::size_t(1));
+    PHPVPN_CHECK_EQ(incoming.popFront(peer), std::optional<PacketBytes>(received));
+
+    transport.hook = {};
+    transport.swappedPayloadAad = true;
+    // Routing and outer data-mac remain valid, only payload AAD is reversed.
+    result = worker.exchangeData(outgoing, incoming, outDrops, inDrops, false);
+    PHPVPN_REQUIRE_OK(result);
+    PHPVPN_CHECK_EQ(result.value().batchesRejected, std::size_t(1));
+    PHPVPN_CHECK_EQ(result.value().packetsReceived, std::size_t(0));
+    PHPVPN_CHECK_EQ(incoming.statistics().itemCount, std::size_t(0));
+    PHPVPN_CHECK_EQ(counters.snapshot().ipv4PacketsReceived, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(counters.snapshot().ipv4BytesReceived, std::uint64_t(40));
+    PHPVPN_CHECK_EQ(inDrops.total(), std::uint64_t(1));
+    PHPVPN_CHECK_EQ(inDrops.totalForReason(DropReason::payload_tag_invalid), std::uint64_t(1));
 }
 
 PHPVPN_TEST(runtime, worker_accounts_partial_bodies_once_on_every_error) {
@@ -788,6 +928,109 @@ PHPVPN_TEST(wizard_service, cancelled_attempt_prevents_delayed_start_and_busy_se
     auto afterReset = fixture.call(WizardCommand::check_url);
     PHPVPN_CHECK(afterReset.error && afterReset.error->code == "wizard_attempt_closed");
 }
+PHPVPN_TEST(wizard_service, native_lost_start_reply_cancels_attempt_before_delayed_start_without_http) {
+    // Removing WizardWindow's cancel-attempt on IPC failure or the service's
+    // sequence tombstone must break this UI -> pipe -> runtime regression.
+    for (const bool acceptedBeforeReplyLoss : {false, true}) {
+        WizardServiceFixture fixture;
+        std::mutex mutex;
+        std::optional<WizardRequest> delayed, cancellation;
+        unsigned starts = 0, cancels = 0;
+        const auto pipe = L"\\\\.\\pipe\\phpvpn-tt13-" +
+            phpvpn::tray::widen(fixture.runtime.crypto.actual->randomUuidV4().value());
+        IpcPipeServerOptions options; options.pipeName = pipe;
+        IpcPipeServer server([&](std::string_view bytes) {
+            const auto request = WizardIpc::parseRequest(bytes);
+            if (!request) return std::string{};
+            std::lock_guard lock(mutex);
+            if (request->command == WizardCommand::check_url && ++starts == 1) {
+                delayed = *request;
+                // Exercise both an undelivered start and a queued operation
+                // whose acknowledgement is lost before the UI learns its ID.
+                if (acceptedBeforeReplyLoss) fixture.service->handle(*request);
+                return std::string{};
+            }
+            if (request->command == WizardCommand::cancel_attempt) {
+                ++cancels; cancellation = *request;
+            }
+            return fixture.service->handle(*request);
+        }, options);
+        PHPVPN_REQUIRE_OK(server.start());
+        phpvpn::tray::WizardWindow wizard(pipe);
+        PHPVPN_CHECK(wizard.open(GetModuleHandleW(nullptr)));
+        const auto pumpUntil = [&](const std::function<bool()>& predicate) {
+            const auto deadline = GetTickCount64() + 7000;
+            do {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                    if (message.message != WM_QUIT && !wizard.translate(message)) {
+                        TranslateMessage(&message); DispatchMessageW(&message);
+                    }
+                }
+                if (predicate()) return true;
+                Sleep(1);
+            } while (GetTickCount64() < deadline);
+            return false;
+        };
+        HWND window = nullptr;
+        EnumThreadWindows(GetCurrentThreadId(), [](HWND hwnd, LPARAM value) -> BOOL {
+            wchar_t name[80]{}; GetClassNameW(hwnd, name, 80);
+            if (std::wstring_view(name) == L"PhpVpnConfigurationWizard")
+                *reinterpret_cast<HWND*>(value) = hwnd;
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&window));
+        const auto child = [&](int id) {
+            struct Search { int id; HWND found = nullptr; } search{id};
+            EnumChildWindows(window, [](HWND hwnd, LPARAM value) -> BOOL {
+                auto& search = *reinterpret_cast<Search*>(value);
+                if (GetDlgCtrlID(hwnd) == search.id) { search.found = hwnd; return FALSE; }
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&search));
+            return search.found;
+        };
+        PHPVPN_CHECK(window != nullptr);
+        const bool ready = pumpUntil([&] { return child(710) && IsWindowEnabled(child(701)); });
+        PHPVPN_CHECK(ready);
+        if (!ready) { wizard.endSession(); return; }
+        SendMessageW(child(701), BM_CLICK, 0, 0);
+        const bool cancelled = pumpUntil([&] {
+            std::lock_guard lock(mutex); return cancellation.has_value();
+        });
+        PHPVPN_CHECK(cancelled);
+        if (!cancelled) { wizard.endSession(); return; }
+        {
+            std::lock_guard lock(mutex);
+            PHPVPN_CHECK(delayed.has_value());
+            PHPVPN_CHECK_EQ(starts, 1u);
+            PHPVPN_CHECK_EQ(cancels, 1u);
+            PHPVPN_CHECK(cancellation->operationId.empty());
+            PHPVPN_CHECK_EQ(cancellation->sessionId, delayed->sessionId);
+            PHPVPN_CHECK_EQ(cancellation->serviceInstanceId, delayed->serviceInstanceId);
+            PHPVPN_CHECK_EQ(cancellation->clientAttemptId, delayed->clientAttemptId);
+            PHPVPN_CHECK_EQ(cancellation->attemptSequence, delayed->attemptSequence);
+            fixture.runDiagnostic(); // queued cancelled work must never reach HTTP
+            const auto reply = fixture.ask(*delayed);
+            PHPVPN_CHECK(reply.error && reply.error->code == "wizard_attempt_closed");
+            fixture.runDiagnostic(); // would expose an incorrectly accepted late start
+            PHPVPN_CHECK_EQ(fixture.httpCalls, 0u);
+            PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+        }
+        PHPVPN_CHECK(pumpUntil([&] { return child(710) && IsWindowEnabled(child(701)); }));
+        PHPVPN_CHECK(!child(711));
+        // A new explicit UI action is the only way to start fresh HTTP work.
+        SendMessageW(child(701), BM_CLICK, 0, 0);
+        PHPVPN_CHECK(pumpUntil([&] { std::lock_guard lock(mutex); return starts == 2; }));
+        {
+            std::lock_guard lock(mutex);
+            fixture.runDiagnostic();
+            PHPVPN_CHECK_EQ(fixture.httpCalls, 1u);
+        }
+        PHPVPN_CHECK(pumpUntil([&] { return child(711) != nullptr; }));
+        wizard.endSession();
+        server.stop();
+    }
+}
+
 PHPVPN_TEST(wizard_service, finish_requires_exact_evidence_is_idempotent_and_last_complete_save_wins) {
     WizardServiceFixture fixture;
     auto premature = fixture.beginFinish();
@@ -981,6 +1224,169 @@ PHPVPN_TEST(runtime, simultaneous_status_reads_do_not_block_live_verified_packet
     PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 1);
     PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
     PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
+}
+
+PHPVPN_TEST(runtime, lifecycle_keeps_one_network_role_and_recreates_two_io_roles) {
+    Gate bootstrap[3], polls[2];
+    std::atomic<bool> sameNetworkThread{true};
+    EngineFixture fixture;
+    fixture.transport.incoming = {packet(100, true)};
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (std::this_thread::get_id() != VpnEngineTestAccess::networkThread(fixture.engine))
+            sameNetworkThread.store(false);
+        if (call == 1) {
+            bootstrap[action == HttpAction::health ? 0 : action == HttpAction::info ? 1 : 2].block();
+        }
+        if (action == HttpAction::data && (call == 2 || call == 4)) polls[call / 2 - 1].block();
+        return {};
+    };
+    fixture.transport.cancel = [&] {
+        for (auto& gate : bootstrap) gate.release();
+        polls[fixture.transport.dataCalls.load() >= 4 ? 1 : 0].release();
+    };
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), std::thread::id{});
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    const auto networkThread = VpnEngineTestAccess::networkThread(fixture.engine);
+    PHPVPN_CHECK(networkThread != std::thread::id{});
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::disconnected);
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+    PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 0);
+    PHPVPN_REQUIRE_ERROR(fixture.engine.start(), ErrorCode::service_already_running);
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    for (auto& gate : bootstrap) {
+        PHPVPN_CHECK(gate.await());
+        PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+        PHPVPN_CHECK_EQ(fixture.driver.loads.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.creates.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.activity.readers.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.activity.writers.load(), 0);
+        PHPVPN_REQUIRE_OK(fixture.engine.connect());
+        PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), networkThread);
+        gate.release();
+    }
+    for (int cycle = 1; cycle <= 2; ++cycle) {
+        PHPVPN_CHECK(polls[cycle - 1].await());
+        PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::connected);
+        PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), networkThread);
+        PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 2u);
+        PHPVPN_CHECK(eventually([&] {
+            return fixture.driver.activity.readers.load() == cycle && fixture.driver.activity.writers.load() == cycle;
+        }));
+        PHPVPN_CHECK(fixture.driver.activity.distinctThreads.load());
+        PHPVPN_REQUIRE_OK(fixture.engine.connect());
+        PHPVPN_CHECK_EQ(fixture.driver.creates.load(), cycle);
+        PHPVPN_CHECK_EQ(fixture.driver.starts.load(), cycle);
+        PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), cycle);
+        PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), cycle);
+        PHPVPN_CHECK_EQ(fixture.transport.dataCalls.load(), cycle * 2);
+        if (cycle == 1) {
+            PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+            PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
+            PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), networkThread);
+            PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+            PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+            PHPVPN_CHECK_EQ(fixture.driver.closes.load(), 1);
+            PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 1);
+            PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 1);
+            PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+            PHPVPN_REQUIRE_OK(fixture.engine.connect());
+        }
+    }
+    fixture.engine.shutdown();
+    fixture.engine.shutdown();
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), std::thread::id{});
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::disconnected);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.closes.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 2);
+    PHPVPN_CHECK(sameNetworkThread.load());
+}
+
+PHPVPN_TEST(runtime, lifecycle_recovery_tears_down_and_recreates_after_current_backoff) {
+    Gate failedPoll, recoveredPoll;
+    std::atomic<bool> sameNetworkThread{true};
+    EngineFixture fixture;
+    fixture.transport.incoming = {packet(100, true)};
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (std::this_thread::get_id() != VpnEngineTestAccess::networkThread(fixture.engine))
+            sameNetworkThread.store(false);
+        if (action == HttpAction::data && call == 2) {
+            failedPoll.block();
+            return HttpExchangeResult{Error(ErrorCode::transport_timeout), 17};
+        }
+        if (action == HttpAction::health && call >= 2 && call <= 8)
+            return HttpExchangeResult{Error(ErrorCode::transport_timeout), 0};
+        if (action == HttpAction::data && call == 4) recoveredPoll.block();
+        return {};
+    };
+    fixture.transport.cancel = [&] { failedPoll.release(); recoveredPoll.release(); };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    const auto networkThread = VpnEngineTestAccess::networkThread(fixture.engine);
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(failedPoll.await());
+    PHPVPN_CHECK(eventually([&] {
+        return fixture.driver.activity.readers.load() == 1 && fixture.driver.activity.writers.load() == 1;
+    }));
+    failedPoll.release();
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::recovering; }));
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.driver.closes.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 1);
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+
+    // Observe real retries, not a copy of backoffDelayMs. The first failure
+    // advances the ladder to 2 s, consecutive failures saturate at 60 s.
+    // Fake time covers the lower bound and the inclusive +20% jitter bound.
+    const std::int64_t bases[] = {2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000};
+    std::int64_t failedAt = 0;
+    int healthCalls = 1;
+    for (const auto base : bases) {
+        fixture.clock.now.store(failedAt + base - 1);
+        const auto reads = fixture.clock.reads.load();
+        // At least two network-loop passes at this time, with no diagnostic
+        // reads or wall-clock sleep standing in for the fake deadline.
+        PHPVPN_CHECK(eventually([&] { return fixture.clock.reads.load() >= reads + 4; }));
+        PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), healthCalls);
+        PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 1);
+        PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 1);
+        PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), networkThread);
+        PHPVPN_REQUIRE_OK(fixture.engine.connect());
+        failedAt += base + base / 5;
+        fixture.clock.now.store(failedAt);
+        ++healthCalls;
+        if (healthCalls < 9) {
+            PHPVPN_CHECK(eventually([&] {
+                if (fixture.transport.healthCalls.load() != healthCalls) return false;
+                const auto status = fixture.engine.status();
+                return status.state == ConnectionState::recovering && status.phase == ConnectionPhase::idle;
+            }));
+        }
+    }
+    PHPVPN_CHECK(recoveredPoll.await());
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::connected);
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), networkThread);
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 2u);
+    PHPVPN_CHECK_EQ(fixture.driver.creates.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+    PHPVPN_CHECK(eventually([&] {
+        return fixture.driver.activity.readers.load() == 2 && fixture.driver.activity.writers.load() == 2;
+    }));
+    PHPVPN_CHECK(fixture.driver.activity.distinctThreads.load());
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 9);
+    PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), 2);
+    fixture.engine.shutdown();
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), std::thread::id{});
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.closes.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 2);
+    PHPVPN_CHECK(sameNetworkThread.load());
 }
 
 PHPVPN_TEST(runtime, health_syntax_is_published_before_key_derivation) {

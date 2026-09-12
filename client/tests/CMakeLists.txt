@@ -67,6 +67,13 @@ target_link_options(phpvpn-client-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_D
 
 add_test(NAME phpvpn-client-tests COMMAND phpvpn-client-tests)
 
+# Isolate the singleton logger and its temporary filesystem fixture from other suites.
+add_executable(phpvpn-logger-tests unit/harness.cpp unit/test_logger.cpp)
+target_include_directories(phpvpn-logger-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+target_link_libraries(phpvpn-logger-tests PRIVATE phpvpn-core phpvpn-compile-options)
+add_test(NAME phpvpn-logger-tests COMMAND phpvpn-logger-tests)
+set_tests_properties(phpvpn-logger-tests PROPERTIES TIMEOUT 30)
+
 option(PHPVPN_BUILD_RESOURCE_TESTS "Build isolated maximum IPC memory and process-local DNS tests" OFF)
 if(PHPVPN_BUILD_RESOURCE_TESTS)
     add_executable(phpvpn-resource-tests unit/harness.cpp unit/test_ipc_availability_win.cpp
