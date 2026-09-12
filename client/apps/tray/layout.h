@@ -2,10 +2,25 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 namespace phpvpn::tray {
 struct Size { int width = 0; int height = 0; bool operator==(const Size&) const = default; };
 struct Rect { int left = 0; int top = 0; int right = 0; int bottom = 0; bool operator==(const Rect&) const = default; };
 struct Point { int x = 0; int y = 0; bool operator==(const Point&) const = default; };
+enum class FooterSide { leading, trailing };
+struct FooterButtonSpec {
+    int preferredWidth = 0;
+    FooterSide side = FooterSide::trailing;
+    bool visible = true;
+};
+struct ButtonFooterLayout {
+    Rect bounds;
+    std::vector<Rect> buttons;
+    int margin = 0;
+    int gap = 0;
+    int buttonHeight = 0;
+    int rows = 0;
+};
 // Native adapter supplies monitor identity, full bounds, work area and target DPI.
 struct MonitorGeometry {
     std::uintptr_t id = 0;
@@ -32,6 +47,9 @@ ContentLayout computeContentLayout(Size client, int headerHeight, int footerHeig
 int revealScrollPosition(int position, int viewportHeight, int contentHeight, Rect target);
 struct EditorLayout { Rect textArea; Rect saveButton; Rect resetButton; Rect cancelButton; Rect heading, path, footer; };
 int scaleForDpi(int pixels, int dpi);
+int buttonFooterMargin(int width, int dpi);
+ButtonFooterLayout computeButtonFooterLayout(
+    Size client, int dpi, std::span<const FooterButtonSpec> buttons);
 Size defaultEditorClientSize(int dpi);
 Size clampToWorkArea(Size desired, Rect workArea, int dpi);
 Rect centerInWorkArea(Size size, Rect workArea);

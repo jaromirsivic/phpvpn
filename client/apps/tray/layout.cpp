@@ -94,6 +94,74 @@ int scaleForDpi(int pixels, int dpi) {
     const auto scaled = (static_cast<std::int64_t>(pixels) * std::max(dpi, 1) + 48) / 96;
     return static_cast<int>(std::clamp<std::int64_t>(scaled, 0, std::numeric_limits<int>::max()));
 }
+int buttonFooterMargin(int width, int dpi) {
+    return std::min(std::max(0, width) / 8, scaleForDpi(16, dpi));
+}
+ButtonFooterLayout computeButtonFooterLayout(
+    Size client, int dpi, std::span<const FooterButtonSpec> buttons) {
+    const int width = std::max(0, client.width);
+    const int height = std::max(0, client.height);
+    ButtonFooterLayout result;
+    result.buttons.resize(buttons.size());
+    result.margin = buttonFooterMargin(width, dpi);
+    result.gap = scaleForDpi(8, dpi);
+    result.buttonHeight = scaleForDpi(36, dpi);
+
+    std::vector<std::size_t> leading;
+    std::vector<std::size_t> trailing;
+    std::int64_t preferredWidth = 0;
+    for (std::size_t i = 0; i < buttons.size(); ++i) {
+        if (!buttons[i].visible) continue;
+        (buttons[i].side == FooterSide::leading ? leading : trailing).push_back(i);
+        preferredWidth += std::max(1, buttons[i].preferredWidth);
+    }
+    const auto visibleCount = leading.size() + trailing.size();
+    const int available = std::max(1, width - 2 * result.margin);
+    if (visibleCount > 1) preferredWidth += static_cast<std::int64_t>(visibleCount - 1) * result.gap;
+    const bool wraps = !leading.empty() && !trailing.empty() && preferredWidth > available;
+    result.rows = visibleCount == 0 ? 0 : (wraps ? 2 : 1);
+    const std::int64_t footerHeight = 2LL * result.margin +
+        static_cast<std::int64_t>(result.rows) * result.buttonHeight +
+        static_cast<std::int64_t>(std::max(0, result.rows - 1)) * result.gap;
+    const int boundedFooterHeight = static_cast<int>(std::min<std::int64_t>(height, footerHeight));
+    result.bounds = {0, height - boundedFooterHeight, width, height};
+
+    const auto layoutGroup = [&](const std::vector<std::size_t>& indices, int row, FooterSide side) {
+        if (indices.empty()) return;
+        const int count = static_cast<int>(indices.size());
+        const int actualGap = count > 1
+            ? std::min(result.gap, std::max(0, (available - count) / (count - 1)))
+            : 0;
+        const int widthBudget = std::max(0, available - actualGap * (count - 1));
+        const int minimumWidth = widthBudget >= count ? 1 : 0;
+        std::vector<int> widths(indices.size(), minimumWidth);
+        int remaining = widthBudget - minimumWidth * count;
+        const auto allocate = [&](std::size_t position) {
+            const int desired = std::max(minimumWidth, buttons[indices[position]].preferredWidth);
+            const int extra = std::min(remaining, desired - minimumWidth);
+            widths[position] += extra;
+            remaining -= extra;
+        };
+        if (side == FooterSide::leading) {
+            for (std::size_t i = 0; i < indices.size(); ++i) allocate(i);
+        } else {
+            for (std::size_t i = indices.size(); i-- > 0;) allocate(i);
+        }
+        int groupWidth = actualGap * (count - 1);
+        for (int buttonWidth : widths) groupWidth += buttonWidth;
+        int x = side == FooterSide::leading ? result.margin : width - result.margin - groupWidth;
+        const int y = std::max(0, result.bounds.top + result.margin) +
+            row * (result.buttonHeight + result.gap);
+        for (std::size_t i = 0; i < indices.size(); ++i) {
+            result.buttons[indices[i]] = {x, y, x + widths[i], y + result.buttonHeight};
+            x += widths[i] + actualGap;
+        }
+    };
+
+    layoutGroup(leading, 0, FooterSide::leading);
+    layoutGroup(trailing, wraps ? 1 : 0, FooterSide::trailing);
+    return result;
+}
 Size defaultEditorClientSize(int dpi) { return {scaleForDpi(1080, dpi), scaleForDpi(560, dpi)}; }
 Size clampToWorkArea(Size desired, Rect workArea, int /*dpi*/) {
     return {std::clamp(desired.width, 0, extent(workArea.left, workArea.right)),
