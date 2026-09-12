@@ -4,7 +4,9 @@
 struct DevSelection { std::string view = "Contracts", scene = "Default"; };
 const std::map<std::string, std::vector<std::string>> devScenes{
     {"Tray", {"Default"}}, {"Connect", {"Default", "Connecting", "Connected", "Failed"}},
+    {"Disconnect", {"Disconnecting", "Disconnected", "Failed"}},
     {"Editor", {"Default", "Invalid"}}, {"Statistics", {"Default", "Unavailable"}},
+    {"Info", {"Who", "Raw"}},
     {"Wizard", {"Default", "Gate", "Url", "Secret", "Identity", "Contracts"}},
     {"Contracts", {"Default", "Invalid", "Saving", "SaveUnknown"}}, {"Password", {"Default"}}
 };
@@ -48,6 +50,10 @@ struct DevBackend : Backend {
         status.counters = {9007199254740993ULL, 123456789, 9007199131284204ULL,
             9876543210987654ULL, 12345678901234567ULL, 543210987654321ULL,
             765432109876543ULL, 12345678909876543ULL, 18446744073709551615ULL};
+        if (selection.view == "Disconnect") {
+            status.state = ConnectionState::connected; status.phase = ConnectionPhase::running;
+            status.connectionStartedAtUtc = status.stateChangedAtUtc; status.tunnelReady = Tristate::yes;
+        }
         if (selection.view == "Wizard" && selection.scene == "Gate") {
             status.state = view.vpnState = ConnectionState::connected;
             status.phase = view.vpnPhase = ConnectionPhase::running;
@@ -99,8 +105,16 @@ struct DevBackend : Backend {
                 break;
             case IpcCommand::disconnect:
                 ++disconnects; ++epoch;
-                status.state = ConnectionState::disconnected; status.phase = ConnectionPhase::idle;
-                status.lastError.reset(); status.tunnelReady = Tristate::no;
+                if (selection.view == "Disconnect" && selection.scene == "Disconnecting") {
+                    status.state = ConnectionState::connected; status.phase = ConnectionPhase::stopping;
+                    status.lastError.reset(); status.tunnelReady = Tristate::yes;
+                } else {
+                    status.state = ConnectionState::disconnected; status.phase = ConnectionPhase::idle;
+                    status.connectionStartedAtUtc.reset(); status.tunnelReady = Tristate::no;
+                    if (selection.view == "Disconnect" && selection.scene == "Failed")
+                        status.lastError = SafeError{"communication_failed", "The service did not confirm Disconnect.", true};
+                    else status.lastError.reset();
+                }
                 break;
             case IpcCommand::get_status: ++statuses; if (unavailable) return {}; break;
             default: ++unexpected; return {};
@@ -211,8 +225,8 @@ struct DevPreview {
     }
     HWND window() const {
         if (selection.view == "Tray") return app->window();
-        if (selection.view == "Connect") return findTop(L"PhpVpnConnectingProgress");
-        if (selection.view == "Editor") return findTop(L"PhpVpnTrayEditor");
+        if (selection.view == "Connect" || selection.view == "Disconnect") return findTop(L"PhpVpnConnectingProgress");
+        if (selection.view == "Editor" || selection.view == "Info") return findTop(L"PhpVpnTrayEditor");
         if (selection.view == "Statistics") return findTop(L"PhpVpnStatistics");
         if (selection.view == "Wizard") return findTop(wizardClass);
         return findTop(L"PhpVpnContracts"); // Password lives until its parent closes
@@ -244,7 +258,9 @@ struct DevPreview {
             ++stage;
             if (selection.view == "Tray") { markReady(); return; }
             if (selection.view == "Connect") action(IDM_TOGGLE);
+            else if (selection.view == "Disconnect") action(IDM_TOGGLE);
             else if (selection.view == "Editor") action(IDM_EDIT_CONFIG);
+            else if (selection.view == "Info") action(IDM_SHOW_INFO);
             else if (selection.view == "Statistics") action(IDM_STATISTICS);
             else if (selection.view == "Wizard") action(206);
             else action(207);
@@ -254,6 +270,24 @@ struct DevPreview {
         // A hidden launcher sets STARTUPINFO. Explicit SW_SHOW must be applied
         // after the production open path, before any screenshot or ready signal.
         if (!IsWindowVisible(root)) ShowWindow(root, SW_SHOW);
+        if (selection.view == "Disconnect") {
+            if (backend.countDev(&DevBackend::disconnects) != 1) return;
+            const auto content = allText(root);
+            const auto expected = selection.scene == "Disconnecting" ? L"Please wait while the VPN disconnects." :
+                selection.scene == "Disconnected" ? L"You have been disconnected successfully." :
+                L"The service did not confirm Disconnect. Try Disconnect again or check the service status.";
+            if (content.find(expected) == std::wstring::npos) return;
+        }
+        if (selection.view == "Info") {
+            const HWND tabs = child(root, IDC_INFO_TABS), field = child(root, IDC_TEXT_AREA);
+            if (!tabs || !field || backend.countDev(&DevBackend::infos) != 1) return;
+            if (selection.scene == "Raw" && stage == 1) {
+                SetFocus(tabs); SendMessageW(tabs, WM_KEYDOWN, VK_RIGHT, 0); ++stage;
+            }
+            const int expected = selection.scene == "Raw" ? 1 : 0;
+            if (TabCtrl_GetCurSel(tabs) != expected || !!IsWindowVisible(field) != !!expected) return;
+            check(text(field).find(L"syntheticGuiPreview") != std::wstring::npos, "Synthetic Info JSON missing");
+        }
         if (selection.view == "Wizard") {
             if (selection.scene == "Gate") { if (text(child(root, nextId)) == wizardText::disconnect) markReady(); return; }
             const unsigned destination = selection.scene == "Secret" ? 2 : selection.scene == "Identity" ? 3 : selection.scene == "Contracts" ? 4 : 1;
@@ -282,7 +316,9 @@ struct DevPreview {
             if (selection.scene == "SaveUnknown" && !app->contractsLifecycleSnapshot().unknown) return;
         }
         if (selection.view == "Statistics") {
-            if (text(child(root, 500)) != L"9,007,199,254,740,993") return;
+            // Control 500 is the first displayed field, Empty polls, not the
+            // aggregate Data polls total held separately in the snapshot.
+            if (text(child(root, 500)) != L"123,456,789") return;
             if (selection.scene == "Unavailable") {
                 if (stage == 1) { backend.loseStatus(); ++stage; }
                 if (allText(root).find(L"unavailable") == std::wstring::npos && allText(root).find(L"Unavailable") == std::wstring::npos) return;
@@ -311,6 +347,10 @@ void devSceneMatrix() {
         preview.run([](DevPreview& p) {
             check(p.window() && (p.selection.view == "Tray" || IsWindowVisible(p.window())), "Preview hidden or missing");
             if (p.selection.view == "Password") check(findTop(L"PhpVpnPasswordSha") && IsWindowEnabled(p.window()), "Password child blocked parent");
+            if (p.selection.view == "Disconnect") check(p.backend.countDev(&DevBackend::disconnects) == 1 &&
+                p.backend.count(&Backend::connects) == 0, "Disconnect preview did not use one isolated Disconnect");
+            if (p.selection.view == "Info") check(p.backend.countDev(&DevBackend::infos) == 1,
+                "Info preview did not use exactly one get-info");
             if (p.selection.scene == "Invalid" && p.selection.view == "Contracts") check(!IsWindowEnabled(child(p.window(), IDOK)), "Invalid enabled Key did not block Save");
             check(p.backend.countDev(&DevBackend::unexpected) == 0, "Unexpected synthetic request");
             p.app->endSession();

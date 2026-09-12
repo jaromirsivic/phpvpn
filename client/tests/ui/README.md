@@ -8,7 +8,11 @@ PHPVPN service are required. From the repository root:
 ./client/tools/dev-tray.ps1
 ./client/tools/dev-tray.ps1 -View Wizard -Scene Identity
 ./client/tools/dev-tray.ps1 -View Connect -Scene Failed
+./client/tools/dev-tray.ps1 -View Disconnect -Scene Disconnecting
+./client/tools/dev-tray.ps1 -View Info -Scene Who
+./client/tools/dev-tray.ps1 -View Info -Scene Raw
 ./client/tools/dev-tray.ps1 -Mode Build -Configuration Release
+./client/tools/dev-tray.ps1 -Mode Test -Filter plan_v001_
 ./client/tools/dev-tray.ps1 -Mode Test -Filter wp06_scene_matrix
 ./client/tools/dev-tray.ps1 -Mode Test -Configuration Release -Filter wp06_
 ~~~
@@ -24,7 +28,9 @@ deleting its cache. Unknown parameters and invalid combinations fail before buil
 |---|---|---|
 | Tray | Default | Real tray menu and multiple windows, private mutex and tooltip PHPVPN GUI preview - synthetic data, exit through Exit. |
 | Connect | Default, Connecting, Connected, Failed | Default is pending. Connected uses the real three-second success countdown. Failed shows endpoint unavailable/invalid. |
+| Disconnect | Disconnecting, Disconnected, Failed | Real Disconnect action and production progress window over an initially connected synthetic snapshot. The scenes show waiting, confirmed success and an unconfirmed Disconnect without contacting the installed service. |
 | Editor | Default, Invalid | Valid synthetic document or malformed JSON containing valid UTF-8, with the real Reset and Save controls. |
+| Info | Who, Raw | Real Show Info action with exactly one synthetic get-info. Who is the initial empty page. Raw selects the second native tab only after the production window exists and shows the same read-only JSON. |
 | Statistics | Default, Unavailable | Nine exact uint64 counters including values above 2^53. Unavailable first loads a valid snapshot and then loses status, retaining stale values. |
 | Wizard | Default, Gate, Url, Secret, Identity, Contracts | Default is Url. Later steps use real Verify actions and synthetic successful replies. Contracts is the Wizard summary. |
 | Contracts | Default, Invalid, Saving, SaveUnknown | A /24 document produces 252 rows. Invalid edits an enabled Key. Saving presses real OK and holds the reply until the original 30-second deadline. SaveUnknown loses the acknowledgement after a possible publication and another synthetic writer's change. Check enables an explicitly confirmed Save draft again. |
@@ -56,6 +62,9 @@ and adds memory-only configuration/status scenarios. Every preview has a fresh
 UUID pipe and mutex, with no arbitrary endpoint parameter or production fallback.
 The backend uses real parsers, document builders and CNG but no ConfigStore
 filesystem, ProgramData configuration, HTTP, SCM, Wintun or routes.
+Disconnect uses the production `IDM_TOGGLE` path and Info uses production
+`IDM_SHOW_INFO`. Their fixture replies are synthetic and remain on the private
+UUID pipe. Switching Info tabs does not issue another get-info.
 
 Legacy commands remain available:
 
@@ -72,7 +81,11 @@ contracts scene is the Wizard summary and retains its old 45-second limit.
 --interactive has no limit. Confirmed Wizard Finish shows its notification,
 closes its session and window, and opens no Contracts editor or VPN connection.
 
-The UI target stays outside CTest. wp06_ checks the scene matrix, a 46-second
+The UI target stays outside CTest. `plan_v001_` runs the focused native dialog
+and footer regressions, `live_resize_repaint` compares 112 live edge/corner
+frames per selected production window with a clean full repaint, and
+`wp06_scene_matrix` opens every declared View/Scene pair and rejects missing or
+hidden windows, unexpected requests and incorrect scene setup. wp06_ also checks a 46-second
 preview, the actual Connect countdown, unknown Check/repeat, multiple Password
 children, the original saving deadline, private endpoint cleanup, all Tray actions
 and in-memory Wizard publication. Existing
@@ -107,8 +120,10 @@ launch for invalid parameters, compilation, corrupt PE and a locked executable.
 Temporary source/EXE mutations stay in that unique copy and are restored. Evidence
 and the copy remain under work/logs/hidden-launch. The script is outside CTest.
 
-These are synthetic GUI checks. They do not prove real service/VPN operation,
-installation, distribution, every DPI/monitor combination, screen-reader behavior
-or full N09b runtime limits. Full visual/performance acceptance follows
+These are synthetic GUI checks. They verify real production window composition,
+native controls, selected input/lifecycle behavior and deterministic repaint over
+safe fixture data. They do not prove real service/VPN operation, installation,
+distribution, every DPI/monitor combination, screen-reader behavior or full N09b
+runtime limits. Full visual/performance acceptance follows
 tray_UX.md UX14 and the separate final audit. Screenshots belong only in work
 logs, never as new tracked binary assets.

@@ -1357,7 +1357,9 @@ std::vector<DWORD> resizePixels(HWND window) {
 }
 void liveResizeRepaintViews(std::span<const char* const> views) {
     for (const auto* view : views) {
-        DevPreview preview({view, "Default"});
+        const char* scene = std::string_view(view) == "Disconnect" ? "Disconnecting" :
+            std::string_view(view) == "Info" ? "Who" : "Default";
+        DevPreview preview({view, scene});
         preview.run([](DevPreview& p) {
             HWND root = p.selection.view == "Password" ? findTop(L"PhpVpnPasswordSha") : p.window();
             check(root && IsWindowVisible(root), "resize window unavailable");
@@ -1393,7 +1395,7 @@ void liveResizeRepaintViews(std::span<const char* const> views) {
     }
 }
 void liveResizeRepaint() {
-    constexpr std::array views{"Wizard", "Statistics", "Contracts", "Editor", "Connect", "Password"};
+    constexpr std::array views{"Wizard", "Statistics", "Contracts", "Editor", "Connect", "Disconnect", "Info", "Password"};
     liveResizeRepaintViews(views);
 }
 void passwordContractsLiveResizeRepaint() {
