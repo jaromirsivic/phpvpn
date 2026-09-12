@@ -70,12 +70,13 @@ inline StatisticsLayout computeStatisticsLayout(int width, int dpi, const Statis
             end += row(i, m + pad, end, std::max(1, right - m - 2 * pad));
     } else {
         const int available = (right - m - 2 * pad - gap) / 2;
-        int leftEnd = next, rightEnd = next;
-        for (std::size_t i = 6; i < 8; ++i)
-            leftEnd += row(i, m + pad, leftEnd, available);
-        for (std::size_t i = 8; i < 10; ++i)
-            rightEnd += row(i, m + pad + available + gap, rightEnd, available);
-        end = std::max(leftEnd, rightEnd);
+        const int left = m + pad, rightColumn = left + available + gap;
+        end = next;
+        for (std::size_t i = 6; i < 10; i += 2) {
+            const int leftHeight = row(i, left, end, available);
+            const int rightHeight = row(i + 1, rightColumn, end, available);
+            end += std::max(leftHeight, rightHeight);
+        }
     }
     l.cards[2] = {m, y, right, end + pad};
     l.height = end + pad + m;

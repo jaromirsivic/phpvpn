@@ -624,6 +624,46 @@ public:
         }
     }
 };
+PHPVPN_TEST(WP03Windows, ServerInformationTabHeadersUseSelectedAndPrimaryPalette) {
+    EditorWindow editor(L"\\\\.\\pipe\\unused-info-tab-palette-test");
+    editor.open(GetModuleHandleW(nullptr), L"Server Information", "{}");
+    const auto tabs = GetDlgItem(editor.window(), IDC_INFO_TABS);
+    PHPVPN_CHECK(tabs != nullptr);
+    if (!tabs) return;
+    PHPVPN_CHECK((GetWindowLongPtrW(tabs, GWL_STYLE) & TCS_OWNERDRAWFIXED) != 0);
+
+    UiResources expected;
+    PHPVPN_CHECK(expected.update(GetModuleHandleW(nullptr), static_cast<int>(GetDpiForWindow(tabs)), false));
+    HDC screen = GetDC(tabs);
+    HDC memory = screen ? CreateCompatibleDC(screen) : nullptr;
+    HBITMAP bitmap = screen ? CreateCompatibleBitmap(screen, 240, 48) : nullptr;
+    const auto previous = memory && bitmap ? SelectObject(memory, bitmap) : nullptr;
+    PHPVPN_CHECK(screen && memory && bitmap && previous);
+    if (screen && memory && bitmap && previous) {
+        for (int selected = 0; selected < 2; ++selected) {
+            editor.selectInfoTab(selected);
+            for (int itemId = 0; itemId < 2; ++itemId) {
+                RECT fill{0, 0, 240, 48};
+                FillRect(memory, &fill, GetSysColorBrush(COLOR_WINDOW));
+                DRAWITEMSTRUCT draw{};
+                draw.CtlType = ODT_TAB;
+                draw.CtlID = IDC_INFO_TABS;
+                draw.itemID = static_cast<UINT>(itemId);
+                draw.hwndItem = tabs;
+                draw.hDC = memory;
+                draw.rcItem = fill;
+                PHPVPN_CHECK(SendMessageW(editor.window(), WM_DRAWITEM, IDC_INFO_TABS,
+                                          reinterpret_cast<LPARAM>(&draw)) == TRUE);
+                const auto role = itemId == selected ? ui::Color::selectedStep : ui::Color::primary;
+                PHPVPN_CHECK_EQ(GetPixel(memory, 12, 8), expected.color(role));
+            }
+        }
+        SelectObject(memory, previous);
+    }
+    if (bitmap) DeleteObject(bitmap);
+    if (memory) DeleteDC(memory);
+    if (screen) ReleaseDC(tabs, screen);
+}
 PHPVPN_TEST(WP03Windows, ServerInformationTabsAreNativeAndDataStable) {
     EditorWindow editor(L"\\\\.\\pipe\\unused-info-tabs-test");
     editor.open(GetModuleHandleW(nullptr), L"Server Information", "{\"server\":\"unchanged\"}");
@@ -633,6 +673,7 @@ PHPVPN_TEST(WP03Windows, ServerInformationTabsAreNativeAndDataStable) {
     const auto field = GetDlgItem(editor.window(), IDC_TEXT_AREA);
     const auto original = windowText(field);
     PHPVPN_CHECK_EQ(TabCtrl_GetItemCount(tabs), 2);
+    PHPVPN_CHECK((GetWindowLongPtrW(tabs, GWL_STYLE) & TCS_OWNERDRAWFIXED) != 0);
     for (int i = 0; i < 2; ++i) {
         wchar_t label[80]{};
         TCITEMW item{}; item.mask = TCIF_TEXT; item.pszText = label; item.cchTextMax = 80;

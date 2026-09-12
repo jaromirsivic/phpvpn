@@ -330,10 +330,10 @@ void StatisticsWindow::paint() {
         for (std::size_t i : {6u, 7u, 8u})
             separator(i);
     else
-        for (std::size_t i : {6u, 8u})
+        for (std::size_t i : {6u, 7u})
             separator(i);
     if (client.right >= scaleForDpi(760, dpi)) {
-        const int x = (layout_.rows[6].value.right + layout_.rows[8].label.left) / 2;
+        const int x = (layout_.rows[6].value.right + layout_.rows[7].label.left) / 2;
         line({x, layout_.rows[6].label.top, x + std::max(1, scaleForDpi(1, dpi)),
               layout_.cards[2].bottom - scaleForDpi(20, dpi)});
     }

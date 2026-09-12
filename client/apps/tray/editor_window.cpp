@@ -9,6 +9,7 @@
 #include "ui_controls.h"
 #include <commctrl.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 
 namespace phpvpn::tray {
@@ -16,6 +17,43 @@ namespace {
 constexpr wchar_t kClass[] = L"PhpVpnTrayEditor";
 constexpr int kReset = 304;
 constexpr UINT_PTR kResetTimer = 1;
+bool drawInfoTab(const DRAWITEMSTRUCT& item, HWND tabs, const UiResources& resources) {
+    if (!tabs || item.CtlType != ODT_TAB || item.hwndItem != tabs || !item.hDC ||
+        item.itemID >= static_cast<UINT>(TabCtrl_GetItemCount(tabs)) || resources.dpi() <= 0)
+        return false;
+
+    std::array<wchar_t, 128> label{};
+    TCITEMW tab{};
+    tab.mask = TCIF_TEXT;
+    tab.pszText = label.data();
+    tab.cchTextMax = static_cast<int>(label.size());
+    if (!TabCtrl_GetItem(tabs, static_cast<int>(item.itemID), &tab)) return false;
+
+    const bool selected = static_cast<int>(item.itemID) == TabCtrl_GetCurSel(tabs);
+    const auto background = selected ? ui::Color::selectedStep : ui::Color::primary;
+    const auto foreground = selected ? ui::Color::text : ui::Color::primaryText;
+    RECT bounds = item.rcItem;
+    FillRect(item.hDC, &bounds, resources.brush(background));
+    FrameRect(item.hDC, &bounds, resources.brush(ui::Color::border));
+
+    const int saved = SaveDC(item.hDC);
+    SelectObject(item.hDC, resources.font(ui::Font::label));
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, resources.color(foreground));
+    const int padding = scaleForDpi(2, resources.dpi());
+    RECT text = bounds;
+    InflateRect(&text, -padding, 0);
+    DrawTextW(item.hDC, label.data(), -1, &text,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    if (selected && GetFocus() == tabs) {
+        RECT focus = bounds;
+        const int inset = std::max(2, scaleForDpi(3, resources.dpi()));
+        InflateRect(&focus, -inset, -inset);
+        if (focus.right > focus.left && focus.bottom > focus.top) DrawFocusRect(item.hDC, &focus);
+    }
+    if (saved) RestoreDC(item.hDC, saved);
+    return true;
+}
 std::string prettyEditorJson(const std::string& text) {
     if (!Json::parse(text)) return text;
     // Reflow only whitespace after validation. Retain exact number tokens
@@ -287,7 +325,7 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
         INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_TAB_CLASSES};
         InitCommonControlsEx(&controls);
         tabs_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-            WS_CLIPSIBLINGS | TCS_FOCUSONBUTTONDOWN, 0, 0, 1, 1, window_,
+            WS_CLIPSIBLINGS | TCS_FOCUSONBUTTONDOWN | TCS_OWNERDRAWFIXED, 0, 0, 1, 1, window_,
             reinterpret_cast<HMENU>(IDC_INFO_TABS), instance, nullptr);
         if (!tabs_) { DestroyWindow(window_); return; }
         for (const auto label : {L"Who is online", L"Raw server information"}) {
@@ -350,6 +388,7 @@ void EditorWindow::selectInfoTab(int index) {
     TabCtrl_SetCurSel(tabs_, index);
     if (index == 0 && GetFocus() == field_) SetFocus(tabs_);
     ShowWindow(field_, index == 1 ? SW_SHOW : SW_HIDE);
+    InvalidateRect(tabs_, nullptr, FALSE);
 }
 void EditorWindow::updateFonts() {
     const int dpi = static_cast<int>(GetDpiForWindow(window_));
@@ -409,6 +448,10 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
     }
     if (!self) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
+        case WM_DRAWITEM:
+            if (lParam && drawInfoTab(*reinterpret_cast<DRAWITEMSTRUCT*>(lParam), self->tabs_, self->resources_))
+                return TRUE;
+            break;
         case WM_NOTIFY: {
             const auto notification = reinterpret_cast<NMHDR*>(lParam);
             if (notification && notification->hwndFrom == self->tabs_ &&
@@ -482,8 +525,10 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             }
             break;
         case WM_SIZE: self->layout(); return 0;
-        case WM_SETTINGCHANGE: case WM_SYSCOLORCHANGE:
-            self->updateFonts(); self->layout(); break;
+        case WM_SETTINGCHANGE: case WM_SYSCOLORCHANGE: case WM_THEMECHANGED:
+            self->updateFonts(); self->layout();
+            if (self->tabs_) InvalidateRect(self->tabs_, nullptr, FALSE);
+            break;
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: {
             PAINTSTRUCT ps{}; auto targetDc = BeginPaint(window,&ps); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(window,&r);

@@ -228,3 +228,41 @@ PHPVPN_TEST(WP03Models, NarrowLayoutsAndMeasuredLongCountersDoNotOverlap) {
         }
     }
 }
+PHPVPN_TEST(WP03Models, StatisticsIpv4WideGridPreservesBindingsAndNarrowOrder) {
+    PHPVPN_CHECK_EQ(std::wstring(statisticsFields[6].label), L"Packets sent");
+    PHPVPN_CHECK_EQ(std::wstring(statisticsFields[7].label), L"Bytes sent");
+    PHPVPN_CHECK_EQ(std::wstring(statisticsFields[8].label), L"Packets received");
+    PHPVPN_CHECK_EQ(std::wstring(statisticsFields[9].label), L"Bytes received");
+    PHPVPN_CHECK_EQ(statisticsFields[6].counterIndex, 5u);
+    PHPVPN_CHECK_EQ(statisticsFields[7].counterIndex, 7u);
+    PHPVPN_CHECK_EQ(statisticsFields[8].counterIndex, 6u);
+    PHPVPN_CHECK_EQ(statisticsFields[9].counterIndex, 8u);
+
+    for (const int dpi : {96, 120, 144, 192}) {
+        const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        StatisticsMetrics metrics;
+        metrics.headingWidth = p(120);
+        metrics.statusWidth = p(150);
+        metrics.descriptionHeight = p(24);
+        metrics.valueWidths.fill(p(80));
+        metrics.labelWidths.fill(p(120));
+        metrics.valueWidths[6] = p(340);
+        metrics.labelWidths[7] = p(180);
+
+        const auto wide = computeStatisticsLayout(p(1000), dpi, metrics);
+        const auto cellTop = [&](std::size_t i) { return std::min(wide.rows[i].label.top, wide.rows[i].value.top); };
+        const auto cellBottom = [&](std::size_t i) { return std::max(wide.rows[i].label.bottom, wide.rows[i].value.bottom); };
+        PHPVPN_CHECK_EQ(wide.rows[6].label.left, wide.rows[8].label.left);
+        PHPVPN_CHECK_EQ(wide.rows[7].label.left, wide.rows[9].label.left);
+        PHPVPN_CHECK(wide.rows[6].label.left < wide.rows[7].label.left);
+        PHPVPN_CHECK_EQ(cellTop(6), cellTop(7));
+        PHPVPN_CHECK_EQ(cellTop(8), cellTop(9));
+        PHPVPN_CHECK(cellTop(8) > cellBottom(6));
+        PHPVPN_CHECK(cellTop(9) > cellBottom(7));
+
+        const auto narrow = computeStatisticsLayout(p(480), dpi, metrics);
+        for (std::size_t i = 6; i < 9; ++i)
+            PHPVPN_CHECK(narrow.rows[i + 1].label.top >
+                         std::max(narrow.rows[i].label.bottom, narrow.rows[i].value.bottom));
+    }
+}

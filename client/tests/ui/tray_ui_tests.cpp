@@ -618,6 +618,7 @@ void serverInformationTabs() {
     const auto window = findTop(L"PhpVpnTrayEditor");
     const auto tabs = child(window, IDC_INFO_TABS), field = child(window, IDC_TEXT_AREA);
     check(tabs && TabCtrl_GetItemCount(tabs) == 2, "native Info tabs missing");
+    check((GetWindowLongPtrW(tabs, GWL_STYLE) & TCS_OWNERDRAWFIXED) != 0, "Info tab headers are not owner-drawn");
     check(TabCtrl_GetCurSel(tabs) == 0 && !IsWindowVisible(field) && GetFocus() == tabs, "wrong initial Info page/focus");
     const auto original = text(field);
     check(original.find(L"uiFixtureInfo") != std::wstring::npos, "production JSON missing");
@@ -641,7 +642,7 @@ void serverInformationTabs() {
     check(gui.backend.count(&Backend::unexpectedInfoCommands) == 0, "Info issued an unexpected command");
     editorClick(window, IDOK);
     gui.until([&] { return !IsWindow(window); }, "OK did not close Info");
-    std::cout << "[ EVIDENCE ] actual IDM_SHOW_INFO, 12 mouse/arrow switches, get-info=1, unexpected=0\n";
+    std::cout << "[ EVIDENCE ] owner-drawn native headers, actual IDM_SHOW_INFO, 12 mouse/arrow switches, get-info=1, unexpected=0\n";
 }
 void editorFooterResize() {
     Gui gui;
