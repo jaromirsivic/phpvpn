@@ -3,10 +3,10 @@ language: Czech
 project_root: C:\git\phpvpn
 intent_directory: C:\git\phpvpn\Intents\2026-09-12-02-29-09
 started_at: 2026-09-12-02-29-09
-last_completed_intent_version: 3
-latest_intent_path: C:\git\phpvpn\Intents\2026-09-12-02-29-09\intent-v003.md
+last_completed_intent_version: 4
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-12-02-29-09\intent-v004.md
 route: plan
 planning_context_id: 01a09316-c089-75f2-87ee-9de0f501c53a
 plan_directory: C:\git\phpvpn\Plans\2026-09-12-02-29-09
-last_completed_plan_version: 2
-latest_plan_path: C:\git\phpvpn\Plans\2026-09-12-02-29-09\plan-v002.md
+last_completed_plan_version: 3
+latest_plan_path: C:\git\phpvpn\Plans\2026-09-12-02-29-09\plan-v003.md

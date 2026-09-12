@@ -1,8 +1,8 @@
 # Pracovní matice konsolidace
 
-Stav: tematický průzkum a index pokrytí uzavřeny. Úplný plán je [plan-v002.md](plan-v002.md), předchozí v1 zachována. V2 opravuje přesnou cestu scheduler.cpp na core/queues a zachovává celý plán. Nesporné dokumentační kroky a samostatná testovací větev jsou oddělené od R01–R10. Celkové prohlášení o obsahové nadbytečnosti historických zdrojů čeká na vyjasnění rozporů. Autoritativní zadání tvoří intent-v001.md, intent-v002.md a intent-v003.md v odpovídající složce Intents. Kód, testy, cílové dokumenty a zdroje se nemění.
+Stav: revize plánu po schválení R01–R10 a intent-v004. R01–R03 a R05–R10 jsou uzavřená, R04 výslovně odložené. Úplný neměnný [plan-v003.md](plan-v003.md) je uložen a ověřen, viz [ověření v3](overeni-planu-v003.md). Předchozí v1/v2 zůstávají zachované. Dokumentační kroky, budoucí implementace backpressure a testovací větev jsou oddělené. Autoritativní zadání tvoří intent-v001 až intent-v004 a [nová uživatelská rozhodnutí](rozhodnuti-v004.md). Kód, testy, cílové dokumenty a původní zdroje se nemění.
 
-Společný deadline: 2026-09-12 05:05 Europe/Berlin (03:05 UTC). Žádní další agenti nevznikají. Při obnově kontextu nejprve načíst celý účinný globální blok instrukcí z CODEX_HOME/AGENTS.override.md nebo AGENTS.md, případně úplný hostem dodaný blok, a ověřit obě přesné hranice před další věcnou prací. Poté přečíst tuto matici a pokračovat prvním neuzavřeným tématem. Deadline se obnovou neposouvá.
+Časový limit: **unlimited**, výslovně schváleno uživatelem a předáno koordinátorem po původním bezpečném zastavení. Starý deadline se již nepoužívá. Žádní další agenti nevznikají. Při obnově kontextu nejprve načíst celý účinný globální blok instrukcí z reálného CODEX_HOME/AGENTS.override.md nebo AGENTS.md, případně úplný hostem dodaný blok, a ověřit obě přesné hranice před další věcnou prací. Poté přečíst aktuální matici a rozhodnutí.
 
 ## Zdroje v závazném pořadí
 
@@ -29,16 +29,18 @@ Před zdroji byly načteny všechny tři cílové dokumenty. Jejich role: client
 
 ## Registr témat
 
+Aktuální stav rozhodnutí má přednost před historickými komentáři níže: R01/T04 uzavřeno vyjmutím nedoložených corner cases, R02/T05 uzavřeno s budoucí B větví, R03/T06 uzavřeno na současné recovery, R04/T08 odloženo, R05/T09 současný installer, R06/T13 Users read, R07 všechny dotčené UI notes bez implementace irelevantní, R08/T19 dynamická HC, R09/T24 výsledkové dirty, R10/T22 deset hodnot a jednotky. Jednadvacet dotčených témat má novou vrchní část Aktuální rozhodnutí po intent-v004, historická analýza pod ní se zachovává pro dohledatelnost.
+
 | ID | Téma | Stav |
 |---|---|---|
-| T01 | Platforma, build, členění a přenosnost | uzavřeno, viz T01.md |
+| T01 | Platforma, build, členění a přenosnost | analýza uzavřena, D01 doplněno v client.md (Architektura, Sestavení klienta), TT01 bez nového testu, build a linkerové mapy NOT RUN, viz [T01](T01.md) a [report D01](../../.superpowers/sdd/plan-v003/task-1-report.md) |
 | T02 | Konfigurační schéma, CIDR a runtime limity | uzavřeno, viz T02.md |
 | T03 | Kryptografie, wire parsery a payload IPv4 | uzavřeno, viz T03.md |
 | T04 | Časová synchronizace | uzavřeno s R01, viz T04.md |
 | T05 | Fronty, plánování a backpressure | uzavřeno s R02, viz T05.md |
 | T06 | VPN role, bootstrap, recovery a checkpointy | uzavřeno s R03, viz T06.md |
 | T07 | HTTP deadline, rušení a izolovaná diagnostika | uzavřeno, viz T07.md |
-| T08 | Wintun, síťové vlastnictví a reconciliation | uzavřeno s R04, viz T08.md |
+| T08 | Wintun, síťové vlastnictví a reconciliation | analýza dokončena, R04 odloženo bez realizace, viz T08.md |
 | T09 | Instalace, upgrade, rollback a distribuce | uzavřeno s R05, viz T09.md |
 | T10 | IPC framing, dostupnost a bezpečné chyby | uzavřeno, viz T10.md |
 | T11 | Provozní čítače a status/diagnostics | uzavřeno, viz T11.md |
@@ -67,6 +69,6 @@ Index [pokryti-zdroju.md](pokryti-zdroju.md) mapuje všech 16 zdrojů včetně �
 
 Další kontrola přímo proti cílovým nadpisům opravila T27 na ponechat existující návod a doplnila skutečně chybějící kapacity IPC, rozpočty Next a retenci receipts do T10/T16/T17. Dřívější obecné tvrzení o již uvedených číselných mezích se tím nahrazuje konkrétními zjištěními.
 
-Závěrečná kontrola doplnila v T14 konkrétní oddělené deployment profily a již existující Python/PowerShell testy. V T12 a T19 opravila přesnou implementační cestu a zdrojovou sekci. T22 opraveno na R10: deset zobrazovaných hodnot a převod bajtů nemají oporu vůči devíti přesným hodnotám schválených zdrojů. Kontrola úplného pokrytí zdrojových bodů zatím pokračuje.
+Závěrečná kontrola doplnila v T14 konkrétní oddělené deployment profily a již existující Python/PowerShell testy. V T12 a T19 opravila přesnou implementační cestu a zdrojovou sekci. Původní rozpor T22 byl nyní uzavřen rozhodnutím R10: deset zobrazovaných hodnot a převod bajtů je schválený stav. Kontrola pokrytí všech šestnácti zdrojů je dokončená.
 
 Každý TNN.md musí obsahovat chronologické zdroje a původní záměr, změny a přednost, konečný záměr, konkrétní důkaz kódu odděleně od existujících testů, klasifikaci, přesný dopad na každý cílový dokument, otevřená rozhodnutí a dopad na konstrukci testů včetně druhu, rozsahu a rizika. Neexistence testu sama neznamená neimplementováno. Před vytvořením plánu musí být uzavřena všechna témata a provedena kontrola pokrytí všech věcných bodů zdrojů.

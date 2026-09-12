@@ -1,6 +1,6 @@
 # Pokrytí závazných zdrojů
 
-Tento index propojuje zdrojové části s jedinými tematickými záznamy T01–T29. Je součástí pracovní matice, nikoli důkaz úspěšného běhu testů. Chronologii, přednost, konkrétní implementaci, klasifikaci jednotlivých odchylek a testovací dopad obsahuje příslušný TNN.md. Smíšený řádek neznamená, že všechny jeho požadavky jsou implementované. Výjimky R01–R10 a neimplementované části zůstávají výslovně zachované.
+Tento index propojuje zdrojové části s tematickými záznamy T01–T29. Není důkaz úspěšného běhu testů. Původní rozpory zůstávají zachované jako historie, aktuálně R01–R03 a R05–R10 uzavírají [nová uživatelská rozhodnutí](rozhodnuti-v004.md), R04 je odložené. Rozšíření o budoucí implementaci R02 je v intent-v004. Jejich novější autorita má přednost před historickými klasifikacemi v indexu.
 
 Zdroje jsou S01–S16 podle priskok-matice.md. Historické instrukce k instalaci, delegaci, opravám zdrojových plánů, commitu, vydání nebo spuštění testů jsou údaje o tehdejším workflow. Nejsou autorizací je provést v této plánovací úloze. Historické baseline, odhady velikosti a tvrzení o tehdejším stroji se nepřenášejí jako současné výsledky.
 
@@ -257,4 +257,21 @@ Každý bod obsahuje původní nález i rozhodnutí. Původní alternativy nejso
 
 ## Výsledek kontroly
 
-Všech 16 zdrojů má tematické přiřazení včetně historických workflow a výslovně nerelevantního S12. Číslované D01–D28, A01–A41, AK01–AK17, N/F/A modernizace, oba seznamy problémů a WP00–WP08 mají dohledatelné pokrytí. Výsledek není prohlášení, že zdroje už lze odstranit: obsahově neuzavřená rozhodnutí R01–R10, nedodané funkce a nevykonané testy takový závěr zatím nedovolují.
+Všech 16 původních zdrojů má tematické přiřazení včetně historických workflow a výslovně nerelevantního S12. Číslované D01–D28, A01–A41, AK01–AK17, N/F/A modernizace, oba seznamy problémů a WP00–WP08 mají dohledatelné pokrytí. Novější rozhodnutí jsou mapována níže. Odložené R04, budoucí B implementace a neprovedené testy se nevydávají za dokončené. Zdroje se nemažou.
+
+## Novější autorita po plánu v2
+
+| Rozhodnutí / zadání | Dotčená témata | Plán / aktuální výsledek |
+|---|---|---|
+| R01 | T02/T04 | D11, TT04, vyjmout nedoložené corner cases, neimplementovat je. |
+| R02 + intent-v004 | T05 | D12 a budoucí B01–B05, TT05. 5 s schváleno, gate dosud nedodaná. |
+| R03 | T06/T07 | D13, TT06/TT07, současný teardown/recreate. |
+| R04 | T08 | Odloženo, žádná současná realizace ani nové testy. |
+| R05 | T09 | D14, TT08, současný jednoduchý installer. |
+| R06 | T13 | D15, TT10, Users read chtěné, admin-only nepřebírat. |
+| R07 | T14/T15/T17/T18/T19/T20/T23/T24/T25 | D15, neimplementované notes vyřazené jako irelevantní. Historické odkazy zůstávají. |
+| R08 | T19 | D16, TT15, dynamická HC paleta schválená. |
+| R09 | T24/T25/T26 | D16, TT17, výsledkové dirty. |
+| R10 | T22/T27/T28 | D17, TT16/TT19, 10 UI hodnot a jednotky, devět službových čítačů beze změny. |
+
+Aktuální testovací dopady nahrazují staré podmínky „až po R“. Nezavádějí testy odloženého R04 nebo odstraněných garancí, přidávají konkrétní B04. Connected for nebylo součástí konkrétní volby R10 a zůstává mimo novou dokumentaci.

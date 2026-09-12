@@ -27,7 +27,9 @@ Jádro klienta nesmí záviset na API konkrétní platformy. Je rozděleno do t�
 
 `core/config/contracts_document.*` vlastní původní validní DOM, preserving patch a úplnou validaci kandidáta. `core/presentation/contracts_model.*` a `password_key_model.*` tvoří samostatné objekty existující statické knihovny `phpvpn-core`. Nepřidávají knihovnu ani závislost třetí strany. Používají sdílené IPv4 helpery, `defaultPayloadKey`, JSON a `CryptoProvider`, bez Windows hlaviček nebo typů. Service a CLI nepřitahují nepoužité modelové objekty. Nativní pohled, focus, scroll, okna a řadič ukládání patří do `apps/tray`. Přenosné jádro WP01 samo není implementací GUI ani Save.
 
-Platformní implementace poskytne pouze rozhraní `Tunnel` a případné API pro služby, privilegia a síťovou konfiguraci. Pro HTTP lze použít jednotnou knihovnu dostupnou na všech třech platformách, například libcurl. Pro nativní kryptografii lze použít ověřenou knihovnu s interoperabilní implementací AES-GCM; požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
+Současná Windows vrstva poskytuje implementaci rozhraní `Tunnel` pomocí Wintun, HTTP/HTTPS transport přes WinHTTP a kryptografický `CryptoProvider` přes Windows CNG. Zajišťuje také lokální IPC, hodiny, souborové operace, cesty a síťovou konfiguraci přes IP Helper. Integrace služby a nativního tray patří do příslušných aplikací. libcurl nebo jiné transportní a kryptografické adaptéry jsou pouze budoucí možností při portování na macOS a Linux, nejsou současnou závislostí klienta. Požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
+
+Zdrojové soubory jsou rozděleny do `client/src/core` pro přenosné jádro ve statické knihovně `phpvpn-core`, `client/src/platform` pro rozhraní a Windows adaptéry ve statické knihovně `phpvpn-platform` a `client/apps` pro samostatné vstupy service, CLI a tray. Služba vlastní VPN provoz, CLI a tray ji ovládají přes lokální IPC. Nativní Win32 okna a jejich obsluha jsou součástí `apps/tray`, nikoli přenosných modelů.
 
 ### Běhový model
 
@@ -717,6 +719,28 @@ Tato část stanoví testovací povinnosti. Provedené a neprovedené kontroly s
 15. Každá HTTP fáze od DNS po neukončené tělo respektuje jeden deadline. Závody cancel/timeout/success/callback a opakované cancel nezpůsobí dvojí close, use-after-free, deadlock ani pozdní úspěch. Před dalším použitím je terminální stav potvrzen, částečné VPN tělo se účtuje jednou.
 16. Oba směry všech uzavřených IPC schémat odmítnou duplicitní, nadbytečné, typově chybné členy, overflow, cizí relaci/operaci/epochu bez vedlejších účinků. Původních sedm příkazů zachová kompatibilitu. Nová tray se starou službou hlásí chybějící podporu bez fallbacku nebo vytvoření konfigurace.
 17. Ručně ověřit přesné menu, anglické nápovědy, absolutní cestu z autoritativního úložiště, spotřebování zpráv, kontraktovou kolizi, klávesnici a resize na malé ploše a DPI 100/125/150/200 %. Všechna tlačítka editoru i Wizardu zůstanou viditelná. Potvrzený Finish oznámí úspěšné uložení, odešle právě jeden wizard-close a zavře Wizard, neotevře Contracts a nepřipojí VPN. Nad skutečnou produkční akcí TrayApplication s izolovanou syntetickou pipe změřit 1 Finish, 1 close, 0 automatických Contracts oken, 0 dalších config read a 0 Connect. Při ztrátě odpovědi Finish má výslovné Verify save právě 1 wizard-get-commit a nikdy druhý Finish. Ověřit také ztracenou odpověď close, Back na URL a gate, jediný souhlas s odpojením, současné disconnected/idle, celé varování a zachování HWND, výběru a undo při resize. Teprve pozdější explicitní volba Communication contracts provede právě jedno `get-config-document` a pro `availability=valid` otevře editor nad aktuálně uloženým dokumentem. Evidence obsahuje OS, build, DPI, scénář, výsledek a testera, žádné klíče ani screenshoty v repozitáři.
+
+## Sestavení klienta
+
+Současný klient se sestavuje pro Windows AMD64 (x64) v C++20 pomocí MSVC (`cl.exe`), CMake nejméně 3.28 a generátoru Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) vyžaduje C++20 bez jazykových rozšíření a statický MSVC CRT, v Debug `/MTd`, v ostatních konfiguracích `/MT`. Konfigurace na jiném operačním systému skončí chybou, hotový macOS ani Linux adaptér zatím neexistuje.
+
+[Aplikační targety](client/apps/CMakeLists.txt) vytvářejí tři oddělené programy:
+
+| CMake target | Výstup | Úloha |
+|---|---|---|
+| `phpvpn-service` | `phpvpn-service.exe` | Windows Service vlastnící VPN provoz a konfiguraci. |
+| `phpvpn-cli` | `phpvpn.exe` | Konzolové ovládání služby přes IPC. |
+| `phpvpn-tray` | `phpvpn-tray.exe` | Nativní Win32 tray a konfigurační okna. |
+
+[CMake presety](client/CMakePresets.json) používají Ninja a externě připravené prostředí MSVC pro danou architekturu. Jméno presetu určuje samostatný adresář `work/build/<preset>`:
+
+| Preset | Konfigurace | Význam |
+|---|---|---|
+| `debug` | `Debug` | x64 sestavení s `BUILD_TESTING=ON`. |
+| `release` | `RelWithDebInfo` | Optimalizované x64 sestavení s ladicími informacemi a `BUILD_TESTING=ON`. Nejde o `CMAKE_BUILD_TYPE=Release`. |
+| `asan` | `Debug` | x64 sestavení s AddressSanitizerem (`PHPVPN_ENABLE_ASAN=ON`) a `BUILD_TESTING=ON`. |
+
+Soubor obsahuje také preset `arm64-release` s `RelWithDebInfo` a `BUILD_TESTING=OFF`. Jeho existence není důkazem ověřeného distribučního ARM64 vydání, podporovaný rozsah této etapy zůstává Windows AMD64. Samostatný postup pro izolované GUI se skutečným `Release` je v části [Izolovaný vývoj a náhled GUI](#izolovaný-vývoj-a-náhled-gui).
 
 ## Specifika platforem
 
