@@ -188,6 +188,36 @@ PHPVPN_TEST(ContractsModel, random_confirmation_failure_and_restored_key_is_clea
     PHPVPN_REQUIRE_OK(m.setKey(target->remoteIp(), old));
     PHPVPN_CHECK(!m.dirty());
 }
+PHPVPN_TEST(ContractsModel, enabled_same_generated_key_is_clean_and_different_result_is_dirty) {
+    Crypto crypto;
+    const auto peer = ip("10.99.99.10");
+    const std::string original = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    auto seed = ContractsModel::create(crypto, document());
+    PHPVPN_REQUIRE_OK(seed);
+    PHPVPN_REQUIRE_OK(seed.value()->setEnabled(peer, true));
+    PHPVPN_REQUIRE_OK(seed.value()->setKey(peer, original));
+    auto saved = seed.value()->prepareSave(envelopeSize);
+    PHPVPN_REQUIRE_OK(saved);
+    auto loaded = ContractsModel::create(crypto, saved.value()->text());
+    PHPVPN_REQUIRE_OK(loaded);
+    auto& model = *loaded.value();
+    const auto target = model.target(peer).value();
+    PHPVPN_REQUIRE_OK(model.confirmRandom(crypto, target, true));
+    PHPVPN_CHECK_EQ(crypto.randomCalls, 1u);
+    PHPVPN_CHECK_EQ(model.row(peer)->keyText(), original);
+    PHPVPN_CHECK(model.row(peer)->enabled());
+    PHPVPN_CHECK(!model.row(peer)->dirty() && !model.dirty());
+    PHPVPN_REQUIRE_OK(model.applyPasswordKey(target, original));
+    PHPVPN_CHECK(!model.dirty());
+    PHPVPN_REQUIRE_OK(model.applyPasswordKey(target, std::string(64, 'a')));
+    PHPVPN_CHECK(model.row(peer)->dirty() && model.dirty());
+    PHPVPN_REQUIRE_OK(model.applyPasswordKey(target, original));
+    PHPVPN_CHECK(!model.dirty());
+    PHPVPN_REQUIRE_OK(model.setEnabled(peer, false));
+    PHPVPN_CHECK(model.dirty()); // removing an originally enabled contract is a change
+    PHPVPN_REQUIRE_OK(model.setEnabled(peer, true));
+    PHPVPN_CHECK(!model.dirty());
+}
 PHPVPN_TEST(ContractsModel, multiple_targets_last_confirmed_frozen_candidate_and_stale_generations) {
     Crypto crypto;
     auto a = ContractsModel::create(crypto, document());

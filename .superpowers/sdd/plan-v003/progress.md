@@ -44,4 +44,28 @@ Stav: dokončeno. D08 je doplněno, TT20 přidalo izolovaný test loggeru, 1 cí
 
 ## Task 9: D09
 
-Stav: předáno do samostatného chatu. Rozsah: redakční odpoutání klientských dokumentů od historických pracovních značek, bez kódu a nových testů.
+Stav: dokončeno. D09 upravilo client.md, tray_UX.md a T28, 68 lokálních odkazů bez chyb. Viz `task-9-report.md`.
+
+## Task 10: D10 + TT11
+
+Stav: dokončeno. D10 je doplněno, 24 C++ a 46 Python testů plus PowerShell regrese prošly. Síťová autentizace .2–.15 zůstává NOT RUN. Viz `task-10-report.md`.
+
+## Task 11: D11 + TT04
+
+Stav: dokončeno. D11 je doplněno, 29 cílených testů bez selhání. Periodický lifecycle a OS scénáře zůstávají NOT RUN. Viz `task-11-report.md`.
+
+## Task 12: D12 + R02
+
+Stav: dokončeno. D12 upravilo současný polling a stav R02, 18 existujících testů bez selhání. B01–B05 jsou nedodané. Viz `task-12-report.md`.
+
+## Task 13: D13 + TT06/TT07
+
+Stav: dokončeno. D13 je doplněno, 28 cílených testů bez selhání. DNS/send a cancel-success scénáře zůstávají NOT RUN. Viz `task-13-report.md`.
+
+## Task 14: D14 + TT08
+
+Stav: dokončeno. D14 je doplněno, 6 VerifyOnly scénářů a 2 izolované testy bez selhání. Reálná instalace zůstává NOT RUN. Viz `task-14-report.md`.
+
+## Task 15: D15 + TT10/TT12
+
+Stav: předáno do samostatného chatu. Rozsah: záměrné Users read, vyřazení neimplementovaných notes a skutečně chybějící vazby konfigurace/Wizardu.

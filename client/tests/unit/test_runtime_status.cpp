@@ -1705,6 +1705,70 @@ PHPVPN_TEST(runtime, fix2_degraded_storage_keeps_diagnostics_and_blocks_connect_
     PHPVPN_CHECK_EQ(rejected->find("error")->find("code")->stringValue(), std::string("journal_corrupt"));
 }
 
+PHPVPN_TEST(wizard_service, fix2_stored_false_survives_model_suggestion_finish_and_new_open) {
+    WizardServiceFixture fixture;
+    auto dom = Json::parse(makeDefaultEditorDocument()).value();
+    for (auto& section : dom.objectValue()) if (section.first == "masterSetup")
+        for (auto& field : section.second.objectValue())
+            if (field.first.ends_with("InWizard")) field.second = JsonValue::makeBool(false);
+    fixture.runtime.files->bytes = Json::serialize(dom);
+    const auto original = *fixture.runtime.files->bytes;
+    ConfigWarnings warnings;
+    fixture.relayConfig = parseAndValidateConfig(original, warnings).value();
+    auto view = WizardIpc::parseView(fixture.call(WizardCommand::open).result).value();
+    fixture.request.sessionId = view.sessionId;
+    WizardModel model;
+    model.load(view);
+    const auto expected = model.fields();
+    PHPVPN_CHECK(!model.autoDetectIpAddress());
+    PHPVPN_CHECK(!model.useDefaultSecret());
+    PHPVPN_CHECK(!model.useDefaultAccessKey());
+    for (auto command : {WizardCommand::check_url, WizardCommand::check_secret, WizardCommand::check_access}) {
+        auto attempt = model.beginCheck(fixture.runtime.crypto.actual->randomUuidV4().value(), 1).value();
+        fixture.request.fields = model.fields();
+        fixture.request.clientAttemptId = attempt.clientAttemptId;
+        fixture.request.attemptSequence = attempt.sequence;
+        auto started = fixture.call(command);
+        PHPVPN_CHECK(!started.error);
+        fixture.request.operationId = started.result.find("operationId")->stringValue();
+        PHPVPN_CHECK(model.acceptStart(fixture.request.operationId, attempt.clientAttemptId, attempt.sequence));
+        fixture.runDiagnostic();
+        auto result = WizardIpc::parseOperation(fixture.call(WizardCommand::get_operation).result).value();
+        PHPVPN_CHECK_EQ(result.state, WizardOperationState::succeeded);
+        if (command == WizardCommand::check_secret) {
+            PHPVPN_CHECK(result.suggestedIp.has_value());
+            // Inject a different proposal at the presentation seam so a mistaken
+            // automatic overwrite cannot pass merely because both IPs are .2.
+            result.suggestedIp = "10.99.99.10";
+        }
+        PHPVPN_CHECK(model.applyOperation(result, 2));
+        PHPVPN_CHECK_EQ(model.fields(), expected);
+    }
+    PHPVPN_CHECK(model.hasSuggestedIp());
+    PHPVPN_CHECK_EQ(model.step(), WizardStep::contracts);
+    PHPVPN_CHECK_EQ(*fixture.runtime.files->bytes, original);
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+    fixture.request.fields = model.fields();
+    PHPVPN_CHECK(!fixture.beginFinish().error);
+    fixture.runFile();
+    const auto receipt = fixture.call(WizardCommand::get_commit);
+    PHPVPN_CHECK_EQ(receipt.result.find("commitState")->stringValue(), std::string("confirmed"));
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+    const auto stored = analyzeWizardDocument(*fixture.runtime.files->bytes).value();
+    PHPVPN_CHECK_EQ(stored.fields, expected);
+    PHPVPN_CHECK_EQ(Json::serialize(*stored.dom.find("communicationContracts")), Json::serialize(*dom.find("communicationContracts")));
+    PHPVPN_CHECK(!fixture.call(WizardCommand::close).error);
+    const auto httpCalls = fixture.httpCalls;
+    auto reopened = WizardIpc::parseView(fixture.call(WizardCommand::open).result).value();
+    PHPVPN_CHECK(reopened.sessionId != view.sessionId);
+    WizardModel newModel;
+    newModel.load(reopened);
+    PHPVPN_CHECK_EQ(newModel.fields(), expected);
+    PHPVPN_CHECK(!newModel.hasSuggestedIp());
+    PHPVPN_CHECK_EQ(fixture.httpCalls, httpCalls);
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+}
+
 PHPVPN_TEST(wizard_service, fix2_all_preferences_persist_through_verified_finish_and_reopen) {
     for (unsigned mask = 0; mask < 8; ++mask) {
         WizardServiceFixture fixture;

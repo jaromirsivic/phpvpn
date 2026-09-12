@@ -154,6 +154,49 @@ PHPVPN_TEST(WP03Models, StatisticsFormatsTenValuesAndPreservesStaleSnapshot) {
     PHPVPN_CHECK_EQ(formatStatisticsBytes(999994), L"999.99 kB");
     PHPVPN_CHECK_EQ(formatStatisticsBytes(999995), L"1.00 MB");
 }
+PHPVPN_TEST(WP03Models, StatisticsRoundsHalfUpAcrossDecimalUnits) {
+    // Catch truncation, binary divisors and failure to promote after rounding.
+    const std::pair<std::uint64_t, const wchar_t *> cases[]{
+        {1004ULL, L"1.00 kB"}, {1005ULL, L"1.01 kB"},
+        {1004999ULL, L"1.00 MB"}, {1005000ULL, L"1.01 MB"},
+        {999994999ULL, L"999.99 MB"}, {999995000ULL, L"1.00 GB"},
+        {1004999999ULL, L"1.00 GB"}, {1005000000ULL, L"1.01 GB"},
+        {999994999999ULL, L"999.99 GB"}, {999995000000ULL, L"1.00 TB"},
+        {1000000000000ULL, L"1.00 TB"},
+        {1004999999999ULL, L"1.00 TB"}, {1005000000000ULL, L"1.01 TB"},
+        {999994999999999ULL, L"999.99 TB"}, {999995000000000ULL, L"1.00 PB"},
+        {1000000000000000ULL, L"1.00 PB"},
+        {1004999999999999ULL, L"1.00 PB"}, {1005000000000000ULL, L"1.01 PB"},
+        {999995000000000000ULL, L"1000.00 PB"}};
+    for (const auto &[bytes, expected] : cases)
+        PHPVPN_CHECK_EQ(formatStatisticsBytes(bytes), expected);
+}
+PHPVPN_TEST(WP03Models, StatisticsSumsExactBytesBeforeRoundingIncludingCarry) {
+    // A wrapped/saturated sum or float conversion loses these exact low bits.
+    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+    struct Case { std::uint64_t first, second, upper, lower; };
+    const Case cases[]{
+        {0, 0, 0, 0}, {maximum, 0, 0, maximum},
+        {9007199254740992ULL, 1, 0, 9007199254740993ULL},
+        {9223372036854775807ULL, 1, 0, 9223372036854775808ULL},
+        {maximum, 1, 1, 0}, {1, maximum, 1, 0},
+        {maximum, maximum, 1, 18446744073709551614ULL}};
+    for (const auto &c : cases) {
+        const auto sum = addStatisticsBytes(c.first, c.second);
+        PHPVPN_CHECK_EQ(sum.upper, c.upper);
+        PHPVPN_CHECK_EQ(sum.lower, c.lower);
+    }
+    StatisticsModel model;
+    auto s = ready();
+    s.counters.serializedDataRequestBodyBytes = 1004;
+    s.counters.serializedDataResponseBodyBytes = 1004;
+    model.update(s, false);
+    PHPVPN_CHECK_EQ(model.value(3), L"1.00 kB");
+    PHPVPN_CHECK_EQ(model.value(4), L"1.00 kB");
+    PHPVPN_CHECK_EQ(model.value(5), L"2.01 kB"); // Not a sum of rounded display values.
+    model.update({}, true);
+    PHPVPN_CHECK_EQ(model.value(5), L"2.01 kB");
+}
 PHPVPN_TEST(WP03Models, NarrowLayoutsAndMeasuredLongCountersDoNotOverlap) {
     for (int dpi : {96, 120, 144, 192}) {
         const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };

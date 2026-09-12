@@ -33,6 +33,7 @@ add_executable(phpvpn-client-tests
     unit/test_tray_layout.cpp
     unit/test_tray_geometry.cpp
     unit/test_tray_infrastructure.cpp
+    unit/test_tray_palette.cpp
     unit/test_tray_application.cpp
     unit/test_status_contract.cpp
     unit/test_winhttp_accounting.cpp
