@@ -1,5 +1,13 @@
-state: capturing
+state: realization paused after task 1, Superpowers forbidden by user
 language: Czech
 project_root: C:\git\phpvpn
 intent_directory: C:\git\phpvpn\Intents\2026-09-12-12-59-17
 started_at: 2026-09-12-12-59-17
+last_completed_intent_version: 1
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-12-12-59-17\intent-v001.md
+route: plan
+planning_context_id: 01a0955b-a8c0-7e63-8313-49bce1909c82
+plan_directory: C:\git\phpvpn\Plans\2026-09-12-12-59-17
+last_completed_plan_version: 1
+latest_plan_path: C:\git\phpvpn\Plans\2026-09-12-12-59-17\plan-v001.md
+realization_context_id: 01a09577-c84d-7073-bba4-1d0b9c17a965
