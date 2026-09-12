@@ -386,6 +386,64 @@ PHPVPN_TEST(WP03Windows, StaticProgressContextSurvivesEveryState) {
         PHPVPN_CHECK(!hasChildText(progress.window(), old));
     SendMessageW(progress.window(), WM_CLOSE, 0, 0);
 }
+PHPVPN_TEST(WP03Windows, DefaultProgressHeightsFitEveryVisiblePanelWithLightBottomGap) {
+    Backend backend;
+    const auto instance = GetModuleHandleW(nullptr);
+    const auto monitors = availableMonitors();
+    PHPVPN_CHECK(!monitors.empty());
+    if (monitors.empty()) return;
+    const auto &monitor = monitors.front();
+    const WindowPlacementContext placementContext{
+        nullptr, Point{(monitor.work.left + monitor.work.right) / 2, (monitor.work.top + monitor.work.bottom) / 2}};
+    const auto verify = [](ProgressWindow &progress, Size expected, const wchar_t *actionText) {
+        RECT client{};
+        GetClientRect(progress.window(), &client);
+        const int dpi = GetDpiForWindow(progress.window());
+        const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        PHPVPN_CHECK_EQ(client.right, p(expected.width));
+        PHPVPN_CHECK_EQ(client.bottom, p(expected.height));
+        const HWND action = FindWindowExW(progress.window(), nullptr, L"STATIC", actionText);
+        PHPVPN_CHECK(action != nullptr);
+        if (action) {
+            const int panelBottom = bounds(action, progress.window()).bottom + p(24);
+            PHPVPN_CHECK(panelBottom + p(8) <= client.bottom);
+            PHPVPN_CHECK(client.bottom - panelBottom <= p(24));
+        }
+    };
+
+    ProgressWindow connect(backend.pipe);
+    {
+        ScopedWindowPlacement placement(placementContext);
+        connect.open(instance);
+    }
+    auto failure = connected();
+    failure.hasError = true;
+    failure.errorCode = "communication_failed";
+    connect.onSnapshot(failure);
+    verify(connect, {940, 560}, L"Check the network and server availability, then try again.");
+    SendMessageW(connect.window(), WM_CLOSE, 0, 0);
+
+    ProgressWindow disconnect(backend.pipe);
+    {
+        ScopedWindowPlacement placement(placementContext);
+        disconnect.open(instance, true);
+    }
+    verify(disconnect, {760, 192}, L"Please wait while the VPN disconnects.");
+    auto disconnected = connected();
+    disconnected.state = "disconnected";
+    disconnected.phase = "idle";
+    disconnected.tunnelReady = "no";
+    disconnect.onDisconnectReply(disconnected);
+    verify(disconnect, {760, 192}, L"You have been disconnected successfully.");
+    disconnect.open(instance, true);
+    auto disconnectFailure = disconnected;
+    disconnectFailure.hasError = true;
+    disconnectFailure.errorCode = "communication_failed";
+    disconnect.onDisconnectReply(disconnectFailure);
+    verify(disconnect, {760, 192},
+           L"The service did not confirm Disconnect. Try Disconnect again or check the service status.");
+    SendMessageW(disconnect.window(), WM_CLOSE, 0, 0);
+}
 PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesInBounds) {
     for (bool disconnect : {false, true}) {
     Backend backend;

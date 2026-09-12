@@ -51,7 +51,7 @@ void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
                                   WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 0, 0, 1, 1, nullptr, nullptr, instance, this);
         if (!window_)
             return;
-        sizeAndCenter(window_, disconnect_ ? Size{760, 340} : ui::connectClient);
+        sizeAndCenter(window_, disconnect_ ? ui::disconnectClient : ui::connectClient);
         auto label = [&](const wchar_t *text, int id = 0) {
             return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 1, 1, window_,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
@@ -358,7 +358,8 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         return 0;
     case WM_GETMINMAXINFO:
         if (self->disconnect_)
-            setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam), {400, 280});
+            setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam),
+                                      {400, ui::disconnectClient.height});
         return 0;
     case WM_VSCROLL: {
         SCROLLINFO s{sizeof(s), SIF_ALL};

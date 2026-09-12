@@ -33,6 +33,7 @@ PHPVPN_TEST(TrayLayout, ProgressUsesSharedMarginsAndStaticContextAtSupportedDpi)
                 PHPVPN_CHECK(l.panel.top >= l.eyebrow.bottom + p(8));
                 PHPVPN_CHECK(disconnect ? l.card == Rect{} : l.card.bottom < l.panel.top);
                 PHPVPN_CHECK(disconnect ? l.separator == Rect{} : l.card.top >= l.eyebrow.bottom + p(8));
+                PHPVPN_CHECK_EQ(l.height - l.panel.bottom, buttonFooterMargin(p(width), dpi));
             }
         }
         const auto narrow = computeProgressLayout(p(320), dpi, p(72), true, false, p(56));

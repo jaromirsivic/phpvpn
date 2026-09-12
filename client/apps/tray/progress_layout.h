@@ -77,7 +77,7 @@ inline ProgressLayout computeProgressLayout(int width, int dpi, int actionHeight
     }
     y += pad;
     l.panel = {m, panelTop, right, y};
-    l.height = y + verticalMargin;
+    l.height = y + buttonFooterMargin(width, dpi);
     return l;
 }
 } // namespace phpvpn::tray
