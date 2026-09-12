@@ -5,6 +5,7 @@
 #include "tray_application.h"
 #include "editor_window.h"
 #include "contracts_window.h"
+#include "ui_controls.h"
 #include "window_utils.h"
 #include "resource.h"
 #include "../unit/wp03_dialog_test.h"
@@ -76,6 +77,12 @@ std::wstring text(HWND window) {
     std::wstring result(static_cast<std::size_t>(GetWindowTextLengthW(window)) + 1, L'\0');
     result.resize(static_cast<std::size_t>(GetWindowTextW(window, result.data(), static_cast<int>(result.size()))));
     return result;
+}
+Rect boundsIn(HWND parent, HWND window) {
+    RECT bounds{};
+    check(window && GetWindowRect(window, &bounds), "control bounds unavailable");
+    MapWindowPoints(nullptr, parent, reinterpret_cast<POINT*>(&bounds), 2);
+    return {bounds.left, bounds.top, bounds.right, bounds.bottom};
 }
 std::wstring allText(HWND parent) {
     std::wstring result = text(parent);
@@ -1184,6 +1191,150 @@ int interactive(std::string_view preview = {}) {
 }
 #include "dev_preview.inc"
 
+void verifyPasswordFooter(HWND window) {
+    RECT client{}; GetClientRect(window, &client);
+    const int dpi = GetDpiForWindow(window), p104 = scaleForDpi(104, dpi);
+    const std::array specs{
+        FooterButtonSpec{p104, FooterSide::leading, true},
+        FooterButtonSpec{p104, FooterSide::leading, true},
+        FooterButtonSpec{p104, FooterSide::trailing, true}};
+    const auto expected = computeButtonFooterLayout({client.right, client.bottom}, dpi, specs);
+    const std::array controls{child(window, 503), child(window, 504), child(window, IDOK)};
+    for (std::size_t i = 0; i < controls.size(); ++i)
+        check(boundsIn(window, controls[i]) == expected.buttons[i], "Password footer differs from shared geometry");
+    const HWND body = GetParent(child(window, 501));
+    const auto bodyBounds = boundsIn(window, body);
+    check(bodyBounds.bottom == expected.bounds.top, "Password body does not stop at footer");
+    SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
+    check(GetScrollInfo(body, SB_VERT, &info) && info.nPage == static_cast<UINT>(expected.bounds.top),
+        "Password scroll page does not use footer boundary");
+}
+
+void passwordFooterResize() {
+    DevPreview preview({"Password", "Default"});
+    unsigned step = 0;
+    preview.run([&](DevPreview& p) {
+        if (step) {
+            if (!findTop(L"PhpVpnPasswordSha")) p.app->endSession();
+            return;
+        }
+        ++step;
+        HWND window = findTop(L"PhpVpnPasswordSha");
+        check(window && IsWindowVisible(window), "Password window unavailable");
+        const int dpi = GetDpiForWindow(window);
+        const HWND input = child(window, 501), hash = child(window, 502);
+        SetFocus(input); SendMessageW(input, EM_SETSEL, 0, 0);
+        for (int width : {900, 480, 360, 359, 320, 480}) {
+            resizeClient(window, scaleForDpi(width, dpi), scaleForDpi(240, dpi));
+            verifyPasswordFooter(window);
+            check(GetFocus() == input, "Password resize changed focus");
+            check(GetNextDlgTabItem(window, input, FALSE) == hash, "Password hash tab order");
+            check(GetNextDlgTabItem(window, hash, FALSE) == child(window, 503), "Password Default tab order");
+            check(GetNextDlgTabItem(window, child(window, 503), FALSE) == child(window, 504), "Password Random tab order");
+            check(GetNextDlgTabItem(window, child(window, 504), FALSE) == child(window, IDOK), "Password OK tab order");
+        }
+        click(window, 503);
+        check(!text(input).empty() && IsWindowEnabled(child(window, IDOK)), "Default action did not enable OK");
+        click(window, 504);
+        check(text(input).size() == 64 && !text(hash).empty(), "Random action did not update password and SHA");
+        SetFocus(input); PostMessageW(input, WM_KEYDOWN, VK_RETURN, 0);
+    });
+    check(step && !findTop(L"PhpVpnPasswordSha"), "Password Enter did not apply and close");
+
+    DevPreview escape({"Password", "Default"});
+    unsigned escaped = 0;
+    escape.run([&](DevPreview& p) {
+        if (escaped) {
+            if (!findTop(L"PhpVpnPasswordSha")) p.app->endSession();
+            return;
+        }
+        ++escaped;
+        const HWND window = findTop(L"PhpVpnPasswordSha");
+        PostMessageW(child(window, 501), WM_KEYDOWN, VK_ESCAPE, 0);
+    });
+    check(escaped && !findTop(L"PhpVpnPasswordSha"), "Password Escape did not close");
+}
+
+ButtonFooterLayout expectedContractsFooter(HWND window) {
+    RECT client{}; GetClientRect(window, &client);
+    const int dpi = GetDpiForWindow(window);
+    const HWND save = child(window, IDOK);
+    HDC dc = GetDC(window);
+    const int saveWidth = std::max(scaleForDpi(180, dpi), measuredButtonWidth(dc,
+        reinterpret_cast<HFONT>(SendMessageW(save, WM_GETFONT, 0, 0)), text(save), dpi));
+    ReleaseDC(window, dc);
+    const std::array specs{
+        FooterButtonSpec{scaleForDpi(236, dpi), FooterSide::leading, IsWindowVisible(child(window, 800)) != FALSE},
+        FooterButtonSpec{scaleForDpi(164, dpi), FooterSide::leading, IsWindowVisible(child(window, 801)) != FALSE},
+        FooterButtonSpec{scaleForDpi(104, dpi), FooterSide::trailing, IsWindowVisible(child(window, IDCANCEL)) != FALSE},
+        FooterButtonSpec{saveWidth, FooterSide::trailing, IsWindowVisible(save) != FALSE}};
+    return computeButtonFooterLayout({client.right, client.bottom}, dpi, specs);
+}
+
+void verifyContractsFooter(HWND window) {
+    const auto expected = expectedContractsFooter(window);
+    const std::array controls{child(window, 800), child(window, 801), child(window, IDCANCEL), child(window, IDOK)};
+    for (std::size_t i = 0; i < controls.size(); ++i)
+        check(boundsIn(window, controls[i]) == expected.buttons[i], "Contracts footer differs from shared geometry");
+    const HWND body = GetParent(GetParent(GetParent(GetParent(child(window, 1001)))));
+    const HWND error = child(window, 802);
+    const auto bodyBounds = boundsIn(window, body), errorBounds = boundsIn(window, error);
+    if (IsWindowVisible(error)) {
+        check(errorBounds.bottom == expected.bounds.top && bodyBounds.bottom == errorBounds.top,
+            "Contracts error/body boundary is not directly above footer");
+    } else check(bodyBounds.bottom == expected.bounds.top, "Contracts body does not stop at footer");
+    SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS};
+    check(GetScrollInfo(body, SB_VERT, &info) && info.nPage == static_cast<UINT>(bodyBounds.bottom),
+        "Contracts scroll page does not use actual body boundary");
+}
+
+void contractsFooterStates() {
+    for (const auto* scene : {"Default", "Saving", "SaveUnknown"}) {
+        DevPreview preview({"Contracts", scene});
+        unsigned step = 0;
+        preview.run([&](DevPreview& p) {
+            HWND window = p.window();
+            if (!window) return;
+            if (!step) {
+                const auto beforeText = text(child(window, IDOK));
+                const bool beforeEnabled = IsWindowEnabled(child(window, IDOK)) != FALSE;
+                const int dpi = GetDpiForWindow(window);
+                for (int width : {900, 552, 551, 480, 372, 371, 900}) {
+                    resizeClient(window, scaleForDpi(width, dpi), scaleForDpi(600, dpi));
+                    verifyContractsFooter(window);
+                    check(text(child(window, IDOK)) == beforeText && (IsWindowEnabled(child(window, IDOK)) != FALSE) == beforeEnabled,
+                        "Contracts resize changed Save meaning or state");
+                }
+                const bool checkVisible = IsWindowVisible(child(window, 800)) != FALSE;
+                const bool repeatVisible = IsWindowVisible(child(window, 801)) != FALSE;
+                if (!checkVisible) {
+                    const HWND next = GetNextDlgTabItem(window, child(window, IDCANCEL), FALSE);
+                    check(IsWindowEnabled(child(window, IDOK)) ? next == child(window, IDOK) : next != child(window, IDOK),
+                        "Contracts disabled Save tab behavior");
+                } else {
+                    check(GetNextDlgTabItem(window, child(window, 800), FALSE) ==
+                        (repeatVisible ? child(window, 801) : child(window, IDCANCEL)), "Contracts leading tab order");
+                }
+                ++step;
+                if (std::string_view(scene) == "SaveUnknown") click(window, 800);
+                else p.app->endSession();
+            } else if (std::string_view(scene) == "SaveUnknown" && IsWindowVisible(child(window, 801))) {
+                verifyContractsFooter(window);
+                check(GetNextDlgTabItem(window, child(window, 800), FALSE) == child(window, 801) &&
+                    GetNextDlgTabItem(window, child(window, 801), FALSE) == child(window, IDCANCEL),
+                    "Contracts Check/Repeat/Cancel tab order");
+                ++step; p.app->endSession();
+            }
+        });
+        check(step == (std::string_view(scene) == "SaveUnknown" ? 2u : 1u), "Contracts footer state did not complete");
+    }
+}
+
+void editorPasswordFooters() {
+    editorFooterResize();
+    passwordFooterResize();
+}
+
 // Compare the immediately completed live layout against an explicit full
 // repaint, without pumping timers or changing application state in between.
 std::vector<DWORD> resizePixels(HWND window) {
@@ -1204,8 +1355,8 @@ std::vector<DWORD> resizePixels(HWND window) {
     check(copied, "resize capture failed");
     return result;
 }
-void liveResizeRepaint() {
-    for (const auto* view : {"Wizard", "Statistics", "Contracts", "Editor", "Connect", "Password"}) {
+void liveResizeRepaintViews(std::span<const char* const> views) {
+    for (const auto* view : views) {
         DevPreview preview({view, "Default"});
         preview.run([](DevPreview& p) {
             HWND root = p.selection.view == "Password" ? findTop(L"PhpVpnPasswordSha") : p.window();
@@ -1240,6 +1391,14 @@ void liveResizeRepaint() {
         check(preview.ready, "resize preview never ready");
         std::cout << "[ EVIDENCE ] " << view << " 112 edge/corner resize frames match full repaint.\n";
     }
+}
+void liveResizeRepaint() {
+    constexpr std::array views{"Wizard", "Statistics", "Contracts", "Editor", "Connect", "Password"};
+    liveResizeRepaintViews(views);
+}
+void passwordContractsLiveResizeRepaint() {
+    constexpr std::array views{"Contracts", "Password"};
+    liveResizeRepaintViews(views);
 }
 
 unsigned startupButtons = 0, systemPaintButtons = 0;
@@ -1478,6 +1637,9 @@ int main(int argc, char** argv) {
     const std::pair<const char*, void(*)()> tests[]{
         {"plan_v001_server_information_tabs", serverInformationTabs},
         {"plan_v001_editor_footer_resize", editorFooterResize},
+        {"plan_v001_editor_password_footers", editorPasswordFooters},
+        {"plan_v001_contracts_footer_states", contractsFooterStates},
+        {"plan_v001_password_contracts_live_resize_repaint", passwordContractsLiveResizeRepaint},
         {"live_resize_repaint", liveResizeRepaint},
         {"modern_button_drag", modernButtonDrag},
         {"modern_button_startup", modernButtonStartup},

@@ -1,6 +1,7 @@
 #include "window_utils.h"
 #include <initguid.h>
 #include "contracts_window.h"
+#include "layout.h"
 #include "system_dialog.h"
 #include "ui_controls.h"
 #include <windowsx.h>
@@ -331,9 +332,14 @@ void ContractsWindow::refresh() {
     EnableWindow(viewport_, !snapshot.saving && !snapshot.unknown);
     EnableWindow(pager_, !snapshot.saving && !snapshot.unknown);
     EnableWindow(ok_, changes > 0 && controller_.model()->canPrepareSave());
-    ShowWindow(ok_, snapshot.unknown ? SW_HIDE : SW_SHOW);
-    ShowWindow(check_, snapshot.unknown ? SW_SHOW : SW_HIDE);
-    ShowWindow(repeat_, controller_.canRepeat() ? SW_SHOW : SW_HIDE);
+    const bool checkVisible = snapshot.unknown;
+    const bool repeatVisible = controller_.canRepeat();
+    const bool saveVisible = !snapshot.unknown;
+    const bool footerVisibilityChanged = (IsWindowVisible(check_) != FALSE) != checkVisible ||
+        (IsWindowVisible(repeat_) != FALSE) != repeatVisible || (IsWindowVisible(ok_) != FALSE) != saveVisible;
+    ShowWindow(ok_, saveVisible ? SW_SHOW : SW_HIDE);
+    ShowWindow(check_, checkVisible ? SW_SHOW : SW_HIDE);
+    ShowWindow(repeat_, repeatVisible ? SW_SHOW : SW_HIDE);
     EnableWindow(check_, !snapshot.checking);
     const auto blockingFocus = controller_.model()->firstBlockingFocus();
     const bool validationNotice = localError_.empty() && blockingFocus.has_value();
@@ -383,7 +389,7 @@ void ContractsWindow::refresh() {
         const auto* source = controller_.model()->row(child->remoteIp());
         child->setTargetEnabled(source && source->enabled() && !snapshot.saving && !snapshot.unknown);
     }
-    if (message != previous || saveTextChanged || noticeStyleChanged) { layout(); reveal(GetFocus()); }
+    if (message != previous || saveTextChanged || noticeStyleChanged || footerVisibilityChanged) { layout(); reveal(GetFocus()); }
 }
 void ContractsWindow::setConnectionActive(bool active) { if (connectionActive_ != active) { connectionActive_ = active; refresh(); layout(); } }
 void ContractsWindow::closeChildren() { for (auto& child : children_) child->close(); children_.clear(); }
@@ -431,9 +437,8 @@ void ContractsWindow::layout() {
     const bool compact = r.right < s(900);
     const int textRight = compact ? right : right-s(180);
     const auto dc=GetDC(window_);
-    const int cancelWidth = s(104), buttonGap = s(8);
-    const int saveWidth = (std::min)((std::max)(1, right-margin-cancelWidth-buttonGap),
-        (std::max)(s(180), measuredButtonWidth(dc, resources_.font(ui::Font::label), saveText_, resources_.dpi())));
+    const int cancelWidth = s(104);
+    const int saveWidth = (std::max)(s(180), measuredButtonWidth(dc, resources_.font(ui::Font::label), saveText_, resources_.dpi()));
     const int headingBottom=s(24)+measureText(dc,resources_.font(ui::Font::heading),L"Communication contracts",(std::max)(1,textRight-margin),true).height;
     const int descriptionTop=(std::max)(s(64),headingBottom+s(4));
     const int descriptionBottom=descriptionTop+measureText(dc,resources_.font(ui::Font::label),L"Manage secure communication between this computer and other virtual IP addresses using end-to-end encryption.",(std::max)(1,textRight-margin),true).height;
@@ -442,25 +447,32 @@ void ContractsWindow::layout() {
     const int errorLength=GetWindowTextLengthW(error_); std::wstring errorText(static_cast<std::size_t>(errorLength)+1,L'\0');
     GetWindowTextW(error_,errorText.data(),errorLength+1); errorText.resize(errorLength);
     const int errorHeight=errorText.empty()?0:measureText(dc,resources_.font(validationNotice_ ? ui::Font::strongValue : ui::Font::label),errorText,(std::max)(1,right-margin),true).height+s(12); ReleaseDC(window_,dc);
-    const bool stackActions=IsWindowVisible(check_) && right-margin<s(528)+cancelWidth+buttonGap;
-    const int footer = (std::max)(0,static_cast<int>(r.bottom)-s(stackActions?148:60)-errorHeight);
-    const int buttonTop=static_cast<int>(r.bottom)-s(44);
+    const std::array specs{
+        FooterButtonSpec{s(236), FooterSide::leading, IsWindowVisible(check_) != FALSE},
+        FooterButtonSpec{s(164), FooterSide::leading, IsWindowVisible(repeat_) != FALSE},
+        FooterButtonSpec{cancelWidth, FooterSide::trailing, IsWindowVisible(cancel_) != FALSE},
+        FooterButtonSpec{saveWidth, FooterSide::trailing, IsWindowVisible(ok_) != FALSE}};
+    const auto footer = computeButtonFooterLayout({r.right, r.bottom}, resources_.dpi(), specs);
+    footerTop_ = footer.bounds.top;
+    const int errorBottom = footer.bounds.top;
+    const int errorTop = (std::max)(0, errorBottom - errorHeight);
+    const int bodyBottom = errorText.empty() ? footer.bounds.top : errorTop;
     positionControls(window_, std::vector<ControlPlacement>{
-        {body_, {0, 0, r.right, footer}},
-        {error_, {margin,footer+s(6),right,footer+(std::max)(s(6),errorHeight)}},
-        {check_, {margin,buttonTop-s(stackActions?88:0),margin+s(236),buttonTop-s(stackActions?88:0)+s(36)}},
-        {repeat_, {margin+s(stackActions?0:244),buttonTop-s(stackActions?44:0),margin+s(stackActions?164:408),buttonTop-s(stackActions?44:0)+s(36)}},
-        {cancel_, {right-saveWidth-buttonGap-cancelWidth,buttonTop,right-saveWidth-buttonGap,buttonTop+s(36)}},
-        {ok_, {right-saveWidth,buttonTop,right,buttonTop+s(36)}}});
+        {body_, {0, 0, r.right, bodyBottom}},
+        {error_, errorText.empty() ? Rect{} : Rect{margin,errorTop,right,errorBottom}},
+        {check_, footer.buttons[0]},
+        {repeat_, footer.buttons[1]},
+        {cancel_, footer.buttons[2]},
+        {ok_, footer.buttons[3]}});
     // Reserve the possible body scrollbar before determining wrapped rows.
     const int pagerColumns = (std::max)(1, (right - margin - GetSystemMetricsForDpi(SM_CXVSCROLL, resources_.dpi())) / s(40));
     const int pagerRows = (static_cast<int>(pageButtons_.size()) + pagerColumns - 1) / pagerColumns;
     const int pagerHeight = pageCount() > 1 ? s(12) + pagerRows * s(40) : 0;
-    const int bodyExtent=(std::max)(footer,tableTop+s(112)+pagerHeight);
+    const int bodyExtent=(std::max)(bodyBottom,tableTop+s(112)+pagerHeight);
     const int tableBottom = bodyExtent - pagerHeight;
     SCROLLINFO bodyInfo{sizeof(bodyInfo),SIF_RANGE|SIF_PAGE|SIF_POS};
-    bodyInfo.nMax=bodyExtent-1; bodyInfo.nPage=footer;
-    bodyScroll_=std::clamp(bodyScroll_,0,(std::max)(0,bodyExtent-footer)); bodyInfo.nPos=bodyScroll_;
+    bodyInfo.nMax=bodyExtent-1; bodyInfo.nPage=bodyBottom;
+    bodyScroll_=std::clamp(bodyScroll_,0,(std::max)(0,bodyExtent-bodyBottom)); bodyInfo.nPos=bodyScroll_;
     SetScrollInfo(body_,SB_VERT,&bodyInfo,TRUE);
     RECT bodyClient{};GetClientRect(body_,&bodyClient);
     const int bodyRight=(std::min)(right,static_cast<int>(bodyClient.right)-margin);
@@ -577,9 +589,7 @@ void ContractsWindow::paint(HWND target) {
     PAINTSTRUCT p{}; auto targetDc = BeginPaint(target, &p); PaintBuffer buffer(targetDc); auto dc = buffer.dc(); RECT r{}; GetClientRect(target, &r);
     FillRect(dc, &r, resources_.brush(target == table_ || target == window_ || target == body_ || target == pager_ ? ui::Color::background : ui::Color::surface));
     if (target == window_ && body_) {
-        RECT bodyBounds{}; GetWindowRect(body_, &bodyBounds);
-        MapWindowPoints(nullptr, window_, reinterpret_cast<POINT*>(&bodyBounds), 2);
-        const RECT divider{0, bodyBounds.bottom, r.right, bodyBounds.bottom + 1};
+        const RECT divider{0, footerTop_, r.right, footerTop_ + 1};
         FillRect(dc, &divider, resources_.brush(ui::Color::separator));
     }
     if (target == table_) paintContractsTable(dc, {0,0,r.right,r.bottom}, scaleForDpi(40, resources_.dpi()), resources_);

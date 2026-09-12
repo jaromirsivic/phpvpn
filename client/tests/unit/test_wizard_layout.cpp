@@ -36,6 +36,64 @@ PHPVPN_TEST(ButtonFooterLayout, MatchesWizardReferenceAtSupportedDpi) {
         }
     }
 }
+PHPVPN_TEST(ButtonFooterLayout, PasswordAndContractsBreakpointsPreserveSharedGeometry) {
+    const auto empty = [](Rect value) { return value == Rect{}; };
+    for (int dpi : {96, 120, 144, 192}) {
+        const auto p = [dpi](int value) { return scaleForDpi(value, dpi); };
+        const auto verify = [&](int width, std::span<const FooterButtonSpec> specs) {
+            const auto footer = computeButtonFooterLayout({width, p(600)}, dpi, specs);
+            PHPVPN_CHECK_EQ(footer.margin, p(16));
+            PHPVPN_CHECK_EQ(footer.gap, p(8));
+            PHPVPN_CHECK_EQ(footer.buttonHeight, p(36));
+            for (std::size_t i = 0; i < specs.size(); ++i) {
+                const auto button = footer.buttons[i];
+                if (!specs[i].visible) {
+                    PHPVPN_CHECK(empty(button));
+                    continue;
+                }
+                PHPVPN_CHECK(button.left >= footer.margin && button.right <= width - footer.margin);
+                PHPVPN_CHECK_EQ(button.bottom - button.top, p(36));
+                PHPVPN_CHECK(button.top >= footer.bounds.top && button.bottom <= footer.bounds.bottom);
+                for (std::size_t j = 0; j < i; ++j) if (specs[j].visible) {
+                    const auto previous = footer.buttons[j];
+                    PHPVPN_CHECK(button.right <= previous.left || button.left >= previous.right ||
+                                 button.bottom <= previous.top || button.top >= previous.bottom);
+                }
+            }
+            return footer;
+        };
+
+        const std::array password{
+            FooterButtonSpec{p(104), FooterSide::leading, true},
+            FooterButtonSpec{p(104), FooterSide::leading, true},
+            FooterButtonSpec{p(104), FooterSide::trailing, true}};
+        const int passwordBreakpoint = 2 * p(16) + 3 * p(104) + 2 * p(8);
+        const auto passwordWide = verify(passwordBreakpoint, password);
+        const auto passwordNarrow = verify(passwordBreakpoint - 1, password);
+        PHPVPN_CHECK_EQ(passwordWide.rows, 1);
+        PHPVPN_CHECK_EQ(passwordNarrow.rows, 2);
+        PHPVPN_CHECK_EQ(passwordWide.buttons[0].left, p(16));
+        PHPVPN_CHECK_EQ(passwordWide.buttons[1].left - passwordWide.buttons[0].right, p(8));
+        PHPVPN_CHECK_EQ(passwordWide.buttons[2].right, passwordBreakpoint - p(16));
+
+        for (const auto visibility : {std::array{false, false, true, true}, std::array{true, false, true, false},
+                                      std::array{true, true, true, false}, std::array{true, true, true, true}}) {
+            const std::array contracts{
+                FooterButtonSpec{p(236), FooterSide::leading, visibility[0]},
+                FooterButtonSpec{p(164), FooterSide::leading, visibility[1]},
+                FooterButtonSpec{p(104), FooterSide::trailing, visibility[2]},
+                FooterButtonSpec{p(180), FooterSide::trailing, visibility[3]}};
+            int preferred = 2 * p(16), visible = 0;
+            for (const auto& spec : contracts) if (spec.visible) { preferred += spec.preferredWidth; ++visible; }
+            preferred += std::max(0, visible - 1) * p(8);
+            const auto wide = verify(preferred, contracts);
+            const auto narrow = verify(preferred - 1, contracts);
+            const bool splitSides = visibility[0] || visibility[1];
+            PHPVPN_CHECK_EQ(wide.rows, 1);
+            PHPVPN_CHECK_EQ(narrow.rows, splitSides ? 2 : 1);
+        }
+    }
+}
 PHPVPN_TEST(WizardLayout, FooterRemainsAccessibleAcrossDpiAndSmallWorkAreas) {
     bool sawOneRow = false;
     bool sawTwoRows = false;

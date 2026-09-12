@@ -1,4 +1,5 @@
 #include "password_sha_window.h"
+#include "layout.h"
 #include "ui_controls.h"
 #include "window_utils.h"
 #include <windowsx.h>
@@ -118,14 +119,19 @@ void PasswordShaWindow::layout() {
     if (!ok_) return;
     LayoutFrame frame(window_);
     RECT r{}; GetClientRect(window_, &r); const auto s = [this](int v) { return scaleForDpi(v, resources_.dpi()); };
-    const int margin = s(24), footer = (std::max)(0,static_cast<int>(r.bottom)-s(60));
+    const int margin = s(24);
+    const std::array specs{
+        FooterButtonSpec{s(104), FooterSide::leading, true},
+        FooterButtonSpec{s(104), FooterSide::leading, true},
+        FooterButtonSpec{s(104), FooterSide::trailing, true}};
+    const auto footer = computeButtonFooterLayout({r.right, r.bottom}, resources_.dpi(), specs);
     positionControls(window_, std::vector<ControlPlacement>{
-        {body_, {0, 0, r.right, footer}},
-        {default_, {margin, footer+s(16), margin+s(104), footer+s(52)}},
-        {random_, {margin+s(116), footer+s(16), margin+s(220), footer+s(52)}},
-        {ok_, {r.right-margin-s(104), footer+s(16), r.right-margin, footer+s(52)}}});
-    SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS}; info.nMax=s(296)-1; info.nPage=footer;
-    scroll_=std::clamp(scroll_,0,(std::max)(0,info.nMax+1-footer)); info.nPos=scroll_; SetScrollInfo(body_,SB_VERT,&info,TRUE);
+        {body_, {0, 0, r.right, footer.bounds.top}},
+        {default_, footer.buttons[0]},
+        {random_, footer.buttons[1]},
+        {ok_, footer.buttons[2]}});
+    SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS}; info.nMax=s(296)-1; info.nPage=footer.bounds.top;
+    scroll_=std::clamp(scroll_,0,(std::max)(0,info.nMax+1-footer.bounds.top)); info.nPos=scroll_; SetScrollInfo(body_,SB_VERT,&info,TRUE);
     RECT body{}; GetClientRect(body_,&body); const int right=(std::max)(margin,static_cast<int>(body.right)-margin);
     std::vector<ControlPlacement> p;
     auto add = [&](HWND h, int y, int height) { p.push_back({h, {margin, s(y)-scroll_, right, s(y + height)-scroll_}}); };

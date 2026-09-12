@@ -275,6 +275,8 @@ Pod kartou stručně `Existing contracts and keys are kept. Default keys are pub
 
 ## UX10: Contracts, model a tabulka
 
+Communication Contracts používá společnou tlačítkovou patičku Wizardu. Vnější okraj je 16 DIP, mezera 8 DIP a výška tlačítka 36 DIP. Viditelné `Check current configuration` a `Save draft again` jsou leading, `Cancel` a viditelné `Save` jsou trailing. Skrytá akce nezabírá obdélník. Změna lifecycle stavu smí změnit počet řádků a výšku patičky, ale ne text, enabled stav, pořadí ani význam akcí. Chybová oblast leží přímo nad skutečnou horní hranou patičky. Posouvané body končí nad chybou, nebo přímo na hraně patičky bez chyby. Stejná hranice určuje velikost stránky, rozsah tabulky, pager a oddělovač.
+
 Titul i nadpis `Communication contracts`, popis `Manage secure communication between this computer and other virtual IP addresses.`. Vpravo nahoře label `Your virtual IP` a IP z načteného dokumentu. Při aktivní VPN jde o uloženou konfiguraci pro příští spojení, její identita nesmí být zaměněna za identitu současného tunelu.
 
 Tabulka má sloupce `Contract`, `Enabled`, `Key`, `Actions`. Pro výchozí `/24` má právě 252 řádků, vzdálené `.2` až `.254` po vyloučení lokální IP. Řazení je vzestupně podle numerické hodnoty remoteIp. Self řádek nevzniká. Identita řádku je remoteIp, nikdy jeho pořadové číslo nebo HWND.
@@ -296,6 +298,8 @@ Jiné CIDR se odvozují přes `Ipv4Cidr::firstClientAddress`, `lastClientAddress
 Počet klientských adres minus jedna ověřit s kontrolou přetečení před alokací řádků, nejvýše 252 řádků. Rozsah mimo `/24` až `/29` je invalid config. Edit Config zpřístupní text k opravě, není výjimkou z validace Save. Neprovádět automatickou migraci, nezobrazit jen první část kontraktů a nezkrátit seznam při publikaci. I v podporovaném rozsahu se zvlášť kontroluje skutečná velikost kompletního výsledného dokumentu a oba rozpočty front.
 
 ## UX11: Key, Random a Password SHA
+
+Password SHA používá tutéž společnou patičku. `Default` a `Random` jsou leading, `OK` je trailing. Vnější okraj je 16 DIP, mezera 8 DIP a výška tlačítka 36 DIP. Při nedostatku šířky se trailing skupina přesune na další řádek bez překryvu nebo ořezu. Body končí na skutečné horní hraně patičky a od této hranice se odvozuje svislá stránka i maximální posun. Text, enabled stav, Tab, Enter, Escape a akce tlačítek se zalomením nemění.
 
 Existující payloadKey se načte přesně. Chybějící zůstane prázdný a unchecked. Jeho zapnutí bez platného klíče zablokuje uložení. Deterministický klíč používaný Wizardem odvozuje sdílená `defaultPayloadKey`:
 

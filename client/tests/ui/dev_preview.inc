@@ -266,10 +266,12 @@ struct DevPreview {
             if (!child(root, 1001)) return;
             if (stage == 1) {
                 check(backend.countDev(&DevBackend::documents) == 1 && backend.countDev(&DevBackend::states) == 0, "Contracts must use one document read");
-                if (selection.view == "Password") { click(root, 1003); ShowWindow(findTop(L"PhpVpnPasswordSha"), SW_SHOW); }
+                if (selection.view == "Password") { click(root, 1000); click(root, 1002); ShowWindow(findTop(L"PhpVpnPasswordSha"), SW_SHOW); }
                 else if (selection.scene == "Invalid") {
                     click(root, 1000); edit(root, 1001, L"invalid key");
                 } else if (selection.scene == "Saving" || selection.scene == "SaveUnknown") {
+                    click(root, 1000);
+                    edit(root, 1001, std::wstring(64, L'a'));
                     click(root, IDOK);
                     { std::lock_guard lock(backend.mutex); backend.saveDeadline = app->contractsLifecycleSnapshot().deadlineMs; }
                     backend.changed.notify_all();
@@ -349,9 +351,9 @@ void devSaveUnknownRepeat() {
             ++step; click(p.window(), 800);
         } else if (step == 1 && IsWindowVisible(child(p.window(), 801))) {
             check(p.backend.countDev(&DevBackend::documents) == 2, "Check did not issue one fresh read");
-            answer(IDNO, [&] { click(p.window(), 801); });
+            phpvpn::tray::test::answer(IDNO, [&] { click(p.window(), 801); });
             check(p.backend.countDev(&DevBackend::saves) == 1, "Repeat No wrote configuration");
-            ++step; answer(IDYES, [&] { click(p.window(), 801); });
+            ++step; phpvpn::tray::test::answer(IDYES, [&] { click(p.window(), 801); });
         }
     });
     check(step == 2 && preview.backend.countDev(&DevBackend::saves) == 2, "Confirmed repeat did not save and close");
@@ -363,7 +365,7 @@ void devPasswordChildren() {
         check(GetTickCount64() - p.readyAt < 6000, "Password workflow timed out");
         if (step++) return;
         const HWND first = findTop(L"PhpVpnPasswordSha");
-        click(p.window(), 1003); const HWND second = findTop(L"PhpVpnPasswordSha");
+        click(p.window(), 1002); const HWND second = findTop(L"PhpVpnPasswordSha");
         check(first && second && first != second && IsWindowEnabled(p.window()), "Multiple Password children unavailable");
         edit(first, 501, L"first synthetic password");
         edit(second, 501, L"second synthetic password");
@@ -385,7 +387,7 @@ void devSavingDeadline() {
         check(GetTickCount64() < deadline + 2000, "Saving stayed disabled beyond its deadline");
         if (current.unknown) {
             check(!current.saving && GetTickCount64() >= deadline, "Saving did not wait for original deadline");
-            answer(IDYES, [&] { SendMessageW(p.window(), WM_CLOSE, 0, 0); });
+            phpvpn::tray::test::answer(IDYES, [&] { SendMessageW(p.window(), WM_CLOSE, 0, 0); });
         }
     });
     check(deadline && preview.backend.countDev(&DevBackend::saves) == 1, "Saving deadline retried publication");

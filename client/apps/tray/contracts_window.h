@@ -72,7 +72,7 @@ private:
         local_ = nullptr, localLabel_ = nullptr, notice_ = nullptr, error_ = nullptr, cancel_ = nullptr, ok_ = nullptr, check_ = nullptr, repeat_ = nullptr;
     bool ending_ = false, changing_ = false, layingOut_ = false, connectionActive_ = false;
     int x_ = 0, y_ = 0, width_ = 0, keyWidth_ = 260, rowHeight_ = 48;
-    int bodyScroll_ = 0;
+    int bodyScroll_ = 0, footerTop_ = 0;
     std::wstring localError_;
     std::wstring saveText_ = L"Save";
     bool validationNotice_ = false;
