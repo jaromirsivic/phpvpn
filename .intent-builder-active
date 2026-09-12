@@ -1,12 +1,5 @@
-state: plan complete, awaiting realization choice
+state: capturing
 language: Czech
 project_root: C:\git\phpvpn
-intent_directory: C:\git\phpvpn\Intents\2026-09-12-10-38-39
-started_at: 2026-09-12-10-38-39
-last_completed_intent_version: 1
-latest_intent_path: C:\git\phpvpn\Intents\2026-09-12-10-38-39\intent-v001.md
-route: plan
-planning_context_id: 01a094c9-3688-7541-91e3-e880ee310a16
-plan_directory: C:\git\phpvpn\Plans\2026-09-12-10-45-15
-last_completed_plan_version: 1
-latest_plan_path: C:\git\phpvpn\Plans\2026-09-12-10-45-15\plan-v001.md
+intent_directory: C:\git\phpvpn\Intents\2026-09-12-12-59-17
+started_at: 2026-09-12-12-59-17
