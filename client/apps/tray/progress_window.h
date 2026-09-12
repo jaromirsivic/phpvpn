@@ -45,7 +45,7 @@ class ProgressWindow {
     ProgressLayout layout_;
     std::array<HWND, 2> labels_{}, fields_{};
     std::array<HWND, 3> checks_{}, checkLabels_{}, checkIcons_{};
-    HWND eyebrow_ = nullptr, heading_ = nullptr, description_ = nullptr;
+    HWND eyebrow_ = nullptr;
     HWND detailsHeading_ = nullptr, checksHeading_ = nullptr, panelHeading_ = nullptr, panelAction_ = nullptr,
          countdown_ = nullptr;
     int scroll_ = 0, scrollMax_ = 0;

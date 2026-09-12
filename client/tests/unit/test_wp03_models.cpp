@@ -201,9 +201,8 @@ PHPVPN_TEST(WP03Models, NarrowLayoutsAndMeasuredLongCountersDoNotOverlap) {
     for (int dpi : {96, 120, 144, 192}) {
         const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
         for (int width : {480, 940}) {
-            auto l = computeProgressLayout(p(width), dpi, p(84), p(48), p(48), true, p(56));
-            PHPVPN_CHECK(l.heading.bottom <= l.description.top);
-            PHPVPN_CHECK(l.description.bottom < l.card.top);
+            auto l = computeProgressLayout(p(width), dpi, p(48), true, false, p(56));
+            PHPVPN_CHECK(l.eyebrow.bottom < l.card.top);
             PHPVPN_CHECK(l.card.bottom < l.panel.top);
             PHPVPN_CHECK(l.panelHeading.bottom <= l.panelAction.top);
             PHPVPN_CHECK(l.countdown.bottom < l.height);

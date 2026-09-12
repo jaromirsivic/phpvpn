@@ -1,4 +1,5 @@
 #include "progress_window.h"
+#include "resource.h"
 #include "ui_controls.h"
 #include "window_utils.h"
 #include <windowsx.h>
@@ -51,14 +52,11 @@ void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
         if (!window_)
             return;
         sizeAndCenter(window_, disconnect_ ? Size{760, 340} : ui::connectClient);
-        auto label = [&](const wchar_t *text) {
+        auto label = [&](const wchar_t *text, int id = 0) {
             return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 1, 1, window_,
-                                   nullptr, instance, nullptr);
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
         };
-        eyebrow_ = label(L"Connection status");
-        heading_ = label(L"Connecting");
-        description_ = label(L"");
-        SetWindowSubclass(heading_, headingProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
+        eyebrow_ = label(L"", IDC_PROGRESS_CONTEXT);
         detailsHeading_ = label(L"Connection details");
         const wchar_t *names[]{L"Server URL", L"Virtual IP"};
         for (std::size_t i = 0; i < 2; ++i) {
@@ -81,6 +79,7 @@ void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
         panelAction_ = label(L"");
         countdown_ = label(L"");
     }
+    setText(eyebrow_, disconnect_ ? L"Disconnecting client from the server." : L"Connecting client to the server.");
     SetWindowTextW(window_, disconnect_ ? L"PHPVPN disconnection" : L"PHPVPN connection");
     for (auto h : {detailsHeading_, checksHeading_, labels_[0], labels_[1], fields_[0], fields_[1],
                   checks_[0], checks_[1], checks_[2], checkLabels_[0], checkLabels_[1], checkLabels_[2],
@@ -130,8 +129,6 @@ void ProgressWindow::updateResources() {
             SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(role)), TRUE);
     };
     font(eyebrow_, ui::Font::subtitle);
-    font(heading_, ui::Font::result);
-    font(description_, ui::Font::subtitle);
     for (auto h : labels_)
         font(h, ui::Font::label);
     font(fields_[0], ui::Font::mono);
@@ -155,8 +152,6 @@ void ProgressWindow::refresh() {
     const auto &error = progressErrorText(v.statusUnavailable ? "status_unavailable" : v.errorCode);
     if (disconnect_) {
         const bool issue = failure || v.statusUnavailable || !v.errorCode.empty();
-        setText(heading_, L"Disconnect");
-        setText(description_, L"VPN connection status");
         setText(panelHeading_, success ? L"Disconnected" : issue ? L"Disconnect not confirmed" : L"Disconnecting...");
         setText(panelAction_, success ? L"You have been disconnected successfully."
             : issue ? L"The service did not confirm Disconnect. Try Disconnect again or check the service status."
@@ -173,10 +168,6 @@ void ProgressWindow::refresh() {
         layout();
         return;
     }
-    setText(heading_, success ? L"Successfully connected" : failure ? L"Connection failed" : L"Connecting");
-    setText(description_, success                          ? L"The VPN connection is ready."
-                          : failure || v.statusUnavailable ? widen(error.description)
-                                                           : L"Checking the server and preparing the VPN connection.");
     setText(fields_[0], details_.available ? widen(details_.serverUrl) : L"Unavailable");
     setText(fields_[1], details_.available ? widen(details_.virtualIp) : L"Unavailable");
     const CheckpointResult checks[]{v.serverUrl, v.serverSecret, v.accessKey};
@@ -215,7 +206,7 @@ void ProgressWindow::onSnapshot(const TrayStatus &snapshot) {
         refresh();
 }
 void ProgressWindow::layout() {
-    if (!heading_ || layingOut_ || IsIconic(window_))
+    if (!eyebrow_ || layingOut_ || IsIconic(window_))
         return;
     LayoutFrame frame(window_);
     layingOut_ = true;
@@ -236,19 +227,9 @@ void ProgressWindow::layout() {
     const bool success = model_.view().stage == ProgressStage::succeeded;
     const int panelWidth =
         contentWidth - scaleForDpi(48 + (success && width >= scaleForDpi(760, dpi) ? 208 : 0), dpi);
-    layout_ = computeProgressLayout(width, dpi, textHeight(heading_, ui::Font::result, contentWidth, 42),
-                                    textHeight(description_, ui::Font::subtitle, contentWidth, 24),
-                                    textHeight(panelAction_, ui::Font::label, panelWidth, 24), success,
+    layout_ = computeProgressLayout(width, dpi,
+                                    textHeight(panelAction_, ui::Font::label, panelWidth, 24), success, disconnect_,
                                     textHeight(panelHeading_, ui::Font::card, panelWidth, 28));
-    if (disconnect_) {
-        // Remove Connect's details/checkpoints card and move the result panel up.
-        const int shift = layout_.panel.top - layout_.card.top;
-        for (auto* r : {&layout_.panel, &layout_.panelHeading, &layout_.panelAction, &layout_.countdown}) {
-            r->top -= shift; r->bottom -= shift;
-        }
-        layout_.height -= shift;
-        layout_.card = layout_.separator = {};
-    }
     ReleaseDC(window_, dc);
     scrollMax_ = std::max(0, layout_.height - static_cast<int>(client.bottom));
     scroll_ = std::clamp(scroll_, 0, scrollMax_);
@@ -271,8 +252,6 @@ void ProgressWindow::layout() {
         positions.push_back({h, r});
     };
     add(eyebrow_, layout_.eyebrow);
-    add(heading_, layout_.heading);
-    add(description_, layout_.description);
     add(detailsHeading_, layout_.detailsHeading);
     add(checksHeading_, layout_.checksHeading);
     for (std::size_t i = 0; i < 2; ++i) {
@@ -325,7 +304,7 @@ LRESULT CALLBACK ProgressWindow::headingProcedure(HWND h, UINT m, WPARAM w, LPAR
         GetClientRect(self->window_, &client);
         MapWindowPoints(self->window_, nullptr, reinterpret_cast<POINT *>(&client), 2);
         if (IntersectRect(&visible, &heading, &client))
-            if ((!self->disconnect_ && h == self->heading_) || (self->disconnect_ && h == self->panelHeading_))
+            if (h == self->panelHeading_ && self->model_.view().stage == ProgressStage::succeeded)
                 self->model_.onSuccessPresented(nowMs());
     }
     if (m == WM_NCDESTROY)
@@ -430,9 +409,9 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         HDC dc = reinterpret_cast<HDC>(wParam);
         HWND h = reinterpret_cast<HWND>(lParam);
         auto color = ui::Color::text, background = ui::Color::surface;
-        if (h == self->eyebrow_ || h == self->description_ || h == self->heading_)
+        if (h == self->eyebrow_)
             background = ui::Color::background;
-        if (h == self->eyebrow_ || h == self->description_ || h == self->fields_[0] || h == self->fields_[1])
+        if (h == self->eyebrow_ || h == self->fields_[0] || h == self->fields_[1])
             color = ui::Color::secondaryText;
         const auto &v = self->model_.view();
         const CheckpointResult checks[]{v.serverUrl, v.serverSecret, v.accessKey};
@@ -481,7 +460,7 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         return 0;
     case WM_NCDESTROY:
         self->resources_.clear();
-        self->heading_ = self->eyebrow_ = self->description_ = nullptr;
+        self->eyebrow_ = nullptr;
         self->detailsHeading_ = self->checksHeading_ = self->panelHeading_ = self->panelAction_ = self->countdown_ =
             nullptr;
         self->fields_ = {};

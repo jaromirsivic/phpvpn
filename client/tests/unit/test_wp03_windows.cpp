@@ -101,6 +101,18 @@ Rect bounds(HWND h, HWND parent) {
     MapWindowPoints(nullptr, parent, reinterpret_cast<POINT *>(&r), 2);
     return {r.left, r.top, r.right, r.bottom};
 }
+bool hasChildText(HWND parent, std::wstring_view expected) {
+    struct Search { std::wstring_view expected; bool found = false; } search{expected};
+    EnumChildWindows(parent, [](HWND child, LPARAM value) -> BOOL {
+        auto &search = *reinterpret_cast<Search *>(value);
+        if (windowText(child) == search.expected) {
+            search.found = true;
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
 void resizeClient(HWND h, Size size) {
     const int dpi = GetDpiForWindow(h);
     // Initial-placement helpers deliberately preserve the size of existing windows.
@@ -168,17 +180,14 @@ void capture(HWND h, const wchar_t *name, bool verifyConnectCard = false) {
         PHPVPN_CHECK(horizontal.size() >= 2 && vertical.size() >= 2);
         if (horizontal.size() >= 2 && vertical.size() >= 2) {
             const std::array<int, 4> edges{horizontal.front(), vertical.front(), horizontal.back(), vertical.back()};
-            const std::array<std::array<int, 4>, 2> references{{{{79, 310, 1364, 828}}, {{78, 310, 1360, 827}}}};
             std::cout << "Painted Connect edges DIP:";
             for (const auto edge : edges)
                 std::cout << " " << edge * 96.0 / dpi;
             std::cout << "\n";
-            for (const auto &reference : references)
-                for (std::size_t edge = 0; edge < edges.size(); ++edge) {
-                    const bool x = edge % 2 == 0;
-                    const double expected = (reference[edge] - (x ? 1 : 79)) * (x ? 940.0 / 1461 : 680.0 / 995);
-                    PHPVPN_CHECK(std::abs(edges[edge] * 96.0 / dpi - expected) <= 6.0);
-                }
+            const int margin = buttonFooterMargin(client.right, dpi);
+            PHPVPN_CHECK(std::abs(edges[0] - margin) <= scaleForDpi(2, dpi));
+            PHPVPN_CHECK(std::abs(edges[2] - (client.right - margin - 1)) <= scaleForDpi(2, dpi));
+            PHPVPN_CHECK(edges[1] < edges[3]);
         }
     }
     SelectObject(dc, old);
@@ -187,7 +196,7 @@ void capture(HWND h, const wchar_t *name, bool verifyConnectCard = false) {
     ReleaseDC(h, source);
 }
 } // namespace
-PHPVPN_TEST(WP03Windows, BothConnectReferenceCardsKeepFourPaintedEdgesAfterResize) {
+PHPVPN_TEST(WP03Windows, ConnectCardKeepsSharedMarginsAndFourPaintedEdgesAfterResize) {
     Backend backend;
     for (const bool success : {false, true}) {
         ProgressWindow progress(backend.pipe);
@@ -255,7 +264,7 @@ PHPVPN_TEST(WP03Windows, ReferenceGeometrySurvivesNativeResizeAndEditorUndo) {
             GetClientRect(progress.window(), &client);
             PHPVPN_CHECK_EQ(client.right, scaleForDpi(940, dpi));
             PHPVPN_CHECK_EQ(client.bottom, scaleForDpi(680, dpi));
-            PHPVPN_CHECK(std::abs(cardLeft - (79.0 - 1.0) * 940.0 / 1461.0) <= 6.0);
+            PHPVPN_CHECK(std::abs(cardLeft - buttonFooterMargin(client.right, dpi) * 96.0 / dpi) <= 2.0);
             std::cout << "Geometry Connect: DPI=" << dpi << " client=" << client.right << "x" << client.bottom
                       << " cardLeftDIP=" << cardLeft << "\n";
         }
@@ -334,6 +343,49 @@ PHPVPN_TEST(WP03Windows, OneConfigPerOpenAndIndependentStatusWithNoDisconnect) {
     std::cout << "WP03 two opens: get-config=" << backend.configs << ", get-status=" << backend.statuses
               << ", maximum simultaneous status=" << backend.maximum << ", other=" << backend.other << "\n";
 }
+PHPVPN_TEST(WP03Windows, StaticProgressContextSurvivesEveryState) {
+    Backend backend;
+    ProgressWindow progress(backend.pipe);
+    progress.open(GetModuleHandleW(nullptr));
+    const HWND context = GetDlgItem(progress.window(), IDC_PROGRESS_CONTEXT);
+    PHPVPN_CHECK(context != nullptr);
+    PHPVPN_CHECK_EQ(windowText(context), L"Connecting client to the server.");
+    progress.onSnapshot(parseStatusResponse(phpvpn::tray::test::kStatusFixture));
+    PHPVPN_CHECK_EQ(windowText(context), L"Connecting client to the server.");
+    progress.onSnapshot(connected());
+    PHPVPN_CHECK_EQ(windowText(context), L"Connecting client to the server.");
+    progress.open(GetModuleHandleW(nullptr));
+    auto failure = connected();
+    failure.hasError = true;
+    failure.errorCode = "access_key_rejected";
+    progress.onSnapshot(failure);
+    PHPVPN_CHECK_EQ(GetDlgItem(progress.window(), IDC_PROGRESS_CONTEXT), context);
+    PHPVPN_CHECK_EQ(windowText(context), L"Connecting client to the server.");
+    progress.open(GetModuleHandleW(nullptr));
+    progress.onSnapshot({});
+    PHPVPN_CHECK_EQ(windowText(context), L"Connecting client to the server.");
+
+    progress.open(GetModuleHandleW(nullptr), true);
+    PHPVPN_CHECK_EQ(GetDlgItem(progress.window(), IDC_PROGRESS_CONTEXT), context);
+    PHPVPN_CHECK_EQ(windowText(context), L"Disconnecting client from the server.");
+    auto disconnected = connected();
+    disconnected.state = "disconnected";
+    disconnected.phase = "idle";
+    disconnected.tunnelReady = "no";
+    progress.onDisconnectReply(disconnected);
+    PHPVPN_CHECK_EQ(windowText(context), L"Disconnecting client from the server.");
+    progress.open(GetModuleHandleW(nullptr), true);
+    auto disconnectFailure = disconnected;
+    disconnectFailure.hasError = true;
+    disconnectFailure.errorCode = "communication_failed";
+    progress.onDisconnectReply(disconnectFailure);
+    PHPVPN_CHECK_EQ(windowText(context), L"Disconnecting client from the server.");
+
+    for (const auto old : {L"Connection status", L"Connecting", L"Successfully connected", L"Connection failed",
+                           L"VPN connection status", L"The VPN connection is ready."})
+        PHPVPN_CHECK(!hasChildText(progress.window(), old));
+    SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+}
 PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesInBounds) {
     for (bool disconnect : {false, true}) {
     Backend backend;
@@ -354,6 +406,13 @@ PHPVPN_TEST(WP03Windows, ActualPaintStartsCountdownAfterHiddenSuccessAndClosesIn
     if (disconnect) { completed.state = "disconnected"; completed.phase = "idle"; completed.tunnelReady = "no"; }
     progress.onSnapshot(completed);
     pump(100);
+    PHPVPN_CHECK(!progress.model().successDeadlineMs());
+    const HWND panelHeading = FindWindowExW(progress.window(), nullptr, L"STATIC",
+        disconnect ? L"Disconnected" : L"Connected successfully");
+    PHPVPN_CHECK(panelHeading != nullptr);
+    const HDC printDc = GetDC(progress.window());
+    SendMessageW(panelHeading, WM_PRINT, reinterpret_cast<WPARAM>(printDc), PRF_CLIENT);
+    ReleaseDC(progress.window(), printDc);
     PHPVPN_CHECK(!progress.model().successDeadlineMs());
     ShowWindow(progress.window(), SW_HIDE);
     pump(10);
