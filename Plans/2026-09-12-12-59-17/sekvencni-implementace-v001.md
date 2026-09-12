@@ -9,9 +9,11 @@ purpose: Sekvenční realizace po agentních blocích s ruční akceptací
 
 ## Cíl
 
-Realizovat zbývající části `plan-v001.md` po ucelených sekvenčních blocích. Každý blok musí dodat implementaci, cílené automatické testy, související dokumentaci, rychlý Debug build a samostatný commit. Po každém bloku následuje ruční nasazení a akceptace uživatelem. Další blok nesmí začít před potvrzením předchozího.
+Realizovat zbývající části `plan-v001.md` po ucelených sekvenčních blocích. Každý blok musí dodat implementaci, cílené automatické testy, související dokumentaci a rychlý Debug build. Po každém bloku následuje ruční nasazení a akceptace uživatelem. Commit a push provádí výhradně uživatel. Další blok nesmí začít před potvrzením předchozího.
 
 Distribuční balíčky a úplná regresní nebo release validace nejsou součástí tohoto plánu.
+
+Veškerá práce se provádí přímo v hlavním checkoutu `C:\git\phpvpn`. Pro žádný blok se nevytváří vedlejší Git worktree.
 
 ## Výchozí stav
 
@@ -22,7 +24,7 @@ Distribuční balíčky a úplná regresní nebo release validace nejsou součá
 
 ## Společný pracovní protokol
 
-Každý agent pracuje nad akceptovaným commitem předchozího bloku a provede tento cyklus:
+Každý agent pracuje nad výchozí revizí, kterou po ručním commitu a pushi předchozího bloku určí uživatel, a provede tento cyklus:
 
 1. Načte globální omezení a pouze svou část původního plánu.
 2. Pomocí Graftu načte jen relevantní symboly, volající a přesné zdrojové rozsahy.
@@ -32,11 +34,15 @@ Každý agent pracuje nad akceptovaným commitem předchozího bloku a provede t
 6. Spustí pouze cílené testovací filtry bloku.
 7. Vytvoří rychlý Debug build produkční služby, CLI a tray aplikace.
 8. Provede `git diff --check` a zkontroluje rozsah změn.
-9. Vytvoří atomický commit.
-10. Předá commit, výsledky cílených testů, cestu k build artefaktům, známá omezení a krátký ruční checklist.
-11. Zastaví práci a čeká na ruční akceptaci uživatele.
+9. Ponechá všechny své změny necommitnuté a bez výslovného pokynu uživatele je ani nestaguje.
+10. Předá přehled změněných souborů, výsledky cílených testů, cestu k build artefaktům, známá omezení a krátký ruční checklist.
+11. Zastaví práci a čeká na ruční akceptaci, commit a push provedené uživatelem.
 
-Worktree a kontext agenta se zachovají až do ruční akceptace. Pokud uživatel nahlásí problém, opravu provede stejný agent. Po potvrzení se commit stane výchozím bodem dalšího bloku a dokončený worktree lze odstranit.
+Změny zůstávají přímo v hlavním checkoutu až do ruční akceptace. Pokud uživatel nahlásí problém, opravu provede stejný agent ve stejném checkoutu a kontextu. Po potvrzení provede commit a push uživatel a určí výchozí revizi dalšího bloku.
+
+Agent nesmí bez samostatného výslovného pokynu uživatele spustit `git add`, `git commit`, `git push` ani ekvivalentní operaci, která mění index nebo vzdálený repozitář.
+
+Agent ani koordinátor nesmí pro tuto realizaci spustit `git worktree add`, vytvořit jiný checkout ani přesunout práci mimo `C:\git\phpvpn`.
 
 ## Rychlý build pro ruční nasazení
 
@@ -125,7 +131,7 @@ Při nezměněné konfiguraci se v dalších blocích konfigurační příkaz vy
 **Effort:** High  
 **Zdrojový rozsah:** zbytek původního Task 4 a původní Task 5
 
-**Důvod volby:** Obě migrace používají hotový helper a sdílejí geometrické a nativní testovací prostředí. Contracts přidává dynamické varianty, error region a scrollování, proto je vhodný vyšší effort. Jeden agent může zachovat stejný kontext a přitom vytvořit dva oddělené commity.
+**Důvod volby:** Obě migrace používají hotový helper a sdílejí geometrické a nativní testovací prostředí. Contracts přidává dynamické varianty, error region a scrollování, proto je vhodný vyšší effort. Jeden agent může zachovat stejný kontext a zpracovat dvě oddělené implementační části bez mezilehlého commitu.
 
 **Implementace:**
 
@@ -190,14 +196,14 @@ Při nezměněné konfiguraci se v dalších blocích konfigurační příkaz vy
 
 Každý agent vrátí stručný report v tomto pořadí:
 
-1. název a commit bloku,
+1. název bloku a výchozí revizi,
 2. dokončené chování,
 3. změněná dokumentace,
 4. spuštěné cílené testy a jejich výsledky,
 5. rychlý build a cesta k `work/build/debug/apps`,
 6. ruční checklist pro uživatele,
 7. položky `NOT RUN` a známá omezení,
-8. potvrzení, že čeká na ruční akceptaci.
+8. potvrzení, že změny zůstávají necommitnuté a agent čeká na ruční akceptaci, commit a push uživatele.
 
 ## Práce výslovně mimo tento plán
 
@@ -216,7 +222,10 @@ Následující činnosti se provedou v samostatném validačním nebo release pl
 ## Koordinační podmínky
 
 - Agenti běží výhradně sekvenčně.
+- Všichni agenti pracují přímo v `C:\git\phpvpn`. Vedlejší worktree se nevytvářejí.
+- Před zahájením každého bloku se ověří aktuální větev a stav pracovního stromu. Neočekávané nebo nesouvisející změny se nesmí přepsat.
 - Následující agent nezačne bez výslovné ruční akceptace předchozího bloku.
 - Při chybě pokračuje původní agent, aby se neplatil nový kontext.
+- Commit a push provádí vždy uživatel. Agent je nesmí provést automaticky ani jako součást dokončovací brány.
 - Pro skutečné provedení celého řetězce s uživatelskými pauzami je vhodné předem povolit neomezenou dobu. Výchozí absolutní limit 150 minut nemusí pokrýt ruční akceptace.
-- Každý agent dostane jen svůj rozsah, globální omezení, commit předchůdce a jeho krátký předávací report.
+- Každý agent dostane jen svůj rozsah, globální omezení, uživatelem určenou výchozí revizi a krátký předávací report předchozího bloku.
