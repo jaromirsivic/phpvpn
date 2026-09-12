@@ -1,4 +1,5 @@
 #include "layout.h"
+#include <array>
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -177,20 +178,24 @@ EditorLayout computeEditorLayout(Size client, int dpi, bool editable) {
     const int width = std::max(0, client.width);
     const int height = std::max(0, client.height);
     const int margin = std::min({scaleForDpi(width < scaleForDpi(700, dpi) ? 16 : 32, dpi), width / 8, height / 8});
-    const int gap = std::min(scaleForDpi(8, dpi), width / 8);
-    const int buttonWidth = std::min(scaleForDpi(104, dpi), std::max(0, (width - 2 * margin - 2 * gap) / 3));
-    const int buttonHeight = std::min(scaleForDpi(36, dpi), std::max(0, height - 2 * margin));
+    const std::array specs{
+        FooterButtonSpec{scaleForDpi(104, dpi), FooterSide::leading, editable},
+        FooterButtonSpec{scaleForDpi(104, dpi), FooterSide::trailing, editable},
+        FooterButtonSpec{scaleForDpi(104, dpi), FooterSide::trailing, true}};
+    const auto footer = computeButtonFooterLayout(client, dpi, specs);
     EditorLayout layout;
-    layout.saveButton = {width - margin - buttonWidth, height - margin - buttonHeight,
-                         width - margin, height - margin};
-    if (editable) {
-        layout.cancelButton = {layout.saveButton.left - gap - buttonWidth, layout.saveButton.top,
-                             layout.saveButton.left - gap, layout.saveButton.bottom};
-        layout.resetButton = {margin, layout.saveButton.top, margin + buttonWidth, layout.saveButton.bottom};
+    layout.resetButton = footer.buttons[0];
+    layout.cancelButton = footer.buttons[1];
+    layout.saveButton = footer.buttons[2];
+    // WM_SIZE can transiently report less than the supported minimum height.
+    // Keep the shared footer's rows, but clip their bounds to that client.
+    for (auto* button : {&layout.resetButton, &layout.cancelButton, &layout.saveButton}) {
+        button->top = std::min(button->top, height);
+        button->bottom = std::min(button->bottom, height);
     }
-    layout.footer = {0, std::max(0, layout.saveButton.top - margin / 2), width, height};
-    const int textBottom = std::max(margin, layout.footer.top - margin / 2);
-    const int headerTop = std::min(scaleForDpi(16, dpi), margin);
+    layout.footer = footer.bounds;
+    const int textBottom = std::max(0, layout.footer.top - margin / 2);
+    const int headerTop = std::min({scaleForDpi(16, dpi), margin, textBottom});
     const int headerSpace = std::min(scaleForDpi(editable ? 72 : 44, dpi),
         std::max(0, textBottom - headerTop));
     layout.heading = {margin, headerTop, width - margin,
@@ -201,6 +206,7 @@ EditorLayout computeEditorLayout(Size client, int dpi, bool editable) {
     }
     const int textTop = headerTop + headerSpace;
     layout.textArea = {margin, textTop, std::max(margin, width - margin), std::max(textTop, textBottom)};
+    if (!editable) layout.tabs = layout.textArea;
     return layout;
 }
 Rect exposedParentRegion(Size /*oldClient*/, Size newClient,

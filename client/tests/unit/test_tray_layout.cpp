@@ -94,13 +94,38 @@ PHPVPN_TEST(TrayLayout, EditorReferenceTopPreservesHeaderAndFooterAtSupportedDpi
         PHPVPN_CHECK(l.heading.bottom <= l.path.top);
         PHPVPN_CHECK(l.path.bottom < l.textArea.top);
         PHPVPN_CHECK(inside(l.heading, size) && inside(l.path, size));
-        PHPVPN_CHECK_EQ(l.textArea.bottom, scaleForDpi(460, dpi));
-        PHPVPN_CHECK_EQ(l.saveButton.bottom, scaleForDpi(528, dpi));
+        PHPVPN_CHECK(l.textArea.bottom <= l.footer.top);
+        PHPVPN_CHECK_EQ(l.saveButton.bottom, scaleForDpi(544, dpi));
         const auto info = computeEditorLayout(size, dpi, false);
         PHPVPN_CHECK_EQ(info.textArea.top, scaleForDpi(60, dpi));
-        PHPVPN_CHECK_EQ(info.textArea.bottom, scaleForDpi(460, dpi));
-        PHPVPN_CHECK_EQ(info.saveButton.bottom, scaleForDpi(528, dpi));
+        PHPVPN_CHECK(info.textArea.bottom <= info.footer.top);
+        PHPVPN_CHECK_EQ(info.saveButton.bottom, scaleForDpi(544, dpi));
+        PHPVPN_CHECK_EQ(l.tabs, Rect{});
+        PHPVPN_CHECK(info.heading.bottom <= info.tabs.top);
+        PHPVPN_CHECK(info.tabs.bottom <= info.footer.top);
+        PHPVPN_CHECK(inside(info.tabs, size) && info.tabs.bottom > info.tabs.top);
         PHPVPN_CHECK(inside(info.heading, size));
+    }
+}
+PHPVPN_TEST(TrayLayout, EditorSharedFooterAndTabs) {
+    for (int dpi : {96, 120, 144, 192}) for (int width : {320, 359, 360, 480, 640, 1080}) {
+        const Size size{scaleForDpi(width, dpi), scaleForDpi(560, dpi)};
+        const auto p = [dpi](int v) { return scaleForDpi(v, dpi); };
+        for (bool editable : {false, true}) {
+            const std::array specs{
+                FooterButtonSpec{p(104), FooterSide::leading, editable},
+                FooterButtonSpec{p(104), FooterSide::trailing, editable},
+                FooterButtonSpec{p(104), FooterSide::trailing, true}};
+            const auto expected = computeButtonFooterLayout(size, dpi, specs);
+            const auto actual = computeEditorLayout(size, dpi, editable);
+            PHPVPN_CHECK_EQ(actual.footer, expected.bounds);
+            PHPVPN_CHECK_EQ(actual.resetButton, expected.buttons[0]);
+            PHPVPN_CHECK_EQ(actual.cancelButton, expected.buttons[1]);
+            PHPVPN_CHECK_EQ(actual.saveButton, expected.buttons[2]);
+            PHPVPN_CHECK(actual.textArea.bottom <= actual.footer.top);
+            PHPVPN_CHECK(editable ? actual.tabs == Rect{} :
+                inside(actual.tabs, size) && actual.tabs.bottom <= actual.footer.top);
+        }
     }
 }
 PHPVPN_TEST(TrayLayout, WorkAreaClampingAndCenteringSupportsSecondaryMonitorCoordinates) {
@@ -126,7 +151,8 @@ PHPVPN_TEST(TrayLayout, RepeatedEdgeAndCornerResizesKeepControlsSeparateAndVisib
             PHPVPN_CHECK(inside(layout.saveButton, size));
             PHPVPN_CHECK(inside(layout.resetButton, size));
             PHPVPN_CHECK(inside(layout.cancelButton, size));
-            PHPVPN_CHECK(layout.resetButton.right < layout.cancelButton.left);
+            PHPVPN_CHECK(layout.resetButton.right < layout.cancelButton.left ||
+                         layout.resetButton.bottom <= layout.cancelButton.top);
             PHPVPN_CHECK(layout.cancelButton.right < layout.saveButton.left);
             PHPVPN_CHECK(layout.resetButton.right > layout.resetButton.left);
             PHPVPN_CHECK(layout.resetButton.bottom > layout.resetButton.top);

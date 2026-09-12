@@ -163,7 +163,7 @@ Konečný výsledek okna se uchová i během následné recovery, chybové okno 
 
 Disconnect má titul `PHPVPN disconnection` a jediný statický horní text `Disconnecting client from the server.`. Nemá kartu detailů ani checkpointů. Veškerý stav zůstává v dynamickém panelu, který při čekání ukazuje `Disconnecting...`, při úspěchu `Disconnected` s odpočtem a při nepotvrzeném odpojení `Disconnect not confirmed` s nápravou. Stejná paint hranice a interval automatického zavření platí pro úspěšný Disconnect.
 
-## UX06: Edit Config
+## UX06: Edit Config a Server Information
 
 Při výchozí klientské ploše začíná záhlaví 16 DIP od horního okraje. Má výšku 72 DIP včetně mezer mezi nadpisem, cestou a editorem, takže horní hrana textového pole leží na 88 DIP. Při omezené výšce se záhlaví omezí dostupným prostorem nad patičkou.
 
@@ -176,6 +176,10 @@ Save pošle celý text službě, která validuje UTF-8, JSON, všechny konfigura
 Reset použije Yes/No: `Restore the default configuration in this editor? The file will change only after you choose Save.`. Yes asynchronně načte `get-default-config`, teprve úspěch nahradí koncept a označí dirty. No, chyba nebo odpověď staré generace nemění text. Missing při otevření používá existující potvrzené `create-default-config`, které zapisuje ještě před otevřením editoru. Cancel již vytvořený soubor neodstraňuje.
 
 Focus začíná v editoru. Tab přejde na Reset, Cancel, Save, Shift+Tab opačně. Enter v textu vloží nový řádek, Ctrl+A/C/V a běžné editační zkratky zůstávají. Escape/Cancel/X při dirty vyžádají Discard unsaved changes? s výchozím No. Unknown navíc upozorní na možnou změnu souboru a vyžádá potvrzení zavření bez kontroly výsledku. No zachová přesný koncept, Yes jej zavře pouze při stále shodném lifecycle snapshotu. Během Save zavření není dostupné. Čisté okno se zavře přímo. Opakovaná volba Edit Config pouze aktivuje již otevřené okno. Resize zachová oba scrollbary, caret, výběr, hlavičku i tlačítka a nepřidá původní svislý artefakt vedle Cancel. Hlavičku a skutečný configPath předává TrayApplication z odpovědi služby, bez druhého čtení souboru. Show Info sdílí pouze nativní textové okno EditorWindow a zůstává samostatnou read-only prezentací bez konfiguračního titulku, hlavičky, cesty a všech konfiguračních akcí.
+
+Server Information používá nativní karty v pořadí `Who is online` a `Raw server information`. Otevření vybere první kartu, její stránka je prázdná a focus je na kartách. Druhá karta ukáže již načtený read-only JSON s neproporcionálním písmem, výběrem, kopírováním a oběma posuvníky. Přepínání myší nebo šipkami pouze mění viditelnost stejného editoru. Neprovádí nové IPC, HTTP, čtení disku ani změnu dat a zachová text, výběr a scroll pozici. Tab pokračuje z karet do viditelného raw editoru a na OK, na prázdné kartě přímo na OK. Shift+Tab jde opačně, Enter a Escape okno zavřou. Edit Config karty nevytváří.
+
+Patičky Edit Config a Server Information používají společnou geometrii Wizardu: vnější okraj 16 DIP, mezery 8 DIP a výšku tlačítek 36 DIP. Reset je leading, Cancel a Save trailing, read-only režim má pouze OK trailing. Při šířce pod bodem zalomení se Reset přesune do horního řádku, Cancel a Save zachovají pořadí ve spodním. Minimální šířka editorového okna je 320 DIP. Textové pole i tab page končí nad skutečnou hranicí patičky a oddělovač tuto hranici sleduje při resize.
 
 ## UX07: Statistics
 

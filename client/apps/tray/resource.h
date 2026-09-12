@@ -13,6 +13,7 @@
 #define IDC_TEXT_AREA 301
 #define IDC_SAVE      302
 #define IDC_CANCEL    303
+#define IDC_INFO_TABS 305
 
 #define IDC_PROGRESS_SHIELD 401
 #define IDC_PROGRESS_TITLE 402

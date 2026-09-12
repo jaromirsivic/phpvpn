@@ -7,6 +7,7 @@
 #include "contracts_window.h"
 #include "window_utils.h"
 #include "resource.h"
+#include "../unit/wp03_dialog_test.h"
 #include "platform/windows/ipc_pipe.h"
 #include "core/config/config_defaults.h"
 #include "core/wizard/wizard_defaults.h"
@@ -134,6 +135,8 @@ struct Backend {
     unsigned totalStarts = 0, finishCalls = 0, defaultCalls = 0, resetCalls = 0, closeCalls = 0, heartbeats = 0;
     unsigned configReads = 0, disconnects = 0, resumes = 0, operationsRead = 0;
     unsigned infoStarted = 0, infoCompleted = 0;
+    unsigned unexpectedInfoCommands = 0;
+    bool auditInfoCommands = false;
     bool releaseInfo = false;
     ULONGLONG disconnectReceivedAt = 0;
     std::uint64_t epoch = 0;
@@ -166,6 +169,12 @@ struct Backend {
         if (ms) changed.wait_for(lock, std::chrono::milliseconds(ms), [&] { return stopping; });
     }
     std::string handle(std::string_view bytes) {
+        {
+            const auto legacy = IpcProtocol::parseRequest(bytes);
+            std::lock_guard lock(mutex);
+            if (auditInfoCommands && (!legacy || (legacy->command != IpcCommand::get_info &&
+                legacy->command != IpcCommand::get_status))) ++unexpectedInfoCommands;
+        }
         auto request = WizardIpc::parseRequest(bytes);
         if (!request) {
             auto legacy = IpcProtocol::parseRequest(bytes);
@@ -586,6 +595,98 @@ class WizardFixtureShell final : public ShellAdapter {
 public:
     bool notify(DWORD, NOTIFYICONDATAW&) override { return true; }
 };
+void editorClick(HWND window, int id) {
+    const auto button = GetDlgItem(window, id);
+    check(button && IsWindowEnabled(button), "editor button missing or disabled");
+    SetActiveWindow(window);
+    SendMessageW(button, BM_CLICK, 0, 0);
+}
+void serverInformationTabs() {
+    Gui gui;
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo = true; gui.backend.auditInfoCommands = true; }
+    TrayApplication app({gui.pipe, L"Local\\phpvpn-info-" + widen(uuid()), std::make_unique<WizardFixtureShell>(), L"Info synthetic"});
+    check(app.initialise(GetModuleHandleW(nullptr)), "production application did not initialise");
+    SendMessageW(app.window(), WM_COMMAND, IDM_SHOW_INFO, 0);
+    gui.until([&] { return findTop(L"PhpVpnTrayEditor") != nullptr; }, "Show Info did not open");
+    const auto window = findTop(L"PhpVpnTrayEditor");
+    const auto tabs = child(window, IDC_INFO_TABS), field = child(window, IDC_TEXT_AREA);
+    check(tabs && TabCtrl_GetItemCount(tabs) == 2, "native Info tabs missing");
+    check(TabCtrl_GetCurSel(tabs) == 0 && !IsWindowVisible(field) && GetFocus() == tabs, "wrong initial Info page/focus");
+    const auto original = text(field);
+    check(original.find(L"uiFixtureInfo") != std::wstring::npos, "production JSON missing");
+    for (int i = 0; i < 12; ++i) {
+        const int index = (i + 1) % 2;
+        if (i % 4 < 2) {
+            SetFocus(tabs); SendMessageW(tabs, WM_KEYDOWN, index ? VK_RIGHT : VK_LEFT, 0);
+        } else {
+            RECT item{}; TabCtrl_GetItemRect(tabs, index, &item);
+            const auto position = MAKELPARAM((item.left + item.right) / 2, (item.top + item.bottom) / 2);
+            SendMessageW(tabs, WM_LBUTTONDOWN, MK_LBUTTON, position);
+            SendMessageW(tabs, WM_LBUTTONUP, 0, position);
+        }
+        gui.pump();
+        check(TabCtrl_GetCurSel(tabs) == index && !!IsWindowVisible(field) == !!index, "mouse/arrow did not switch page");
+        check(text(field) == original && field == child(window, IDC_TEXT_AREA), "switch replaced JSON or HWND");
+    }
+    gui.wait(150);
+    check(gui.backend.count(&Backend::infoStarted) == 1 && gui.backend.count(&Backend::infoCompleted) == 1,
+          "tab switches reloaded server information");
+    check(gui.backend.count(&Backend::unexpectedInfoCommands) == 0, "Info issued an unexpected command");
+    editorClick(window, IDOK);
+    gui.until([&] { return !IsWindow(window); }, "OK did not close Info");
+    std::cout << "[ EVIDENCE ] actual IDM_SHOW_INFO, 12 mouse/arrow switches, get-info=1, unexpected=0\n";
+}
+void editorFooterResize() {
+    Gui gui;
+    unsigned saves = 0;
+    for (bool editable : {true, false}) {
+        gui.editor.open(GetModuleHandleW(nullptr), L"Editor footer", "{}",
+            editable ? EditorWindow::Save{[&](const std::string&) { ++saves; return false; }} : EditorWindow::Save{});
+        const auto window = gui.editor.window();
+        const int dpi = GetDpiForWindow(window);
+        const auto field = child(window, IDC_TEXT_AREA);
+        check(editable ? !child(window, IDC_INFO_TABS) : !!child(window, IDC_INFO_TABS), "wrong editor mode");
+        if (!editable) gui.editor.selectInfoTab(1);
+        SetFocus(field);
+        SendMessageW(field, EM_SETSEL, 0, 1);
+        for (int width : {1080, 480, 360, 320, 1080, 320}) {
+            RECT requested{0, 0, scaleForDpi(width, dpi), scaleForDpi(560, dpi)};
+            AdjustWindowRectExForDpi(&requested, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)), FALSE,
+                static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE)), dpi);
+            SetWindowPos(window, nullptr, 0, 0, requested.right - requested.left, requested.bottom - requested.top,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            gui.pump();
+            RECT client{}; GetClientRect(window, &client);
+            check(client.right == scaleForDpi(width, dpi), "native editor did not reach requested width");
+            const auto expected = computeEditorLayout({client.right, client.bottom}, dpi, editable);
+            const auto verify = [&](int id, Rect wanted) {
+                RECT actual{}; GetWindowRect(GetDlgItem(window, id), &actual);
+                MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&actual), 2);
+                check(actual.left == wanted.left && actual.top == wanted.top && actual.right == wanted.right && actual.bottom == wanted.bottom,
+                    "native editor footer differs from shared geometry");
+            };
+            verify(editable ? IDC_SAVE : IDOK, expected.saveButton);
+            if (editable) { verify(304, expected.resetButton); verify(IDC_CANCEL, expected.cancelButton); }
+            RECT area{}; GetWindowRect(field, &area); MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&area), 2);
+            check(area.bottom <= expected.footer.top, "editor overlaps footer");
+            check(GetFocus() == field, "resize changed focus");
+            DWORD first = 0, last = 0;
+            SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&first), reinterpret_cast<LPARAM>(&last));
+            check(first == 0 && last == 1, "resize changed selection");
+            check(text(GetDlgItem(window, editable ? IDC_SAVE : IDOK)) == (editable ? L"Save" : L"OK"), "button meaning changed");
+        }
+        if (editable) {
+            check(GetNextDlgTabItem(window, field, FALSE) == child(window, 304), "Reset tab order");
+            check(GetNextDlgTabItem(window, child(window, 304), FALSE) == child(window, IDC_CANCEL), "Cancel tab order");
+            check(GetNextDlgTabItem(window, child(window, IDC_CANCEL), FALSE) == child(window, IDC_SAVE), "Save tab order");
+            editorClick(window, IDC_SAVE); gui.until([&] { return saves == 1; }, "Save activation failed");
+            phpvpn::tray::test::answer(IDNO, [&] { editorClick(window, 304); gui.pump(); });
+            check(text(field) == L"{}", "declined Reset changed text");
+            editorClick(window, IDC_CANCEL);
+        } else editorClick(window, IDOK);
+        gui.until([&] { return !gui.editor.window(); }, "footer close failed");
+    }
+}
 void wizardProductionFinish(bool lost) {
     Gui gui(true);
     {
@@ -1375,6 +1476,8 @@ int main(int argc, char** argv) {
     }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"plan_v001_server_information_tabs", serverInformationTabs},
+        {"plan_v001_editor_footer_resize", editorFooterResize},
         {"live_resize_repaint", liveResizeRepaint},
         {"modern_button_drag", modernButtonDrag},
         {"modern_button_startup", modernButtonStartup},

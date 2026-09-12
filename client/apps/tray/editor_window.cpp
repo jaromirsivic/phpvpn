@@ -283,6 +283,20 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     if (!window_) return;
     // client.md Edit Config: 1080 x 560 is the CLIENT size at 96 DPI.
     sizeAndCenter(window_, defaultEditorClientSize(96));
+    if (!save_) {
+        INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_TAB_CLASSES};
+        InitCommonControlsEx(&controls);
+        tabs_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+            WS_CLIPSIBLINGS | TCS_FOCUSONBUTTONDOWN, 0, 0, 1, 1, window_,
+            reinterpret_cast<HMENU>(IDC_INFO_TABS), instance, nullptr);
+        if (!tabs_) { DestroyWindow(window_); return; }
+        for (const auto label : {L"Who is online", L"Raw server information"}) {
+            TCITEMW item{};
+            item.mask = TCIF_TEXT;
+            item.pszText = const_cast<wchar_t*>(label);
+            TabCtrl_InsertItem(tabs_, TabCtrl_GetItemCount(tabs_), &item);
+        }
+    }
     DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
                    ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL;
     if (!save_) style |= ES_READONLY;
@@ -291,6 +305,7 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     if (!field_) { DestroyWindow(window_); return; }
     SendMessageW(field_, EM_SETLIMITTEXT, kIpcMaxMessageBytes, 0);
     setContent(content);
+    if (tabs_) selectInfoTab(0);
     heading_ = CreateWindowExW(0, L"STATIC", save_ ? L"Edit configuration" : L"Server information",
         WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 1, 1, window_, nullptr, instance, nullptr);
     if (save_) {
@@ -323,8 +338,18 @@ void EditorWindow::open(HINSTANCE instance, const std::wstring& title, const std
     }
     updateEnabled();
     ShowWindow(window_, SW_SHOW);
+    // The page is a sibling of EDIT. Keep its background behind the raw field.
+    // Circular dialog order remains tabs -> visible field -> OK -> tabs.
+    if (tabs_) SetWindowPos(tabs_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     SetForegroundWindow(window_);
-    SetFocus(field_);
+    SetFocus(tabs_ ? tabs_ : field_);
+}
+void EditorWindow::selectInfoTab(int index) {
+    if (!tabs_ || (index != 0 && index != 1)) return;
+    infoTab_ = index;
+    TabCtrl_SetCurSel(tabs_, index);
+    if (index == 0 && GetFocus() == field_) SetFocus(tabs_);
+    ShowWindow(field_, index == 1 ? SW_SHOW : SW_HIDE);
 }
 void EditorWindow::updateFonts() {
     const int dpi = static_cast<int>(GetDpiForWindow(window_));
@@ -332,6 +357,7 @@ void EditorWindow::updateFonts() {
     HFONT text = resources_.font(ui::Font::mono);
     HFONT button = resources_.font(ui::Font::label);
     SendMessageW(field_, WM_SETFONT, reinterpret_cast<WPARAM>(text), TRUE);
+    if (tabs_) SendMessageW(tabs_, WM_SETFONT, reinterpret_cast<WPARAM>(button), TRUE);
     for (const int id : {IDC_SAVE, kReset, IDC_CANCEL, IDOK}) {
         if (const HWND child = GetDlgItem(window_, id)) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(button), TRUE);
     }
@@ -354,9 +380,16 @@ void EditorWindow::layout() {
     // The parent paints the continuous surface and frame. Keep the native EDIT,
     // including both non-client scrollbars, inside the rounded corners.
     const int inset = scaleForDpi(6, static_cast<int>(GetDpiForWindow(window_)));
-    const auto fieldRect = Rect{next.textArea.left + inset, next.textArea.top + inset,
-        std::max(next.textArea.left + inset, next.textArea.right - inset),
-        std::max(next.textArea.top + inset, next.textArea.bottom - inset)};
+    auto area = next.textArea;
+    if (tabs_) {
+        move(tabs_, next.tabs);
+        RECT page{next.tabs.left, next.tabs.top, next.tabs.right, next.tabs.bottom};
+        TabCtrl_AdjustRect(tabs_, FALSE, &page);
+        area = {page.left, page.top, page.right, page.bottom};
+    }
+    const auto fieldRect = Rect{area.left + inset, area.top + inset,
+        std::max(area.left + inset, area.right - inset),
+        std::max(area.top + inset, area.bottom - inset)};
     move(field_, fieldRect);
     move(GetDlgItem(window_, IDC_SAVE), next.saveButton);
     move(GetDlgItem(window_, kReset), next.resetButton);
@@ -376,6 +409,15 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
     }
     if (!self) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
+        case WM_NOTIFY: {
+            const auto notification = reinterpret_cast<NMHDR*>(lParam);
+            if (notification && notification->hwndFrom == self->tabs_ &&
+                notification->idFrom == IDC_INFO_TABS && notification->code == TCN_SELCHANGE) {
+                self->selectInfoTab(TabCtrl_GetCurSel(self->tabs_));
+                return 0;
+            }
+            break;
+        }
         case WM_COMMAND:
             if (reinterpret_cast<HWND>(lParam) == self->field_ &&
                 (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == EN_KILLFOCUS)) {
@@ -432,7 +474,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             InvalidateRect(window, nullptr, FALSE);
             break;
         case WM_LBUTTONDOWN:
-            if (self->field_ && IsWindowEnabled(self->field_)) {
+            if (self->field_ && IsWindowVisible(self->field_) && IsWindowEnabled(self->field_)) {
                 const auto& area = self->oldLayout_.textArea;
                 RECT frame{area.left, area.top, area.right, area.bottom};
                 POINT point{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
@@ -450,7 +492,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             const auto surface = self->save_ ? ui::Color::surface : ui::Color::disabledBackground;
             const auto border = focused ? (self->save_ ? ui::Color::focus : ui::Color::buttonNeutralFocus)
                                         : (self->save_ ? ui::Color::border : ui::Color::disabledBackground);
-            paintRoundedShape(dc, self->oldLayout_.textArea, scaleForDpi(12, self->resources_.dpi()),
+            if (self->save_) paintRoundedShape(dc, self->oldLayout_.textArea, scaleForDpi(12, self->resources_.dpi()),
                 self->resources_, surface, border, false,
                 std::max(1, scaleForDpi(focused ? 2 : 1, self->resources_.dpi())));
             const int top=self->oldLayout_.footer.top;
@@ -473,7 +515,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             self->layout();
             return 0;
         case WM_GETMINMAXINFO: {
-            setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam), {640, 360});
+            setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO*>(lParam), {320, 360});
             return 0;
         }
         case WM_QUERYENDSESSION: return TRUE;
@@ -488,6 +530,8 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
             self->save_ = {}; self->pollSave_ = {}; self->abandonSave_ = {};
             self->window_ = nullptr;
             self->field_ = nullptr;
+            self->tabs_ = nullptr;
+            self->infoTab_ = 0;
             self->editorFocused_ = self->editorActive_ = false;
             return 0;
         case WM_NCDESTROY:

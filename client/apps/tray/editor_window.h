@@ -38,9 +38,15 @@ public:
             SendMessageW(window_, WM_COMMAND, IDOK, 0);
             return true;
         }
+        if (!save_ && message.message == WM_KEYDOWN && message.wParam == VK_TAB) {
+            const auto next = GetNextDlgTabItem(window_, GetFocus(), GetKeyState(VK_SHIFT) < 0);
+            if (next) SetFocus(next);
+            return true;
+        }
         return IsDialogMessageW(window_, &message) != FALSE;
     }
     HWND window() const { return window_; }
+    void selectInfoTab(int index);
 private:
     static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     void layout();
@@ -61,6 +67,8 @@ private:
     SaveOperation saveOperation_;
     HWND window_ = nullptr;
     HWND field_ = nullptr;
+    HWND tabs_ = nullptr;
+    int infoTab_ = 0;
     bool editorFocused_ = false, editorActive_ = false;
     UiResources resources_;
     HINSTANCE instance_ = nullptr;

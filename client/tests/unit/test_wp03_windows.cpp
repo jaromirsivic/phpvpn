@@ -15,6 +15,9 @@
 #include <fstream>
 #include <mutex>
 #include <thread>
+#include <commctrl.h>
+#include <ole2.h>
+#pragma comment(lib, "ole32.lib")
 
 namespace {
 using namespace phpvpn;
@@ -286,7 +289,7 @@ PHPVPN_TEST(WP03Windows, ReferenceGeometrySurvivesNativeResizeAndEditorUndo) {
     SendMessageW(field, EM_SETSEL, 1, 1);
     SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"x"));
     SendMessageW(field, EM_SETSEL, 1, 2);
-    for (const Size size : {Size{1080, 560}, Size{640, 400}, Size{320, 280}, Size{1080, 560}}) {
+    for (const Size size : {Size{1080, 560}, Size{640, 400}, Size{320, 360}, Size{1080, 560}}) {
         resizeClient(editor.window(), size);
         pump(10);
         const int dpi = GetDpiForWindow(editor.window());
@@ -296,7 +299,8 @@ PHPVPN_TEST(WP03Windows, ReferenceGeometrySurvivesNativeResizeAndEditorUndo) {
             GetClientRect(editor.window(), &client);
             PHPVPN_CHECK_EQ(client.right, scaleForDpi(1080, dpi));
             PHPVPN_CHECK_EQ(client.bottom, scaleForDpi(560, dpi));
-            PHPVPN_CHECK(std::abs(r.top * 96.0 / dpi - (202.0 - 55.0) * 560.0 / 949.0) <= 6.0);
+            // The reference describes the outer text frame. Native EDIT has a 6 DIP inset.
+            PHPVPN_CHECK(std::abs(r.top * 96.0 / dpi - 6.0 - (202.0 - 55.0) * 560.0 / 949.0) <= 6.0);
             std::cout << "Geometry Editor: DPI=" << dpi << " client=" << client.right << "x" << client.bottom
                       << " textTopDIP=" << r.top * 96.0 / dpi << "\n";
         }
@@ -569,6 +573,166 @@ PHPVPN_TEST(WP03Windows, StatisticsNativeExactValuesStaleAndFocusScroll) {
     capture(stats.window(), L"statistics-narrow-max.bmp");
     SendMessageW(stats.window(), WM_CLOSE, 0, 0);
 }
+// Snapshot every format before WM_COPY. Unsupported data aborts before any
+// clipboard mutation. Destruction restores even when an assertion fails.
+class ClipboardRestore {
+    std::vector<std::pair<UINT, HANDLE>> data_;
+    HWND owner_;
+    bool captured_ = false;
+public:
+    explicit ClipboardRestore(HWND owner) : owner_(owner) {}
+    bool capture() {
+        if (!OpenClipboard(owner_)) return false;
+        bool ok = true;
+        for (UINT format = EnumClipboardFormats(0); format; format = EnumClipboardFormats(format)) {
+            auto source = GetClipboardData(format);
+            auto copy = source ? OleDuplicateData(source, static_cast<CLIPFORMAT>(format), 0) : nullptr;
+            if (!copy) { ok = false; break; }
+            data_.emplace_back(format, copy);
+        }
+        CloseClipboard();
+        captured_ = ok;
+        return ok;
+    }
+    ~ClipboardRestore() {
+        if (captured_) {
+            bool opened = false;
+            for (int retry = 0; retry < 100 && !opened; ++retry) {
+                opened = OpenClipboard(owner_) != FALSE;
+                if (!opened) Sleep(10);
+            }
+            PHPVPN_CHECK(opened);
+            if (opened) {
+                PHPVPN_CHECK(EmptyClipboard());
+                for (auto& [format, handle] : data_) {
+                    if (SetClipboardData(format, handle)) handle = nullptr;
+                    else PHPVPN_CHECK(false);
+                }
+                CloseClipboard();
+            }
+        }
+        for (auto [format, handle] : data_) if (handle) {
+            if (format == CF_BITMAP || format == CF_PALETTE || format == CF_DSPBITMAP) DeleteObject(handle);
+            else if (format == CF_ENHMETAFILE || format == CF_DSPENHMETAFILE) DeleteEnhMetaFile(static_cast<HENHMETAFILE>(handle));
+            else {
+                if (format == CF_METAFILEPICT || format == CF_DSPMETAFILEPICT) {
+                    auto picture = static_cast<METAFILEPICT*>(GlobalLock(handle));
+                    if (picture) { DeleteMetaFile(picture->hMF); GlobalUnlock(handle); }
+                }
+                GlobalFree(handle);
+            }
+        }
+    }
+};
+PHPVPN_TEST(WP03Windows, ServerInformationTabsAreNativeAndDataStable) {
+    EditorWindow editor(L"\\\\.\\pipe\\unused-info-tabs-test");
+    editor.open(GetModuleHandleW(nullptr), L"Server Information", "{\"server\":\"unchanged\"}");
+    const auto tabs = GetDlgItem(editor.window(), IDC_INFO_TABS);
+    PHPVPN_CHECK(tabs != nullptr);
+    if (!tabs) return;
+    const auto field = GetDlgItem(editor.window(), IDC_TEXT_AREA);
+    const auto original = windowText(field);
+    PHPVPN_CHECK_EQ(TabCtrl_GetItemCount(tabs), 2);
+    for (int i = 0; i < 2; ++i) {
+        wchar_t label[80]{};
+        TCITEMW item{}; item.mask = TCIF_TEXT; item.pszText = label; item.cchTextMax = 80;
+        PHPVPN_CHECK(SendMessageW(tabs, TCM_GETITEMW, i, reinterpret_cast<LPARAM>(&item)));
+        PHPVPN_CHECK_EQ(std::wstring(label), i == 0 ? L"Who is online" : L"Raw server information");
+    }
+    PHPVPN_CHECK_EQ(TabCtrl_GetCurSel(tabs), 0);
+    PHPVPN_CHECK(!IsWindowVisible(field));
+    PHPVPN_CHECK_EQ(GetFocus(), tabs);
+    SendMessageW(tabs, WM_KEYDOWN, VK_RIGHT, 0);
+    PHPVPN_CHECK_EQ(TabCtrl_GetCurSel(tabs), 1);
+    PHPVPN_CHECK(IsWindowVisible(field));
+    const auto fieldBounds = bounds(field, editor.window());
+    PHPVPN_CHECK_EQ(ChildWindowFromPointEx(editor.window(),
+        POINT{fieldBounds.left + 2, fieldBounds.top + 2}, CWP_SKIPINVISIBLE), field);
+    PHPVPN_CHECK_EQ(windowText(field), original);
+    {
+        ClipboardRestore clipboard(editor.window());
+        const bool captured = clipboard.capture();
+        PHPVPN_CHECK(captured);
+        if (captured) {
+            SendMessageW(field, EM_SETSEL, 2, 7);
+            SendMessageW(field, WM_COPY, 0, 0);
+            const bool opened = OpenClipboard(editor.window()) != FALSE;
+            PHPVPN_CHECK(opened);
+            if (opened) {
+                const auto handle = GetClipboardData(CF_UNICODETEXT);
+                const auto copied = handle ? static_cast<const wchar_t*>(GlobalLock(handle)) : nullptr;
+                PHPVPN_CHECK(copied != nullptr);
+                if (copied) { PHPVPN_CHECK_EQ(std::wstring(copied), original.substr(2, 5)); GlobalUnlock(handle); }
+                CloseClipboard();
+            }
+        }
+    }
+    PHPVPN_CHECK((GetWindowLongW(field, GWL_STYLE) & (ES_READONLY | ES_MULTILINE | WS_VSCROLL | WS_HSCROLL)) ==
+                 (ES_READONLY | ES_MULTILINE | WS_VSCROLL | WS_HSCROLL));
+    SendMessageW(field, EM_SETSEL, 2, 7);
+    const auto scroll = SendMessageW(field, EM_GETFIRSTVISIBLELINE, 0, 0);
+    for (int i = 0; i < 12; ++i) editor.selectInfoTab(i % 2);
+    editor.selectInfoTab(-1); editor.selectInfoTab(2);
+    PHPVPN_CHECK_EQ(TabCtrl_GetCurSel(tabs), 1);
+    DWORD first = 0, last = 0;
+    SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&first), reinterpret_cast<LPARAM>(&last));
+    PHPVPN_CHECK_EQ(first, 2u); PHPVPN_CHECK_EQ(last, 7u);
+    PHPVPN_CHECK_EQ(SendMessageW(field, EM_GETFIRSTVISIBLELINE, 0, 0), scroll);
+    PHPVPN_CHECK_EQ(windowText(field), original);
+    editor.selectInfoTab(0);
+    SendMessageW(editor.window(), WM_LBUTTONDOWN, 0, MAKELPARAM(100, 150));
+    PHPVPN_CHECK(GetFocus() != field);
+    PHPVPN_CHECK_EQ(GetNextDlgTabItem(editor.window(), tabs, FALSE), GetDlgItem(editor.window(), IDOK));
+    editor.selectInfoTab(1);
+    PHPVPN_CHECK_EQ(GetNextDlgTabItem(editor.window(), tabs, FALSE), field);
+    MSG key{}; key.hwnd = tabs; key.message = WM_KEYDOWN; key.wParam = VK_TAB;
+    SetFocus(tabs); PHPVPN_CHECK(editor.translate(key)); PHPVPN_CHECK_EQ(GetFocus(), field);
+    BYTE previousKeys[256]{}; GetKeyboardState(previousKeys);
+    BYTE shifted[256]{}; std::copy(std::begin(previousKeys), std::end(previousKeys), shifted);
+    shifted[VK_SHIFT] |= 0x80; SetKeyboardState(shifted);
+    key = {}; key.hwnd = field; key.message = WM_KEYDOWN; key.wParam = VK_TAB;
+    PHPVPN_CHECK(editor.translate(key));
+    SetKeyboardState(previousKeys);
+    PHPVPN_CHECK_EQ(GetFocus(), tabs);
+    key.hwnd = field; key.wParam = VK_RETURN;
+    PHPVPN_CHECK(editor.translate(key)); PHPVPN_CHECK(!editor.window());
+    editor.open(GetModuleHandleW(nullptr), L"Server Information", "{}");
+    key.hwnd = GetFocus(); key.wParam = VK_ESCAPE;
+    PHPVPN_CHECK(editor.translate(key)); PHPVPN_CHECK(!editor.window());
+}
+PHPVPN_TEST(WP03Windows, ServerInformationTabsPreserveNonzeroScrollAfterResize) {
+    std::string source = "{\"rows\":[";
+    for (int i = 0; i < 150; ++i) source += (i ? ",\"" : "\"") + std::string(240, 'x') + "\"";
+    source += "]}";
+    EditorWindow editor(L"\\\\.\\pipe\\unused-info-scroll-test");
+    editor.open(GetModuleHandleW(nullptr), L"Server Information", source);
+    editor.selectInfoTab(1);
+    const auto field = GetDlgItem(editor.window(), IDC_TEXT_AREA);
+    const auto original = windowText(field);
+    SendMessageW(field, EM_SETSEL, 5000, 5010);
+    SendMessageW(field, EM_LINESCROLL, 20, 25);
+    const auto vertical = SendMessageW(field, EM_GETFIRSTVISIBLELINE, 0, 0);
+    const auto horizontal = GetScrollPos(field, SB_HORZ);
+    PHPVPN_CHECK(vertical > 0 && horizontal > 0);
+    for (int i = 0; i < 12; ++i) editor.selectInfoTab(i % 2);
+    PHPVPN_CHECK_EQ(SendMessageW(field, EM_GETFIRSTVISIBLELINE, 0, 0), vertical);
+    PHPVPN_CHECK_EQ(GetScrollPos(field, SB_HORZ), horizontal);
+    SetWindowPos(editor.window(), nullptr, 0, 0, 850, 600, SWP_NOMOVE | SWP_NOZORDER);
+    const auto resizedVertical = SendMessageW(field, EM_GETFIRSTVISIBLELINE, 0, 0);
+    const auto resizedHorizontal = GetScrollPos(field, SB_HORZ);
+    editor.selectInfoTab(0); editor.selectInfoTab(1);
+    PHPVPN_CHECK_EQ(SendMessageW(field, EM_GETFIRSTVISIBLELINE, 0, 0), resizedVertical);
+    PHPVPN_CHECK_EQ(GetScrollPos(field, SB_HORZ), resizedHorizontal);
+    DWORD first = 0, last = 0;
+    SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&first), reinterpret_cast<LPARAM>(&last));
+    PHPVPN_CHECK_EQ(first, 5000u); PHPVPN_CHECK_EQ(last, 5010u);
+    PHPVPN_CHECK_EQ(windowText(field), original);
+    PHPVPN_CHECK_EQ(field, GetDlgItem(editor.window(), IDC_TEXT_AREA));
+    pump(10);
+    capture(editor.window(), L"server-information-raw.bmp");
+    editor.selectInfoTab(0); pump(10);
+    capture(editor.window(), L"server-information-who.bmp");
+}
 PHPVPN_TEST(WP03Windows, EditorPreservesNulSelectionDirtyAndSeparatesShowInfo) {
     Backend backend;
     EditorWindow editor(backend.pipe);
@@ -624,7 +788,7 @@ PHPVPN_TEST(WP03Windows, EditorPreservesNulSelectionDirtyAndSeparatesShowInfo) {
     unsigned children = 0;
     for (auto h = GetWindow(editor.window(), GW_CHILD); h; h = GetWindow(h, GW_HWNDNEXT))
         ++children;
-    PHPVPN_CHECK_EQ(children, 1u);
+    PHPVPN_CHECK_EQ(children, 4u);
     PHPVPN_CHECK_EQ(backend.configs.load(), 0u);
 }
 PHPVPN_TEST(WP03Windows, FiveHundredPaintsAndTwentyWindowCyclesKeepObjectsStable) {

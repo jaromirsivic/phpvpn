@@ -45,7 +45,7 @@ Rect initialWindowRect(Size clientDip, const MonitorGeometry& monitor, Size fram
 struct ContentLayout { Rect header, viewport, footer; int scrollMax = 0; };
 ContentLayout computeContentLayout(Size client, int headerHeight, int footerHeight, int contentHeight);
 int revealScrollPosition(int position, int viewportHeight, int contentHeight, Rect target);
-struct EditorLayout { Rect textArea; Rect saveButton; Rect resetButton; Rect cancelButton; Rect heading, path, footer; };
+struct EditorLayout { Rect textArea; Rect saveButton; Rect resetButton; Rect cancelButton; Rect heading, path, tabs, footer; };
 int scaleForDpi(int pixels, int dpi);
 int buttonFooterMargin(int width, int dpi);
 ButtonFooterLayout computeButtonFooterLayout(
