@@ -130,3 +130,26 @@ or with the environment variable `PHPVPN_LARGE_BODY_URL`.
 - **HTTPS and a reverse proxy.** Chapter 16.1.1 asks for the same result over
   HTTPS and behind a proxy. The deployment offers plain HTTP only. Forged
   `X-Forwarded-*` headers are covered.
+
+Status fixtures cover enabled/disabled GET and HEAD and predictable/secure secrets. Default storage is `./phpvpn_data`, without automatic migration from `./phpvpn`. Deploy only `phpvpn.php`, without assets, and keep fixture storage outside the webroot.
+
+Run `uv run --python 3.13 python tools/test-status-variants.py` for four isolated PHP HTTP variants. The test checks exact embedded HTML, removal of the entire warning panel, HEAD without a body, successful health/info/data with the page disabled, custom/default storage paths and no migration. It uses `D:/nginx/php8.5.9/php.exe` and disposes its temporary servers and directories.
+
+## Masked communication contracts
+
+`test_info_extensions.py` independently signs full-auth info extensions. It
+checks A/B/C/D privacy, include-only reads, empty publication, signed optional
+presence, wrong credentials/domain, replay-window semantics and body limits.
+`tests-info-extensions.php` runs with `tests.php` and checks duplicate JSON members,
+stored corruption, 252/253 records and temp-file cleanup. Run real storage races
+and write/partial-write/flush fault injection, interrupted-writer cleanup and a
+forced Windows rename failure without changing a deployment:
+
+```powershell
+uv run --python 3.13 python tools/test-info-storage.py --php D:/nginx/php8.5.9/php.exe
+```
+
+The storage test creates and removes only its temporary directory below `work`.
+Concurrent publication can safely fail while a Windows reader holds a file. The
+test requires complete old/new snapshots, rather than assuming every competing
+rename succeeds. The HTTP handler reports failed publication as 503.

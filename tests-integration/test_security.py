@@ -252,14 +252,20 @@ def test_batch_file_name_carries_the_expiry(
         assert source == sender
 
 
-def test_client_marker_is_an_empty_file(client: PhpVpnClient, clean_queues: None) -> None:
-    """Chapter 16.5.2, `info.json` is a zero length marker."""
+def test_fresh_client_marker_is_empty_until_publication(client: PhpVpnClient, clean_queues: None) -> None:
+    """Fresh ordinary activity creates an empty marker and preserves later publications."""
     root = buffer_root(client)
     address = client.configuration.addresses[0]
-    client.send_data(address)
     marker = root / address.replace(".", "_") / "info.json"
+    marker.unlink(missing_ok=True)
+    client.send_data(address)
     assert marker.is_file(), "the authenticated source gets a lastSeen marker"
     assert marker.stat().st_size == 0, "the marker carries no content"
+    response,_ = client.extended_info(address,{"maskedCommunicationContracts":[]})
+    assert response.status_code == 200
+    published = marker.read_bytes()
+    client.send_data(address)
+    assert marker.read_bytes() == published == b'{"maskedCommunicationContracts":[]}'
 
 
 def test_storage_is_not_reachable_over_http(client: PhpVpnClient) -> None:
@@ -270,6 +276,8 @@ def test_storage_is_not_reachable_over_http(client: PhpVpnClient) -> None:
         "/phpvpn/10_99_99_2/info.json",
         "/../phpvpn-buffer/10_99_99_2/info.json",
         "/phpvpn-buffer/",
+        "/phpvpn_data/",
+        "/phpvpn_data/10_99_99_2/info.json",
     ):
         raw = client.session.get(base + suffix, timeout=10)
         assert raw.status_code in (400, 403, 404), (

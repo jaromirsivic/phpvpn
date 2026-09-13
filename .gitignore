@@ -6,6 +6,7 @@ __pycache__/
 
 # Default storage root of the disk driver
 /phpvpn/
+/phpvpn_data/
 
 # Client build output and the distribution folder produced by make-dist.ps1
 /work/

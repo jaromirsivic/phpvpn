@@ -53,7 +53,7 @@ $newKeyLines = ($keys.Keys | ForEach-Object { "    '$_' => '$($keys[$_])'," }) -
 $newKeys = "const ACCESS_KEYS = [`n$newKeyLines`n];"
 $content = Replace-ExactlyOnce $content $oldKeys $newKeys 'ACCESS_KEYS'
 $escapedBuffer = $BufferDirectory.Replace('\', '/').Replace("'", "\'")
-$content = Replace-ExactlyOnce $content "const BUFFER_DIRECTORY = './phpvpn';" "const BUFFER_DIRECTORY = '$escapedBuffer';" 'BUFFER_DIRECTORY'
+$content = Replace-ExactlyOnce $content "const BUFFER_DIRECTORY = './phpvpn_data';" "const BUFFER_DIRECTORY = '$escapedBuffer';" 'BUFFER_DIRECTORY'
 
 $target = Join-Path $WebRoot 'phpvpn.php'
 [System.IO.File]::WriteAllText($target, $content, (New-Object System.Text.UTF8Encoding($false)))

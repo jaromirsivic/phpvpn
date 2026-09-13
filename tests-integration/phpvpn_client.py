@@ -876,6 +876,29 @@ class PhpVpnClient:
         )
         return response, request_id or ""
 
+    def build_info_full(self, src: str, extensions: dict, *, access_key: bytes | None = None,
+                        timestamp: str | None = None, request_id: str | None = None) -> tuple[bytes, str]:
+        """Independent extended-info canonicalization. Presence and array order are signed."""
+        extension = {}
+        if "maskedCommunicationContracts" in extensions:
+            extension["maskedCommunicationContracts"] = [
+                {"peer": item["peer"], "hash": item["hash"]}
+                for item in extensions["maskedCommunicationContracts"]]
+        if "includeMaskedCommunicationContracts" in extensions:
+            extension["includeMaskedCommunicationContracts"] = extensions["includeMaskedCommunicationContracts"]
+        encoded = json.dumps(extension, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        timestamp = self.clock.timestamp() if timestamp is None else timestamp
+        request_id = new_uuid4() if request_id is None else request_id
+        canonical = f"PHPVPN-AUTH-FULL\nPOST\ninfo\n{src}\n{timestamp}\n{request_id}\n{hashlib.sha256(encoded).hexdigest()}".encode()
+        tag = b64u_encode(hmac_sha256(self.full_auth_key(src, access_key), canonical))
+        body = dict(type="auth-full", src=src, timestamp=timestamp, requestId=request_id, tag=tag)
+        body.update(extension)
+        return json.dumps(body, separators=(",", ":")).encode(), request_id
+
+    def extended_info(self, src: str, extensions: dict) -> tuple[Response, str]:
+        body, request_id = self.build_info_full(src, extensions)
+        return self.info(body=body, request_id=request_id)
+
     def decrypt_info(self, payload: Mapping[str, Any], request_id: str) -> dict[str, Any]:
         """Authenticate and decrypt an `info` response, chapter 8.3."""
         salt = b64u_decode(payload["salt"])

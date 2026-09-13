@@ -30,7 +30,7 @@ namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kStatusMessage = WM_APP + 2;
 constexpr UINT kCommandMessage = WM_APP + 3;
-constexpr UINT kConfigMessage = WM_APP + 4, kDisconnectMessage = WM_APP + 5, kInfoMessage = WM_APP + 6;
+constexpr UINT kConfigMessage = WM_APP + 4, kDisconnectMessage = WM_APP + 5;
 constexpr UINT kWizardMenu = 206, kContractsMenu = 207;
 constexpr UINT_PTR kStatusTimer = 1;
 constexpr UINT_PTR kExitTimer = 90;
@@ -42,12 +42,12 @@ constexpr wchar_t kClass[] = L"PhpVpnTrayWindow";
 TrayApplication::TrayApplication(TrayRuntime runtime)
     : runtime_(std::move(runtime)), shellIcon_(runtime_.shell.get()),
       statusReader_(runtime_.pipeName), commands_(runtime_.pipeName),
-      disconnect_(runtime_.pipeName), info_(runtime_.pipeName), config_(runtime_.pipeName),
+      disconnect_(runtime_.pipeName), config_(runtime_.pipeName),
       editor_(runtime_.pipeName), infoWindow_(runtime_.pipeName), wizard_(runtime_.pipeName),
       contracts_(runtime_.pipeName), progress_(runtime_.pipeName), disconnectProgress_(runtime_.pipeName) {}
 TrayApplication::~TrayApplication() {
     endSession();
-    commands_.stop(); disconnect_.stop(); info_.stop(); config_.stop(); statusReader_.stop();
+    commands_.stop(); disconnect_.stop(); config_.stop(); statusReader_.stop();
     if (window_) {
         KillTimer(window_, kStatusTimer);
         shellIcon_.remove();
@@ -127,14 +127,13 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
         case kCommandMessage: self->finishCommand(); return 0;
         case kConfigMessage: self->finishConfigAction(); return 0;
         case kDisconnectMessage: self->finishDisconnect(); return 0;
-        case kInfoMessage: self->finishInfo(); return 0;
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
                 case IDM_EDIT_CONFIG: self->startConfigAction(MenuAction::edit); return 0;
-                case IDM_SHOW_INFO:
-                    if (self->info_.request(IpcCommand::get_info, {}, window, kInfoMessage)) self->infoPlacement_ = self->menuPlacement_;
-                    else self->showError(L"Server information is already being requested. Wait for that result.");
+                case IDM_SHOW_INFO: {
+                    self->infoWindow_.open(self->instance_);
                     return 0;
+                }
                 case kWizardMenu:
                     if (!self->wizard_.open(self->instance_)) self->showError(L"Configuration Wizard could not be opened.");
                     return 0;
@@ -417,21 +416,6 @@ void TrayApplication::finishDisconnect() {
     onSnapshot(status); progress_.onSnapshot(status);
     statusReader_.stop(); statusReader_.request(window_, kStatusMessage);
 }
-void TrayApplication::finishInfo() {
-    ScopedWindowPlacement placement(infoPlacement_);
-    auto response = info_.take(); if (!response) return;
-    auto value = Json::parse(*response);
-    if (!value || !value->isObject()) { showError(L"The service did not return valid server information."); return; }
-    if (const auto* failure = value->find("error"); failure && failure->isObject()) {
-        const auto* description = failure->find("description");
-        auto text = description && description->isString() ? widen(description->stringValue()) : L"Server information could not be read.";
-        if (const auto* code = failure->find("code"); code && code->isString() && code->stringValue().starts_with("config_"))
-            text += L"\nExpected configuration: " + expectedConfigurationPath() + L"\nOpen Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
-        showError(text.c_str());
-        return;
-    }
-    infoWindow_.open(instance_, L"PHPVPN server information", Json::serializePretty(*value));
-}
 void TrayApplication::requestExit() {
     if (endingSession_ || exitRequested_) return;
     exitRequested_ = true; exitApproval_.reset(); SetTimer(window_, kExitTimer, 50, nullptr); advanceExit();
@@ -473,7 +457,7 @@ void TrayApplication::endSession() {
     endingSession_ = true; exitRequested_ = false; exitApproval_.reset();
     if (window_) { KillTimer(window_, kExitTimer); KillTimer(window_, kStatusTimer); }
     polling_.stop();
-    commands_.abandon(); disconnect_.abandon(); info_.abandon(); config_.abandon(); statusReader_.abandon();
+    commands_.abandon(); disconnect_.abandon(); config_.abandon(); statusReader_.abandon();
     pendingCommand_.reset(); configAction_.reset(); saveOperation_.reset();
     editor_.endSession(); wizard_.endSession(); contracts_.endSession();
     progress_.endSession(); infoWindow_.endSession();

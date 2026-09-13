@@ -127,7 +127,7 @@ public:
             }
             auto request = IpcProtocol::parseRequest(json);
             if (!request) return IpcWorkClass::shortControl;
-            if (request->command == IpcCommand::get_info) return IpcWorkClass::diagnostic;
+            if (request->command == IpcCommand::get_info || request->command == IpcCommand::get_server_info) return IpcWorkClass::diagnostic;
             if (request->command == IpcCommand::connect || request->command == IpcCommand::get_config || request->command == IpcCommand::set_config)
                 return IpcWorkClass::file;
             return IpcWorkClass::shortControl;

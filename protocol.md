@@ -123,14 +123,14 @@ HTTPS navíc poskytuje ochranu transportních metadat v těle a hlavičkách, au
 |---|---|---|---|
 | `/phpvpn.php` | `GET`, `HEAD` | bez těla | HTML provozní stránka |
 | `/phpvpn.php?action=health` | `POST` | jeden JSON objekt `auth-none` | jeden autentizovaný JSON objekt `health` |
-| `/phpvpn.php?action=info` | `POST` | jeden JSON objekt `auth-semi` | jeden JSON objekt `info` |
+| `/phpvpn.php?action=info` | `POST` | jeden JSON objekt `auth-semi` nebo rozšířený `auth-full` | jeden JSON objekt `info` |
 | `/phpvpn.php?action=data` | `POST` | NDJSON začínající `auth-full` | NDJSON s datovými záznamy a výsledkem |
 
 Jiné metody vrací `405 method_not_allowed` s hlavičkou `Allow`. Neznámá akce vrací `404 not_found`.
 
 ### 5.1 Provozní stránka
 
-`GET /phpvpn.php` vrací jednoduché HTML s `<h1>Server is running</h1>`. Byla-li nakonfigurovaná hodnota `SERVER_SECRET` prázdná nebo je-li jeho efektivní hodnota přesně `CHANGE_THIS_SERVER_SECRET` nebo tvořena pouze nulovými bajty `0x00` či pouze ASCII znaky `0`, stránka navíc zobrazí červený `<h2>Server is not secure. Please modify SERVER_SECRET in the phpvpn.php</h2>`.
+`STATUS_PAGE_ENABLED` má výchozí hodnotu `true`. Kořenový GET vrací samostatné HTML podle `assets/index.html` s nadpisem `<h1>PHPVPN server is running</h1>`, generátorem 32 náhodných bajtů přes Web Crypto a kopírováním 64 lowercase hex znaků. HTML, CSS i JavaScript jsou vložené přímo do skriptu. Prázdný, výchozí, nulový nebo ASCII nulový secret zobrazí celý červený warning panel `aside`. Jiný secret jej odstraní. Při `false` GET vrací `404 not_found` bez HTML. HEAD má odpovídající status a hlavičky bez těla. Přepínač neomezuje REST API. Nový datový default `./phpvpn_data` nepřesouvá ani nekopíruje stará data z `./phpvpn`, případnou migraci provádí správce ručně.
 
 Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: výchozí, prázdný nebo nulový `SERVER_SECRET` neblokuje `health`, `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`. Protože je však taková hodnota veřejně předvídatelná, neposkytuje tag odpovědi `health` praktický důkaz identity serveru.
 
@@ -305,6 +305,28 @@ Do `canonical` vstupují přesné ASCII bajty validovaného `timestamp` beze zm�
 
 `requestId` je korelační hodnota. Server nepersistuje `timestamp` ani `requestId`. Timestamp omezuje replay starého požadavku, ale identický platný požadavek lze uvnitř otevřeného 60sekundového okna zopakovat a server jej přijme znovu.
 
+### 8.1a Volitelné full-auth rozšíření
+
+Přítomnost `maskedCommunicationContracts` nebo `includeMaskedCommunicationContracts` zapíná plnou autentizaci. Platí to i pro `[]` a `false`. Request je jeden JSON objekt s `type:"auth-full"`, `src`, `timestamp`, `requestId`, `tag` a alespoň jedním rozšířeným polem. Samostatný auth-full bez rozšíření není platný. Původní request bez obou polí nadále používá přesně auth-semi a původní limit 4096 bajtů.
+
+`maskedCommunicationContracts` je pole nejvýše 252 objektů přesného tvaru `{"peer":"10.99.99.3","hash":"<64 lowercase hex>"}`. Skutečný strop je zároveň počet platných VPN adres minus vlastní adresa. Peer je canonical VPN IPv4 v rozsahu serveru, jiný než src a unikátní. Pro peer není vyžadován záznam ACCESS_KEYS. Každý hash musí odpovídat `[0-9a-f]{64}`. Neznámé členy, duplicitní členy včetně escapovaných názvů, duplicity peer, null a záměny objektu a pole se odmítají. `includeMaskedCommunicationContracts` je pouze boolean. Maximální celé tělo je `MAX_INFO_REQUEST_BODY_BYTES = 65536`, zároveň nejvýše MAX_REQUEST_BODY_BYTES.
+
+Identifikátor kontraktu je dvojice numericky vzestupně seřazených IPv4 adres spojená `_`. Maskovaný hash je lowercase SHA-256 UTF-8 bajtů `contract + "_" + communicationKeyLowerHex + "_" + configuredServerSecret`, bez koncového LF nebo NUL. Komunikační klíč má přesně 32 bajtů reprezentovaných 64 lowercase hex znaky. Server secret se zde použije přesně z konfigurace včetně velikosti písmen, whitespace, Unicode a prázdné hodnoty. Prázdný secret se pro tento hash nenahrazuje defaultem. Plaintext klíče ani secret se neposílají.
+
+Kanonický objekt E obsahuje jen přítomná rozšířená pole v pořadí `maskedCommunicationContracts`, `includeMaskedCommunicationContracts`. Dvojice mají pořadí členů peer, hash. E je kompaktní JSON bez whitespace, BOM a koncového LF. Pole se při ověřování netřídí. Klientský builder je před podpisem seřadí numericky podle peer. Nepřítomné pole je odlišné od false nebo []. Extension hash je lowercase SHA-256 přesných UTF-8 bajtů E.
+
+```text
+PHPVPN-AUTH-FULL
+POST
+info
+<src>
+<timestamp>
+<requestId>
+<extensionHash>
+```
+
+Podpis nemá koncový LF. Tag je canonical unpadded Base64URL HMAC-SHA-256 s `fullAuthKey` odvozeným přesně jako pro data. Jen v autentizační derivaci se prázdný server secret nahradí defaultem. Kanonizace a tagy data se nemění. Server ověří src proti ACCESS_KEYS, pro neznámou identitu provede dummy-key derivaci a constant-time porovnání. Identita, podpis nebo čas mimo 60sekundové okno vrací 401. Vadný formát vrací 400, velikost nebo počet 413, Content-Type 415 a selhání potvrzené publikace 503 queue_unavailable. Před validací a autentizací se nic nezapisuje. Platný replay uvnitř časového okna je nadále přijat, žádná historie request ID nevzniká.
+
 ### 8.2 Plaintext odpovědi
 
 Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
@@ -316,6 +338,14 @@ Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 `generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`. Kvůli 30sekundovému omezení aktualizací a best-effort povaze statistik jde pouze o přibližný provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
 
 `limits` popisuje skutečné aktivní hodnoty serveru. Klient nesmí spoléhat pouze na výchozí hodnoty této specifikace. `minDataPollIntervalMs` a `maxDataPollIntervalMs` jsou doporučené dolní a horní hranice intervalu mezi voláními `data`; klient se jimi smí řídit, ale nejsou pro něj závazné. Odpověď `info` nesmí obsahovat název, konfiguraci ani jinou informaci o interním úložišti serveru.
+
+Při `includeMaskedCommunicationContracts:true` má každý vrácený klient navíc pole `maskedCommunicationContracts`. Pro cizího klienta obsahuje nejvýše jednu publikovanou dvojici, jejíž peer je přesně autentizované src žadatele. Bez shody je pole prázdné. Vlastní záznam má vždy []. O vztazích dvou jiných klientů se nevrací hashe, peery, původní délka seznamu ani počty skrytých položek. Standardní odpověď bez include true nemá žádné nové pole, ani po publikaci.
+
+Klienti bez platného lastSeen se vždy vynechávají, žádné null ani Never. Adresy se procházejí numericky. Při dosažení MAX_INFO_PLAINTEXT_BYTES = 262144 se ubírají celé položky od nejvyšší IP. Pokud se nevejde ani základní objekt, odpověď je server_misconfigured. GeneratedAt vzniká po publikaci či touch. Čtení každého uloženého seznamu a jeho mtime patří jednomu file handle.
+
+Rozšířený klientský parser vyžaduje extension pole u každého klienta, unikátní adresy, validní časy, self s [] a nejvýše jeden peer rovný očekávanému src u každého cizího klienta. Vadná poslední položka odmítá celý snapshot včetně limitů. Prázdné clients se v rozšířeném toku konzervativně odmítá, protože bez záznamu nelze odlišit starý server. Pouze vlastní marker reprezentuje platný přehled s nulou cizích klientů. Standardní parser prázdné clients přijímá.
+
+Přehled používá signed rozdíl generatedAt minus lastSeen z jediné odpovědi. Nejvýše 60000 ms včetně budoucího lastSeen znamená online, 60001 ms již offline. Shoda hashů s aktuální lokální konfigurací neprokazuje stav skutečně aktivního tunelu.
 
 ### 8.3 Šifrovaná odpověď
 
@@ -563,7 +593,7 @@ Wire protokol nesmí záviset na názvech souborů, adresářích ani databázov
 - `sweepQueue(destination, now)` pro cílené odstranění expirací z jedné fronty;
 - `sweep(now)` pro omezenou oportunistickou údržbu.
 
-Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Konfigurační proměnná `BUFFER_DIRECTORY` určuje kořen tohoto úložiště. Její výchozí hodnota je `./phpvpn`, relativní cesta se vyhodnocuje vůči adresáři souboru `phpvpn.php`; administrátor ji smí změnit na jinou absolutní nebo relativní cestu. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SS.sssZ_<bytes>_<src>_<uuid>`, kde první pole je jediný časový údaj: čas expirace v UTC s přesně třemi číslicemi milisekund. Pomlčky mezi hodinou, minutou a sekundou jsou filename-safe náhradou dvojteček; `Z` označuje UTC. Příklad: `2026-08-12T14-37-05.123Z_2048_10.99.99.2_d5b543a9-9fc3-4c98-916c-ea0198f67a79.data`. `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Každý per-client adresář navíc smí obsahovat statistický marker `info.json` podle kapitoly 10.6; tento soubor není dávkou a operace fronty jej musí ignorovat. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
+Povinný driver `disk` používá per-client adresáře a atomické `rename()` ve stejném filesystému. Konfigurační proměnná `BUFFER_DIRECTORY` určuje kořen tohoto úložiště. Její výchozí hodnota je `./phpvpn_data`, relativní cesta se vyhodnocuje vůči adresáři souboru `phpvpn.php`; administrátor ji smí změnit na jinou absolutní nebo relativní cestu. Dávka se zapisuje pod příponou `.receiving`, po úspěšném dokončení zápisu se přejmenuje na `.data` a worker ji před odesláním atomicky přejmenuje na `.sending`. Pouze worker, který uspěl v přejmenování `.data` na `.sending`, smí dávku vydat a poté smazat. Název dávky před stavovou příponou má tvar `YYYY-MM-DDTHH-MM-SS.sssZ_<bytes>_<src>_<uuid>`, kde první pole je jediný časový údaj: čas expirace v UTC s přesně třemi číslicemi milisekund. Pomlčky mezi hodinou, minutou a sekundou jsou filename-safe náhradou dvojteček; `Z` označuje UTC. Příklad: `2026-08-12T14-37-05.123Z_2048_10.99.99.2_d5b543a9-9fc3-4c98-916c-ea0198f67a79.data`. `<bytes>` je počet serializovaných bajtů, `<src>` je validovaná zdrojová VPN adresa a `<uuid>` je náhodné UUID verze 4. Každý per-client adresář navíc smí obsahovat statistický marker `info.json` podle kapitoly 10.6; tento soubor není dávkou a operace fronty jej musí ignorovat. Konfigurační volba `STORAGE_DRIVER` má výchozí hodnotu `disk`; budoucí `memcached`, `mariadb`, `mysql` nebo `postgresql` musí zachovat stejné atomické převzetí jednotlivých dávek a kapacitní chování.
 
 Adresář klienta s VPN adresou `a.b.c.d` má cestu `BUFFER_DIRECTORY/a_b_c_d`. Jeho jméno vzniká výhradně nahrazením tří teček adresy podtržítky; například buffer cílové adresy `10.99.99.2` je `BUFFER_DIRECTORY/10_99_99_2`. Adresář patří vždy cílové adrese `dst`, nikoli odesílateli uvedenému v názvu dávky. Při výchozím rozsahu může kořen obsahovat nejvýše 253 takových podadresářů pro adresy `10.99.99.2` až `10.99.99.254`.
 
@@ -573,7 +603,7 @@ Kořenový i per-client adresář se vytváří líně a pouze z již validovan�
 
 Ovladač `disk` ukládá statistiku každého klienta samostatně do souboru `info.json` v jeho per-client adresáři. Neexistuje žádný centrální soubor statistik. Soubor `info.json` je marker: jeho čas poslední změny (`mtime`) představuje `lastSeen` daného klienta s přesností poskytovanou filesystémem.
 
-Výchozí a implementací vytvářený obsah `info.json` je prázdný soubor o délce nula bajtů. Navzdory příponě `.json` jeho obsah netvoří JSON dokument, nenese žádná protokolová data a implementace jej NESMÍ číst, parsovat ani do něj zapisovat. Název je pouze konvenční. Aktualizace statistiky mění výhradně `mtime`; soubor nesmí obsahovat přístupový klíč, serverové tajemství, fyzickou adresu, payload ani interní cestu.
+Čerstvý marker běžné aktivity je prázdný. Potvrzená full-auth publikace jej atomicky nahradí JSON objektem `{"maskedCommunicationContracts":[{"peer":"IP","hash":"HEX"}]}`. Explicitní [] předchozí seznam vymaže. Publikace obchází třicetisekundový throttle. Zápis probíhá do jedinečného `.info-<uuid>.tmp` ve stejném adresáři, s kontrolou všech bajtů, flush, nastavením mtime a rename bez předchozího unlink cíle. Chyba zachová starý soubor a vrátí 503 queue_unavailable. Obsah a mtime rozšířeného čtení pochází z jednoho handle. Vadný, přerostlý nebo historicky prázdný soubor poskytne pouze [] při zachování čitelného lastSeen. Temp soubory nejsou fronta, bounded sweep uklízí jen přesné názvy starší než INFO_TEMP_TTL_SECONDS = 300.
 
 Po úspěšném ověření a normálním zpracování každého požadavku `data` server:
 
@@ -584,9 +614,9 @@ Po úspěšném ověření a normálním zpracování každého požadavku `data
 
 Endpoint `info` projde nakonfigurované klienty a pro každý z nich se pokusí načíst pouze `mtime` jeho markeru. Úspěšně načtený a reprezentovatelný čas převede na UTC RFC 3339 přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ` a použije jako `lastSeen`; chybějící přesnost filesystému vyjádří nulami v příslušných milisekundách. Klienta s chybějícím nebo nečitelným markerem, neplatným `mtime` nebo chybějícím per-client adresářem z pole `clients` vynechá. Obsah markeru se ani při akci `info` nečte.
 
-Statistiky jsou striktně best effort. Selhání načtení metadat, vytvoření markeru nebo změny jeho `mtime` NESMÍ změnit HTTP status, `data-result`, odpovídající `data-mac`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžné aktualizace stejného markeru jsou povoleny a poslední dokončená metadata operace vyhrává; různí klienti používají různé markery a navzájem si statistiku nepřepisují.
+Běžný touch je striktně best effort a zachovává uložený JSON. Potvrzená publikace má samostatnou chybovou smlouvu výše. Selhání načtení metadat, vytvoření markeru nebo změny jeho `mtime` NESMÍ změnit HTTP status, `data-result`, odpovídající `data-mac`, publikování odesílaných dat, vyprázdnění příchozího bufferu ani předání payloadů. Implementace kvůli statistikám NESMÍ provádět retry, čekat, získávat souborový zámek ani vracet chybu. Souběžné aktualizace stejného markeru jsou povoleny a poslední dokončená metadata operace vyhrává; různí klienti používají různé markery a navzájem si statistiku nepřepisují.
 
-Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `BUFFER_DIRECTORY` má být mimo document root; používá-li administrátor výchozí cestu `./phpvpn` uvnitř document rootu, webserver MUSÍ přímý přístup k celému tomuto adresáři explicitně zakázat. Endpoint `info` neprozrazuje jméno, umístění ani chyby markeru. Marker se NESMÍ započítávat do využité kapacity fronty, vydávat v odpovědi `data`, přejmenovávat mezi stavy dávky ani odstraňovat při TTL nebo oportunistickém sweepu.
+Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `BUFFER_DIRECTORY` má být mimo document root; používá-li administrátor výchozí cestu `./phpvpn_data` uvnitř document rootu, webserver MUSÍ přímý přístup k celému tomuto adresáři explicitně zakázat. Endpoint `info` neprozrazuje jméno, umístění ani chyby markeru. Marker se NESMÍ započítávat do využité kapacity fronty, vydávat v odpovědi `data`, přejmenovávat mezi stavy dávky ani odstraňovat při TTL nebo oportunistickém sweepu.
 
 ## 11. Limity a timeouty
 
@@ -597,6 +627,9 @@ Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `BUFFER_D
 | `MAX_DATA_RECORDS_PER_REQUEST` | 16 | Počet záznamů `data` v jednom requestu. |
 | `MAX_AUTH_RECORD_BYTES` | 4096 B | První řádek včetně LF. |
 | `MAX_REQUEST_BODY_BYTES` | 983040 B | Celé NDJSON tělo požadavku včetně všech LF. `983040 B` znamená 960 kB. Hodnota je záměrně nižší než výchozí limit 1 MiB serverů Nginx a Tengine. |
+| `MAX_INFO_REQUEST_BODY_BYTES` | 65536 B | Celé tělo rozšířeného info, nejvýše MAX_REQUEST_BODY_BYTES. |
+| `MAX_MASKED_COMMUNICATION_CONTRACTS` | 252 | Současně nejvýše počet platných klientských adres minus jedna. |
+| `INFO_TEMP_TTL_SECONDS` | 300 s | Stáří dočasné info publikace pro bounded sweep. |
 | `MAX_INFO_PLAINTEXT_BYTES` | 262144 B | Plaintext šifrované odpovědi `info`. |
 | `MAX_QUEUE_BYTES_PER_CLIENT` | 16777216 B | 16 MiB logické persistentní fronty. |
 | `AUTH_TIMESTAMP_SKEW_SECONDS` | 60 s | Nejvyšší absolutní odchylka autentizačního timestampu od času serveru. |
@@ -637,6 +670,8 @@ Protokol nemá kryptografickou session ani přihlašovací handshake. Neautentiz
 3. libovolný počet samostatně autentizovaných `data` cyklů;
 4. ukončení prostým zastavením požadavků.
 
+Windows Connect používá health → běžné info → prázdné full-auth data → full-auth info s úplnou publikací a include true → tunel. Čtvrtý checkpoint Communication contracts je úspěšný až po úplném ověření odpovědi. Selhání tohoto kroku je terminální, včetně timeoutu a neznámého výsledku publikace. Úspěšná publikace se v recovery stejné epochy neopakuje. Časná recovery před dosažením čtvrtého kroku jej musí dokončit. Nový uživatelský reconnect načte uloženou konfiguraci a publikuje nový seznam.
+
 Neexistuje login, session ID, keepalive ani logout. Každý request lze zpracovat jiným PHP workerem nebo uzlem se sdíleným storage a stejnou konfigurací klíčů.
 
 ### 12.2 Stav uložené dávky
@@ -673,7 +708,7 @@ Reakce s backoffem v tabulce platí pro provozní obnovu. Jednorázová diagnost
 
 Chybová odpověď není autentizovaná. Klient ji smí použít jako diagnostiku nebo podnět k backoffu, nikdy jako důkaz přijetí dat. Server nesmí v chybě prozradit cestu, token, secret, existenci jiného klienta, obsah fronty ani výpis výjimky.
 
-Chyba per-client statistického markeru `info.json` nikdy není protokolovou chybou a NESMÍ vyvolat `500`, `503` ani změnit jinak zvolený status odpovědi. Nesmí být uvedena v chybovém těle ani odlišitelná časováním záměrného čekání nebo retry.
+Chyba běžného best-effort touch není protokolovou chybou. Selhání explicitní publikace kontraktů naopak vrací 503 queue_unavailable. Po úspěšném rename ztráta HTTP odpovědi neznamená rollback.
 
 ## 14. Kompatibilita a rozšiřování
 
@@ -786,7 +821,7 @@ Statistika `lastSeen` se zvažuje pouze po platně autentizovaném a normálně 
 14. Storage lock skončí po 200 ms řízenou chybou, nikoli blokací workeru.
 15. Stejná sada kontraktních testů běží nad každým storage driverem.
 16. Název diskové dávky obsahuje právě jeden UTC čas: expiraci ve filename-safe tvaru `YYYY-MM-DDTHH-MM-SS.sssZ` s přesně třemi číslicemi milisekund.
-17. Výchozí `BUFFER_DIRECTORY` se vyhodnotí jako `./phpvpn` vůči souboru `phpvpn.php`; validovaná adresa `10.99.99.2` se mapuje na podadresář `10_99_99_2`. Adresář cíle vznikne při prvním čtení nebo zápisu jeho fronty a adresář úspěšně autentizovaného zdroje se best-effort vytvoří pro jeho marker `info.json`.
+17. Výchozí `BUFFER_DIRECTORY` se vyhodnotí jako `./phpvpn_data` vůči souboru `phpvpn.php`; validovaná adresa `10.99.99.2` se mapuje na podadresář `10_99_99_2`. Adresář cíle vznikne při prvním čtení nebo zápisu jeho fronty a adresář úspěšně autentizovaného zdroje se best-effort vytvoří pro jeho marker `info.json`.
 
 ### 16.5 Statistiky klientů
 

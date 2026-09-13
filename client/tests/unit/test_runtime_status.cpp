@@ -157,7 +157,7 @@ public:
     std::function<std::optional<HttpExchangeResult>(HttpAction, std::string_view, int)> hook;
     std::function<void()> cancel;
     std::function<void(HttpResponse&)> mutateResponse;
-    std::atomic<int> healthCalls{0}, infoCalls{0}, dataCalls{0};
+    std::atomic<int> healthCalls{0}, infoCalls{0}, dataCalls{0}, extendedCalls{0};
     std::atomic<std::uint64_t> dataRequestBytes{0}, dataResponseBytes{0};
     bool badHealthTag = false, badInfo = false, badMac = false, badPacket = false, badPayloadTag = false;
     bool defer = false;
@@ -219,7 +219,7 @@ public:
             PHPVPN_CHECK_EQ(auth.objectValue().size(), std::size_t(2));
         }
         const auto id = auth.find("requestId")->stringValue();
-        std::string body = action == HttpAction::health ? health(id) : action == HttpAction::info ? info(id) : data(id, request);
+        std::string body = action == HttpAction::health ? health(id) : action == HttpAction::info ? info(id, auth.find("includeMaskedCommunicationContracts") != nullptr) : data(id, request);
         const auto bytes = body.size();
         if (action == HttpAction::data) dataResponseBytes += bytes;
         HttpResponse response{200, std::move(body), httpActionContentType(action)};
@@ -239,8 +239,14 @@ private:
         return "{\"serverVersion\":\"1.0\",\"status\":\"running\",\"description\":\"ok\",\"timestamp\":\"" +
                std::string(kTimestamp) + "\",\"requestId\":\"" + id + "\",\"iv\":\"" + ivText + "\",\"tag\":\"" + Base64Url::encode(tag) + "\"}";
     }
-    std::string info(const std::string& id) {
-        const std::string plaintext = badInfo ? "{}" : R"({"serverVersion":"1.0","generatedAt":"2026-09-04T10:00:00.000Z","clients":[],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}})";
+    std::string info(const std::string& id, bool extended) {
+        std::string plaintext = badInfo ? "{}" : R"({"serverVersion":"1.0","generatedAt":"2026-09-04T10:00:00.000Z","clients":[],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}})";
+        if (extended) {
+            ++extendedCalls;
+            const auto at = plaintext.find("\"clients\":[]");
+            if (at != std::string::npos) plaintext.replace(at, 12,
+                "\"clients\":[{\"address\":\"" + config_->virtualIp.toString() + "\",\"lastSeen\":\"2026-09-04T10:00:00.000Z\",\"maskedCommunicationContracts\":[]}]");
+        }
         std::vector<std::uint8_t> salt(32, 4), iv(12, 5), ciphertext;
         KeyDerivation keys(crypto_);
         auto key = keys.infoKey(config_->serverSecret, salt, id).value();
@@ -1670,7 +1676,7 @@ PHPVPN_TEST(runtime, lifecycle_keeps_one_network_role_and_recreates_two_io_roles
         PHPVPN_CHECK_EQ(fixture.driver.creates.load(), cycle);
         PHPVPN_CHECK_EQ(fixture.driver.starts.load(), cycle);
         PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), cycle);
-        PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), cycle);
+        PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), cycle * 2);
         PHPVPN_CHECK_EQ(fixture.transport.dataCalls.load(), cycle * 2);
         if (cycle == 1) {
             PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
@@ -1770,7 +1776,7 @@ PHPVPN_TEST(runtime, lifecycle_recovery_tears_down_and_recreates_after_current_b
     }));
     PHPVPN_CHECK(fixture.driver.activity.distinctThreads.load());
     PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 9);
-    PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), 3);
     fixture.engine.shutdown();
     PHPVPN_CHECK_EQ(VpnEngineTestAccess::networkThread(fixture.engine), std::thread::id{});
     PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
@@ -1900,7 +1906,7 @@ PHPVPN_TEST(runtime, connect_http_diagnostic_phase_scope_and_cleanup) {
             f.engine.dismissConnectDiagnostic(s.connectionEpoch, *s.connectAttemptId);
             PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
         }
-        PHPVPN_CHECK_EQ(f.transport.diagnosticCalls.load(), mode == 0 || mode == 2 || mode == 3 || mode == 4 || mode == 7 ? 1 : 2);
+        PHPVPN_CHECK_EQ(f.transport.diagnosticCalls.load(), mode == 0 || mode == 2 || mode == 3 || mode == 4 || mode == 7 ? 1 : mode == 6 ? 3 : 2);
         PHPVPN_REQUIRE_OK(f.engine.disconnect());
         PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
         PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::disconnected; }));
@@ -2392,4 +2398,5 @@ PHPVPN_TEST(runtime_http_headers, invalid_save_keeps_active_config_and_new_conne
     const auto observations = fixture.transport.observedHeaders();
     PHPVPN_CHECK_EQ(observations.back().headers, "X-New: next-connection");
 }
+#include "runtime_info_extensions.inc"
 }

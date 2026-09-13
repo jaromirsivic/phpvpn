@@ -1,3 +1,4 @@
+#include "core/presentation/table_pagination.h"
 #include "window_utils.h"
 #include <initguid.h>
 #include "contracts_window.h"
@@ -16,7 +17,7 @@ constexpr UINT resultMessage = WM_APP + 80;
 constexpr UINT pageMessage = WM_APP + 81;
 constexpr UINT_PTR timer = 80;
 constexpr int firstControl = 1000, checkId = 800, repeatId = 801;
-constexpr int pageSize = 20, firstPageControl = 900;
+constexpr int pageSize = kTablePageSize, firstPageControl = 900;
 }
 ContractsWindow::~ContractsWindow() { endSession(); }
 bool ContractsWindow::open(HINSTANCE instance, HWND owner, std::string_view document, std::string path, std::string revision) {
@@ -125,7 +126,7 @@ bool ContractsWindow::createRows() {
 }
 void ContractsWindow::activate() const { if (window_) reactivateWindow(window_); }
 int ContractsWindow::pageCount() const {
-    return (std::max)(1, (static_cast<int>(controller_.model()->rows().size()) + pageSize - 1) / pageSize);
+    return tablePageCount(controller_.model()->rows().size());
 }
 void ContractsWindow::destroyRows() {
     const bool wasChanging = changing_;
@@ -172,11 +173,7 @@ bool ContractsWindow::createPager() {
     };
     add(L"\u00ab", 0, L"First page");
     add(L"\u2039", (std::max)(0, page_ - 1), L"Previous page");
-    std::vector<int> pages{0};
-    const int start = count <= 7 ? 1 : std::clamp(page_ - 2, 1, count - 6);
-    const int end = count <= 7 ? count - 2 : start + 4;
-    for (int page = start; page <= end; ++page) pages.push_back(page);
-    pages.push_back(count - 1);
+    const auto pages = tablePageNumbers(count, page_);
     int previous = -1;
     for (int page : pages) {
         if (page > previous + 1) add(L"\u2026", -1, L"");

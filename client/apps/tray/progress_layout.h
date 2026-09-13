@@ -7,7 +7,7 @@ namespace phpvpn::tray {
 struct ProgressLayout {
     Rect eyebrow, card, detailsHeading, checksHeading, separator, panel;
     std::array<Rect, 2> labels, values;
-    std::array<Rect, 3> checks, checkIcons, checkLabels;
+    std::array<Rect, 4> checks, checkIcons, checkLabels;
     Rect panelHeading, panelAction, countdown, errorDetail;
     int height = 0;
 };
@@ -52,11 +52,11 @@ inline ProgressLayout computeProgressLayout(int width, int dpi, int actionHeight
         y += p(20);
         l.checksHeading = {m + pad, y, innerRight, y + p(28)};
         y += p(44);
-        for (std::size_t i = 0; i < 3; ++i) {
-            const bool stacked = width < p(400);
+        for (std::size_t i = 0; i < 4; ++i) {
+            const bool stacked = width < p(560);
             l.checkIcons[i] = {m + pad, y, m + pad + p(28), y + p(32)};
-            l.checkLabels[i] = {m + pad + p(40), y, m + pad + p(176), y + p(32)};
-            l.checks[i] = {m + pad + p(stacked ? 40 : 176), y + p(stacked ? 28 : 0),
+            l.checkLabels[i] = {m + pad + p(40), y, innerRight, y + p(32)};
+            l.checks[i] = {m + pad + p(stacked ? 40 : 280), y + p(stacked ? 28 : 0),
                            innerRight, y + p(stacked ? 56 : 32)};
             y += p(stacked ? 60 : 40);
         }

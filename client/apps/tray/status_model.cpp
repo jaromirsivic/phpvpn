@@ -44,18 +44,18 @@ TrayStatus parseStatusResponse(std::string_view json) {
         !nonemptyString(root.find("requestId")) || !Uuid::isValidV4(root.find("requestId")->stringValue())) return result;
     const auto* status = root.find("status");
     // client.md, get-status: a complete v1 snapshot, never a partial update.
-    if (!status || !status->isObject() || status->objectValue().size() != (status->find("httpDiagnostic") ? 26u : 25u) ||
+    if (!status || !status->isObject() || status->objectValue().size() != (status->find("httpDiagnostic") ? 27u : 26u) ||
         !unsignedNumber(status->find("connectionEpoch")) ||
         !versionOne(status->find("ipcVersion")) ||
         !nonemptyString(status->find("clientVersion")) ||
         !nonemptyString(status->find("stateChangedAt")) ||
         !unsignedNumber(status->find("recoveryCount")) ||
         !stringIn(status->find("state"), {"disconnected", "connecting", "connected", "recovering", "error"}) ||
-        !stringIn(status->find("phase"), {"idle", "health", "info", "access-key-check", "starting-tunnel", "running", "stopping"}) ||
+        !stringIn(status->find("phase"), {"idle", "health", "info", "access-key-check", "communication-contracts-check", "starting-tunnel", "running", "stopping"}) ||
         !stringIn(status->find("serverReachable"), {"unknown", "yes", "no"}) ||
         !stringIn(status->find("serverVerified"), {"unknown", "yes", "no"}) ||
         !stringIn(status->find("tunnelReady"), {"unknown", "yes", "no"})) return result;
-    for (const char* name : {"serverUrlCheck", "serverSecretCheck", "accessKeyCheck"}) {
+    for (const char* name : {"serverUrlCheck", "serverSecretCheck", "accessKeyCheck", "communicationContractsCheck"}) {
         if (!stringIn(status->find(name), {"pending", "success", "failed"})) return result;
     }
     if (!Iso8601::isValid(status->find("stateChangedAt")->stringValue())) return result;
@@ -95,6 +95,7 @@ TrayStatus parseStatusResponse(std::string_view json) {
     result.serverUrl = checkpoint(status->find("serverUrlCheck"));
     result.serverSecret = checkpoint(status->find("serverSecretCheck"));
     result.accessKey = checkpoint(status->find("accessKeyCheck"));
+    result.communicationContracts = checkpoint(status->find("communicationContractsCheck"));
     result.connectionEpoch = jsonUnsignedOrZero(status->find("connectionEpoch"));
     const auto* attemptId = status->find("connectAttemptId");
     if (!attemptId) return TrayStatus{};

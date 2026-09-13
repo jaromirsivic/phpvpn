@@ -1,3 +1,4 @@
+#include "core/protocol/response_parser.h"
 #include "core/protocol/http_headers.h"
 #include "core/ipc/ipc_protocol.h"
 
@@ -15,11 +16,12 @@ struct CommandName {
     const char* name;
 };
 
-constexpr std::array<CommandName, 8> kCommandNames = {{
+constexpr std::array<CommandName, 9> kCommandNames = {{
     {IpcCommand::get_status, "get-status"},
     {IpcCommand::connect, "connect"},
     {IpcCommand::disconnect, "disconnect"},
     {IpcCommand::get_info, "get-info"},
+    {IpcCommand::get_server_info, "get-server-info"},
     {IpcCommand::get_config, "get-config"},
     {IpcCommand::set_config, "set-config"},
     {IpcCommand::get_diagnostics, "get-diagnostics"},
@@ -186,6 +188,17 @@ std::string IpcProtocol::dismissDiagnosticPayload(std::uint64_t epoch, std::stri
         {"connectAttemptId", JsonValue::makeString(std::string(attemptId))}}));
 }
 
+std::string IpcProtocol::buildServerInfoResponse(std::string_view requestId, const ServerInfoSnapshot& snapshot) {
+    auto local = parseMaskedContracts(maskedContractsJson(snapshot.localMaskedCommunicationContracts), snapshot.localAddress);
+    auto info = ResponseParser::parseInfoPlaintext(snapshot.infoPlaintext, snapshot.localAddress);
+    if (!local || !info) return buildError(requestId, Error(ErrorCode::response_invalid));
+    auto response = Json::serialize(JsonValue::makeObject({{"ipcVersion", JsonValue::makeInteger(kIpcVersion)},
+        {"requestId", JsonValue::makeString(std::string(requestId))}, {"result", JsonValue::makeObject({
+        {"infoPlaintext", JsonValue::makeString(snapshot.infoPlaintext)}, {"localAddress", JsonValue::makeString(snapshot.localAddress.toString())},
+        {"localMaskedCommunicationContracts", maskedContractsJson(snapshot.localMaskedCommunicationContracts)}})}}));
+    if (response.size() > kIpcMaxMessageBytes) return buildError(requestId, Error(ErrorCode::ipc_message_too_large));
+    return response;
+}
 std::string IpcProtocol::buildAcknowledgement(std::string_view requestId) {
     JsonObject members;
     members.emplace_back("ipcVersion", JsonValue::makeInteger(kIpcVersion));
@@ -208,6 +221,7 @@ std::string IpcProtocol::buildStatusResponse(std::string_view requestId,
     status.emplace_back("serverUrlCheck", JsonValue::makeString(checkpointResultName(snapshot.serverUrlCheck)));
     status.emplace_back("serverSecretCheck", JsonValue::makeString(checkpointResultName(snapshot.serverSecretCheck)));
     status.emplace_back("accessKeyCheck", JsonValue::makeString(checkpointResultName(snapshot.accessKeyCheck)));
+    status.emplace_back("communicationContractsCheck", JsonValue::makeString(checkpointResultName(snapshot.communicationContractsCheck)));
     status.emplace_back("serverReachable", tristateValue(snapshot.serverReachable));
     status.emplace_back("serverVerified", tristateValue(snapshot.serverVerified));
     status.emplace_back("tunnelReady", tristateValue(snapshot.tunnelReady));

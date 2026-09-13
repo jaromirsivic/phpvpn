@@ -7,6 +7,7 @@ add_library(phpvpn-core STATIC
     core/config/config_document.cpp
     core/config/contracts_document.cpp
     core/presentation/contracts_model.cpp
+    core/presentation/server_info_model.cpp
     core/presentation/password_key_model.cpp
     core/config/config_store.cpp
     core/config/config_defaults.cpp
@@ -20,6 +21,8 @@ add_library(phpvpn-core STATIC
     core/config/config_validator.cpp
 
     core/crypto/canonical.cpp
+    core/crypto/masked_contracts.cpp
+    core/protocol/info_extensions.cpp
     core/crypto/crypto_provider.cpp
     core/crypto/hkdf.cpp
     core/crypto/key_derivation.cpp

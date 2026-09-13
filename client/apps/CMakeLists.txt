@@ -58,6 +58,7 @@ add_executable(phpvpn-tray WIN32
     tray/wizard_layout.cpp
     tray/progress_window.cpp
     tray/statistics_window.cpp
+    tray/server_info_window.cpp
     tray/editor_window.cpp
     tray/contracts_save_controller.cpp
     tray/password_sha_window.cpp

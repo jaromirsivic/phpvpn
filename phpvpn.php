@@ -12,7 +12,7 @@
  *  - memory_limit should be at least 128M.
  *  - BUFFER_DIRECTORY must not be reachable over HTTP. The server writes best effort
  *    .htaccess and web.config guards, nginx must be configured manually, for example:
- *        location ^~ /phpvpn/ { deny all; return 404; }
+ *        location ^~ /phpvpn_data/ { deny all; return 404; }
  *
  * MIT licensed.
  */
@@ -60,8 +60,12 @@ const ACCESS_KEYS = [
 /** Storage backend. Only 'disk' exists in v1. */
 const STORAGE_DRIVER = 'disk';
 
-/** Storage root. A relative path is resolved against the directory of this file. */
-const BUFFER_DIRECTORY = './phpvpn';
+/** Storage root, relative to this file. Old ./phpvpn data is NOT migrated automatically. */
+const BUFFER_DIRECTORY = './phpvpn_data';
+
+/** true serves the root status page. false returns 404 not_found for GET/HEAD,
+ * without HTML. All REST API actions remain available. */
+const STATUS_PAGE_ENABLED = true;
 
 /** VPN address space. Changing it requires the same change on every participant. */
 const VPN_ADDRESS_PREFIX = '10.99.99.';
@@ -73,6 +77,9 @@ const MAX_DATA_RECORDS_PER_REQUEST = 16;
 const MAX_AUTH_RECORD_BYTES = 4096;
 const MAX_REQUEST_BODY_BYTES = 983040;
 const MAX_INFO_PLAINTEXT_BYTES = 262144;
+const MAX_INFO_REQUEST_BODY_BYTES = 65536;
+const MAX_MASKED_COMMUNICATION_CONTRACTS = 252;
+const INFO_TEMP_TTL_SECONDS = 300;
 const MAX_QUEUE_BYTES_PER_CLIENT = 16777216;
 const AUTH_TIMESTAMP_SKEW_SECONDS = 60;
 const QUEUE_TTL_SECONDS = 60;
@@ -493,6 +500,82 @@ final class DataRecord
 
 final class JsonWire
 {
+    /** Bounded JSON reader preserving object/array identity and rejecting duplicate decoded keys. */
+    public static function parseInfoObject(string $text): ?\stdClass
+    {
+        if (strlen($text) > MAX_INFO_REQUEST_BODY_BYTES) return null;
+        $i = 0;
+        try {
+            $value = self::infoValue($text, $i, 0);
+            $i = self::skipWhitespace($text, $i, strlen($text));
+            return $i === strlen($text) && $value instanceof \stdClass ? $value : null;
+        } catch (\UnexpectedValueException | \JsonException $e) {
+            return null;
+        }
+    }
+
+    private static function infoValue(string $text, int &$i, int $depth): mixed
+    {
+        $length = strlen($text);
+        $i = self::skipWhitespace($text, $i, $length);
+        if ($depth > 4 || $i >= $length) throw new \UnexpectedValueException();
+        $c = $text[$i++];
+        if ($c === '"') {
+            $start = $i - 1;
+            while ($i < $length) {
+                $c = $text[$i++];
+                if ($c === '\\') { $i++; continue; }
+                if ($c === '"') return json_decode(substr($text, $start, $i - $start), false, 8, JSON_THROW_ON_ERROR);
+            }
+            throw new \UnexpectedValueException();
+        }
+        if ($c === '{' || $c === '[') {
+            $object = $c === '{';
+            $end = $object ? '}' : ']';
+            $result = $object ? new \stdClass() : [];
+            $i = self::skipWhitespace($text, $i, $length);
+            if (($text[$i] ?? '') === $end) { $i++; return $result; }
+            while (true) {
+                if ($object) {
+                    $key = self::infoValue($text, $i, $depth + 1);
+                    if (!is_string($key) || str_contains($key, "\0") || property_exists($result, $key)) throw new \UnexpectedValueException();
+                    $i = self::skipWhitespace($text, $i, $length);
+                    if (($text[$i++] ?? '') !== ':') throw new \UnexpectedValueException();
+                    $result->{$key} = self::infoValue($text, $i, $depth + 1);
+                } else {
+                    $result[] = self::infoValue($text, $i, $depth + 1);
+                }
+                $i = self::skipWhitespace($text, $i, $length);
+                $separator = $text[$i++] ?? '';
+                if ($separator === $end) return $result;
+                if ($separator !== ',') throw new \UnexpectedValueException();
+            }
+        }
+        $i--;
+        foreach (['true' => true, 'false' => false, 'null' => null] as $literal => $value) {
+            if (substr($text, $i, strlen($literal)) === $literal) { $i += strlen($literal); return $value; }
+        }
+        throw new \UnexpectedValueException();
+    }
+
+    /** Returns normalized member order, or a protocol error status. Never normalizes values. */
+    public static function maskedContracts(mixed $value, string $src): array|int
+    {
+        if (!is_array($value)) return 400;
+        if (count($value) > min(MAX_MASKED_COMMUNICATION_CONTRACTS, VPN_HOST_MAX - VPN_HOST_MIN)) return 413;
+        $out = [];
+        $seen = [];
+        foreach ($value as $item) {
+            if (!$item instanceof \stdClass || count(get_object_vars($item)) !== 2 ||
+                !isset($item->peer, $item->hash) || !is_string($item->peer) || !is_string($item->hash) ||
+                !Validators::isVpnAddress($item->peer) || $item->peer === $src || isset($seen[$item->peer]) ||
+                preg_match('/\A[0-9a-f]{64}\z/D', $item->hash) !== 1) return 400;
+            $seen[$item->peer] = true;
+            $out[] = ['peer' => $item->peer, 'hash' => $item->hash];
+        }
+        return $out;
+    }
+
     private const DATA_HEAD = '{"type":"data","messageId":"';
 
     /**
@@ -1243,6 +1326,10 @@ final class KeyDerivation
 
 final class Authenticator
 {
+    public static function infoFullCanonical(string $src, string $timestamp, string $requestId, string $extensionHash): string
+    {
+        return "PHPVPN-AUTH-FULL\nPOST\ninfo\n$src\n$timestamp\n$requestId\n$extensionHash";
+    }
     public static function semiCanonical(string $timestamp, string $requestId): string
     {
         return "PHPVPN-AUTH-SEMI\nPOST\ninfo\n" . $timestamp . "\n" . $requestId;
@@ -1314,6 +1401,10 @@ interface Storage
     public function sweep(int $nowMs, int $budgetMs): void;
 
     public function readLastSeenMs(string $client): ?int;
+
+    public function publishMaskedContracts(string $client, array $contracts, int $nowMs): bool;
+
+    public function readClientInfoSnapshot(string $client): array;
 
     public function touchLastSeenBestEffort(string $client, int $nowMs): void;
 }
@@ -1491,11 +1582,17 @@ final class DiskStorage implements Storage
                 if ($files >= SWEEP_MAX_FILES || microtime(true) > $deadline) {
                     return;
                 }
+                $files++;
+                if (preg_match('/\A\.info-([0-9a-f-]{36})\.tmp\z/D', $entry, $match) === 1 && Validators::isUuidV4($match[1])) {
+                    $tempPath = $path . DIRECTORY_SEPARATOR . $entry;
+                    $tempMtime = Fs::mtime($tempPath);
+                    if ($tempMtime !== null && $nowMs - $tempMtime * 1000 > INFO_TEMP_TTL_SECONDS * 1000) Fs::unlink($tempPath);
+                    continue;
+                }
                 $parsed = self::parseBatchName($entry);
                 if ($parsed === null || $parsed['expiresAtMs'] > $nowMs) {
                     continue;
                 }
-                $files++;
                 Fs::unlink($path . DIRECTORY_SEPARATOR . $entry);
             }
         }
@@ -1506,6 +1603,40 @@ final class DiskStorage implements Storage
         $marker = $this->clientDirectory($client) . DIRECTORY_SEPARATOR . self::MARKER;
         $mtime = Fs::mtime($marker);
         return $mtime === null ? null : $mtime * 1000;
+    }
+
+    public function publishMaskedContracts(string $client, array $contracts, int $nowMs): bool
+    {
+        $json = json_encode(['maskedCommunicationContracts' => $contracts], JSON_UNESCAPED_SLASHES);
+        if ($json === false || strlen($json) > MAX_INFO_REQUEST_BODY_BYTES) return false;
+        $directory = $this->clientDirectory($client);
+        if (!Fs::ensureDir($directory)) return false;
+        $temp = $directory . DIRECTORY_SEPARATOR . '.info-' . Validators::newUuidV4() . '.tmp';
+        $handle = @fopen($temp, 'xb');
+        if ($handle === false) return false;
+        $ok = self::writeAll($handle, $json) && fflush($handle) && Fs::touch($temp, intdiv($nowMs, 1000));
+        $ok = fclose($handle) && $ok;
+        if ($ok) $ok = Fs::rename($temp, $directory . DIRECTORY_SEPARATOR . self::MARKER);
+        if (!$ok) Fs::unlink($temp);
+        return $ok;
+    }
+
+    public function readClientInfoSnapshot(string $client): array
+    {
+        $empty = ['lastSeen' => null, 'contracts' => []];
+        $handle = @fopen($this->clientDirectory($client) . DIRECTORY_SEPARATOR . self::MARKER, 'rb');
+        if ($handle === false) return $empty;
+        $stat = fstat($handle);
+        $body = stream_get_contents($handle, MAX_INFO_REQUEST_BODY_BYTES + 1);
+        fclose($handle);
+        if ($stat === false || !isset($stat['mtime'])) return $empty;
+        $empty['lastSeen'] = $stat['mtime'] * 1000;
+        if ($body === false) return $empty;
+        $object = JsonWire::parseInfoObject($body);
+        if ($object === null || count(get_object_vars($object)) !== 1 || !property_exists($object, 'maskedCommunicationContracts')) return $empty;
+        $contracts = JsonWire::maskedContracts($object->maskedCommunicationContracts, $client);
+        if (is_array($contracts)) $empty['contracts'] = $contracts;
+        return $empty;
     }
 
     public function touchLastSeenBestEffort(string $client, int $nowMs): void
@@ -1934,13 +2065,12 @@ final class StatusPageHandler
 {
     public function handle(ResponseWriter $writer, bool $insecure): void
     {
-        $html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>phpvpn</title></head>\n"
-            . "<body>\n<h1>Server is running</h1>\n";
-        if ($insecure) {
-            $html .= "<h2 style=\"color:red\">Server is not secure. "
-                . "Please modify SERVER_SECRET in the phpvpn.php</h2>\n";
+        $html = <<<'STATUS_HTML'
+<!doctype html><html lang=en><meta name=viewport content="width=device-width"><title>PHPVPN server is running</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;font:16px Arial,sans-serif}main{margin:auto;width:48rem;max-width:100%;padding:1.5rem;background:#e8e8e8;border-radius:1rem;box-shadow:0 .4rem 1.5rem #0003}h1{margin-top:0}aside{padding:1rem;background:#c00;color:#fff;border-radius:.6rem}button{padding:.6rem;border:0;border-radius:.5rem;background:#06c;color:#fff;cursor:pointer}#r:not([hidden]){display:flex;gap:.5rem}#k{min-width:0;flex:1;font-family:monospace}</style><main><h1>PHPVPN server is running</h1><aside><b>Warning:</b> The default SERVER_SECRET value is still in use. Set the SERVER_SECRET variable in this script to a secure value immediately. You can use the Generate key button below to create one.</aside><p>Generate a secure hexadecimal key: <button id=g>Generate key</button></p><div id=r hidden><input id=k aria-label="Generated key" readonly><button id=c>Copy key</button></div><noscript>JavaScript must be enabled to generate and copy a key.</noscript></main><script>g.onclick=()=>{k.value=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,0)).join('');r.hidden=false};c.onclick=()=>{k.select();navigator.clipboard?navigator.clipboard.writeText(k.value).catch(()=>document.execCommand('copy')):document.execCommand('copy')}</script>
+STATUS_HTML;
+        if (!$insecure) {
+            $html = preg_replace('/<aside>.*?<\/aside>/s', '', $html);
         }
-        $html .= "</body>\n</html>\n";
         $writer->begin(200, Http::HTML, ['Content-Length' => (string) strlen($html)]);
         $writer->write($html);
     }
@@ -2004,15 +2134,51 @@ final class InfoHandler
             Http::error($writer, 415, 'unsupported_media_type');
             return;
         }
-        $body = $request->readBody(MAX_AUTH_RECORD_BYTES);
+        if (MAX_INFO_REQUEST_BODY_BYTES > MAX_REQUEST_BODY_BYTES || MAX_INFO_REQUEST_BODY_BYTES < MAX_AUTH_RECORD_BYTES) {
+            Http::error($writer, 503, 'server_misconfigured');
+            return;
+        }
+        $body = $request->readBody(MAX_INFO_REQUEST_BODY_BYTES);
         if ($body === null) {
             Http::error($writer, 413, 'payload_too_large');
             return;
         }
-        $fields = JsonWire::parseFlatStringObject($body, ['type', 'timestamp', 'requestId', 'tag']);
-        if ($fields === null || $fields['type'] !== 'auth-semi' || !Validators::isUuidV4($fields['requestId'])) {
+        $object = JsonWire::parseInfoObject($body);
+        $extended = $object !== null && (property_exists($object, 'maskedCommunicationContracts') || property_exists($object, 'includeMaskedCommunicationContracts'));
+        if (!$extended && strlen($body) > MAX_AUTH_RECORD_BYTES) {
+            Http::error($writer, 413, 'payload_too_large');
+            return;
+        }
+        $fields = $extended ? get_object_vars($object) : JsonWire::parseFlatStringObject($body, ['type', 'timestamp', 'requestId', 'tag']);
+        $required = $extended ? ['type', 'src', 'timestamp', 'requestId', 'tag'] : ['type', 'timestamp', 'requestId', 'tag'];
+        $valid = $fields !== null;
+        foreach ($required as $key) $valid = $valid && isset($fields[$key]) && is_string($fields[$key]);
+        if (!$valid || array_diff(array_keys($fields), array_merge($required, ['maskedCommunicationContracts', 'includeMaskedCommunicationContracts'])) !== [] ||
+            $fields['type'] !== ($extended ? 'auth-full' : 'auth-semi') || !Validators::isUuidV4($fields['requestId'])) {
             Http::error($writer, 400, 'bad_request');
             return;
+        }
+        $extensions = [];
+        if ($extended) {
+            if (!Validators::isVpnAddress($fields['src'])) {
+                Http::error($writer, 401, 'unauthorized');
+                return;
+            }
+            if (array_key_exists('maskedCommunicationContracts', $fields)) {
+                $contracts = JsonWire::maskedContracts($fields['maskedCommunicationContracts'], $fields['src']);
+                if (is_int($contracts)) {
+                    Http::error($writer, $contracts, $contracts === 413 ? 'payload_too_large' : 'bad_request');
+                    return;
+                }
+                $extensions['maskedCommunicationContracts'] = $contracts;
+            }
+            if (array_key_exists('includeMaskedCommunicationContracts', $fields)) {
+                if (!is_bool($fields['includeMaskedCommunicationContracts'])) {
+                    Http::error($writer, 400, 'bad_request');
+                    return;
+                }
+                $extensions['includeMaskedCommunicationContracts'] = $fields['includeMaskedCommunicationContracts'];
+            }
         }
         $timestampMs = Iso8601::parseMs($fields['timestamp']);
         if ($timestampMs === null || !Base64Url::isCanonicalOfByteLength($fields['tag'], 32)) {
@@ -2024,19 +2190,36 @@ final class InfoHandler
             return;
         }
 
-        $expected = hash_hmac(
-            'sha256',
-            Authenticator::semiCanonical($fields['timestamp'], $fields['requestId']),
-            KeyDerivation::semiKey($this->config->serverSecret),
-            true
-        );
+        $known = true;
+        if ($extended) {
+            $accessKey = $this->config->accessKey($fields['src']);
+            $known = $accessKey !== null;
+            $key = KeyDerivation::fullAuthKey($this->config->serverSecret, $accessKey ?? KeyDerivation::DUMMY_ACCESS_KEY, $fields['src']);
+            $canonical = Authenticator::infoFullCanonical($fields['src'], $fields['timestamp'], $fields['requestId'],
+                hash('sha256', (string) json_encode($extensions, JSON_UNESCAPED_SLASHES)));
+        } else {
+            $key = KeyDerivation::semiKey($this->config->serverSecret);
+            $canonical = Authenticator::semiCanonical($fields['timestamp'], $fields['requestId']);
+        }
+        $expected = hash_hmac('sha256', $canonical, $key, true);
         $provided = Base64Url::decode($fields['tag']);
-        if ($provided === null || !hash_equals($expected, $provided)) {
+        $valid = $provided !== null && hash_equals($expected, $provided);
+        if (!$known || !$valid) {
             Http::error($writer, 401, 'unauthorized');
             return;
         }
 
-        $plaintext = $this->buildPlaintext();
+        if ($extended) {
+            if (array_key_exists('maskedCommunicationContracts', $extensions)) {
+                if (!$this->storage->publishMaskedContracts($fields['src'], $extensions['maskedCommunicationContracts'], $this->clock->nowMs())) {
+                    Http::error($writer, 503, 'queue_unavailable');
+                    return;
+                }
+            } else {
+                $this->storage->touchLastSeenBestEffort($fields['src'], $this->clock->nowMs());
+            }
+        }
+        $plaintext = $this->buildPlaintext(($extensions['includeMaskedCommunicationContracts'] ?? false) ? $fields['src'] : null);
         if ($plaintext === null) {
             Http::error($writer, 503, 'server_misconfigured');
             return;
@@ -2061,15 +2244,23 @@ final class InfoHandler
         ], JSON_UNESCAPED_SLASHES));
     }
 
-    private function buildPlaintext(): ?string
+    private function buildPlaintext(?string $requester = null): ?string
     {
         $clients = [];
         foreach ($this->config->clientAddresses() as $address) {
-            $lastSeen = $this->storage->readLastSeenMs($address);
+            $snapshot = $requester === null ? null : $this->storage->readClientInfoSnapshot($address);
+            $lastSeen = $snapshot === null ? $this->storage->readLastSeenMs($address) : $snapshot['lastSeen'];
             if ($lastSeen === null) {
                 continue;
             }
-            $clients[] = ['address' => $address, 'lastSeen' => Iso8601::formatMs($lastSeen)];
+            $client = ['address' => $address, 'lastSeen' => Iso8601::formatMs($lastSeen)];
+            if ($requester !== null) {
+                $client['maskedCommunicationContracts'] = [];
+                if ($address !== $requester) foreach ($snapshot['contracts'] as $contract) {
+                    if ($contract['peer'] === $requester) $client['maskedCommunicationContracts'][] = $contract;
+                }
+            }
+            $clients[] = $client;
         }
         $limits = [
             'maxDataRecordsPerRequest' => MAX_DATA_RECORDS_PER_REQUEST,
@@ -2393,6 +2584,10 @@ final class Application
 
         if ($action === null || $action === '') {
             if ($method === 'GET' || $method === 'HEAD') {
+                if (!STATUS_PAGE_ENABLED) {
+                    Http::error($writer, 404, 'not_found');
+                    return;
+                }
                 $insecure = self::isConfiguredSecretInsecure();
                 (new StatusPageHandler())->handle($writer, $insecure);
                 return;

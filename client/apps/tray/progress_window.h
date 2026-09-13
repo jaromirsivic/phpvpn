@@ -50,7 +50,7 @@ class ProgressWindow {
     UiResources resources_;
     ProgressLayout layout_;
     std::array<HWND, 2> labels_{}, fields_{};
-    std::array<HWND, 3> checks_{}, checkLabels_{}, checkIcons_{};
+    std::array<HWND, 4> checks_{}, checkLabels_{}, checkIcons_{};
     HWND eyebrow_ = nullptr;
     HWND detailsHeading_ = nullptr, checksHeading_ = nullptr, panelHeading_ = nullptr, panelAction_ = nullptr,
          countdown_ = nullptr;

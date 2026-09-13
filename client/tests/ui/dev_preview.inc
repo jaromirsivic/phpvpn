@@ -66,6 +66,10 @@ struct DevBackend : Backend {
         if (auto request = IpcProtocol::parseRequest(bytes)) {
             std::unique_lock lock(mutex);
             switch (request->command) {
+            case IpcCommand::get_server_info:
+                ++infos; lock.unlock();
+                { std::lock_guard guard(mutex); releaseInfo=true; }
+                return Backend::handle(bytes);
             case IpcCommand::get_info: ++infos; return "{\"syntheticGuiPreview\":true}";
             case IpcCommand::get_config: return document;
             case IpcCommand::set_config:
@@ -96,7 +100,7 @@ struct DevBackend : Backend {
                 status.state = ConnectionState::connecting; status.phase = ConnectionPhase::health;
                 if (selection.scene == "Connected") {
                     status.state = ConnectionState::connected; status.phase = ConnectionPhase::running;
-                    status.serverUrlCheck = status.serverSecretCheck = status.accessKeyCheck = phpvpn::CheckpointResult::success;
+                    status.serverUrlCheck = status.serverSecretCheck = status.accessKeyCheck = status.communicationContractsCheck = phpvpn::CheckpointResult::success;
                     status.serverReachable = status.serverVerified = status.tunnelReady = Tristate::yes;
                 } else if (selection.scene == "Failed") {
                     status.state = ConnectionState::error; status.serverUrlCheck = phpvpn::CheckpointResult::failed;
@@ -226,7 +230,8 @@ struct DevPreview {
     HWND window() const {
         if (selection.view == "Tray") return app->window();
         if (selection.view == "Connect" || selection.view == "Disconnect") return findTop(L"PhpVpnConnectingProgress");
-        if (selection.view == "Editor" || selection.view == "Info") return findTop(L"PhpVpnTrayEditor");
+        if (selection.view == "Editor") return findTop(L"PhpVpnTrayEditor");
+        if (selection.view == "Info") return findTop(L"PHPVPN.ServerInformation");
         if (selection.view == "Statistics") return findTop(L"PhpVpnStatistics");
         if (selection.view == "Wizard") return findTop(wizardClass);
         return findTop(L"PhpVpnContracts"); // Password lives until its parent closes
@@ -286,7 +291,7 @@ struct DevPreview {
             }
             const int expected = selection.scene == "Raw" ? 1 : 0;
             if (TabCtrl_GetCurSel(tabs) != expected || !!IsWindowVisible(field) != !!expected) return;
-            check(text(field).find(L"syntheticGuiPreview") != std::wstring::npos, "Synthetic Info JSON missing");
+            if(text(field).find(L"uiFixtureInfo") == std::wstring::npos) return;
         }
         if (selection.view == "Wizard") {
             if (selection.scene == "Gate") { if (text(child(root, nextId)) == wizardText::disconnect) markReady(); return; }
@@ -350,7 +355,7 @@ void devSceneMatrix() {
             if (p.selection.view == "Disconnect") check(p.backend.countDev(&DevBackend::disconnects) == 1 &&
                 p.backend.count(&Backend::connects) == 0, "Disconnect preview did not use one isolated Disconnect");
             if (p.selection.view == "Info") check(p.backend.countDev(&DevBackend::infos) == 1,
-                "Info preview did not use exactly one get-info");
+                "Info preview did not use exactly one get-server-info");
             if (p.selection.scene == "Invalid" && p.selection.view == "Contracts") check(!IsWindowEnabled(child(p.window(), IDOK)), "Invalid enabled Key did not block Save");
             check(p.backend.countDev(&DevBackend::unexpected) == 0, "Unexpected synthetic request");
             p.app->endSession();

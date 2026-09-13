@@ -21,8 +21,9 @@ foreach ($profile in 'integration', 'wizard-default') {
 }
 $target = Join-Path $sandbox 'web\phpvpn.php'
 $before = [IO.File]::ReadAllText($target)
-foreach ($mutation in 'secret', 'keys') {
+foreach ($mutation in 'secret', 'keys', 'buffer') {
     $invalid = if ($mutation -eq 'secret') { $source.Replace("const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';", "const SERVER_SECRET = 'unexpected';") }
+               elseif ($mutation -eq 'buffer') { $source.Replace("const BUFFER_DIRECTORY = './phpvpn_data';", "const BUFFER_DIRECTORY = './unexpected';") }
                else { $source.Replace("'10.99.99.15' =>", "'10.99.99.16' =>") }
     [IO.File]::WriteAllText((Join-Path $sandbox 'phpvpn.php'), $invalid)
     $rejected = $false

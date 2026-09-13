@@ -1,4 +1,5 @@
 #pragma once
+#include "server_info_window.h"
 #include <memory>
 #include <optional>
 #include <string>
@@ -54,7 +55,6 @@ private:
     void startConfigAction(MenuAction action);
     void finishConfigAction();
     void finishDisconnect();
-    void finishInfo();
     void showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason = {});
     void openEditor(const std::string& text, const std::string& path);
     void advanceExit();
@@ -66,7 +66,7 @@ private:
     UniqueUiHandle<HANDLE, CloseKernelHandle> mutex_;
     UiResources resources_;
     ShellIcon shellIcon_;
-    WindowPlacementContext menuPlacement_, commandPlacement_, configPlacement_, infoPlacement_;
+    WindowPlacementContext menuPlacement_, commandPlacement_, configPlacement_;
     bool alreadyRunning_ = false;
     bool initialisationAttempted_ = false, initialised_ = false;
     bool exitRequested_ = false, exitConfirming_ = false, endingSession_ = false;
@@ -83,13 +83,13 @@ private:
     PollSchedule polling_{kStatusIntervalMs};
     StatusReader statusReader_;
     CommandReader commands_;
-    CommandReader disconnect_, info_;
+    CommandReader disconnect_;
     WizardReader config_;
     std::optional<MenuAction> configAction_;
     std::optional<IpcCommand> pendingCommand_;
     std::optional<SaveOperation> saveOperation_;
     EditorWindow editor_;
-    EditorWindow infoWindow_;
+    ServerInfoWindow infoWindow_;
     WizardWindow wizard_;
     ContractsWindow contracts_;
     ProgressWindow progress_;

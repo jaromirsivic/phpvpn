@@ -5,6 +5,7 @@
 // health timestamp only after the GMAC, the info plaintext only after the GCM
 // tag over the whole ciphertext.
 #pragma once
+#include "core/protocol/info_extensions.h"
 
 #include <cstdint>
 #include <functional>
@@ -36,7 +37,7 @@ struct HealthSyntax {
     std::vector<std::uint8_t> iv;
     std::vector<std::uint8_t> tag;
 };
-struct SeenClient { Ipv4Address address; std::int64_t lastSeenMs = 0; };
+struct SeenClient { Ipv4Address address; std::int64_t lastSeenMs = 0; std::vector<MaskedCommunicationContract> maskedCommunicationContracts; };
 
 // Server limits taken from the verified `info` plaintext.
 struct ServerLimits {
@@ -62,7 +63,7 @@ public:
     static Result<HealthSyntax> parseHealthSyntax(std::string_view expectedRequestId, std::string_view body);
     static Result<HealthResponse> verifyHealth(CryptoProvider& crypto, KeyDerivation& keys,
         std::string_view serverSecret, const HealthSyntax& syntax);
-    static Result<InfoResponse> parseInfoPlaintext(std::string_view plaintext);
+    static Result<InfoResponse> parseInfoPlaintext(std::string_view plaintext, std::optional<Ipv4Address> extendedSrc = std::nullopt);
     // Validates the whole `health` object, derives the per requestId key and
     // verifies the 16 byte GMAC over the AAD with an empty plaintext.
     static Result<HealthResponse> parseHealth(CryptoProvider& crypto,
@@ -79,7 +80,7 @@ public:
                                           KeyDerivation& keys,
                                           std::string_view serverSecret,
                                           std::string_view expectedRequestId,
-                                          std::string_view body);
+                                          std::string_view body, std::optional<Ipv4Address> extendedSrc = std::nullopt);
 
     // Maps `{"type":"error","code":"..."}` onto a stable client error code. A
     // body that cannot be parsed still yields the status based error.

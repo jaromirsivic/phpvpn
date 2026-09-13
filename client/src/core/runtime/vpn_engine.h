@@ -93,6 +93,7 @@ public:
     // running connection is not disturbed. Never starts the tunnel, the worker
     // roles or a `data` poll, and never changes the connection state.
     Result<std::string> fetchInfoOnce();
+    Result<ServerInfoSnapshot> fetchServerInfoOnce();
 
     ConnectionIdentity connectionIdentity() const;
     // Dedicated ordering guard for accepted Connect and file commit. This is
@@ -160,6 +161,8 @@ private:
     CheckpointResult serverUrlCheck_ = CheckpointResult::pending;
     CheckpointResult serverSecretCheck_ = CheckpointResult::pending;
     CheckpointResult accessKeyCheck_ = CheckpointResult::pending;
+    CheckpointResult communicationContractsCheck_ = CheckpointResult::pending;
+    bool communicationContractsVerifiedForEpoch_ = false;
     bool healthSyntaxUsable_ = false;
     bool connectCommandPending_ = false;
     Tristate serverReachable_ = Tristate::unknown;

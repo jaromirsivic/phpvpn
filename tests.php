@@ -595,7 +595,7 @@ $runner->run('Status page and method routing', function (Runner $t): void {
     try {
         $page = $harness->call('', 'GET', null, '');
         $t->same(200, $page->status, 'status page');
-        $t->ok(str_contains($page->body, '<h1>Server is running</h1>'), 'H1 present');
+        $t->ok(str_contains($page->body, '<h1>PHPVPN server is running</h1>'), 'H1 present');
         $t->ok(str_contains($page->headers['Content-Type'], 'text/html'), 'html content type');
 
         $post = $harness->call('', 'POST', null, '');
@@ -624,12 +624,25 @@ $runner->run('Insecure secret warning', function (Runner $t): void {
     try {
         $page = $harness->call('', 'GET', null, '');
         $t->ok(
-            str_contains($page->body, 'Server is not secure') === (\PhpVpn\SERVER_SECRET === 'CHANGE_THIS_SERVER_SECRET'
+            str_contains($page->body, '<aside><b>Warning:</b>') === (\PhpVpn\SERVER_SECRET === 'CHANGE_THIS_SERVER_SECRET'
                 || \PhpVpn\SERVER_SECRET === ''),
             'warning matches the configured secret'
         );
     } finally {
         $harness->cleanup();
+    }
+});
+
+$runner->run('Embedded status template and complete warning removal', function (Runner $t): void {
+    $mockup = trim((string) file_get_contents(__DIR__ . '/assets/index.html'));
+    foreach ([true, false] as $insecure) {
+        $writer = new BufferedResponseWriter();
+        (new \PhpVpn\StatusPageHandler())->handle($writer, $insecure);
+        $expected = $insecure ? $mockup : preg_replace('/<aside>.*?<\/aside>/s', '', $mockup);
+        $t->same($expected, $writer->body, 'embedded mockup matches exactly');
+        $t->same((string) strlen($writer->body), $writer->headers['Content-Length'], 'exact response length');
+        $t->same($insecure, str_contains($writer->body, '<aside>'), 'whole warning panel is conditional');
+        $t->ok(str_contains($writer->body, 'crypto.getRandomValues(new Uint8Array(32))'), 'Web Crypto generator retained');
     }
 });
 
@@ -1234,4 +1247,5 @@ $runner->run('No replay or nonce state is persisted', function (Runner $t): void
     }
 });
 
+require __DIR__ . '/tests-info-extensions.php';
 exit($runner->summary());

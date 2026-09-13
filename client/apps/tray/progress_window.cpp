@@ -72,8 +72,8 @@ void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
         checksHeading_ = label(L"Connection checks");
         for (auto &check : checks_)
             check = label(L"");
-        const wchar_t *namesOfChecks[]{L"Server URL", L"Server secret", L"Access key"};
-        for (std::size_t i = 0; i < 3; ++i) {
+        const wchar_t *namesOfChecks[]{L"Server URL", L"Server secret", L"Access key", L"Communication contracts"};
+        for (std::size_t i = 0; i < 4; ++i) {
             checkLabels_[i] = label(namesOfChecks[i]);
             checkIcons_[i] = label(L"");
         }
@@ -89,8 +89,8 @@ void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
     setText(eyebrow_, disconnect_ ? L"Disconnecting client from the server." : L"Connecting client to the server.");
     SetWindowTextW(window_, disconnect_ ? L"PHPVPN disconnection" : L"PHPVPN connection");
     for (auto h : {detailsHeading_, checksHeading_, labels_[0], labels_[1], fields_[0], fields_[1],
-                  checks_[0], checks_[1], checks_[2], checkLabels_[0], checkLabels_[1], checkLabels_[2],
-                  checkIcons_[0], checkIcons_[1], checkIcons_[2]})
+                  checks_[0], checks_[1], checks_[2], checks_[3], checkLabels_[0], checkLabels_[1], checkLabels_[2], checkLabels_[3],
+                  checkIcons_[0], checkIcons_[1], checkIcons_[2], checkIcons_[3]})
         ShowWindow(h, disconnect_ ? SW_HIDE : SW_SHOW);
     updateResources();
     refresh();
@@ -181,8 +181,8 @@ void ProgressWindow::refresh() {
     }
     setText(fields_[0], details_.available ? widen(details_.serverUrl) : L"Unavailable");
     setText(fields_[1], details_.available ? widen(details_.virtualIp) : L"Unavailable");
-    const CheckpointResult checks[]{v.serverUrl, v.serverSecret, v.accessKey};
-    for (std::size_t i = 0; i < 3; ++i) {
+    const CheckpointResult checks[]{v.serverUrl, v.serverSecret, v.accessKey, v.communicationContracts};
+    for (std::size_t i = 0; i < 4; ++i) {
         setText(checks_[i], outcome(checks[i]));
         setText(checkIcons_[i], checks[i] == CheckpointResult::success  ? L"\x2713"
                                 : checks[i] == CheckpointResult::failed ? L"\x2717"
@@ -275,7 +275,7 @@ void ProgressWindow::layout() {
         add(labels_[i], layout_.labels[i]);
         add(fields_[i], layout_.values[i]);
     }
-    for (std::size_t i = 0; i < 3; ++i) {
+    for (std::size_t i = 0; i < 4; ++i) {
         add(checks_[i], layout_.checks[i]);
         add(checkLabels_[i], layout_.checkLabels[i]);
         add(checkIcons_[i], layout_.checkIcons[i]);
@@ -433,8 +433,8 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         if (h == self->eyebrow_ || h == self->fields_[0] || h == self->fields_[1])
             color = ui::Color::secondaryText;
         const auto &v = self->model_.view();
-        const CheckpointResult checks[]{v.serverUrl, v.serverSecret, v.accessKey};
-        for (std::size_t i = 0; i < 3; ++i)
+        const CheckpointResult checks[]{v.serverUrl, v.serverSecret, v.accessKey, v.communicationContracts};
+        for (std::size_t i = 0; i < 4; ++i)
             if (h == self->checks_[i] || h == self->checkIcons_[i])
                 color = checkColor(checks[i]);
         if (h == self->panelHeading_ || h == self->panelAction_ || h == self->countdown_) {

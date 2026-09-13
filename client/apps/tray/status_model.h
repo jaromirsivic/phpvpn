@@ -49,6 +49,7 @@ struct TrayStatus {
     CheckpointResult serverUrl = CheckpointResult::pending;
     CheckpointResult serverSecret = CheckpointResult::pending;
     CheckpointResult accessKey = CheckpointResult::pending;
+    CheckpointResult communicationContracts = CheckpointResult::pending;
     std::string tunnelReady;
     bool hasError = false;
     std::string errorCode;

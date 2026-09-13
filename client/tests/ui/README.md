@@ -30,7 +30,7 @@ deleting its cache. Unknown parameters and invalid combinations fail before buil
 | Connect | Default, Connecting, Connected, Failed | Default is pending. Connected uses the real three-second success countdown. Failed shows endpoint unavailable/invalid. |
 | Disconnect | Disconnecting, Disconnected, Failed | Real Disconnect action and production progress window over an initially connected synthetic snapshot. The scenes show waiting, confirmed success and an unconfirmed Disconnect without contacting the installed service. |
 | Editor | Default, Invalid | Valid synthetic document or malformed JSON containing valid UTF-8, with the real Reset and Save controls. |
-| Info | Who, Raw | Real Show Info action with exactly one synthetic get-info. Who is the initial empty page. Raw selects the second native tab only after the production window exists and shows the same read-only JSON. |
+| Info | Who, Raw | Real Show Info action with one synthetic get-server-info. Who displays the native contracts table. Raw selects the second native tab and shows the same complete, read-only server snapshot. |
 | Statistics | Default, Unavailable | Nine exact uint64 counters including values above 2^53. Unavailable first loads a valid snapshot and then loses status, retaining stale values. |
 | Wizard | Default, Gate, Url, Secret, Identity, Contracts | Default is Url. Later steps use real Verify actions and synthetic successful replies. Contracts is the Wizard summary. |
 | Contracts | Default, Invalid, Saving, SaveUnknown | A /24 document produces 252 rows. Invalid edits an enabled Key. Saving presses real OK and holds the reply until the original 30-second deadline. SaveUnknown loses the acknowledgement after a possible publication and another synthetic writer's change. Check enables an explicitly confirmed Save draft again. |
@@ -64,7 +64,7 @@ The backend uses real parsers, document builders and CNG but no ConfigStore
 filesystem, ProgramData configuration, HTTP, SCM, Wintun or routes.
 Disconnect uses the production `IDM_TOGGLE` path and Info uses production
 `IDM_SHOW_INFO`. Their fixture replies are synthetic and remain on the private
-UUID pipe. Switching Info tabs does not issue another get-info.
+UUID pipe. Switching Info tabs or pages does not issue another get-server-info.
 
 Legacy commands remain available:
 
@@ -127,3 +127,14 @@ distribution, every DPI/monitor combination, screen-reader behavior or full N09b
 runtime limits. Full visual/performance acceptance follows
 tray_UX.md UX14 and the separate final audit. Screenshots belong only in work
 logs, never as new tracked binary assets.
+
+### Extended Server information
+
+The `server_information` filter covers native tabs, 252 clients with 20 inserted
+rows per page, full-model count, Refresh success and busy failure, atomic raw/table
+replacement, closing a pending request, reopening, small-window footer and live
+resize/repaint. `ServerInfo` core tests cover 0/1/20/21/141/252 peers, exact time
+boundaries, future timestamps, sorting, local-key changes and 96/120/144/192 DPI
+layout. `wp06_scene_matrix` checks the production preview dispatch. These tests
+use synthetic private IPC. Physical monitor migration, high contrast and screen
+reader checks remain manual and must be recorded separately.

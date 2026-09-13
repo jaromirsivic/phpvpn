@@ -5,10 +5,14 @@
 #include "core/config/config_defaults.h"
 #include "core/crypto/canonical.h"
 #include "core/crypto/key_derivation.h"
+#include "core/crypto/masked_contracts.h"
+#include "core/presentation/server_info_model.h"
 #include "core/protocol/base64url.h"
 #include "core/protocol/data_record.h"
 #include "core/protocol/request_builder.h"
 #include "core/runtime/network_worker.h"
+#include "core/runtime/vpn_engine.h"
+#include "fake_config_files.h"
 #include "core/wizard/probe_client.h"
 #include "core/wizard/wizard_defaults.h"
 #include <windows.h>
@@ -242,5 +246,67 @@ PHPVPN_TEST(server_contract, diagnostic_consumes_without_payload_gcm_while_boots
     PHPVPN_CHECK(delivered.has_value());
     if (delivered) PHPVPN_CHECK_EQ(*delivered, expected);
     PHPVPN_CHECK_EQ(receiver.poll(), std::size_t(0));
+}
+PHPVPN_TEST(server_contract, masked_contracts_full_auth_publish_and_read_only_snapshot) {
+    Fixture a, b;
+    NetworkWorker first(a.crypto,a.transport,*a.clock), second(b.crypto,b.transport,*b.clock);
+    const auto configA=runtimeConfig(2,3), configB=runtimeConfig(3,2);
+    require(first.configure(configA));require(second.configure(configB));
+    require(first.performHealth());require(second.performHealth());
+    auto hashesA=require(maskedCommunicationContracts(a.crypto,*configA));
+    auto hashesB=require(maskedCommunicationContracts(b.crypto,*configB));
+    PHPVPN_CHECK_EQ(hashesA.front().hash,hashesB.front().hash);
+    InfoRequestOptions publishA;publishA.maskedCommunicationContracts=hashesA;publishA.includeMaskedCommunicationContracts=true;
+    InfoRequestOptions publishB;publishB.maskedCommunicationContracts=hashesB;publishB.includeMaskedCommunicationContracts=true;
+    require(first.performExtendedInfo(publishA));require(second.performExtendedInfo(publishB));
+    InfoRequestOptions read;read.includeMaskedCommunicationContracts=true;
+    const auto before=a.transport.dataPosts;
+    auto response=require(first.performExtendedInfo(read));
+    auto model=require(buildServerInfoModel({response.plaintext,configA->virtualIp,hashesA}));
+    const auto row=std::find_if(model.rows.begin(),model.rows.end(),[&](const auto& item){return item.peer==configB->virtualIp;});
+    PHPVPN_CHECK(row!=model.rows.end());
+    if(row!=model.rows.end())PHPVPN_CHECK_EQ(row->state,ServerClientState::valid);
+    PHPVPN_CHECK_EQ(a.transport.dataPosts,before);
+    // Explicit empty publication withdraws the old contract immediately.
+    publishB.maskedCommunicationContracts=std::vector<MaskedCommunicationContract>{};
+    require(second.performExtendedInfo(publishB));
+    response=require(first.performExtendedInfo(read));
+    model=require(buildServerInfoModel({response.plaintext,configA->virtualIp,hashesA}));
+    const auto withdrawn=std::find_if(model.rows.begin(),model.rows.end(),[&](const auto& item){return item.peer==configB->virtualIp;});
+    PHPVPN_CHECK(withdrawn!=model.rows.end());
+    if(withdrawn!=model.rows.end())PHPVPN_CHECK_EQ(withdrawn->state,ServerClientState::invalid);
+    auto standard=require(first.performInfo());
+    PHPVPN_CHECK(standard.plaintext.find("maskedCommunicationContracts")==std::string::npos);
+}
+PHPVPN_TEST(server_contract, server_info_operation_reads_current_config_once_without_connecting) {
+    Fixture fixture;
+    auto config=runtimeConfig(2,3);
+    auto backend=std::make_unique<FakeConfigFiles>(fixture.crypto);
+    auto* files=backend.get();files->bytes=config->rawJson;
+    ConfigStore store(fixture.crypto,std::move(backend));
+    auto driver=createPlatformTunnelDriver();auto net=createPlatformNetConfig();
+    const auto directory=std::filesystem::temp_directory_path()/fixture.crypto.randomUuidV4().value();
+    // Nonexistent private journal means recovery performs no network mutation.
+    VpnEngine engine(fixture.crypto,fixture.transport,*fixture.clock,*driver,*net,
+                     EnginePaths{directory/"config.json",directory/"journal.json",directory.wstring()},store);
+    require(engine.start());
+    const auto before=files->reads;
+    auto snapshot=require(engine.fetchServerInfoOnce());
+    PHPVPN_CHECK_EQ(files->reads,before+1);
+    PHPVPN_CHECK_EQ(snapshot.localAddress,config->virtualIp);
+    const auto firstHash=snapshot.localMaskedCommunicationContracts.front().hash;
+    const auto key=std::string("918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d");
+    const auto keyAt=files->bytes->find(key);PHPVPN_CHECK(keyAt!=std::string::npos);
+    files->bytes->replace(keyAt,key.size(),std::string(64,'a'));
+    snapshot=require(engine.fetchServerInfoOnce());
+    PHPVPN_CHECK_EQ(files->reads,before+2);
+    PHPVPN_CHECK(snapshot.localMaskedCommunicationContracts.front().hash!=firstHash);
+    const auto status=engine.status();
+    PHPVPN_CHECK_EQ(status.state,ConnectionState::disconnected);
+    PHPVPN_CHECK_EQ(status.counters.dataPollsTotal,std::uint64_t(0));
+    PHPVPN_CHECK_EQ(fixture.transport.dataPosts,0u);
+    PHPVPN_CHECK_EQ(files->writes,0u);
+    PHPVPN_CHECK(!std::filesystem::exists(directory));
+    engine.shutdown();
 }
 } // namespace phpvpn

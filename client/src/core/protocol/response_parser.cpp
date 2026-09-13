@@ -111,7 +111,7 @@ Result<InfoResponse> ResponseParser::parseInfo(CryptoProvider& crypto,
                                                KeyDerivation& keys,
                                                std::string_view serverSecret,
                                                std::string_view expectedRequestId,
-                                               std::string_view body) {
+                                               std::string_view body, std::optional<Ipv4Address> extendedSrc) {
     FlatObjectFields fields;
     PHPVPN_TRY_ASSIGN(fields, JsonScanner::parseFlatStringObject(body, kInfoKeys));
 
@@ -140,6 +140,10 @@ Result<InfoResponse> ResponseParser::parseInfo(CryptoProvider& crypto,
     if (!Base64Url::isCanonicalWithByteLength(tagText, kGcmTagSize)) {
         return Error(ErrorCode::wire_invalid_base64url, "info tag must decode to 16 bytes");
     }
+    // Bound allocation and GCM work before decoding an untrusted response.
+    if (ciphertextText.size() > (262144u * 4u + 2u) / 3u) {
+        return Error(ErrorCode::response_invalid, "info ciphertext exceeds the plaintext limit");
+    }
     if (ciphertextText.empty() || !Base64Url::isCanonical(ciphertextText)) {
         return Error(ErrorCode::wire_invalid_base64url, "info ciphertext is not canonical");
     }
@@ -162,10 +166,11 @@ Result<InfoResponse> ResponseParser::parseInfo(CryptoProvider& crypto,
     PHPVPN_TRY_ASSIGN(plaintext,
                       crypto.aesGcmOpen(infoKey.span(), iv, asBytes(aad), ciphertext, tag));
 
-    return parseInfoPlaintext(toString(plaintext.span()));
+    return parseInfoPlaintext(toString(plaintext.span()), extendedSrc);
 }
 
-Result<InfoResponse> ResponseParser::parseInfoPlaintext(std::string_view plaintextText) {
+Result<InfoResponse> ResponseParser::parseInfoPlaintext(std::string_view plaintextText, std::optional<Ipv4Address> extendedSrc) {
+    if (plaintextText.size() > 262144) return Error(ErrorCode::response_invalid);
     JsonValue document;
     PHPVPN_TRY_ASSIGN(document, Json::parse(plaintextText));
     if (!document.isObject()) {
@@ -210,6 +215,7 @@ Result<InfoResponse> ResponseParser::parseInfoPlaintext(std::string_view plainte
 
     const auto* clients = document.find("clients");
     if (!clients || !clients->isArray()) return Error(ErrorCode::response_invalid, "info clients must be an array");
+    if (extendedSrc && (clients->arrayValue().empty() || clients->arrayValue().size() > 253 || !validInfoAddress(*extendedSrc))) return Error(ErrorCode::response_invalid, "unverifiable info extension");
     std::set<std::uint32_t> seen;
     for (const auto& client : clients->arrayValue()) {
         if (!client.isObject()) return Error(ErrorCode::response_invalid, "info client must be an object");
@@ -221,7 +227,16 @@ Result<InfoResponse> ResponseParser::parseInfoPlaintext(std::string_view plainte
         const auto timestamp = Iso8601::parse(lastSeen->stringValue());
         if (!ip || !timestamp || !seen.insert(ip->value()).second)
             return Error(ErrorCode::response_invalid, "info client address or timestamp is invalid or duplicated");
-        response.clients.push_back({*ip, *timestamp});
+        SeenClient seenClient{*ip, *timestamp, {}};
+        if (extendedSrc) {
+            if (!validInfoAddress(*ip) || (ip->value() >> 8) != (extendedSrc->value() >> 8)) return Error(ErrorCode::response_invalid);
+            const auto* contracts = client.find("maskedCommunicationContracts");
+            if (!contracts) return Error(ErrorCode::response_invalid, "missing info extension");
+            PHPVPN_TRY_ASSIGN(seenClient.maskedCommunicationContracts, parseMaskedContracts(*contracts, *ip));
+            if (seenClient.maskedCommunicationContracts.size() > (*ip == *extendedSrc ? 0u : 1u)) return Error(ErrorCode::response_invalid);
+            for (const auto& c : seenClient.maskedCommunicationContracts) if (c.peer != *extendedSrc) return Error(ErrorCode::response_invalid, "info privacy filter mismatch");
+        }
+        response.clients.push_back(std::move(seenClient));
     }
     return response;
 }

@@ -20,7 +20,7 @@ namespace phpvpn {
 
 enum class ConnectionState { disconnected, connecting, connected, recovering, error };
 
-enum class ConnectionPhase { idle, health, info, access_key_check, starting_tunnel, running, stopping };
+enum class ConnectionPhase { idle, health, info, access_key_check, communication_contracts_check, starting_tunnel, running, stopping };
 
 enum class Tristate { unknown, yes, no };
 enum class CheckpointResult { pending, success, failed };
@@ -51,6 +51,7 @@ struct StatusSnapshot {
     CheckpointResult serverUrlCheck = CheckpointResult::pending;
     CheckpointResult serverSecretCheck = CheckpointResult::pending;
     CheckpointResult accessKeyCheck = CheckpointResult::pending;
+    CheckpointResult communicationContractsCheck = CheckpointResult::pending;
     Tristate serverReachable = Tristate::unknown;
     Tristate serverVerified = Tristate::unknown;
     Tristate tunnelReady = Tristate::unknown;

@@ -10,6 +10,7 @@
 // IPC envelope, because they carry the verified server plaintext and the exact
 // configuration document.
 #pragma once
+#include "core/protocol/info_extensions.h"
 
 #include <optional>
 #include <string>
@@ -36,6 +37,7 @@ enum class IpcCommand {
     connect,
     disconnect,
     get_info,
+    get_server_info,
     get_config,
     set_config,
     get_diagnostics,
@@ -56,6 +58,7 @@ struct IpcRequest {
 
 class IpcProtocol {
 public:
+    static std::string buildServerInfoResponse(std::string_view requestId, const ServerInfoSnapshot& snapshot);
     static std::string dismissDiagnosticPayload(std::uint64_t epoch, std::string_view attemptId);
     // Full validation of one request document.
     static Result<IpcRequest> parseRequest(std::string_view json);

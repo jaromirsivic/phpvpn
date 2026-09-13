@@ -430,6 +430,56 @@ std::int64_t NetworkWorker::nextPollDelayMs(bool hadTraffic) {
     return currentPollIntervalMs_;
 }
 
+Result<InfoResponse> NetworkWorker::performExtendedInfo(const InfoRequestOptions& options, std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
+    if (!config_) {
+        return Error(ErrorCode::config_missing, "no active configuration");
+    }
+    if (!timeSync_.hasSnapshot()) {
+        return Error(ErrorCode::time_not_synchronised, "no verified server time is available");
+    }
+
+    std::string requestId;
+    PHPVPN_TRY_ASSIGN(requestId, newRequestId());
+    std::string timestamp;
+    PHPVPN_TRY_ASSIGN(timestamp, currentTimestamp());
+
+    std::string body;
+    PHPVPN_TRY_ASSIGN(body, RequestBuilder::buildInfoFull(crypto_, fullAuthKey_, config_->virtualIp, timestamp, requestId, options));
+
+    HttpResponse response;
+    if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
+    auto exchange = failedDiagnostic ? transport_.postDiagnostic(HttpAction::info, body) : transport_.post(HttpAction::info, body);
+    if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
+    if (rejectedResponse) *rejectedResponse = exchange.ok() || exchange.responseProcessingFailed;
+    if (failedDiagnostic && (exchange.ok() || exchange.responseProcessingFailed)) *failedDiagnostic = std::move(exchange.diagnostic);
+    if (!exchange.ok()) return exchange.error();
+    response = std::move(exchange).value();
+    if (response.statusCode != 200) {
+        return Error(ResponseParser::mapServerError(response.statusCode, response.body),
+                     "the server rejected the info request");
+    }
+
+    InfoResponse info;
+    PHPVPN_TRY_ASSIGN(info, ResponseParser::parseInfo(crypto_, keys_, normalisedServerSecret_,
+                                                      requestId, response.body, (options.includeMaskedCommunicationContracts.value_or(false) ? std::optional<Ipv4Address>(config_->virtualIp) : std::nullopt)));
+
+    serverLimits_ = info.limits;
+    hasServerLimits_ = true;
+
+    const std::int64_t low =
+        std::max<std::int64_t>(kMinPollIntervalMs, serverLimits_.minDataPollIntervalMs);
+    const std::int64_t high =
+        std::min<std::int64_t>(kMaxPollIntervalMs, serverLimits_.maxDataPollIntervalMs);
+    currentPollIntervalMs_ = clampToRange(currentPollIntervalMs_, low, high);
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
+
+    PHPVPN_LOG_INFO(kComponent, "info response verified and server limits published");
+    return info;
+}
+
 Status NetworkWorker::verifyAccessKey(DirectionQueues& inbound, DropCounters& inboundDrops) {
     // An empty authenticated request is enough: a wrong ACCESS_KEY cannot pass
     // the auth-full tag, and a verified `data-mac` proves the server accepted it.

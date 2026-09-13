@@ -77,3 +77,5 @@ V aktuální etapě je implementovaným cílem Windows x64. Pokud pro macOS nebo
 6. Předat přesnou cestu k výsledku a stručný stav ověření. Pokud se vytváří ZIP, jeho obsah MUSÍ odpovídat ověřenému výsledku a zachovat příslušnou adresářovou strukturu. Archiv a pracovní reporty se ukládají mimo `dist`, aby se při dalším sestavení nemísily s jeho obsahem.
 
 Aktuální [client/tools/make-dist.ps1](client/tools/make-dist.ps1) sestavuje plochý Windows balíček a jeho výchozí výstup je `dist`. Při použití pro tuto metodiku se MUSÍ výstup výslovně nasměrovat do `dist/client/Windows/x64` pomocí `-OutputDirectory`, případně do odpovídající složky nově připravovaného stromu. Samotný nástroj nevytváří serverovou část ani platformní složky macOS a Linux, jejich přípravu MUSÍ zajistit celkový postup sestavení. Dokumentace tímto popisuje požadované použití stávajícího nástroje, netvrdí, že jeho výchozí chování již sestavuje celý distribuční strom.
+
+Status stránka je vložená přímo v `phpvpn.php`. Distribuovaný server nepotřebuje `assets/index.html`.

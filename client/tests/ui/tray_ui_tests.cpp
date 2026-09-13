@@ -1,3 +1,4 @@
+#include "core/protocol/response_parser.h"
 // Explicit Win32 UI integration harness. The backend is deterministic test
 // state, not a claim about the real service. All windows belong to this PID.
 #include "wizard_window.h"
@@ -179,11 +180,13 @@ struct Backend {
     void delay(std::unique_lock<std::mutex>& lock, unsigned ms) {
         if (ms) changed.wait_for(lock, std::chrono::milliseconds(ms), [&] { return stopping; });
     }
+    unsigned infoRowCount = 1;
+    bool infoError = false;
     std::string handle(std::string_view bytes) {
         {
             const auto legacy = IpcProtocol::parseRequest(bytes);
             std::lock_guard lock(mutex);
-            if (auditInfoCommands && (!legacy || (legacy->command != IpcCommand::get_info &&
+            if (auditInfoCommands && (!legacy || (legacy->command != IpcCommand::get_info && legacy->command != IpcCommand::get_server_info &&
                 legacy->command != IpcCommand::get_status))) ++unexpectedInfoCommands;
         }
         auto request = WizardIpc::parseRequest(bytes);
@@ -191,10 +194,25 @@ struct Backend {
             auto legacy = IpcProtocol::parseRequest(bytes);
             if (!legacy) return {};
             std::unique_lock lock(mutex);
-            if (legacy->command == IpcCommand::get_info) {
+            if (legacy->command == IpcCommand::get_info || legacy->command == IpcCommand::get_server_info) {
                 ++infoStarted;
                 changed.wait_for(lock, std::chrono::milliseconds(3500), [&] { return stopping || releaseInfo; });
                 ++infoCompleted;
+                if (legacy->command == IpcCommand::get_server_info) {
+                    ServerInfoSnapshot snapshot;
+                    snapshot.localAddress=*Ipv4Address::parse("10.99.99.2");
+                    if(infoError)return IpcProtocol::buildError(legacy->requestId,Error(ErrorCode::busy));
+                    JsonArray clients;
+                    for(unsigned i=0;i<=infoRowCount;++i) {
+                        const auto address=Ipv4Address(snapshot.localAddress.value()+i);
+                        std::vector<MaskedCommunicationContract> published;
+                        if(i && i%3==1)published.push_back({snapshot.localAddress,std::string(64,'a')});
+                        if(i)snapshot.localMaskedCommunicationContracts.push_back({address,std::string(64,'a')});
+                        clients.push_back(J::makeObject({{"address",str(address.toString())},{"lastSeen",str(i && i%3==0?"2026-09-13T11:58:00.000Z":"2026-09-13T11:59:30.000Z")},{"maskedCommunicationContracts",maskedContractsJson(published)}}));
+                    }
+                    snapshot.infoPlaintext=Json::serialize(J::makeObject({{"serverVersion",str("uiFixtureInfo")},{"generatedAt",str("2026-09-13T12:00:00.000Z")},{"clients",J::makeArray(std::move(clients))},{"limits",J::makeObject({{"maxDataRecordsPerRequest",J::makeInteger(16)},{"maxRequestBodyBytes",J::makeInteger(983040)},{"maxQueueBytesPerClient",J::makeInteger(16777216)},{"queueTtlSeconds",J::makeInteger(60)},{"minDataPollIntervalMs",J::makeInteger(50)},{"maxDataPollIntervalMs",J::makeInteger(3200)}})}}));
+                    return IpcProtocol::buildServerInfoResponse(legacy->requestId,snapshot);
+                }
                 return "{\"uiFixtureInfo\":true}";
             }
             if (legacy->command == IpcCommand::disconnect) {
@@ -337,9 +355,15 @@ struct Gui {
         IpcPipeServerOptions options;
         options.pipeName = pipe;
         options.cancelHandlers = [this] { backend.release(); };
+        options.busyResponse = [](std::string_view bytes) {
+            const auto wizard=WizardIpc::parseRequest(bytes);
+            if(wizard)return WizardIpc::buildError(wizard->requestId,WizardIpc::safeError(Error(ErrorCode::busy)));
+            const auto request=IpcProtocol::parseRequest(bytes);
+            return IpcProtocol::buildError(request?request->requestId:std::string{},Error(ErrorCode::busy));
+        };
         options.classify = [](std::string_view bytes) {
             const auto legacy = IpcProtocol::parseRequest(bytes);
-            if (legacy && legacy->command == IpcCommand::get_info) return IpcWorkClass::diagnostic;
+            if (legacy && (legacy->command == IpcCommand::get_info || legacy->command == IpcCommand::get_server_info)) return IpcWorkClass::diagnostic;
             const auto request = WizardIpc::parseRequest(bytes);
             if (request && (request->command == WizardCommand::check_url || request->command == WizardCommand::check_secret ||
                 request->command == WizardCommand::check_access)) return IpcWorkClass::diagnostic;
@@ -684,8 +708,8 @@ void serverInformationTabs() {
     TrayApplication app({gui.pipe, L"Local\\phpvpn-info-" + widen(uuid()), std::make_unique<WizardFixtureShell>(), L"Info synthetic"});
     check(app.initialise(GetModuleHandleW(nullptr)), "production application did not initialise");
     SendMessageW(app.window(), WM_COMMAND, IDM_SHOW_INFO, 0);
-    gui.until([&] { return findTop(L"PhpVpnTrayEditor") != nullptr; }, "Show Info did not open");
-    const auto window = findTop(L"PhpVpnTrayEditor");
+    gui.until([&] { return findTop(L"PHPVPN.ServerInformation") != nullptr && IsWindowVisible(findTop(L"PHPVPN.ServerInformation")); }, "Show Info did not open");
+    const auto window = findTop(L"PHPVPN.ServerInformation");
     const auto tabs = child(window, IDC_INFO_TABS), field = child(window, IDC_TEXT_AREA);
     check(tabs && TabCtrl_GetItemCount(tabs) == 2, "native Info tabs missing");
     check((GetWindowLongPtrW(tabs, GWL_STYLE) & TCS_OWNERDRAWFIXED) != 0, "Info tab headers are not owner-drawn");
@@ -712,7 +736,70 @@ void serverInformationTabs() {
     check(gui.backend.count(&Backend::unexpectedInfoCommands) == 0, "Info issued an unexpected command");
     editorClick(window, IDOK);
     gui.until([&] { return !IsWindow(window); }, "OK did not close Info");
-    std::cout << "[ EVIDENCE ] owner-drawn native headers, actual IDM_SHOW_INFO, 12 mouse/arrow switches, get-info=1, unexpected=0\n";
+    std::cout << "[ EVIDENCE ] owner-drawn native headers, actual IDM_SHOW_INFO, 12 mouse/arrow switches, get-server-info=1, unexpected=0\n";
+}
+void serverInformationRefresh() {
+    Gui gui;
+    {std::lock_guard lock(gui.backend.mutex);gui.backend.releaseInfo=true;gui.backend.infoRowCount=252;gui.backend.auditInfoCommands=true;}
+    TrayApplication app({gui.pipe,L"Local\\phpvpn-info-refresh-"+widen(uuid()),std::make_unique<WizardFixtureShell>(),L"Info refresh synthetic"});
+    check(app.initialise(GetModuleHandleW(nullptr)),"application initialisation");
+    SendMessageW(app.window(),WM_COMMAND,IDM_SHOW_INFO,0);
+    gui.until([&]{auto h=findTop(L"PHPVPN.ServerInformation");return h && IsWindowVisible(h);},"info snapshot not shown");
+    const auto window=findTop(L"PHPVPN.ServerInformation"),table=child(window,7102),raw=child(window,IDC_TEXT_AREA);
+    check(ListView_GetItemCount(table)==20,"table must contain one page only");
+    check(text(window)==L"Server information (84 valid online clients)","full model count");
+    const auto original=text(raw);
+    auto parsed=ResponseParser::parseInfoPlaintext(narrow(original),*Ipv4Address::parse("10.99.99.2"));
+    check(parsed.ok() && parsed->clients.size()==253,"raw snapshot incomplete");
+    check((GetWindowLongPtrW(raw,GWL_STYLE)&ES_READONLY)!=0,"raw must be read-only");
+    const auto refreshBounds=boundsIn(window,child(window,7101)),okBounds=boundsIn(window,GetDlgItem(window,IDOK));
+    std::cout << "[ INFO GEOMETRY ] refresh=" << refreshBounds.left << "," << refreshBounds.right << " OK=" << okBounds.left << "," << okBounds.right << "\n";
+    check(refreshBounds.right<okBounds.left,"Refresh must be left of OK");
+    captureWizard(window,L"server-info-252.bmp");
+    // Last page contains twelve rows. Pager and tabs never request another snapshot.
+    HWND last=nullptr;for(int i=0;i<15;++i)if(text(child(window,7200+i))==L"»")last=child(window,7200+i);
+    check(last!=nullptr,"last page missing");SendMessageW(last,BM_CLICK,0,0);gui.pump();
+    check(ListView_GetItemCount(table)==12,"last page size");check(text(raw)==original,"pager changed raw snapshot");
+    SendMessageW(app.window(),WM_COMMAND,IDM_SHOW_INFO,0);gui.wait(100);
+    check(gui.backend.count(&Backend::infoStarted)==1,"reopening active window made request");
+    {std::lock_guard lock(gui.backend.mutex);gui.backend.infoError=true;}
+    SendMessageW(child(window,7101),BM_CLICK,0,0);
+    gui.until([&]{return gui.backend.count(&Backend::infoCompleted)==2 && IsWindowEnabled(child(window,7101));},"failed Refresh did not finish");
+    check(text(raw)==original && ListView_GetItemCount(table)==12,"failed Refresh replaced part of snapshot");
+    {std::lock_guard lock(gui.backend.mutex);gui.backend.infoError=false;gui.backend.infoRowCount=1;}
+    SendMessageW(child(window,7101),BM_CLICK,0,0);
+    gui.until([&]{return text(window)==L"Server information (1 valid online clients)";},"new snapshot not installed");
+    check(ListView_GetItemCount(table)==1 && text(raw)!=original,"successful Refresh did not replace both views");
+    check(gui.backend.count(&Backend::unexpectedInfoCommands)==0,"extra info commands");
+    editorClick(window,IDOK);gui.until([&]{return !IsWindow(window);},"Info close");
+}
+void serverInformationClosePending() {
+    Gui gui;
+    ServerInfoWindow info(gui.pipe);
+    info.open(GetModuleHandleW(nullptr));
+    gui.until([&]{return gui.backend.count(&Backend::infoStarted)==1;},"pending Info request missing");
+    const auto hidden=info.window();
+    check(hidden && !IsWindowVisible(hidden),"unverified initial snapshot was shown");
+    info.endSession();
+    check(!info.window() && !IsWindow(hidden),"pending Info did not close");
+    {std::lock_guard lock(gui.backend.mutex);gui.backend.releaseInfo=true;gui.backend.infoRowCount=21;}
+    gui.backend.changed.notify_all();
+    gui.until([&]{return gui.backend.count(&Backend::infoCompleted)==1;},"cancelled fixture request did not finish");
+    gui.wait(100);
+    check(!info.window() && !findTop(L"PHPVPN.ServerInformation"),"late result reopened Info");
+    info.open(GetModuleHandleW(nullptr));
+    gui.until([&]{return info.window() && IsWindowVisible(info.window());},"Info did not reopen after cancellation");
+    check(ListView_GetItemCount(child(info.window(),7102))==20,"reopened Info has wrong snapshot");
+    check(gui.backend.count(&Backend::infoStarted)==2,"reopen must issue exactly one fresh request");
+    for(const auto size : {Size{320,360},Size{640,480},Size{1080,560}}) {
+        resizeClient(info.window(),size.width,size.height);gui.pump();
+        const auto refresh=boundsIn(info.window(),child(info.window(),7101));
+        const auto ok=boundsIn(info.window(),GetDlgItem(info.window(),IDOK));
+        RECT client{};GetClientRect(info.window(),&client);
+        check(refresh.left>=0 && refresh.right<ok.left && ok.right<=client.right && ok.bottom<=client.bottom,"small Info footer clipped");
+        if(size.width==320)captureWizard(info.window(),L"server-info-small.bmp");
+    }
+    info.endSession();
 }
 void editorFooterResize() {
     Gui gui;
@@ -1200,21 +1287,28 @@ void editorReset() {
 }
 
 void commandReaderIsolation() {
+    for(const auto command:{IpcCommand::get_info,IpcCommand::get_server_info}) {
     Gui gui;
     // Release the diagnostic handler before either CommandReader destructor,
     // including on failure. No real HTTP or service is involved in this test.
     struct Release { Backend& backend; ~Release() { backend.release(); } };
-    CommandReader info(gui.pipe), reader(gui.pipe);
+    CommandReader info(gui.pipe), reader(gui.pipe), other(gui.pipe);
     Release release{gui.backend};
     const HWND target = CreateWindowExW(0, L"STATIC", L"private command target", 0, 0, 0, 1, 1,
                                        HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
     check(target && ownWindow(target), "private message target could not be created");
-    check(info.request(IpcCommand::get_info, {}, target, WM_APP + 98), "CommandReader refused get-info");
+    check(info.request(command, {}, target, WM_APP + 98), "CommandReader refused info command");
     gui.until([&] { return gui.backend.count(&Backend::infoStarted) == 1; }, "get-info did not occupy diagnostic worker");
     check(!info.take().has_value(), "held get-info already completed");
     // Busy must be observable, without replacing or silently dropping either
     // the accepted command or the explicit rejection.
-    check(!info.request(IpcCommand::get_info, {}, target, WM_APP + 98), "busy CommandReader accepted a second command");
+    check(!info.request(command, {}, target, WM_APP + 98), "busy CommandReader accepted a second command");
+    check(other.request(command,{},target,WM_APP+97),"second diagnostic request refused locally");
+    std::optional<std::string> busyResponse;
+    gui.until([&]{busyResponse=other.take();return busyResponse.has_value();},"diagnostic capacity did not return busy");
+    auto busy=Json::parse(*busyResponse);
+    if(busy && busy->find("error") && busy->find("error")->find("code"))std::cout << "[ DIAGNOSTIC CAPACITY ] " << busy->find("error")->find("code")->stringValue() << '\n';
+    check(busy && busy->find("error") && busy->find("error")->find("code") && busy->find("error")->find("code")->stringValue()=="busy","second diagnostic did not receive busy");
     const auto sent = GetTickCount64();
     check(reader.request(IpcCommand::disconnect, {}, target, WM_APP + 99), "independent CommandReader refused disconnect while get-info busy");
     std::optional<std::string> response;
@@ -1233,10 +1327,12 @@ void commandReaderIsolation() {
     std::optional<std::string> infoResponse;
     gui.until([&] { infoResponse = info.take(); return infoResponse.has_value(); }, "accepted get-info result was silently dropped");
     const auto parsedInfo = Json::parse(*infoResponse);
-    check(parsedInfo && parsedInfo->find("uiFixtureInfo") && parsedInfo->find("uiFixtureInfo")->boolValue(), "get-info result was replaced");
+    if(command==IpcCommand::get_info)check(parsedInfo && parsedInfo->find("uiFixtureInfo") && parsedInfo->find("uiFixtureInfo")->boolValue(), "get-info result was replaced");
+    else check(parseServerInfoResult(*infoResponse).ok(),"get-server-info result was replaced");
     check(gui.backend.count(&Backend::infoStarted) == 1 && gui.backend.count(&Backend::infoCompleted) == 1, "busy get-info was queued or retried");
     reader.stop();
     DestroyWindow(target);
+    }
 }
 
 int interactive(std::string_view preview = {}) {
@@ -1454,6 +1550,8 @@ void liveResizeRepaintViews(std::span<const char* const> views) {
                     30 + (top ? MulDiv(650, dpi, 96) - height : 0), rect.right - rect.left, rect.bottom - rect.top,
                     SWP_NOZORDER | SWP_NOACTIVATE);
                 check(GetFocus() == focus, "resize changed native focus");
+                RECT pending{};
+                if(GetUpdateRect(root,&pending,FALSE))std::cout << "[ PAINT PENDING ] " << p.selection.view << " edge=" << edge << " step=" << step << " rect=" << pending.left << ',' << pending.top << ',' << pending.right << ',' << pending.bottom << '\n';
                 check(!GetUpdateRect(root, nullptr, FALSE), "layout returned with unpainted parent");
                 const auto live = resizePixels(root);
                 RedrawWindow(root, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -1470,6 +1568,9 @@ void liveResizeRepaintViews(std::span<const char* const> views) {
 void liveResizeRepaint() {
     constexpr std::array views{"Wizard", "Statistics", "Contracts", "Editor", "Connect", "Disconnect", "Info", "Password"};
     liveResizeRepaintViews(views);
+}
+void serverInformationLiveResizeRepaint() {
+    constexpr std::array views{"Info"};liveResizeRepaintViews(views);
 }
 void passwordContractsLiveResizeRepaint() {
     constexpr std::array views{"Contracts", "Password"};
@@ -1712,6 +1813,9 @@ int main(int argc, char** argv) {
     const std::pair<const char*, void(*)()> tests[]{
         {"http_diagnostic_wizard_owned_window_cleanup", wizardHttpDiagnostic},
         {"plan_v001_server_information_tabs", serverInformationTabs},
+        {"server_information_refresh_and_pagination", serverInformationRefresh},
+        {"server_information_close_pending_reopen_resize", serverInformationClosePending},
+        {"server_information_live_resize_repaint", serverInformationLiveResizeRepaint},
         {"plan_v001_editor_footer_resize", editorFooterResize},
         {"plan_v001_editor_password_footers", editorPasswordFooters},
         {"plan_v001_contracts_footer_states", contractsFooterStates},

@@ -21,6 +21,7 @@ struct ProgressView {
     CheckpointResult serverUrl = CheckpointResult::pending;
     CheckpointResult serverSecret = CheckpointResult::pending;
     CheckpointResult accessKey = CheckpointResult::pending;
+    CheckpointResult communicationContracts = CheckpointResult::pending;
     std::string errorDescription;
     std::string errorCode;
     bool statusUnavailable = false;

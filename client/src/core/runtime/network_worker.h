@@ -68,6 +68,7 @@ public:
     // One verified `info` exchange. Also publishes the server limits used by the
     // scheduler and by the polling interval.
     Result<InfoResponse> performInfo(std::optional<HttpDiagnostic>* failedDiagnostic = nullptr, bool* rejectedResponse = nullptr);
+    Result<InfoResponse> performExtendedInfo(const InfoRequestOptions& options, std::optional<HttpDiagnostic>* failedDiagnostic = nullptr, bool* rejectedResponse = nullptr);
 
     // Verifies that the configured ACCESS_KEY is accepted, by sending an empty
     // authenticated `data` request and requiring a verified response. Payload

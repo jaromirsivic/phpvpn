@@ -4,6 +4,7 @@
 // carries no whitespace, so the bytes that are hashed are the bytes that are
 // sent.
 #pragma once
+#include "core/protocol/info_extensions.h"
 
 #include <cstdint>
 #include <span>
@@ -19,6 +20,8 @@ namespace phpvpn {
 
 class RequestBuilder {
 public:
+    static Result<std::string> buildInfoFull(CryptoProvider& crypto, const SecureBuffer& key,
+        Ipv4Address src, std::string_view timestamp, std::string_view requestId, InfoRequestOptions options);
     // {"type":"auth-none","requestId":"..."}
     static std::string buildAuthNone(std::string_view requestId);
 

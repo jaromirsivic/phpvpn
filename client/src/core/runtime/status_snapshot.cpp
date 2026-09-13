@@ -15,7 +15,9 @@ SafeError SafeError::fromConnection(const Error& error, ConnectionPhase phase,
     // client.md: public connection errors describe the failed operation,
     // never raw transport details or an inference from historical checkpoints.
     if (error.code == ErrorCode::transport_timeout || error.code == ErrorCode::timeout)
-        return {"communication_timeout", "The server did not respond in time. Verification could not be completed.", true};
+        return {"communication_timeout", "The server did not respond in time. Verification could not be completed.", phase != ConnectionPhase::communication_contracts_check};
+    if (phase == ConnectionPhase::communication_contracts_check)
+        return {"communication_contracts_verification_failed", "Communication contracts could not be verified. Check server compatibility.", false};
     if (error.code == ErrorCode::config_invalid_url ||
         (phase == ConnectionPhase::health && !healthSyntaxUsable))
         return {"endpoint_unavailable_or_invalid", "The server endpoint is not reachable or not valid.",
@@ -66,6 +68,7 @@ const char* connectionPhaseName(ConnectionPhase phase) noexcept {
             return "info";
         case ConnectionPhase::access_key_check:
             return "access-key-check";
+        case ConnectionPhase::communication_contracts_check: return "communication-contracts-check";
         case ConnectionPhase::starting_tunnel:
             return "starting-tunnel";
         case ConnectionPhase::running:

@@ -48,7 +48,7 @@ elseif ($path === '/hold.php') { require __DIR__ . '/hold.php'; }
 else { http_response_code(404); }
 ''', encoding="utf-8")
     (fixture / "hold.php").write_text('''<?php
-$h = fopen(__DIR__ . '/phpvpn/10_99_99_3/.lock', 'cb');
+$h = fopen(__DIR__ . '/phpvpn_data/10_99_99_3/.lock', 'cb');
 if (!$h || !flock($h, LOCK_EX | LOCK_NB)) { http_response_code(500); exit; }
 file_put_contents(__DIR__ . '/lock-ready', 'ready');
 $end = microtime(true) + 12;
@@ -85,10 +85,10 @@ echo 'released';
                     assert time.monotonic() < deadline, "private PHP worker did not start"
                     time.sleep(0.05)
         config = Configuration(urls[0], b"CHANGE_THIS_SERVER_SECRET",
-                               {f"10.99.99.{i}": bytes([i]) * 32 for i in range(2, 16)}, fixture / "phpvpn")
+                               {f"10.99.99.{i}": bytes([i]) * 32 for i in range(2, 16)}, fixture / "phpvpn_data")
         client = PhpVpnClient(config, session=session)
         client.synchronize_clock()
-        (fixture / "phpvpn/10_99_99_3").mkdir(parents=True, exist_ok=True)
+        (fixture / "phpvpn_data/10_99_99_3").mkdir(parents=True, exist_ok=True)
         with ThreadPoolExecutor(max_workers=1) as pool:
             holder = pool.submit(requests.get, f"http://127.0.0.1:{ports[1]}/hold.php", timeout=15)
             try:
@@ -110,7 +110,7 @@ echo 'released';
                 assert_protocol_headers(response, JSON_CONTENT_TYPE)
                 assert response.headers.get("Retry-After") == "1"
                 assert 150 <= elapsed < 1500, "real 200ms lock budget plus bounded HTTP/scheduling overhead"
-                assert not list((fixture / "phpvpn/10_99_99_3").glob("*.data"))
+                assert not list((fixture / "phpvpn_data/10_99_99_3").glob("*.data"))
             finally:
                 (fixture / "lock-release").write_text("release", encoding="ascii")
             assert holder.result().text == "released"

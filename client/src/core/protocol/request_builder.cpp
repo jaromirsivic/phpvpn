@@ -4,7 +4,27 @@
 #include "core/crypto/canonical.h"
 #include "core/protocol/base64url.h"
 
+#include <algorithm>
 namespace phpvpn {
+Result<std::string> RequestBuilder::buildInfoFull(CryptoProvider& crypto, const SecureBuffer& key,
+    Ipv4Address src, std::string_view timestamp, std::string_view requestId, InfoRequestOptions options) {
+    if (options.maskedCommunicationContracts) std::sort(options.maskedCommunicationContracts->begin(), options.maskedCommunicationContracts->end(), [](const auto& a, const auto& b) { return a.peer < b.peer; });
+    std::string extensions;
+    PHPVPN_TRY_ASSIGN(extensions, canonicalInfoExtensions(options, src));
+    Sha256Digest hash{};
+    PHPVPN_TRY_ASSIGN(hash, crypto.sha256(asBytes(extensions)));
+    const auto canonical = infoFullCanonical(src.toString(), timestamp, requestId, sha256Hex(hash));
+    Sha256Digest tag{};
+    PHPVPN_TRY_ASSIGN(tag, crypto.hmacSha256(key.span(), asBytes(canonical)));
+    JsonValue fields;
+    PHPVPN_TRY_ASSIGN(fields, Json::parse(extensions));
+    JsonObject root{{"type", JsonValue::makeString("auth-full")}, {"src", JsonValue::makeString(src.toString())},
+        {"timestamp", JsonValue::makeString(std::string(timestamp))}, {"requestId", JsonValue::makeString(std::string(requestId))}, {"tag", JsonValue::makeString(Base64Url::encode(tag))}};
+    for (auto& field : fields.objectValue()) root.push_back(std::move(field));
+    auto out = Json::serialize(JsonValue::makeObject(std::move(root)));
+    if (out.size() > kMaxInfoRequestBodyBytes) return Error(ErrorCode::response_invalid);
+    return out;
+}
 namespace {
 
 constexpr std::string_view kAuthFullPrefixSrc = R"({"type":"auth-full","src":")";

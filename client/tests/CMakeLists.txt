@@ -25,6 +25,9 @@ add_executable(phpvpn-client-tests
     unit/test_service_registration.cpp
     unit/test_time_sync.cpp
     unit/test_wire.cpp
+    unit/test_info_extensions.cpp
+    unit/test_server_info_model.cpp
+    unit/test_server_info_layout.cpp
     unit/test_traffic_counters.cpp
     unit/test_runtime_status.cpp
     unit/test_tray_status.cpp
@@ -53,6 +56,7 @@ add_executable(phpvpn-client-tests
     ../apps/tray/system_dialog.cpp
     ../apps/tray/progress_window.cpp
     ../apps/tray/statistics_window.cpp
+    ../apps/tray/server_info_window.cpp
     ../apps/tray/editor_window.cpp
     ../apps/tray/wizard_window.cpp
     ../apps/tray/http_error_detail_window.cpp
@@ -145,6 +149,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/progress_details.cpp
         ../apps/tray/progress_window.cpp
         ../apps/tray/statistics_window.cpp
+        ../apps/tray/server_info_window.cpp
         ../apps/tray/editor_window.cpp
         ../apps/tray/status_model.cpp
         ../apps/tray/status_reader.cpp
@@ -177,7 +182,8 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
         ../apps/tray/http_error_detail_window.cpp
-        ../apps/tray/editor_window.cpp
+        ../apps/tray/server_info_window.cpp
+    ../apps/tray/editor_window.cpp
         ../apps/tray/contracts_save_controller.cpp
         ../apps/tray/password_sha_window.cpp
         ../apps/tray/contracts_window.cpp)

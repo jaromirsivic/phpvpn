@@ -1,10 +1,10 @@
-﻿#include "progress_model.h"
+#include "progress_model.h"
 #include <array>
 #include <limits>
 
 namespace phpvpn::tray {
 const ProgressErrorText &progressErrorText(std::string_view code) {
-    static constexpr std::array<ProgressErrorText, 7> errors{
+    static constexpr std::array<ProgressErrorText, 8> errors{
         {{"endpoint_unavailable_or_invalid", "The server endpoint is not reachable or not valid.",
           "Cannot connect to the server", "Check the Server URL and network connection, then try again."},
          {"server_verification_failed", "The server could not be verified with the configured SERVER_SECRET.",
@@ -17,6 +17,7 @@ const ProgressErrorText &progressErrorText(std::string_view code) {
           "Cannot complete the connection", "Check the network and server availability, then try again."},
          {"communication_timeout", "The server did not respond in time. Verification could not be completed.",
           "Connection timed out", "Check the network and server availability, then try again."},
+         {"communication_contracts_verification_failed", "Communication contracts could not be verified. Check server compatibility.", "Cannot verify communication contracts", "Check server compatibility, then reconnect."},
          {"status_unavailable", "The connection status is unavailable.", "Cannot read connection status",
           "Check that the PHPVPN service is running."}}};
     for (const auto &error : errors)
@@ -69,10 +70,11 @@ void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/)
     view_.serverUrl = status.serverUrl;
     view_.serverSecret = status.serverSecret;
     view_.accessKey = status.accessKey;
+    view_.communicationContracts = status.communicationContracts;
     if (status.state == "connected" && status.phase == "running" && status.tunnelReady == "yes" && !status.hasError) {
         view_.stage = ProgressStage::succeeded;
         view_.shield = Shield::green;
-        // Checkpoints remain the exact triple from this same status snapshot.
+        // Checkpoints remain the exact four checkpoints from this same status snapshot.
     } else if (status.hasError || status.state == "error") {
         view_.stage = ProgressStage::failed;
         view_.shield = Shield::grey;

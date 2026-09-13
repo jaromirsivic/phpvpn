@@ -50,9 +50,27 @@ values to the repository.
   restart/crash lifecycle resets, including an in-flight response and a delayed
   completion. Confirm old traffic cannot repopulate the new/disconnected state.
 - [ ] **35, NOT RUN**: Edit Config may display URL and keys returned by get-config.
-  Show Info follows get-info. Progress, Statistics, tooltips and errors must not
+  Show Info follows get-server-info. Progress, Statistics, tooltips and errors must not
   display URLs, keys, tags, ciphertexts, packet contents, internal paths or raw
   system/network details. Save only via set-config, Cancel without a write.
 - [ ] **20, NOT RUN**: save asynchronously, close the editor before completion,
   and reopen later. An old completion must not close a new editor or discard its
   contents. Repeated clicks during the pending command must not duplicate saves.
+
+## Server information acceptance, NOT RUN
+
+- [ ] Connect A and B with matching keys and check all four checkpoints. Show
+  Info on A must exclude A, show B as valid and count it in the heading.
+- [ ] Connect C with a mismatching or missing A contract. A must see invalid.
+  Publish B-C and C-D contracts and check that A receives neither their hashes
+  nor their hidden peer lists in Raw server information.
+- [ ] Keep B inactive for more than 60 seconds of server time, then Refresh.
+  B must become Offline. Future lastSeen and exactly 60 seconds remain online.
+- [ ] Save a matching local A key and Refresh without reconnect. Comparison must
+  change using the saved configuration. The active VPN and A's published list
+  must remain unchanged until an explicit reconnect.
+- [ ] Exercise 0, 20, 21 and 252 peers, keyboard paging, Ctrl+End, both tabs,
+  copying raw text, Refresh failure, close/reopen and service restart. A failed
+  Refresh must retain both old views. Disconnect must remain available.
+- [ ] Verify screen reader text and focus, high contrast, physical monitor/DPI
+  migration and 320-DIP width. Record actual Windows settings and results.

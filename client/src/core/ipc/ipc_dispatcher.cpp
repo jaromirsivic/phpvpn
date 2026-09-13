@@ -88,6 +88,11 @@ std::string IpcDispatcher::handle(std::string_view requestJson) {
             // IPC envelope and without any part of the encrypted wrapper.
             return std::move(info).value();
         }
+        case IpcCommand::get_server_info: {
+            auto info = engine_.fetchServerInfoOnce();
+            if (!info) return IpcProtocol::buildError(request.requestId, info.error());
+            return IpcProtocol::buildServerInfoResponse(request.requestId, info.value());
+        }
     }
 
     return IpcProtocol::buildError(request.requestId,

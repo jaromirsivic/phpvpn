@@ -82,3 +82,15 @@ Multiuser, sleep/resume and delayed DNS are not tested by this SCM target.
 Delayed DNS is now independently verified by the opt-in process-local resource
 target. See [resource report](../implementation-plan3-resource-report.md) for
 real maximum IPC RSS, held DNS queries, HTTP lock contention and reproduction.
+
+## Extended info contract coverage
+
+The opt-in `phpvpn-contract-tests` target uses an isolated `wizard-default` PHP
+fixture selected by `PHPVPN_CONTRACT_URL`. Its full-auth test publishes matching
+A/B masks through CNG and WinHTTP, verifies the resulting model, withdraws a
+contract with an empty list and confirms standard info compatibility. The
+service-operation test calls `fetchServerInfoOnce`, counts exactly one config
+read per action, changes the stored local key and verifies fresh comparison
+hashes with no Connect, data polling, configuration write or tunnel operation.
+Python `tests-integration/test_info_extensions.py` covers A/B/C/D filtering.
+These contract tests do not claim a real four-checkpoint Wintun connection.

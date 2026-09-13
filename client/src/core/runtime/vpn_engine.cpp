@@ -1,3 +1,4 @@
+#include "core/crypto/masked_contracts.h"
 #include "core/runtime/vpn_engine.h"
 
 #include <algorithm>
@@ -172,6 +173,41 @@ Result<std::string> VpnEngine::fetchInfoOnce() {
     InfoResponse info;
     PHPVPN_TRY_ASSIGN(info, worker.performInfo());
     return info.plaintext;
+}
+
+Result<ServerInfoSnapshot> VpnEngine::fetchServerInfoOnce() {
+    std::unique_lock lock(infoMutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return Error(ErrorCode::busy);
+    const auto generation = diagnosticGeneration_.load();
+    ClientConfigPtr config;
+    PHPVPN_TRY_ASSIGN(config, configStore_.readValid());
+
+    std::unique_ptr<Transport> created;
+    PHPVPN_TRY_ASSIGN(created, createPlatformTransport());
+    std::shared_ptr<Transport> transport(std::move(created));
+    {
+        std::lock_guard diagnosticLock(diagnosticMutex_);
+        if (!running_.load() || generation != diagnosticGeneration_.load()) return Error(ErrorCode::cancelled);
+        diagnosticTransport_ = transport;
+    }
+    struct Cleanup {
+        VpnEngine& engine;
+        ~Cleanup() { std::lock_guard diagnosticLock(engine.diagnosticMutex_); engine.diagnosticTransport_.reset(); }
+    } cleanup{*this};
+    NetworkWorker worker(crypto_, *transport, clock_);
+    PHPVPN_TRY(worker.configure(config, nullptr, [this, generation] {
+        return !running_.load() || generation != diagnosticGeneration_.load();
+    }));
+
+    HealthResponse health;
+    PHPVPN_TRY_ASSIGN(health, worker.performHealth());
+    (void)health;
+
+    InfoResponse info;
+    PHPVPN_TRY_ASSIGN(info, worker.performExtendedInfo(InfoRequestOptions{std::nullopt, true}));
+    std::vector<MaskedCommunicationContract> contracts;
+    PHPVPN_TRY_ASSIGN(contracts, maskedCommunicationContracts(crypto_, *config));
+    return ServerInfoSnapshot{std::move(info.plaintext), config->virtualIp, std::move(contracts)};
 }
 
 Status VpnEngine::connect() {
@@ -390,6 +426,23 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
         return accessKey.error();
     }
 
+    if (!communicationContractsVerifiedForEpoch_) {
+        setPhase(ConnectionPhase::communication_contracts_check);
+        if (!running_.load() || !connectRequested_.load()) return Error(ErrorCode::cancelled);
+        auto contracts = maskedCommunicationContracts(crypto_, *config);
+        if (!contracts.ok()) {
+            std::lock_guard lock(stateMutex_);
+            communicationContractsCheck_ = CheckpointResult::failed;
+            return contracts.error();
+        }
+        auto extended = network_.performExtendedInfo(InfoRequestOptions{std::move(contracts).value(), true}, failedDiagnostic, rejectedResponse);
+        {
+            std::lock_guard lock(stateMutex_);
+            communicationContractsCheck_ = extended.ok() ? CheckpointResult::success : CheckpointResult::failed;
+            communicationContractsVerifiedForEpoch_ = extended.ok();
+        }
+        if (!extended.ok()) return extended.error();
+    }
     setPhase(ConnectionPhase::starting_tunnel);
     if (!running_.load() || !connectRequested_.load()) return Error(ErrorCode::cancelled);
     TunnelSessionSettings settings;
@@ -516,7 +569,8 @@ void VpnEngine::runNetworkThread() {
             {
                 std::lock_guard<std::mutex> lock(stateMutex_);
                 counters_.reset();
-                serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = CheckpointResult::pending;
+                serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = communicationContractsCheck_ = CheckpointResult::pending;
+                communicationContractsVerifiedForEpoch_ = false;
                 packetsReceived_ = packetsSent_ = 0;
                 state_ = ConnectionState::disconnected;
                 connectionStartedAtUtc_.reset();
@@ -531,7 +585,8 @@ void VpnEngine::runNetworkThread() {
             {
                 std::lock_guard<std::mutex> lock(stateMutex_);
                 counters_.reset();
-                serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = CheckpointResult::pending;
+                serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = communicationContractsCheck_ = CheckpointResult::pending;
+                communicationContractsVerifiedForEpoch_ = false;
                 packetsReceived_ = packetsSent_ = 0;
                 lastError_.reset();
                 state_ = ConnectionState::connecting;
@@ -673,7 +728,8 @@ void VpnEngine::runNetworkThread() {
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         counters_.reset();
-        serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = CheckpointResult::pending;
+        serverUrlCheck_ = serverSecretCheck_ = accessKeyCheck_ = communicationContractsCheck_ = CheckpointResult::pending;
+                communicationContractsVerifiedForEpoch_ = false;
         state_ = ConnectionState::disconnected;
         connectionStartedAtUtc_.reset();
         phase_ = ConnectionPhase::idle;
@@ -698,6 +754,7 @@ StatusSnapshot VpnEngine::status() const {
     snapshot.serverUrlCheck = serverUrlCheck_;
     snapshot.serverSecretCheck = serverSecretCheck_;
     snapshot.accessKeyCheck = accessKeyCheck_;
+    snapshot.communicationContractsCheck = communicationContractsCheck_;
     snapshot.serverReachable = serverReachable_;
     snapshot.serverVerified = serverVerified_;
     snapshot.tunnelReady = tunnelReady_;

@@ -49,7 +49,7 @@ PHPVPN_TEST(StatusContract, ServiceToTrayFullUnsignedRangeAndObjectOrder) {
         const auto* status = document.value().find("status");
         PHPVPN_CHECK(status != nullptr);
         if (!status) return;
-        PHPVPN_CHECK_EQ(status->objectValue().size(), 25U);
+        PHPVPN_CHECK_EQ(status->objectValue().size(), 26U);
         PHPVPN_CHECK(status->find("packetsSent") == nullptr);
         PHPVPN_CHECK(status->find("packetsReceived") == nullptr);
         for (int order = 0; order != 2; ++order) {
