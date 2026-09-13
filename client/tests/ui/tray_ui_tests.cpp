@@ -702,6 +702,129 @@ void editorClick(HWND window, int id) {
     SetActiveWindow(window);
     SendMessageW(button, BM_CLICK, 0, 0);
 }
+void connectDefaultResultFits() {
+    Gui gui;
+    for (const char* error : {"", "endpoint_unavailable_or_invalid", "communication_contracts_verification_failed"}) {
+        ProgressWindow progress(gui.pipe);
+        progress.open(GetModuleHandleW(nullptr));
+        TrayStatus snapshot;
+        snapshot.valid = true;
+        snapshot.state = *error ? "error" : "connected";
+        snapshot.phase = *error ? "idle" : "running";
+        snapshot.tunnelReady = *error ? "no" : "yes";
+        snapshot.serverUrl = snapshot.serverSecret = snapshot.accessKey = snapshot.communicationContracts =
+            phpvpn::tray::CheckpointResult::success;
+        snapshot.hasError = *error != 0;
+        snapshot.errorCode = error;
+        if (*error) snapshot.communicationContracts = phpvpn::tray::CheckpointResult::failed;
+        progress.onSnapshot(snapshot);
+        const auto window = progress.window();
+        check(window && IsWindowVisible(window), "Connect result window missing");
+        check(progress.model().view().stage == (*error ? ProgressStage::failed : ProgressStage::succeeded), "Connect result not presented");
+        RECT client{}, outer{};
+        GetClientRect(window, &client); GetWindowRect(window, &outer);
+        const int dpi = GetDpiForWindow(window);
+        SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE}; GetScrollInfo(window, SB_VERT, &scroll);
+        std::cout << "[ CONNECT DEFAULT ] result=" << (*error ? error : "success") << " dpi=" << dpi
+                  << " client=" << client.right << 'x' << client.bottom << " content=" << scroll.nMax + 1
+                  << " scroll=" << !!(GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL) << '\n';
+        check(allText(window).find(L"Communication contracts") != std::wstring::npos, "fourth check missing");
+        const auto monitor = targetMonitor({});
+        check(outer.left >= monitor.work.left && outer.top >= monitor.work.top && outer.right <= monitor.work.right &&
+              outer.bottom <= monitor.work.bottom, "Connect default is outside monitor work area");
+        // A physically small desktop can clamp the requested default size.
+        const int availableWidth = client.right + ((GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL)
+            ? GetSystemMetricsForDpi(SM_CXVSCROLL, dpi) : 0);
+        if (client.bottom >= scaleForDpi(ui::connectClient.height, dpi) && availableWidth >= scaleForDpi(ui::connectClient.width, dpi)) {
+            check(scroll.nMax + 1 <= static_cast<int>(scroll.nPage), "Connect default result requires vertical scrolling");
+            check(!(GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL), "Connect default has a vertical scrollbar");
+        }
+        resizeClient(window, 640, 360);
+        GetScrollInfo(window, SB_VERT, &scroll);
+        check(scroll.nMax + 1 > static_cast<int>(scroll.nPage) && (GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL),
+              "small Connect window must remain scrollable");
+        progress.endSession();
+    }
+}
+struct InfoPaintProbe {
+    HWND window;
+    unsigned paint = 0, erase = 0;
+    explicit InfoPaintProbe(HWND h) : window(h) {
+        check(SetWindowSubclass(h, procedure, 99, reinterpret_cast<DWORD_PTR>(this)) != FALSE, "paint probe attachment");
+    }
+    ~InfoPaintProbe() { if (IsWindow(window)) RemoveWindowSubclass(window, procedure, 99); }
+    static LRESULT CALLBACK procedure(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data) {
+        auto& probe = *reinterpret_cast<InfoPaintProbe*>(data);
+        if (m == WM_PAINT) ++probe.paint;
+        if (m == WM_ERASEBKGND) ++probe.erase;
+        return DefSubclassProc(h, m, w, l);
+    }
+};
+void serverInformationIdlePaint() {
+    for (unsigned rows : {0u, 1u, 21u}) {
+        Gui gui;
+        { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo = true; gui.backend.infoRowCount = rows;
+          gui.backend.auditInfoCommands = true; }
+        ServerInfoWindow info(gui.pipe);
+        info.open(GetModuleHandleW(nullptr));
+        // Bound the pump even if a control continuously invalidates itself.
+        const auto pumpFor = [](DWORD ms) {
+            const auto until = GetTickCount64() + ms;
+            MSG message{};
+            do {
+                if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&message); DispatchMessageW(&message);
+                } else MsgWaitForMultipleObjects(0, nullptr, FALSE, 5, QS_ALLINPUT);
+            } while (GetTickCount64() < until);
+        };
+        const auto waitFor = [&](auto ready, const char* failure) {
+            const auto deadline = GetTickCount64() + 3000;
+            while (!ready() && GetTickCount64() < deadline) pumpFor(10);
+            check(ready(), failure);
+        };
+        waitFor([&] { return info.window() && IsWindowVisible(info.window()); }, "Info snapshot missing");
+        const auto window = info.window(), table = child(window, 7102), header = ListView_GetHeader(table);
+        check(ListView_GetItemCount(table) == static_cast<int>(std::min(rows, 20u)), "wrong fixture row count");
+        if (rows == 0) {
+            check(text(window) == L"Server information (0 valid online clients)", "empty table title");
+            const auto parsed = ResponseParser::parseInfoPlaintext(narrow(text(child(window, IDC_TEXT_AREA))),
+                *Ipv4Address::parse("10.99.99.2"));
+            check(parsed.ok() && parsed->clients.size() == 1, "empty fixture must retain the local client in raw JSON");
+        }
+        InfoPaintProbe rootProbe(window), tableProbe(table), headerProbe(header);
+        // Prove that the probes see actual native paints, then observe the idle
+        // message queue. A static screenshot cannot detect this repaint loop.
+        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        check(tableProbe.paint > 0 && headerProbe.paint > 0, "native paint probes did not observe repaint");
+        const auto verifyIdle = [&](const char* phase) {
+            pumpFor(250);
+            for (auto* p : {&rootProbe, &tableProbe, &headerProbe}) p->paint = p->erase = 0;
+            pumpFor(1000);
+            std::cout << "[ IDLE PAINT ] rows=" << rows << " phase=" << phase
+                      << " root=" << rootProbe.paint << " table=" << tableProbe.paint << " header=" << headerProbe.paint
+                      << " table_erase=" << tableProbe.erase << " header_erase=" << headerProbe.erase << '\n';
+            // Allow incidental desktop exposure, but reject a self-sustaining
+            // loop (hundreds or thousands of paints per second before the fix).
+            for (const auto* p : {&rootProbe, &tableProbe, &headerProbe})
+                check(p->paint < 30 && p->erase < 30, "server information keeps repainting while idle");
+        };
+        verifyIdle("open");
+        resizeClient(window, 640, 480);
+        const auto tabs = child(window, IDC_INFO_TABS);
+        NMHDR changed{tabs, IDC_INFO_TABS, TCN_SELCHANGE};
+        TabCtrl_SetCurSel(tabs, 1); SendMessageW(window, WM_NOTIFY, IDC_INFO_TABS, reinterpret_cast<LPARAM>(&changed));
+        pumpFor(50);
+        TabCtrl_SetCurSel(tabs, 0); SendMessageW(window, WM_NOTIFY, IDC_INFO_TABS, reinterpret_cast<LPARAM>(&changed));
+        SendMessageW(window, WM_COMMAND, 7101, 0);
+        waitFor([&] { return gui.backend.count(&Backend::infoCompleted) == 2 && IsWindowEnabled(child(window, 7101)); },
+                "refresh incomplete");
+        check(ListView_GetItemCount(table) == static_cast<int>(std::min(rows, 20u)), "refresh changed row count");
+        verifyIdle("resize-tabs-refresh");
+        check(gui.backend.count(&Backend::infoStarted) == 2 && gui.backend.count(&Backend::unexpectedInfoCommands) == 0,
+              "idle observation or tab switch issued an unexpected request");
+        info.endSession();
+    }
+}
 void serverInformationTabs() {
     Gui gui;
     { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo = true; gui.backend.auditInfoCommands = true; }
@@ -1813,6 +1936,8 @@ int main(int argc, char** argv) {
     const std::pair<const char*, void(*)()> tests[]{
         {"http_diagnostic_wizard_owned_window_cleanup", wizardHttpDiagnostic},
         {"plan_v001_server_information_tabs", serverInformationTabs},
+        {"server_information_idle_paint", serverInformationIdlePaint},
+        {"connect_default_result_fits", connectDefaultResultFits},
         {"server_information_refresh_and_pagination", serverInformationRefresh},
         {"server_information_close_pending_reopen_resize", serverInformationClosePending},
         {"server_information_live_resize_repaint", serverInformationLiveResizeRepaint},

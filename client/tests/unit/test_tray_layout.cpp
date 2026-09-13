@@ -1,6 +1,7 @@
 #include "harness.h"
 #include "../../apps/tray/layout.h"
 #include "../../apps/tray/progress_layout.h"
+#include "../../apps/tray/ui_style.h"
 #include <array>
 #include <cmath>
 
@@ -28,6 +29,34 @@ PHPVPN_TEST(TrayLayout, ConnectHttpDiagnosticButtonFitsAndNeverOverlapsText) {
         PHPVPN_CHECK(l.errorDetail.bottom <= l.panel.bottom - p(24));
         PHPVPN_CHECK(l.errorDetail.left >= l.panelAction.right + p(16) || l.errorDetail.top >= l.panelAction.bottom + p(16));
         PHPVPN_CHECK_EQ(l.errorDetail.bottom - l.errorDetail.top, p(40));
+    }
+}
+PHPVPN_TEST(TrayLayout, ConnectDefaultFitsFourChecksAndResultsWithWorkAreaClamping) {
+    for (int dpi : {96, 120, 144, 192}) {
+        const auto p = [dpi](int value) { return scaleForDpi(value, dpi); };
+        const Size client{p(ui::connectClient.width), p(ui::connectClient.height)};
+        for (bool success : {false, true}) {
+            // Include a two-line action and an Error detail button in the failure case.
+            const auto layout = computeProgressLayout(client.width, dpi, p(success ? 24 : 48), success, false,
+                                                      p(28), success ? 0 : p(128));
+            PHPVPN_CHECK_EQ(layout.checks.size(), 4u);
+            PHPVPN_CHECK(layout.checks.back().bottom < layout.card.bottom);
+            PHPVPN_CHECK(inside(layout.panel, client));
+            PHPVPN_CHECK(layout.height <= client.height);
+        }
+        const Size frame{p(16), p(39)};
+        for (const Size work : {Size{p(1920), p(1080)}, Size{800, 600}}) {
+            const Rect area{-work.width, -work.height, 0, 0};
+            const MonitorGeometry monitor{1, area, area, dpi};
+            const auto outer = initialWindowRect(ui::connectClient, monitor, frame);
+            PHPVPN_CHECK(outer.left >= monitor.work.left && outer.top >= monitor.work.top);
+            PHPVPN_CHECK(outer.right <= monitor.work.right && outer.bottom <= monitor.work.bottom);
+            if (work.height == 600) {
+                const int width = outer.right - outer.left - frame.width;
+                const int height = outer.bottom - outer.top - frame.height;
+                PHPVPN_CHECK(computeProgressLayout(width, dpi, p(24), true, false, p(28)).height > height);
+            } else PHPVPN_CHECK_EQ(outer.bottom - outer.top - frame.height, client.height);
+        }
     }
 }
 PHPVPN_TEST(TrayLayout, ProgressUsesSharedMarginsAndStaticContextAtSupportedDpi) {

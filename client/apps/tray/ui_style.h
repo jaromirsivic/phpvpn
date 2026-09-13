@@ -14,7 +14,8 @@ inline constexpr wchar_t connectingTip[] = L"PHPVPN: connecting";
 inline constexpr wchar_t recoveringTip[] = L"PHPVPN: recovering";
 inline constexpr wchar_t unavailableTip[] = L"PHPVPN: service status unavailable";
 inline constexpr wchar_t errorTip[] = L"PHPVPN: error";
-inline constexpr Size connectClient{940, 560}, disconnectClient{760, 192}, editorClient{1080, 560},
+// Four connection checks and the result panel need 596 DIP, plus room for wrapped error text.
+inline constexpr Size connectClient{940, 640}, disconnectClient{760, 192}, editorClient{1080, 560},
     statisticsClient{1000, 650}, wizardClient{1000, 680}, contractsClient{1180, 680}, passwordClient{675, 360};
 inline constexpr int spacing = 4, fieldGap = 8, relatedGap = 12, sectionGap = 24,
     cardPadding = 24, contentMargin = 32, compactMargin = 16, cardRadius = 8,

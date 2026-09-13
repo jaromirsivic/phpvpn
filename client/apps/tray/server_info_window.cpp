@@ -63,9 +63,12 @@ void ServerInfoWindow::open(HINSTANCE instance) {
         item.pszText = const_cast<wchar_t *>(text);
         TabCtrl_InsertItem(tabs_, TabCtrl_GetItemCount(tabs_), &item);
     }
+    // The report header is a child window. Without clipping it, WS_EX_COMPOSITED
+    // repeatedly repaints the list and header, even when the list has no rows.
     table_ =
         create(WC_LISTVIEWW, L"Who is online",
-               WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS, kTable);
+               WS_VISIBLE | WS_TABSTOP | WS_CLIPCHILDREN | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS |
+                   LVS_SHAREIMAGELISTS, kTable);
     SetWindowSubclass(table_, tableProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
     SetWindowSubclass(ListView_GetHeader(table_), headerProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
     ListView_SetExtendedListViewStyle(table_, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
