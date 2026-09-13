@@ -1,3 +1,4 @@
+#include "core/protocol/http_headers.h"
 // Full configuration validation, plan_client.md chapter 8.2.
 //
 // The validator runs before every connection attempt and before every write
@@ -138,7 +139,7 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
         return Error(ErrorCode::config_invalid_value, "masterSetup must be an object");
     }
 
-    static constexpr std::string_view kMasterMembers[] = {"serverUrl",
+    static constexpr std::string_view kMasterMembers[] = {"httpHeaders", "serverUrl",
                                                           "trustAnyTlsCertificate",
                                                           "serverSecret",
                                                           "vpnCidr",
@@ -151,6 +152,8 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
 
     auto config = std::make_shared<ConfigValues>();
     config->rawJson.assign(json);
+    PHPVPN_TRY_ASSIGN(config->httpHeaders, requireString(*master, "httpHeaders", "masterSetup"));
+    PHPVPN_TRY(normalizeHttpHeaders(config->httpHeaders));
     for (const auto& [name, destination] : {
         std::pair{"useDefaultServerSecretInWizard", &config->wizardPreferences.useDefaultServerSecretInWizard},
         std::pair{"autoDetectIpAddressInWizard", &config->wizardPreferences.autoDetectIpAddressInWizard},
@@ -330,6 +333,7 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
     config->runtime = values->runtime;
     config->contracts = std::move(values->contracts);
     config->rawJson = std::move(values->rawJson);
+    config->httpHeaders = std::move(values->httpHeaders);
     return ClientConfigPtr(std::move(config));
 }
 

@@ -1,4 +1,4 @@
-#include <winsock2.h>
+﻿#include <winsock2.h>
 #include <ws2tcpip.h>
 
 #include "harness.h"
@@ -149,7 +149,7 @@ std::unique_ptr<Transport> transportFor(const BodyServer& server, std::int64_t c
     auto created = createPlatformTransport();
     if (!created.ok()) throw std::runtime_error("platform transport creation failed");
     auto transport = std::move(created).value();
-    TransportSettings settings;
+    TransportSettings settings; settings.httpHeaders = "X-Test: fixture";
     settings.serverUrl = server.url();
     settings.responseTimeoutSeconds = 1;
     settings.maxResponseBodyBytes = cap;
@@ -274,7 +274,7 @@ PHPVPN_TEST(WinHttpDiagnostic, ExactRequestBytesIndependentBoundsDuplicatesAndIm
     for (std::size_t requestSize : {0u, 1u, 65536u, 65537u}) {
         BodyServer server(BodyServer::Mode::httpError, requestSize % 2, "X-Dup: first\r\nX-Dup: second\r\n");
         auto transport = createPlatformTransport().value();
-        TransportSettings settings; settings.captureWizardHttpDiagnostics = true;
+        TransportSettings settings; settings.httpHeaders = "X-Test: fixture"; settings.captureWizardHttpDiagnostics = true;
         settings.serverUrl = server.url().substr(0, server.url().find("/phpvpn.php"));
         PHPVPN_REQUIRE_OK(transport->configure(settings));
         std::string sent(requestSize, 's');
@@ -326,7 +326,7 @@ PHPVPN_TEST(WinHttpDeadline, HeadersTlsAndTrickleBodyShareOneAbsoluteBudget) {
 PHPVPN_TEST(WinHttpDeadline, BoundarySettingsNeverBecomeInfinite) {
     auto created = createPlatformTransport();
     PHPVPN_REQUIRE_OK(created);
-    TransportSettings settings;
+    TransportSettings settings; settings.httpHeaders = "X-Test: fixture";
     settings.serverUrl = "http://127.0.0.1/phpvpn.php";
     for (const auto seconds : {0LL, -1LL, 2147484LL, 9223372036854775807LL}) {
         settings.responseTimeoutSeconds = seconds;
@@ -342,7 +342,7 @@ PHPVPN_TEST(WinHttpLifecycle, ConcurrentCancellationThenReuse) {
     auto transport = std::move(created).value();
     for (int i = 0; i < 5; ++i) {
         BodyServer server(BodyServer::Mode::tlsHandshake, 0);
-        TransportSettings settings;
+        TransportSettings settings; settings.httpHeaders = "X-Test: fixture";
         settings.serverUrl = server.url();
         PHPVPN_REQUIRE_OK(transport->configure(settings));
         auto pending = std::async(std::launch::async, [&] { return transport->post(HttpAction::health, "{}"); });
@@ -358,10 +358,108 @@ PHPVPN_TEST(WinHttpLifecycle, ConcurrentCancellationThenReuse) {
         if (!result.ok()) PHPVPN_CHECK_EQ(result.error().code, ErrorCode::cancelled);
     }
     BodyServer server(BodyServer::Mode::complete, 42);
-    TransportSettings settings;
+    TransportSettings settings; settings.httpHeaders = "X-Test: fixture";
     settings.serverUrl = server.url();
     PHPVPN_REQUIRE_OK(transport->configure(settings));
     auto response = transport->post(HttpAction::data, "{}");
     PHPVPN_CHECK(response.ok());
     PHPVPN_CHECK_EQ(response.responseBodyBytesRead, 42U);
+}
+
+#include "core/config/config.h"
+#include "core/protocol/http_headers.h"
+namespace {
+std::vector<std::string> wireValues(const std::string& request, std::string name) {
+    std::vector<std::string> values;
+    const auto end = request.find("\r\n\r\n");
+    std::size_t at = request.find("\r\n") + 2;
+    while (at < end) {
+        const auto next = request.find("\r\n", at);
+        auto line = request.substr(at, next - at);
+        const auto colon = line.find(':');
+        auto key = line.substr(0, colon);
+        for (auto& c : key) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        if (key == name) {
+            auto value = line.substr(colon + 1);
+            while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.erase(0, 1);
+            values.push_back(value);
+        }
+        at = next + 2;
+    }
+    return values;
+}
+}
+PHPVPN_TEST(WinHttpHeaders, WireMatrix) {
+    for (auto action : {HttpAction::health, HttpAction::info, HttpAction::data}) {
+        const std::vector<std::string> blocks = {kDefaultHttpHeaders, "X-Test: own", "User-Agent: own-agent",
+            "X-Order: first\r\nX-Trace: second\r\nX-Last: third",
+            "X-Test: lf\nX-Empty:\n", "X-Utf8: \xc5\xbe\xc3\xa1\xf0\x9f\x98\x80",
+            "Cookie: a=1; b=2", "Cache-Control: no-store", "Pragma: custom"};
+        for (const auto& block : blocks) {
+            BodyServer server(BodyServer::Mode::complete, 3);
+            auto transport = createPlatformTransport().value();
+            TransportSettings settings;
+            settings.serverUrl = server.url();
+            settings.httpHeaders = block;
+            settings.responseTimeoutSeconds = 2;
+            PHPVPN_CHECK(transport->configure(settings).ok());
+            const std::string body("a\0b\r\n", 5);
+            const auto result = transport->postDiagnostic(action, body);
+            PHPVPN_CHECK(result.ok());
+            if (!result.ok()) {
+                std::cout << "WIRE failure action=" << httpActionName(action) << " headers=" << block
+                          << " error=" << result.error().name() << "\n";
+                continue;
+            }
+            const auto wire = server.receivedRequest();
+            std::cout << "WIRE action=" << httpActionName(action) << " headers=" << block << "\n" << wire.substr(0, wire.find("\r\n\r\n")) << "\n";
+            PHPVPN_CHECK(wire.starts_with(std::string("POST /phpvpn.php?action=") + httpActionName(action) + " HTTP/1.1\r\n"));
+            PHPVPN_CHECK_EQ(wire.substr(wire.find("\r\n\r\n") + 4), body);
+            PHPVPN_CHECK_EQ(wireValues(wire, "content-length"), std::vector<std::string>{"5"});
+            PHPVPN_CHECK(wire.find("PHPVPN/1.0") == std::string::npos);
+            const auto expectedHeaders = buildApplicationRequestHeaders(httpActionContentType(action), *normalizeHttpHeaders(block));
+            const auto expected = std::string("POST / HTTP/1.1\r\n") + expectedHeaders + "\r\n\r\n";
+            for (const auto name : {"cache-control", "pragma", "user-agent", "x-order", "x-trace", "x-last", "x-test", "x-empty", "x-utf8", "cookie"}) {
+                PHPVPN_CHECK_EQ(wireValues(wire, name), wireValues(expected, name));
+                if (result.diagnostic) PHPVPN_CHECK_EQ(wireValues(result.diagnostic->request.prefix, name), wireValues(expected, name));
+            }
+            PHPVPN_CHECK_EQ(wireValues(wire, "content-type"), std::vector<std::string>{httpActionContentType(action)});
+            PHPVPN_CHECK_EQ(wireValues(wire, "connection"), std::vector<std::string>{"Keep-Alive"});
+            PHPVPN_CHECK_EQ(result.diagnostic.has_value(), action != HttpAction::data);
+            if (result.diagnostic) {
+                const auto& captured = result.diagnostic->request.prefix;
+                PHPVPN_CHECK_EQ(captured.substr(captured.find("\r\n\r\n") + 4), body);
+            }
+            if (block == "X-Test: own") PHPVPN_CHECK(wireValues(wire, "user-agent").empty());
+            if (block == "User-Agent: own-agent") PHPVPN_CHECK_EQ(wireValues(wire, "user-agent"), std::vector<std::string>{"own-agent"});
+            if (block.starts_with("X-Utf8")) PHPVPN_CHECK_EQ(wireValues(wire, "x-utf8"), std::vector<std::string>{"\xc5\xbe\xc3\xa1\xf0\x9f\x98\x80"});
+        }
+    }
+}
+
+PHPVPN_TEST(WinHttpHeaders, ConfigureRejectsUnsafeBlocksBeforeSendingAndReconfigureRemovesUserAgent) {
+    auto transport = createPlatformTransport().value();
+    for (const auto bad : {"", "X: ok\r\n\r\nGET / HTTP/1.1", "Content-Type: bad", "content-length: 0",
+        "CONNECTION: close", "hOsT: other", "X: first\nx: second", "User-Agent: first\nuser-agent: second", "Transfer-Encoding: chunked", "X: \xff"}) {
+        BodyServer server(BodyServer::Mode::complete, 0);
+        TransportSettings settings;
+        settings.serverUrl = server.url();
+        settings.httpHeaders = bad;
+        PHPVPN_CHECK(!transport->configure(settings));
+        PHPVPN_CHECK(!transport->post(HttpAction::data, "body").ok());
+        PHPVPN_CHECK(server.receivedRequest().empty());
+    }
+    for (const auto headers : {kDefaultHttpHeaders, "X-Test: own", "User-Agent: replacement", "X-Test: own"}) {
+        BodyServer server(BodyServer::Mode::complete, 0);
+        TransportSettings settings;
+        settings.serverUrl = server.url();
+        settings.httpHeaders = headers;
+        PHPVPN_REQUIRE_OK(transport->configure(settings));
+        PHPVPN_REQUIRE_OK(transport->post(HttpAction::info, "{}"));
+        const auto wire = server.receivedRequest();
+        const auto userAgent = wireValues(wire, "user-agent");
+        if (std::string_view(headers) == "X-Test: own") PHPVPN_CHECK(userAgent.empty());
+        else PHPVPN_CHECK_EQ(userAgent.size(), 1u);
+        PHPVPN_CHECK(wire.find("PHPVPN/1.0") == std::string::npos);
+    }
 }

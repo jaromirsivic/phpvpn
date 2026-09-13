@@ -26,6 +26,7 @@ struct WizardContext {
     Ipv4Cidr vpnCidr;
     bool trustAnyTlsCertificate = kDefaultTrustAnyTlsCertificate;
     RuntimeLimits runtime;
+    std::string httpHeaders;
 };
 // Incomplete input never becomes a runtime ClientConfig or uses dummy keys.
 struct WizardPreferences {
@@ -44,6 +45,7 @@ struct ConfigValues {
     std::vector<CommunicationContract> contracts;
     std::string rawJson;
     WizardPreferences wizardPreferences;
+    std::string httpHeaders;
 };
 struct WizardDocument {
     JsonValue dom;

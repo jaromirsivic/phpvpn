@@ -1,23 +1,37 @@
 #include "core/wizard/http_diagnostic.h"
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <set>
 
 namespace phpvpn {
 namespace {
 void stripFraming(std::string& block) {
     while (block.ends_with("\r\n")) block.resize(block.size() - 2);
 }
-bool hasHeader(std::string_view block, std::string_view name) {
+struct HeaderLine {
+    std::string_view text;
+    std::string name;
+    std::string_view value;
+};
+std::vector<HeaderLine> headerLines(std::string_view block) {
+    std::vector<HeaderLine> lines;
     for (std::size_t start = 0; start < block.size();) {
         const auto end = block.find("\r\n", start);
         const auto line = block.substr(start, end == std::string_view::npos ? block.size() - start : end - start);
-        if (line.find(':') == name.size() && std::equal(name.begin(), name.end(), line.begin(), [](unsigned char a, unsigned char b) {
-            return (a >= 'A' && a <= 'Z' ? a + 32 : a) == (b >= 'A' && b <= 'Z' ? b + 32 : b);
-        })) return true;
+        const auto colon = line.find(':');
+        if (colon != std::string_view::npos) {
+            std::string name(line.substr(0, colon));
+            for (char& c : name) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+            auto value = line.substr(colon + 1);
+            while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.remove_prefix(1);
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
+            lines.push_back({line, std::move(name), value});
+        }
         if (end == std::string_view::npos) break;
         start = end + 2;
     }
-    return false;
+    return lines;
 }
 }
 DiagnosticRequestHeaders reconstructDiagnosticRequestHeaders(std::optional<std::string> raw, std::string_view application) {
@@ -31,16 +45,26 @@ DiagnosticRequestHeaders reconstructDiagnosticRequestHeaders(std::optional<std::
             out.block.erase(0, end == std::string::npos ? out.block.size() : end + 2);
         }
         stripFraming(out.block);
-        for (std::size_t start = 0; start < application.size();) {
-            const auto end = application.find("\r\n", start);
-            const auto line = application.substr(start, end == std::string_view::npos ? application.size() - start : end - start);
-            const auto colon = line.find(':');
-            if (colon != std::string_view::npos && !hasHeader(out.block, line.substr(0, colon))) {
-                if (!out.block.empty()) out.block += "\r\n";
-                out.block += line; out.source = RequestHeadersSource::merged;
-            }
-            if (end == std::string_view::npos) break;
-            start = end + 2;
+        const auto rawLines = headerLines(out.block);
+        const auto applicationLines = headerLines(application);
+        std::map<std::string, std::vector<std::string_view>> actual, expected;
+        for (const auto& line : rawLines) actual[line.name].push_back(line.value);
+        for (const auto& line : applicationLines) expected[line.name].push_back(line.value);
+        std::set<std::string> incomplete;
+        for (const auto& [name, values] : expected)
+            if (actual[name] != values) incomplete.insert(name);
+        if (!incomplete.empty()) {
+            std::string merged;
+            const auto append = [&](std::string_view line) {
+                if (!merged.empty()) merged += "\r\n";
+                merged += line;
+            };
+            // Reconstruct entire affected groups. Never guess which duplicate
+            // was omitted, or invent a system value for a colliding name.
+            for (const auto& line : rawLines) if (!incomplete.contains(line.name)) append(line.text);
+            for (const auto& line : applicationLines) if (incomplete.contains(line.name)) append(line.text);
+            out.block = std::move(merged);
+            out.source = RequestHeadersSource::merged;
         }
     } else out.block = application;
     stripFraming(out.block);

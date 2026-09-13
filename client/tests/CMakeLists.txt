@@ -8,6 +8,7 @@ add_executable(phpvpn-client-tests
     unit/test_config_files_win.cpp
     unit/test_config_store.cpp
     unit/test_wizard_ipc.cpp
+    unit/test_http_headers.cpp
     unit/test_http_diagnostic.cpp
     unit/test_wizard_document.cpp
     unit/test_wizard_model.cpp

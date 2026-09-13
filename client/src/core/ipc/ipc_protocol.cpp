@@ -1,3 +1,4 @@
+#include "core/protocol/http_headers.h"
 #include "core/ipc/ipc_protocol.h"
 
 #include <array>
@@ -269,8 +270,8 @@ std::string IpcProtocol::buildError(std::string_view requestId, const Error& err
     JsonObject payload;
     payload.emplace_back("code", JsonValue::makeString(error.name()));
     // Only the curated description travels over the pipe, never the internal
-    // detail, a system message or a path.
-    payload.emplace_back("description", JsonValue::makeString(errorCodeDescription(error.code)));
+    // detail, a system message or a path. Header validation has a closed safe grammar.
+    payload.emplace_back("description", JsonValue::makeString(httpHeadersErrorDescription(error)));
     payload.emplace_back("recoverable", JsonValue::makeBool(error.recoverable()));
 
     JsonObject members;

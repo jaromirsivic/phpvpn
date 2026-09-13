@@ -53,7 +53,7 @@ Result<WizardDocument> analyzeWizardDocument(std::string_view json) {
     PHPVPN_TRY_ASSIGN(document.dom, Json::parse(values->rawJson));
     document.fields.serverUrl = values->serverUrl.original;
     document.fields.serverSecret = values->serverSecret;
-    document.context = {values->vpnCidr, values->trustAnyTlsCertificate, values->runtime};
+    document.context = {values->vpnCidr, values->trustAnyTlsCertificate, values->runtime, values->httpHeaders};
     document.hasVirtualIp = values->virtualIp.has_value();
     document.hasAccessKey = values->accessKey.has_value();
     document.fields.useDefaultServerSecretInWizard = values->wizardPreferences.useDefaultServerSecretInWizard.value_or(values->serverSecret == kDefaultServerSecret);

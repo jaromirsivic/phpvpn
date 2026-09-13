@@ -1171,6 +1171,8 @@ void editorReset() {
     normalized.erase(std::remove(normalized.begin(), normalized.end(), '\r'), normalized.end());
     auto expected = makeDefaultEditorDocument();
     expected.erase(std::remove(expected.begin(), expected.end(), '\r'), expected.end());
+    // The editor's existing pretty presentation omits the file's final newline.
+    while (!expected.empty() && expected.back() == '\n') expected.pop_back();
     check(normalized == expected, "Editor did not load the common service template");
     check(SendMessageW(child(editor, IDC_TEXT_AREA), EM_GETMODIFY, 0, 0) != 0 && saves == 0, "Reset saved to disk or did not mark modified text");
     edit(editor, IDC_TEXT_AREA, L"preserved failed reset");

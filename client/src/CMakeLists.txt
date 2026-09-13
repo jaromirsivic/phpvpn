@@ -28,6 +28,7 @@ add_library(phpvpn-core STATIC
     core/ipc/ipc_protocol.cpp
     core/ipc/wizard_ipc.cpp
 
+    core/protocol/http_headers.cpp
     core/protocol/base64url.cpp
     core/protocol/data_record.cpp
     core/protocol/ipv4.cpp

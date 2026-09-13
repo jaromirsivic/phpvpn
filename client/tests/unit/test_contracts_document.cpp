@@ -22,6 +22,7 @@ PHPVPN_TEST(ContractsDocument, absent_present_empty_and_unchecked_removal) {
         PHPVPN_CHECK(model.resumeEditing(model.saveGeneration()));
         const auto peer = ip("10.99.99.10");
         PHPVPN_REQUIRE_OK(model.setEnabled(peer, true));
+        PHPVPN_REQUIRE_OK(model.setKey(peer, std::string(64, 'a')));
         auto enabled = model.prepareSave(envelopeSize);
         PHPVPN_REQUIRE_OK(enabled);
         contracts = enabled.value()->dom().find("communicationContracts");
@@ -66,6 +67,7 @@ PHPVPN_TEST(ContractsDocument, preserves_all_unrelated_values_types_and_optional
         auto created = ContractsModel::create(crypto, original);
         PHPVPN_REQUIRE_OK(created);
         PHPVPN_REQUIRE_OK(created.value()->setEnabled(ip("10.99.99.254"), true));
+        PHPVPN_REQUIRE_OK(created.value()->setKey(ip("10.99.99.254"), std::string(64, 'a')));
         auto candidate = created.value()->prepareSave(envelopeSize);
         PHPVPN_REQUIRE_OK(candidate);
         const auto& patched = candidate.value()->dom();
@@ -98,7 +100,7 @@ PHPVPN_TEST(ContractsDocument, complete_snapshot_rejects_omissions_duplicates_fo
     PHPVPN_REQUIRE_OK(parsed.value()->buildCandidate(bad, envelopeSize));
     bad[0].enabled = true;
     PHPVPN_REQUIRE_ERROR(parsed.value()->buildCandidate(bad, envelopeSize), ErrorCode::config_invalid_key);
-    const std::string over(kMaxContractKeyTextBytes, 'a');
+    const std::string over(kMaxContractKeyTextBytes + 1, 'a');
     bad = rows; bad[0].keyText = over;
     PHPVPN_REQUIRE_ERROR(parsed.value()->buildCandidate(bad, envelopeSize), ErrorCode::config_too_large);
     PHPVPN_CHECK_EQ(Json::serialize(parsed.value()->dom()), source);
@@ -137,6 +139,7 @@ PHPVPN_TEST(ContractsDocument, result_document_limit_and_actual_encoded_envelope
     PHPVPN_CHECK_EQ(exact.value()->text().size(), kMaxConfigFileBytes);
     PHPVPN_CHECK(m.resumeEditing(m.saveGeneration()));
     PHPVPN_REQUIRE_OK(m.setEnabled(m.rows().front().remoteIp(), true));
+    PHPVPN_REQUIRE_OK(m.setKey(m.rows().front().remoteIp(), std::string(64, 'a')));
     int called = 0;
     PHPVPN_REQUIRE_ERROR(m.prepareSave([&](std::string_view value) { ++called; return envelopeSize(value); }), ErrorCode::config_too_large);
     PHPVPN_CHECK_EQ(called, 0);

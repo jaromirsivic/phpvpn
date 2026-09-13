@@ -56,11 +56,11 @@ struct Registrar {
         }                                                                         \
     } while (false)
 
+// Compare within one full expression so dereferenced temporary optionals and
+// Result members remain alive until the comparison completes.
 #define PHPVPN_CHECK_EQ(actual, expected)                                         \
     do {                                                                          \
-        const auto& phpvpn_actual_ = (actual);                                    \
-        const auto& phpvpn_expected_ = (expected);                                \
-        if (!(phpvpn_actual_ == phpvpn_expected_)) {                              \
+        if (![](const auto& a, const auto& b) { return a == b; }((actual), (expected))) { \
             std::ostringstream phpvpn_stream_;                                    \
             phpvpn_stream_ << "expected " #actual " == " #expected;               \
             ::phpvpn::test::Registry::instance().reportFailure(                    \
@@ -70,9 +70,7 @@ struct Registrar {
 
 #define PHPVPN_CHECK_NE(actual, expected)                                         \
     do {                                                                          \
-        const auto& phpvpn_actual_ = (actual);                                    \
-        const auto& phpvpn_expected_ = (expected);                                \
-        if (phpvpn_actual_ == phpvpn_expected_) {                                 \
+        if ([](const auto& a, const auto& b) { return a == b; }((actual), (expected))) { \
             ::phpvpn::test::Registry::instance().reportFailure(                    \
                 __FILE__, __LINE__, "expected " #actual " != " #expected);        \
         }                                                                         \

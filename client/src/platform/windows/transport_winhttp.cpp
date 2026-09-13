@@ -1,3 +1,4 @@
+#include "core/protocol/http_headers.h"
 // Asynchronous WinHTTP. Only post() invokes request APIs or closes the handle.
 // Callbacks signal completion and account bytes. Cancellation only signals the
 // owner, which waits for HANDLE_CLOSING before releasing callback state/buffers.
@@ -125,8 +126,10 @@ public:
         if (settings.responseTimeoutSeconds < 1 || settings.responseTimeoutSeconds > kMaxHttpTimeoutSeconds || settings.maxResponseBodyBytes < 1)
             return Error(ErrorCode::config_invalid_limit);
         PHPVPN_TRY_ASSIGN(url_, parseServerUrl(settings.serverUrl));
+        PHPVPN_TRY_ASSIGN(normalizedHeaders_, normalizeHttpHeaders(settings.httpHeaders));
+        if (widen(normalizedHeaders_).empty()) return Error(ErrorCode::config_encoding_error);
         settings_ = settings;
-        session_.reset(WinHttpOpen(L"PHPVPN/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+        session_.reset(WinHttpOpen(nullptr, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
                                   WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC));
         if (!session_.value) return Error(ErrorCode::transport_unavailable);
         const int timeout = static_cast<int>(settings.responseTimeoutSeconds * 1000);
@@ -253,7 +256,11 @@ private:
                 SECURITY_FLAG_IGNORE_CERT_CN_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
             if (!WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &flags, sizeof(flags))) return Error(ErrorCode::transport_tls_failed);
         }
-        const auto headers = std::wstring(L"Content-Type: ") + widen(httpActionContentType(action)) + L"\r\n";
+        const auto applicationHeaders = buildApplicationRequestHeaders(httpActionContentType(action), normalizedHeaders_);
+        // WinHTTP encodes Unicode header values as UTF-8 on the wire. Decode the
+        // configured UTF-8 once, never widen its individual octets or use ACP.
+        const auto headers = widen(applicationHeaders);
+        if (headers.empty()) return Error(ErrorCode::config_encoding_error);
         {
             std::lock_guard lock(state.mutex);
             if (state.cancelled) return Error(ErrorCode::cancelled);
@@ -270,7 +277,7 @@ private:
             auto& diagnostic = *state.diagnostic;
             diagnostic.action = action;
             auto rawRequest = queryHeaderText(request, WINHTTP_QUERY_RAW_HEADERS_CRLF | WINHTTP_QUERY_FLAG_REQUEST_HEADERS);
-            const auto requestHeaders = reconstructDiagnosticRequestHeaders(std::move(rawRequest), narrow(headers));
+            const auto requestHeaders = reconstructDiagnosticRequestHeaders(std::move(rawRequest), applicationHeaders);
             diagnostic.requestHeadersSource = requestHeaders.source;
             const auto schemeEnd = url_.original.find("://") + 3;
             const auto authorityEnd = url_.original.find('/', schemeEnd);
@@ -382,6 +389,7 @@ private:
     std::atomic<std::uint64_t> cancellationEpoch_{0};
     ServerUrl url_;
     TransportSettings settings_;
+    std::string normalizedHeaders_;
 };
 }
 Result<std::unique_ptr<Transport>> createPlatformTransport() { return std::unique_ptr<Transport>(new WinHttpTransport); }

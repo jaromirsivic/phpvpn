@@ -22,8 +22,14 @@ Status ProbeClient::prepare(const WizardContext& context, const WizardFields& fi
     if (!isStrictUtf8(fields.serverSecret)) return Error(ErrorCode::config_encoding_error);
     secret_ = normalizeServerSecret(fields.serverSecret);
     bodyLimit_ = context.runtime.maxResponseBodyBytes;
-    return transport_.configure({fields.serverUrl, context.trustAnyTlsCertificate,
-        context.runtime.responseTimeoutSeconds, bodyLimit_, captureDiagnostics_});
+    TransportSettings settings;
+    settings.serverUrl = fields.serverUrl;
+    settings.trustAnyTlsCertificate = context.trustAnyTlsCertificate;
+    settings.responseTimeoutSeconds = context.runtime.responseTimeoutSeconds;
+    settings.maxResponseBodyBytes = bodyLimit_;
+    settings.captureWizardHttpDiagnostics = captureDiagnostics_;
+    settings.httpHeaders = context.httpHeaders;
+    return transport_.configure(settings);
 }
 Result<HttpResponse> ProbeClient::post(HttpAction action, std::string_view body) {
     clearExchange();

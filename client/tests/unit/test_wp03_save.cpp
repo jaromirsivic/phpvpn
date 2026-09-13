@@ -132,3 +132,36 @@ PHPVPN_TEST(WP03Save, TwentyFourAbandonedWorkersOutliveReadersWithoutLateNotific
     std::cout << "24 abandoned Save workers, worst abandon " << worst << " ms\n";
     PHPVPN_CHECK(worst < 100);
 }
+
+#include "core/protocol/http_headers.h"
+#include "core/ipc/wizard_ipc.h"
+PHPVPN_TEST(WP03Save, HttpHeadersErrorsExposeOnlyCuratedValidationDetails) {
+    const SaveOperation op{1, 2, 3, 100};
+    for (const auto headers : {"Host: secret-marker", "X: first\nx: secret-marker", "X: secret-marker\n\nbody", ""}) {
+        auto checked = normalizeHttpHeaders(headers);
+        PHPVPN_CHECK(!checked);
+        const auto envelope = IpcProtocol::buildError(id, checked.error());
+        const auto parsed = Json::parse(envelope).value();
+        const auto& description = parsed.find("error")->find("description")->stringValue();
+        PHPVPN_CHECK(description.find("masterSetup.httpHeaders line ") != std::string::npos);
+        PHPVPN_CHECK(description.find("secret-marker") == std::string::npos);
+        auto classified = classifySaveResponse(op, id, envelope, true, 99);
+        PHPVPN_CHECK_EQ(classified.outcome, SaveOutcome::rejected);
+        PHPVPN_CHECK_EQ(classified.validationDescription, description);
+        const auto wizard = WizardIpc::safeError(checked.error());
+        PHPVPN_CHECK_EQ(wizard.description, description);
+        PHPVPN_REQUIRE_OK(WizardIpc::parseError(*Json::parse(WizardIpc::buildError(id, wizard))->find("error")));
+    }
+    for (const auto unsafe : {"secret-marker", "masterSetup.httpHeaders line 0: invalid field name",
+         "masterSetup.httpHeaders line 2: Host: secret-marker is managed by the application or transport",
+         "masterSetup.httpHeaders line 2: invalid field name\nsecret-marker"}) {
+        PHPVPN_CHECK(!isHttpHeadersErrorDescription(unsafe));
+        auto envelope = Json::parse(IpcProtocol::buildError(id, Error(ErrorCode::config_invalid_value, unsafe))).value();
+        PHPVPN_CHECK_EQ(envelope.find("error")->find("description")->stringValue(), errorCodeDescription(ErrorCode::config_invalid_value));
+        for (auto& member : envelope.objectValue()) if (member.first == "error")
+            for (auto& field : member.second.objectValue()) if (field.first == "description") field.second = JsonValue::makeString(unsafe);
+        const auto untrusted = classifySaveResponse(op, id, Json::serialize(envelope), true, 99);
+        PHPVPN_CHECK_EQ(untrusted.outcome, SaveOutcome::unknown);
+        PHPVPN_CHECK(untrusted.validationDescription.empty());
+    }
+}

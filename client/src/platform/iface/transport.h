@@ -29,6 +29,7 @@ struct TransportSettings {
     std::int64_t responseTimeoutSeconds = 30;
     std::int64_t maxResponseBodyBytes = 67108864;
     bool captureWizardHttpDiagnostics = false;
+    std::string httpHeaders;
 };
 
 struct HttpResponse {

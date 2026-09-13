@@ -96,10 +96,12 @@ bool EditorWindow::finishSave(const SaveResult& result) {
         // A modal message pumps session-end and other generation changes.
         if (window_ && generation == generation_ && !endingSession_) DestroyWindow(window_);
     } else {
-        const auto text = unknown_ ? L"The file may already have changed. The save result is unknown. Close this editor and open Edit Config to inspect the current configuration. The save will not be retried automatically." :
+        std::wstring text = unknown_ ? L"The file may already have changed. The save result is unknown. Close this editor and open Edit Config to inspect the current configuration. The save will not be retried automatically." :
             result.outcome == SaveOutcome::notSent ? L"The save was not sent. Your text has been preserved." :
             L"The service rejected the configuration before publication. Your text has been preserved.";
-        showSystemMessage(window_, text, L"Edit Config", unknown_ ? SystemDialogIcon::warning : SystemDialogIcon::error);
+        if (result.outcome == SaveOutcome::rejected && !result.validationDescription.empty())
+            text += L"\n\n" + widen(result.validationDescription);
+        showSystemMessage(window_, text.c_str(), L"Edit Config", unknown_ ? SystemDialogIcon::warning : SystemDialogIcon::error);
         if (window_ && generation == generation_ && !endingSession_) SetFocus(field_);
     }
     return true;

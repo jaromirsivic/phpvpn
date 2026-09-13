@@ -62,9 +62,10 @@ Navržená struktura:
 ```json
 {
   "masterSetup": {
-    "serverUrl": "https://vpn.example.test/phpvpn.php",
-    "trustAnyTlsCertificate": true,
     "serverSecret": "server-shared-secret",
+    "serverUrl": "https://vpn.example.test/phpvpn.php",
+    "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
+    "trustAnyTlsCertificate": true,
     "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
     "accessKey": "64-znakový-malý-hex"
@@ -423,9 +424,10 @@ Vytvoření i Reset editoru používají jedinou továrnu `makeDefaultEditorDocu
 ```json
 {
   "masterSetup": {
-    "serverUrl": "http://127.0.0.1/phpvpn.php",
-    "trustAnyTlsCertificate": true,
     "serverSecret": "CHANGE_THIS_SERVER_SECRET",
+    "serverUrl": "http://127.0.0.1/phpvpn.php",
+    "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
+    "trustAnyTlsCertificate": true,
     "useDefaultServerSecretInWizard": true,
     "autoDetectIpAddressInWizard": true,
     "useDefaultAccessKeyInWizard": true,
@@ -622,7 +624,7 @@ Každý řádek uvádí další request pole nad povinnou trojicí. Relace je v�
 
 Při otevření create/reset konceptu nebo repair dokumentu jsou dosud chybějící IP či klíč v `fields` reprezentované prázdným stringem, nikoli falešně validní běhovou konfigurací. Odmítnutý původní dokument má fields/context null a neposkytne text přes tato pole. Výběr mode reset při odmítnutí obsahu sám Reset neprovádí, síť a Finish jsou zakázané do výslovného `wizard-reset`.
 
-`fields` obsahuje právě čtyři stringy `serverUrl`, `serverSecret`, `virtualIp`, `accessKey` a tři povinné booleany `useDefaultServerSecretInWizard`, `autoDetectIpAddressInWizard`, `useDefaultAccessKeyInWizard`. `context` obsahuje právě `vpnCidr` jako string, `trustAnyTlsCertificate` jako bool a osm kladných celočíselných členů `maxOutboundQueueBytes`, `maxInboundQueueBytes`, `minPerPeerQueueBytes`, `maxResponseBodyBytes`, `maxNdjsonLineBytes`, `maxDataRecordsPerResponse`, `responseTimeoutSeconds` a `timeSyncIntervalSeconds`. Služba je odvodí z vlastního originálu nebo resetovaného konceptu, nesmí věřit klientem podstrčenému TLS nebo CIDR. `contractCount` je nezáporné celé číslo. `availability` je právě jedna hodnota ConfigAvailability, `mode` jedna hodnota WizardMode, `vpnState` a `vpnPhase` používají původní výčty get-status. `connectionEpoch` je nezáporné 64bitové celé číslo. `createDefaultContracts` je bool. `reasonCode` je bezpečný string nebo null, `configPath` je absolutní string pevného úložiště. `revisionToken` je neprůhledný náhodný identifikátor revize v rámci instance služby, nikoli zveřejněný hash secretu ani očekávaná revize commitu.
+`fields` obsahuje právě čtyři stringy `serverUrl`, `serverSecret`, `virtualIp`, `accessKey` a tři povinné booleany `useDefaultServerSecretInWizard`, `autoDetectIpAddressInWizard`, `useDefaultAccessKeyInWizard`. `context` obsahuje právě `httpHeaders` a `vpnCidr` jako stringy, `trustAnyTlsCertificate` jako bool a osm kladných celočíselných členů `maxOutboundQueueBytes`, `maxInboundQueueBytes`, `minPerPeerQueueBytes`, `maxResponseBodyBytes`, `maxNdjsonLineBytes`, `maxDataRecordsPerResponse`, `responseTimeoutSeconds` a `timeSyncIntervalSeconds`. Služba je odvodí z vlastního originálu nebo resetovaného konceptu, nesmí věřit klientem podstrčenému TLS nebo CIDR. `contractCount` je nezáporné celé číslo. `availability` je právě jedna hodnota ConfigAvailability, `mode` jedna hodnota WizardMode, `vpnState` a `vpnPhase` používají původní výčty get-status. `connectionEpoch` je nezáporné 64bitové celé číslo. `createDefaultContracts` je bool. `reasonCode` je bezpečný string nebo null, `configPath` je absolutní string pevného úložiště. `revisionToken` je neprůhledný náhodný identifikátor revize v rámci instance služby, nikoli zveřejněný hash secretu ani očekávaná revize commitu.
 
 `existingDefaultContractPeers` je povinné pole nejvýše 14 kanonických, unikátních a číselně seřazených kandidátních IPv4 stringů z původního session DOM. Počet nesmí překročit `contractCount`, který zahrnuje všechny původní kontrakty. Mimo podporovaný CIDR je pole prázdné. Při fields/context null musí být pole prázdné a počet nula, stejně jako u create/reset konceptu bez kontraktů. Finish nepřijímá klientem tvrzené počty ani tento seznam. Sedmipoložkové fields tvoří access evidence i commit fingerprint. True default secret/key musí souhlasit s konkrétní hodnotou, true auto IP s návrhem uloženým službou při poslední platné secret kontrole. Změna kteréhokoli příznaku vyžaduje nový access důkaz. Stejný commitId s jinými fields je odmítnut, totožný receipt neopakuje zápis.
 
@@ -1123,3 +1125,13 @@ Současné Windows jádro, WinHTTP/CNG adaptéry, tři VPN role, fronty, agregov
 3. Budoucí porty mohou doplnit Linux TUN a macOS Network Extension a potřebné transportní, kryptografické a systémové adaptéry. Jejich návrh v platformních částech není tvrzením o dodaném portu ani ověřené distribuci.
 
 Agregovaný payload není kompatibilní se starším pravidlem jednoho IPv4 paketu v ciphertextu. Kompatibilní klienti a server musí používat shodný formát podle [protocol.md](protocol.md).
+
+## HTTP hlavičky konfigurace
+
+`masterSetup.httpHeaders` je povinný string s alespoň jedním řádkem `název: hodnota`. JSON escapuje oddělovače jako `\r\n` nebo `\n`, transport je normalizuje na CRLF. Jeden koncový oddělovač je povolený. Prázdné řádky, samotné CR, neplatné názvy, řídicí znaky a vložené request/status řádky jsou odmítnuté.
+
+Názvy `Content-Type`, `Content-Length`, `Connection`, `Host` a `Transfer-Encoding` patří aplikaci nebo transportu a jsou zakázané bez ohledu na velikost písmen. Chyba uvádí cestu, číslo řádku a zakázaný název, nikdy jeho hodnotu. Odmítnutý dokument se neuloží a aktivní konfigurace zůstane zachovaná. Starý soubor bez `httpHeaders` se automaticky nemigruje ani nepřepisuje. User-Agent pochází pouze z tohoto bloku, při jeho odebrání musí zůstat alespoň jedna jiná hlavička. UTF-8 hodnoty se převádějí do WinHTTP jako Unicode, bez systémové code page.
+
+Každý uživatelský název smí být v bloku nejvýše jednou. Druhý výskyt stejného názvu, včetně jiné velikosti písmen, odmítne celý dokument s číslem řádku a názvem, bez hodnoty. Odesílací cesta nic nededuplicuje, nefiltruje ani neslučuje.
+
+IPC a editor přenášejí pro tuto validaci pouze předem vymezené popisy chyby s cestou položky, číslem řádku a případně názvem hlavičky. Ostatní interní detaily chyb se nadále nahrazují pevným bezpečným popisem.

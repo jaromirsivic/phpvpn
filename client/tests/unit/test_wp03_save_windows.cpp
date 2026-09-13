@@ -60,7 +60,9 @@ struct Backend {
     std::wstring suffix = widen(createPlatformCryptoProvider().value()->randomUuidV4().value());
     std::wstring pipe = L"\\\\.\\pipe\\phpvpn-wp03-lifecycle-" + suffix;
     std::atomic<unsigned> saves{0}, resets{0}, reads{0}, unexpected{0}, statuses{0};
-    bool holdSave = false, holdReset = false, invalid = false;
+    bool holdSave = false, holdReset = false, invalid = false, persist = false;
+    std::string storedDocument = makeDefaultEditorDocument();
+    std::string document() { std::lock_guard lock(mutex); return storedDocument; }
     std::mutex mutex;
     std::condition_variable condition;
     bool released = false, resetReleased = false;
@@ -84,6 +86,12 @@ struct Backend {
     std::string reply(std::string_view bytes) {
         if (const auto request = IpcProtocol::parseRequest(bytes)) {
             if (request->command == IpcCommand::set_config) {
+                if (persist) {
+                    ConfigWarnings warnings;
+                    auto config = parseAndValidateConfig(request->config, warnings);
+                    if (!config) { ++saves; return IpcProtocol::buildError(request->requestId, config.error()); }
+                    std::lock_guard lock(mutex); storedDocument = request->config;
+                }
                 ++saves; if (holdSave) wait();
                 return invalid ? "{}" : IpcProtocol::buildAcknowledgement(request->requestId);
             }
@@ -101,7 +109,7 @@ struct Backend {
                     {"configPath", JsonValue::makeString("Z:\\synthetic\\config.json")},
                     {"availability", JsonValue::makeString("valid")}, {"reasonCode", JsonValue::makeNull()},
                     {"revisionToken", JsonValue::makeString("fixture")},
-                    {"document", JsonValue::makeString(makeDefaultEditorDocument())}}));
+                    {"document", JsonValue::makeString(document())}}));
             }
             if (request->command == WizardCommand::get_default_config) {
                 ++resets; if (holdReset) wait(true);
@@ -293,4 +301,76 @@ PHPVPN_TEST(WP03SaveWindows, TwentyFourCreateSaveResetEndSessionDestroyCycles) {
     }
     std::cout << "24 Editor/Save/Reset end-session + destroy cycles, worst " << worst << " ms\n";
     PHPVPN_CHECK(worst < 100);
+}
+
+PHPVPN_TEST(WP03SaveWindows, HttpHeadersEditorSaveReloadAndReset) {
+    Backend backend;
+    backend.persist = true;
+    auto dom = Json::parse(makeDefaultEditorDocument()).value();
+    auto& master = dialogs::member(dom, "masterSetup");
+    const std::string headers = "X-Editor: first\nX-Trace: second\nX-Quote: \"a\\b\"\nX-Utf8: \xc5\xbe";
+    dialogs::member(master, "httpHeaders") = JsonValue::makeString(headers);
+    std::reverse(master.objectValue().begin(), master.objectValue().end());
+    backend.storedDocument = Json::serialize(dom);
+    auto app = backend.app();
+    auto field = GetDlgItem(editorWindow(), IDC_TEXT_AREA);
+    auto shown = Json::parse(narrow(text(field)));
+    PHPVPN_REQUIRE_OK(shown);
+    PHPVPN_CHECK_EQ(Json::serialize(*shown->find("masterSetup")), Json::serialize(master));
+    const std::string changed = headers + "\nX-Edited: saved";
+    dialogs::member(master, "httpHeaders") = JsonValue::makeString(changed);
+    const auto input = widen(Json::serialize(dom));
+    SendMessageW(field, EM_SETSEL, 0, -1);
+    SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(input.c_str()));
+    SendMessageW(editorWindow(), WM_COMMAND, MAKEWPARAM(IDC_TEXT_AREA, EN_CHANGE), reinterpret_cast<LPARAM>(field));
+    dialogs::answer(IDOK, [&] {
+        SendMessageW(editorWindow(), WM_COMMAND, IDC_SAVE, 0);
+        PHPVPN_CHECK(until([&] { return !app->editorLifecycleSnapshot().open; }, 5000));
+    });
+    PHPVPN_CHECK_EQ(backend.saves.load(), 1u);
+    auto saved = Json::parse(backend.document());
+    PHPVPN_REQUIRE_OK(saved);
+    PHPVPN_CHECK_EQ(Json::serialize(*saved->find("masterSetup")), Json::serialize(master));
+    SendMessageW(app->window(), WM_COMMAND, IDM_EDIT_CONFIG, 0);
+    PHPVPN_CHECK(until([&] { return app->editorLifecycleSnapshot().open; }));
+    field = GetDlgItem(editorWindow(), IDC_TEXT_AREA);
+    auto reopened = Json::parse(narrow(text(field)));
+    PHPVPN_REQUIRE_OK(reopened);
+    PHPVPN_CHECK_EQ(reopened->find("masterSetup")->find("httpHeaders")->stringValue(), changed);
+    dialogs::answer(IDYES, [&] { SendMessageW(editorWindow(), WM_COMMAND, 304, 0); });
+    PHPVPN_CHECK(until([&] {
+        auto current = Json::parse(narrow(text(field)));
+        return current && current->find("masterSetup")->find("httpHeaders")->stringValue() == kDefaultHttpHeaders;
+    }, 5000));
+    auto reset = Json::parse(narrow(text(field)));
+    PHPVPN_REQUIRE_OK(reset);
+    PHPVPN_CHECK_EQ(reset->find("masterSetup")->find("httpHeaders")->stringValue(), kDefaultHttpHeaders);
+    PHPVPN_CHECK_EQ(backend.saves.load(), 1u);
+    PHPVPN_CHECK(app->approvedDiscardEditor(app->editorLifecycleSnapshot()));
+}
+
+PHPVPN_TEST(WP03SaveWindows, HttpHeadersRejectedSaveReportsNameAndLineWithoutValue) {
+    Backend backend;
+    backend.persist = true;
+    auto app = backend.app();
+    const auto original = backend.document();
+    auto dom = Json::parse(original).value();
+    dialogs::member(dialogs::member(dom, "masterSetup"), "httpHeaders") = JsonValue::makeString("X-Test: first\nx-test: secret-marker");
+    const auto field = GetDlgItem(editorWindow(), IDC_TEXT_AREA);
+    const auto input = widen(Json::serialize(dom));
+    SendMessageW(field, EM_SETSEL, 0, -1);
+    SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(input.c_str()));
+    dialogs::dialogTexts.clear();
+    dialogs::answer(IDOK, [&] {
+        SendMessageW(editorWindow(), WM_COMMAND, IDC_SAVE, 0);
+        PHPVPN_CHECK(until([&] { return !app->editorLifecycleSnapshot().saving; }, 5000));
+    });
+    PHPVPN_CHECK_EQ(backend.document(), original);
+    PHPVPN_CHECK(app->editorLifecycleSnapshot().open && app->editorLifecycleSnapshot().dirty);
+    PHPVPN_CHECK(!app->editorLifecycleSnapshot().unknown);
+    PHPVPN_CHECK(std::any_of(dialogs::dialogTexts.begin(), dialogs::dialogTexts.end(), [](const auto& text) {
+        return text.find(L"masterSetup.httpHeaders line 2: x-test") != std::wstring::npos;
+    }));
+    for (const auto& text : dialogs::dialogTexts) PHPVPN_CHECK(text.find(L"secret-marker") == std::wstring::npos);
+    PHPVPN_CHECK(app->approvedDiscardEditor(app->editorLifecycleSnapshot()));
 }

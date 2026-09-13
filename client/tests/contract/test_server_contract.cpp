@@ -99,7 +99,7 @@ ClientConfigPtr runtimeConfig(unsigned own, unsigned peer) {
     const std::string ip = "10.99.99." + std::to_string(own);
     const auto json = JsonValue::makeObject({
         {"masterSetup", JsonValue::makeObject({
-            {"serverUrl", string(relayUrl())}, {"serverSecret", string(std::string(kDefaultServerSecret))},
+            {"httpHeaders", string(kDefaultHttpHeaders)}, {"serverUrl", string(relayUrl())}, {"serverSecret", string(std::string(kDefaultServerSecret))},
             {"vpnCidr", string("10.99.99.0/24")}, {"virtualIp", string(ip)},
             {"accessKey", string(defaultAccessKey(ip))}
         })},

@@ -32,12 +32,15 @@ inline constexpr std::int64_t kDefaultMaxDataRecordsPerResponse = 65535;
 inline constexpr std::int64_t kDefaultResponseTimeoutSeconds = 30;
 inline constexpr std::int64_t kDefaultTimeSyncIntervalSeconds = 300;
 
+inline constexpr char kDefaultHttpHeaders[] = "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0";
+
 // Shared complete template for service startup and explicit editor creation/reset.
 inline constexpr std::string_view kDefaultConfigDocument = R"json({
   "masterSetup": {
-    "serverUrl": "http://127.0.0.1/phpvpn.php",
-    "trustAnyTlsCertificate": true,
     "serverSecret": "CHANGE_THIS_SERVER_SECRET",
+    "serverUrl": "http://127.0.0.1/phpvpn.php",
+    "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
+    "trustAnyTlsCertificate": true,
     "useDefaultServerSecretInWizard": true,
     "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
@@ -106,6 +109,7 @@ public:
 
     // Increases with every successful `set-config`, plan_client.md decision 9.
     std::uint64_t generation = 0;
+    std::string httpHeaders;
 };
 
 using ClientConfigPtr = std::shared_ptr<const ClientConfig>;

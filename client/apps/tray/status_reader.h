@@ -40,6 +40,7 @@ struct SaveResult {
     SaveOperation operation;
     SaveOutcome outcome = SaveOutcome::unknown;
     ErrorCode error = ErrorCode::response_invalid;
+    std::string validationDescription;
 };
 // Strict local consumer of the existing acknowledgement/error envelope.
 SaveResult classifySaveResponse(const SaveOperation& operation, std::string_view requestId,

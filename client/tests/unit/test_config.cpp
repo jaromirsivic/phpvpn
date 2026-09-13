@@ -18,7 +18,7 @@ constexpr const char* kPayloadKey =
 std::string documentWith(const std::string& masterExtras,
                          const std::string& runtime = std::string(),
                          const std::string& contracts = std::string()) {
-    std::string text = R"({"masterSetup":{"serverUrl":"https://relay.example/vpn.php",)";
+    std::string text = R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://relay.example/vpn.php",)";
     text += masterExtras;
     text += R"("serverSecret":"a-long-and-unpredictable-secret","vpnCidr":"10.99.99.0/24",)";
     text += R"("virtualIp":"10.99.99.2","accessKey":")";
@@ -85,7 +85,7 @@ PHPVPN_TEST(config, reports_the_accepted_risks_as_warnings) {
     PHPVPN_CHECK(!warnings.messages().empty());
 
     const std::string plain =
-        R"({"masterSetup":{"serverUrl":"http://relay.example/vpn.php","serverSecret":"0000",)"
+        R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"http://relay.example/vpn.php","serverSecret":"0000",)"
         R"("virtualIp":"10.99.99.2","accessKey":")" +
         std::string(kAccessKey) + R"("}})";
     ConfigWarnings plainWarnings;
@@ -99,19 +99,19 @@ PHPVPN_TEST(config, rejects_an_unknown_or_duplicate_member) {
     ConfigWarnings warnings;
 
     const std::string unknownTop =
-        std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s",)"
+        std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverSecret":"s",)"
                     R"("virtualIp":"10.99.99.2","accessKey":")") +
         kAccessKey + R"("},"unexpected":1})";
     PHPVPN_CHECK(!parseAndValidateConfig(unknownTop, warnings).ok());
 
     const std::string unknownMaster =
-        std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s",)"
+        std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverSecret":"s",)"
                     R"("virtualIp":"10.99.99.2","accessKey":")") +
         kAccessKey + R"(","extra":true}})";
     PHPVPN_CHECK(!parseAndValidateConfig(unknownMaster, warnings).ok());
 
     const std::string duplicate =
-        std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverUrl":"https://a/c",)"
+        std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverUrl":"https://a/c",)"
                     R"("serverSecret":"s","virtualIp":"10.99.99.2","accessKey":")") +
         kAccessKey + R"("}})";
     PHPVPN_CHECK(!parseAndValidateConfig(duplicate, warnings).ok());
@@ -133,7 +133,7 @@ PHPVPN_TEST(config, rejects_a_malformed_server_url) {
 
     for (const char* url : invalid) {
         const std::string document =
-            std::string(R"({"masterSetup":{"serverUrl":")") + url +
+            std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":")") + url +
             R"(","serverSecret":"s","virtualIp":"10.99.99.2","accessKey":")" + kAccessKey +
             R"("}})";
         PHPVPN_CHECK(!parseAndValidateConfig(document, warnings).ok());
@@ -162,7 +162,7 @@ PHPVPN_TEST(config, rejects_an_invalid_virtual_address) {
 
     for (const char* address : invalid) {
         const std::string document =
-            std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s",)"
+            std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverSecret":"s",)"
                         R"("vpnCidr":"10.99.99.0/24","virtualIp":")") +
             address + R"(","accessKey":")" + kAccessKey + R"("}})";
         PHPVPN_CHECK(!parseAndValidateConfig(document, warnings).ok());
@@ -180,7 +180,7 @@ PHPVPN_TEST(config, rejects_a_key_that_is_not_64_lowercase_hex_characters) {
 
     for (const char* key : invalid) {
         const std::string document =
-            std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s",)"
+            std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverSecret":"s",)"
                         R"("virtualIp":"10.99.99.2","accessKey":")") +
             key + R"("}})";
         PHPVPN_CHECK(!parseAndValidateConfig(document, warnings).ok());
@@ -295,7 +295,7 @@ PHPVPN_TEST(config, rejects_an_invalid_prefix_length) {
 
     for (const char* cidr : invalid) {
         const std::string document =
-            std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s",)"
+            std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverSecret":"s",)"
                         R"("vpnCidr":")") +
             cidr + R"(","virtualIp":"10.99.99.2","accessKey":")" + kAccessKey + R"("}})";
         PHPVPN_CHECK(!parseAndValidateConfig(document, warnings).ok());
@@ -307,7 +307,7 @@ PHPVPN_TEST(config, cidr_range_is_global_in_full_and_every_repair_mode) {
     // turn an unsupported prefix into a repairable document.
     for (int prefix = 0; prefix <= 33; ++prefix) {
         for (unsigned missing = 0; missing < 4; ++missing) {
-            const auto document = std::string(R"({"masterSetup":{"serverUrl":"https://a/b","serverSecret":"s","vpnCidr":"0.0.0.0/)") +
+            const auto document = std::string(R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://a/b","serverSecret":"s","vpnCidr":"0.0.0.0/)") +
                 std::to_string(prefix) + "\"" +
                 ((missing & 1) ? "" : R"(,"virtualIp":"0.0.0.2")") +
                 ((missing & 2) ? "" : std::string(R"(,"accessKey":")") + kAccessKey + "\"") + "}}";

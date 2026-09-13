@@ -1,6 +1,8 @@
 #pragma once
 #include <windows.h>
 #include <commctrl.h>
+#include <oleacc.h>
+#pragma comment(lib, "oleacc.lib")
 #include <functional>
 #include <string>
 #include <vector>
@@ -8,6 +10,32 @@
 namespace phpvpn::tray::test {
 inline int dialogAnswer = IDOK;
 inline std::vector<std::wstring> dialogTexts;
+// TaskDialog content lives in DirectUI rather than native STATIC controls.
+inline void appendAccessibleText(IAccessible* object, std::wstring& text, unsigned depth = 0) {
+    if (!object || depth > 12) return;
+    VARIANT self{}; self.vt = VT_I4; self.lVal = CHILDID_SELF;
+    BSTR name = nullptr;
+    if (SUCCEEDED(object->get_accName(self, &name)) && name) { text.append(name, SysStringLen(name)); SysFreeString(name); }
+    long count = 0;
+    if (FAILED(object->get_accChildCount(&count)) || count <= 0 || count > 512) return;
+    std::vector<VARIANT> children(static_cast<std::size_t>(count));
+    long obtained = 0;
+    if (SUCCEEDED(AccessibleChildren(object, 0, count, children.data(), &obtained))) {
+        for (long i = 0; i < obtained; ++i) {
+            auto& child = children[static_cast<std::size_t>(i)];
+            if (child.vt == VT_DISPATCH && child.pdispVal) {
+                IAccessible* nested = nullptr;
+                if (SUCCEEDED(child.pdispVal->QueryInterface(IID_IAccessible, reinterpret_cast<void**>(&nested)))) {
+                    appendAccessibleText(nested, text, depth + 1); nested->Release();
+                }
+            } else if (child.vt == VT_I4) {
+                name = nullptr;
+                if (SUCCEEDED(object->get_accName(child, &name)) && name) { text.append(name, SysStringLen(name)); SysFreeString(name); }
+            }
+            VariantClear(&child);
+        }
+    }
+}
 inline void CALLBACK answerDialog(HWND, UINT, UINT_PTR, DWORD) {
     EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
         wchar_t type[64]{};
@@ -23,6 +51,11 @@ inline void CALLBACK answerDialog(HWND, UINT, UINT_PTR, DWORD) {
             *reinterpret_cast<std::wstring*>(p) += text;
             return TRUE;
         }, reinterpret_cast<LPARAM>(&content));
+        IAccessible* accessible = nullptr;
+        if (SUCCEEDED(AccessibleObjectFromWindow(window, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+            reinterpret_cast<void**>(&accessible)))) {
+            appendAccessibleText(accessible, content); accessible->Release();
+        }
         dialogTexts.push_back(std::move(content));
         // TaskDialog uses DirectUI controls whose native button ID is zero.
         // Its public message takes the logical IDOK/IDYES/IDNO button ID.

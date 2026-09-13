@@ -46,7 +46,7 @@ struct VpnEngineTestAccess {
     }
 };
 namespace {
-constexpr const char* kConfig = R"({"masterSetup":{"serverUrl":"https://runtime.invalid/secret-path","serverSecret":"runtime-fixture-secret","vpnCidr":"10.99.99.0/24","virtualIp":"10.99.99.2","accessKey":"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},"communicationContracts":{"10.99.99.3":{"payloadKey":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"}}})";
+constexpr const char* kConfig = R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://runtime.invalid/secret-path","serverSecret":"runtime-fixture-secret","vpnCidr":"10.99.99.0/24","virtualIp":"10.99.99.2","accessKey":"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},"communicationContracts":{"10.99.99.3":{"payloadKey":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"}}})";
 constexpr const char* kMessageId = "1f4d8c1a-3b2e-4a51-8c7d-9e0f1a2b3c4d";
 constexpr const char* kTimestamp = "2026-09-04T10:00:00.000Z";
 
@@ -164,6 +164,14 @@ public:
     bool swappedPayloadAad = false;
     std::vector<PacketBytes> incoming;
     bool captureDiagnostics = false;
+    struct HeaderObservation { HttpAction action; std::string headers; std::string request; };
+    std::mutex headerMutex;
+    std::string configuredHeaders;
+    std::vector<HeaderObservation> headerObservations;
+    std::vector<HeaderObservation> observedHeaders() {
+        std::lock_guard lock(headerMutex);
+        return headerObservations;
+    }
     bool suppressDiagnostic = false;
     std::atomic<int> diagnosticCalls{0};
     HttpExchangeResult postDiagnostic(HttpAction action, std::string_view request) override {
@@ -174,7 +182,12 @@ public:
         captureDiagnostics = previous;
         return result;
     }
-    Status configure(const TransportSettings& settings) override { captureDiagnostics = settings.captureWizardHttpDiagnostics; return ok(); }
+    Status configure(const TransportSettings& settings) override {
+        captureDiagnostics = settings.captureWizardHttpDiagnostics;
+        std::lock_guard lock(headerMutex);
+        configuredHeaders = settings.httpHeaders;
+        return ok();
+    }
     HttpExchangeResult capture(HttpAction action, std::string_view request, HttpExchangeResult result) {
         if (captureDiagnostics && !suppressDiagnostic && action != HttpAction::data && result.ok()) {
             HttpDiagnostic d; d.action = action; d.responseComplete = true;
@@ -187,6 +200,10 @@ public:
     }
     void cancelCurrentRequest() override { if (cancel) cancel(); }
     HttpExchangeResult post(HttpAction action, std::string_view request) override {
+        {
+            std::lock_guard lock(headerMutex);
+            headerObservations.push_back({action, configuredHeaders, std::string(request)});
+        }
         const int call = action == HttpAction::health ? ++healthCalls : action == HttpAction::info ? ++infoCalls : ++dataCalls;
         if (action == HttpAction::data) dataRequestBytes += request.size();
         if (hook) {
@@ -406,6 +423,7 @@ struct WizardServiceFixture {
     std::unique_ptr<WizardService> service;
     std::uint64_t sequence = 0;
     unsigned httpCalls = 0;
+    std::vector<ScriptedTransport::HeaderObservation> probeHeaders;
     std::function<void(ScriptedTransport&)> configureProbe;
     bool platformProbe = false;
     WizardRequest request;
@@ -422,7 +440,11 @@ struct WizardServiceFixture {
         scheduler.transport = [&]() -> Result<std::unique_ptr<Transport>> {
             if (platformProbe) return createPlatformTransport();
             auto transport = std::make_unique<ScriptedTransport>(*runtime.crypto.actual, relayConfig);
-            transport->hook = [&](HttpAction, std::string_view, int) -> std::optional<HttpExchangeResult> { ++httpCalls; return {}; };
+            transport->hook = [&, observed = transport.get()](HttpAction, std::string_view, int) -> std::optional<HttpExchangeResult> {
+                ++httpCalls;
+                probeHeaders.push_back(observed->observedHeaders().back());
+                return {};
+            };
             if (configureProbe) configureProbe(*transport);
             return std::unique_ptr<Transport>(std::move(transport));
         };
@@ -1190,7 +1212,7 @@ void runNativeHttpDiagnosticIntegration(bool external) {
         if (scenario.starts_with("size")) {
             targetSize = std::stoull(scenario.substr(4));
             setMode("body65000");
-            auto transport = createPlatformTransport().value(); TransportSettings settings;
+            auto transport = createPlatformTransport().value(); TransportSettings settings; settings.httpHeaders = "X-Test: fixture";
             settings.serverUrl = narrowUrl; settings.captureWizardHttpDiagnostics = true;
             PHPVPN_REQUIRE_OK(transport->configure(settings));
             const auto calibrated = transport->post(HttpAction::health, "{}");
@@ -1542,6 +1564,7 @@ PHPVPN_TEST(runtime, recovery_retains_accepted_config_after_save_and_external_de
     PHPVPN_CHECK(data.await());
     // Scripted relay still authenticates with the original secret and key.
     PHPVPN_CHECK(fixture.engine.status().state == ConnectionState::connected);
+    for (const auto& request : fixture.transport.observedHeaders()) PHPVPN_CHECK_EQ(request.headers, "X-Test: fixture");
     const auto reads = fixture.files->reads;
     PHPVPN_REQUIRE_OK(fixture.engine.connect());
     PHPVPN_CHECK_EQ(fixture.files->reads, reads);
@@ -2256,3 +2279,117 @@ PHPVPN_TEST(wizard_service, fix2_all_preferences_persist_through_verified_finish
     }
 }
 }  // namespace phpvpn
+
+namespace phpvpn {
+PHPVPN_TEST(runtime_http_headers, worker_three_actions_authenticated_time_refresh_and_reconfigure) {
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    NetworkWorker worker(crypto, transport, clock);
+    auto dom = Json::parse(kConfig).value();
+    const std::string custom = "X-Runtime: own\nX-Trace: second";
+    for (auto& section : dom.objectValue()) if (section.first == "masterSetup")
+        for (auto& item : section.second.objectValue()) if (item.first == "httpHeaders") item.second = JsonValue::makeString(custom);
+    ConfigWarnings warnings;
+    auto config = parseAndValidateConfig(Json::serialize(dom), warnings).value();
+    PHPVPN_REQUIRE_OK(worker.configure(config));
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    PHPVPN_CHECK(worker.timeSync().hasSnapshot());
+    PHPVPN_CHECK_EQ(worker.timeSync().snapshot()->authenticatedServerTimestampMs, *Iso8601::parse(kTimestamp));
+    clock.now = 2500;
+    PHPVPN_REQUIRE_OK(worker.performInfo());
+    DirectionQueues incoming(10000, 0, 1), outgoing(10000, 0, 1);
+    DropCounters inDrops, outDrops;
+    PHPVPN_REQUIRE_OK(worker.verifyAccessKey(incoming, inDrops));
+    PHPVPN_REQUIRE_OK(worker.exchangeData(outgoing, incoming, outDrops, inDrops, true));
+    const auto observations = transport.observedHeaders();
+    PHPVPN_CHECK_EQ(observations.size(), 4u);
+    for (const auto& request : observations) {
+        PHPVPN_CHECK_EQ(request.headers, custom);
+        if (request.action != HttpAction::health) {
+            const auto auth = Json::parse(request.request.substr(0, request.request.find('\n'))).value();
+            PHPVPN_CHECK_EQ(*Iso8601::parse(auth.find("timestamp")->stringValue()), *Iso8601::parse(kTimestamp) + 1500);
+        }
+    }
+    clock.now = 300000;
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    PHPVPN_CHECK_EQ(worker.timeSync().snapshot()->synchronisedAtMonoMs, 300000);
+    transport.badHealthTag = true;
+    clock.now = 310000;
+    PHPVPN_CHECK(!worker.performHealth());
+    PHPVPN_CHECK_EQ(worker.timeSync().snapshot()->synchronisedAtMonoMs, 300000);
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig()));
+    PHPVPN_CHECK(!worker.timeSync().hasSnapshot());
+    PHPVPN_CHECK(!worker.performHealth());
+    PHPVPN_CHECK(!worker.timeSync().hasSnapshot());
+    transport.badHealthTag = false;
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    const auto final = transport.observedHeaders();
+    PHPVPN_CHECK_EQ(final.back().headers, "X-Test: fixture");
+}
+PHPVPN_TEST(probe_http_headers, all_direct_and_service_checks_use_original_context) {
+    for (bool diagnostics : {false, true}) {
+        ObservedCrypto crypto;
+        ScriptedTransport transport(*crypto.actual);
+        TestClock clock;
+        auto document = analyzeWizardDocument(kConfig).value();
+        document.context.httpHeaders = "X-Probe: own\nX-Trace: second";
+        ProbeClient probe(crypto, transport, clock);
+        probe.captureWizardHttpDiagnostics(diagnostics);
+        PHPVPN_REQUIRE_OK(probe.checkUrl(document.context, document.fields));
+        PHPVPN_REQUIRE_OK(probe.checkSecret(document.context, document.fields));
+        PHPVPN_REQUIRE_OK(probe.checkAccess(document, document.fields));
+        const auto observations = transport.observedHeaders();
+        PHPVPN_CHECK_EQ(observations.size(), 6u);
+        for (const auto& request : observations) PHPVPN_CHECK_EQ(request.headers, document.context.httpHeaders);
+        PHPVPN_CHECK_EQ(observations.back().action, HttpAction::data);
+    }
+    WizardServiceFixture fixture;
+    fixture.allChecks();
+    PHPVPN_CHECK_EQ(fixture.probeHeaders.size(), 6u);
+    for (const auto& request : fixture.probeHeaders) PHPVPN_CHECK_EQ(request.headers, "X-Test: fixture");
+    // An independently saved file cannot replace the opened wizard's context.
+    PHPVPN_REQUIRE_OK(fixture.runtime.store.save(makeDefaultEditorDocument(), fixture.request.requestId));
+    fixture.check(WizardCommand::check_url);
+    PHPVPN_CHECK_EQ(fixture.probeHeaders.back().headers, "X-Test: fixture");
+}
+}
+
+namespace phpvpn {
+PHPVPN_TEST(runtime_http_headers, invalid_save_keeps_active_config_and_new_connect_uses_new_headers) {
+    EngineFixture fixture;
+    Gate polling;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && call == 2) polling.block();
+        return {};
+    };
+    fixture.transport.cancel = [&] { polling.release(); };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(polling.await());
+    const auto original = *fixture.files->bytes;
+    const auto writes = fixture.files->writes;
+    auto dom = Json::parse(original).value();
+    auto setHeaders = [&](const std::string& headers) {
+        for (auto& section : dom.objectValue()) if (section.first == "masterSetup")
+            for (auto& item : section.second.objectValue()) if (item.first == "httpHeaders") item.second = JsonValue::makeString(headers);
+    };
+    setHeaders("X: permitted\nHOST: forbidden");
+    PHPVPN_REQUIRE_ERROR(fixture.engine.setConfigJson(Json::serialize(dom)), ErrorCode::config_invalid_value);
+    PHPVPN_CHECK_EQ(*fixture.files->bytes, original);
+    PHPVPN_CHECK_EQ(fixture.files->writes, writes);
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::connected);
+    setHeaders("X-New: next-connection");
+    PHPVPN_REQUIRE_OK(fixture.engine.setConfigJson(Json::serialize(dom)));
+    for (const auto& request : fixture.transport.observedHeaders()) PHPVPN_CHECK_EQ(request.headers, "X-Test: fixture");
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
+    fixture.transport.hook = {};
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::connected; }));
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
+    const auto observations = fixture.transport.observedHeaders();
+    PHPVPN_CHECK_EQ(observations.back().headers, "X-New: next-connection");
+}
+}

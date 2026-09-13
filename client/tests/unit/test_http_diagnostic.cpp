@@ -90,3 +90,28 @@ PHPVPN_TEST(http_diagnostic, octets_and_safe_unicode_are_deterministic) {
     PHPVPN_CHECK_EQ(diagnosticSizeKiB((std::numeric_limits<std::uint64_t>::max)()), "18014398509481984.00");
 }
 }
+
+namespace phpvpn {
+PHPVPN_TEST(http_diagnostic, reconstructs_entire_incomplete_duplicate_groups_without_claiming_raw) {
+    const std::string application = "Content-Type: application/json\r\nX: first\r\nx: second\r\nX: first\r\nY: \t own \t";
+    for (const std::string raw : {"Host: relay\r\nX: first", "Host: relay\r\nX: first\r\nx: second",
+         "Host: relay\r\nX: first, second, first", "Host: relay\r\nX: changed"}) {
+        const auto result = reconstructDiagnosticRequestHeaders(raw, application);
+        PHPVPN_CHECK_EQ(result.source, RequestHeadersSource::merged);
+        PHPVPN_CHECK_EQ(result.block, "Host: relay\r\n" + application);
+        PHPVPN_CHECK_EQ(result.version, "HTTP/?");
+    }
+    const auto identical = reconstructDiagnosticRequestHeaders("X: same", "X: same\r\nX: same");
+    PHPVPN_CHECK_EQ(identical.block, "X: same\r\nX: same");
+    PHPVPN_CHECK_EQ(identical.source, RequestHeadersSource::merged);
+    const std::string complete = "POST / HTTP/2\r\nHost: relay\r\ncontent-type:\tapplication/json \r\nx: first\r\nX: second\r\nx: first\r\ny: own\r\n\r\n";
+    const auto result = reconstructDiagnosticRequestHeaders(complete, application);
+    PHPVPN_CHECK_EQ(result.source, RequestHeadersSource::winhttp);
+    PHPVPN_CHECK_EQ(result.version, "HTTP/2");
+    PHPVPN_CHECK_EQ(result.block, complete.substr(15, complete.size() - 19));
+    const auto absent = reconstructDiagnosticRequestHeaders({}, application);
+    PHPVPN_CHECK_EQ(absent.source, RequestHeadersSource::application);
+    PHPVPN_CHECK_EQ(absent.block, application);
+    PHPVPN_CHECK(absent.block.find("PHPVPN/1.0") == std::string::npos);
+}
+}

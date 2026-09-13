@@ -52,6 +52,7 @@ Status NetworkWorker::configure(ClientConfigPtr config, TrafficCounters* counter
 
     TransportSettings settings;
     settings.serverUrl = config_->serverUrl.original;
+    settings.httpHeaders = config_->httpHeaders;
     settings.trustAnyTlsCertificate = config_->trustAnyTlsCertificate;
     settings.responseTimeoutSeconds = config_->runtime.responseTimeoutSeconds;
     settings.maxResponseBodyBytes = config_->runtime.maxResponseBodyBytes;

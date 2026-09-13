@@ -1,3 +1,4 @@
+#include "core/protocol/http_headers.h"
 #include "core/ipc/wizard_ipc.h"
 #include "core/ipc/ipc_protocol.h"
 #include "core/protocol/uuid.h"
@@ -271,19 +272,21 @@ Result<WizardFields> WizardIpc::parseFields(const J& value) {
 }
 J WizardIpc::contextValue(const WizardContext& context) {
     const auto& r = context.runtime;
-    return J::makeObject({{"vpnCidr", str(context.vpnCidr.toString())}, {"trustAnyTlsCertificate", J::makeBool(context.trustAnyTlsCertificate)},
+    return J::makeObject({{"httpHeaders", str(context.httpHeaders)}, {"vpnCidr", str(context.vpnCidr.toString())}, {"trustAnyTlsCertificate", J::makeBool(context.trustAnyTlsCertificate)},
         {"maxOutboundQueueBytes", J::makeInteger(r.maxOutboundQueueBytes)}, {"maxInboundQueueBytes", J::makeInteger(r.maxInboundQueueBytes)},
         {"minPerPeerQueueBytes", J::makeInteger(r.minPerPeerQueueBytes)}, {"maxResponseBodyBytes", J::makeInteger(r.maxResponseBodyBytes)},
         {"maxNdjsonLineBytes", J::makeInteger(r.maxNdjsonLineBytes)}, {"maxDataRecordsPerResponse", J::makeInteger(r.maxDataRecordsPerResponse)},
         {"responseTimeoutSeconds", J::makeInteger(r.responseTimeoutSeconds)}, {"timeSyncIntervalSeconds", J::makeInteger(r.timeSyncIntervalSeconds)}});
 }
 Result<WizardContext> WizardIpc::parseContext(const J& value) {
-    if (!shape(value, {"vpnCidr", "trustAnyTlsCertificate", "maxOutboundQueueBytes", "maxInboundQueueBytes", "minPerPeerQueueBytes",
+    if (!shape(value, {"httpHeaders", "vpnCidr", "trustAnyTlsCertificate", "maxOutboundQueueBytes", "maxInboundQueueBytes", "minPerPeerQueueBytes",
         "maxResponseBodyBytes", "maxNdjsonLineBytes", "maxDataRecordsPerResponse", "responseTimeoutSeconds", "timeSyncIntervalSeconds"}) ||
         !text(value.find("vpnCidr")) || !value.find("trustAnyTlsCertificate")->isBool()) return malformed();
     auto cidr = Ipv4Cidr::parse(value.find("vpnCidr")->stringValue());
     if (!cidr) return malformed();
+    if (!text(value.find("httpHeaders")) || !normalizeHttpHeaders(value.find("httpHeaders")->stringValue())) return malformed();
     WizardContext context;
+    context.httpHeaders = value.find("httpHeaders")->stringValue();
     context.vpnCidr = *cidr;
     context.trustAnyTlsCertificate = value.find("trustAnyTlsCertificate")->boolValue();
     auto& r = context.runtime;
@@ -393,7 +396,7 @@ WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     else if (error.code == ErrorCode::wizard_connection_interrupted) action = "Choose Disconnect & continue to disconnect the VPN for everyone, then repeat the checks.";
     else if (error.code == ErrorCode::wizard_contract_self_conflict) action = "Choose another virtual IP, or correct the contract through Edit Config before opening a new wizard.";
     else if (error.code == ErrorCode::wizard_unsupported) action = "Update both the PHPVPN service and tray to the same version, then open Configuration Wizard again.";
-    return {error.name(), errorCodeDescription(error.code), error.recoverable(), std::move(field), status,
+    return {error.name(), httpHeadersErrorDescription(error), error.recoverable(), std::move(field), status,
         std::move(action), std::move(url), std::move(path)};
 }
 J WizardIpc::errorValue(const WizardError& error) {

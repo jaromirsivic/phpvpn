@@ -169,7 +169,7 @@ PHPVPN_TEST(resource_dns, real_delayed_resolution_deadline_cancel_and_reuse) {
     if (address) freeaddrinfo(address);
     std::cout << "[ MEASURE ] process DNS getaddrinfo=" << resolveCode << " received_queries=" << servers.queries << "\n";
     auto configure = [&](const char* phase) {
-        TransportSettings settings;
+        TransportSettings settings; settings.httpHeaders = "X-Test: fixture";
         settings.serverUrl = "http://" + std::string(phase) + "-" + suffix + ":" + std::to_string(servers.httpPort) + "/phpvpn.php";
         settings.responseTimeoutSeconds = 1;
         if (!transport->configure(settings)) throw std::runtime_error("transport configure failed");

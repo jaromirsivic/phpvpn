@@ -284,7 +284,7 @@ void udpRoundtrip(Client& client, const ClientConfigPtr& stored) {
     const auto string = [](std::string value) { return JsonValue::makeString(std::move(value)); };
     auto document = JsonValue::makeObject({
         {"masterSetup", JsonValue::makeObject({
-            {"serverUrl", string(relay)}, {"serverSecret", string(stored->serverSecret)},
+            {"httpHeaders", string(stored->httpHeaders)}, {"serverUrl", string(relay)}, {"serverSecret", string(stored->serverSecret)},
             {"vpnCidr", string("10.99.99.0/24")}, {"virtualIp", string("10.99.99.3")},
             {"accessKey", string(defaultAccessKey("10.99.99.3"))}})},
         {"runtime", JsonValue::makeObject({{"responseTimeoutSeconds", JsonValue::makeInteger(3)}})},

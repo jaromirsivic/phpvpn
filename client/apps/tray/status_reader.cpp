@@ -1,3 +1,4 @@
+#include "core/protocol/http_headers.h"
 #include "status_reader.h"
 #include <array>
 #include <condition_variable>
@@ -186,9 +187,13 @@ SaveResult classifySaveResponse(const SaveOperation& operation, std::string_view
         ErrorCode::config_invalid_value, ErrorCode::config_invalid_url, ErrorCode::config_invalid_cidr,
         ErrorCode::config_invalid_address, ErrorCode::config_invalid_key, ErrorCode::config_invalid_limit,
         ErrorCode::config_queue_budget, ErrorCode::wizard_contract_self_conflict}) {
-        if (code->stringValue() == errorCodeName(candidate) && description->stringValue() == errorCodeDescription(candidate) &&
+        if (code->stringValue() == errorCodeName(candidate) && (description->stringValue() == errorCodeDescription(candidate) ||
+            (candidate == ErrorCode::config_invalid_value && isHttpHeadersErrorDescription(description->stringValue()))) &&
             recoverable->boolValue() == errorCodeIsRecoverable(candidate)) {
-            result.outcome = SaveOutcome::rejected; result.error = candidate; break;
+            result.outcome = SaveOutcome::rejected; result.error = candidate;
+            if (candidate == ErrorCode::config_invalid_value && isHttpHeadersErrorDescription(description->stringValue()))
+                result.validationDescription = description->stringValue();
+            break;
         }
     }
     return result;
