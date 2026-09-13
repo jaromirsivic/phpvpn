@@ -72,6 +72,8 @@ public:
     // Performs exactly one POST to `?action=<action>` and returns the complete
     // body. Never follows a redirect and never uses a proxy.
     virtual HttpExchangeResult post(HttpAction action, std::string_view body) = 0;
+    // Explicit, one-exchange opt-in for initial Connect health/info only.
+    virtual HttpExchangeResult postDiagnostic(HttpAction action, std::string_view body) { return post(action, body); }
 
     // Aborts the request that is currently in flight, if any.
     virtual void cancelCurrentRequest() = 0;

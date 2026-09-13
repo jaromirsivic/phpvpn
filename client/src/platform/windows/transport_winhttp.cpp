@@ -156,6 +156,12 @@ public:
         }
     }
     HttpExchangeResult post(HttpAction action, std::string_view body) override {
+        return postImpl(action, body, false);
+    }
+    HttpExchangeResult postDiagnostic(HttpAction action, std::string_view body) override {
+        return postImpl(action, body, true);
+    }
+    HttpExchangeResult postImpl(HttpAction action, std::string_view body, bool capture) {
         const auto cancellationEpoch = cancellationEpoch_.load();
         std::lock_guard lock(serial_);
         const auto start = GetTickCount64();
@@ -185,7 +191,7 @@ public:
                 SetEvent(state->cancel);
             }
         }
-        auto result = exchange(request, *state, deadline, action, body);
+        auto result = exchange(request, *state, deadline, action, body, capture);
         {
             std::lock_guard stateLock(state->mutex);
             if (state->cancelled) result = Error(ErrorCode::cancelled);
@@ -235,7 +241,7 @@ private:
         }
     }
     Result<HttpResponse> exchange(HINTERNET request, RequestState& state, ULONGLONG deadline,
-                                   HttpAction action, std::string_view body) {
+                                   HttpAction action, std::string_view body, bool capture) {
         DWORD disabled = WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
         if (!WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disabled, sizeof(disabled)))
             return Error(ErrorCode::transport_unavailable);
@@ -259,7 +265,7 @@ private:
         PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE));
         if (!WinHttpReceiveResponse(request, nullptr)) return Error(mapError(GetLastError()));
         PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE));
-        if (settings_.captureWizardHttpDiagnostics && action != HttpAction::data) {
+        if ((capture || settings_.captureWizardHttpDiagnostics) && action != HttpAction::data) {
             state.diagnostic.emplace();
             auto& diagnostic = *state.diagnostic;
             diagnostic.action = action;

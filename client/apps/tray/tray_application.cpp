@@ -194,6 +194,8 @@ void TrayApplication::showMenu(bool keyboard) {
 void TrayApplication::onSnapshot(const TrayStatus& snapshot) {
     statusUnavailable_ = !snapshot.valid;
     applyStatusSnapshot(snapshot_, snapshot);
+    // Only the live Connect owner retains raw HTTP. Icon/statistics caches do not.
+    snapshot_.httpDiagnostic.reset();
     statistics_.onSnapshot(snapshot_, statusUnavailable_);
     contracts_.setConnectionActive(connectedOrConnecting());
     // Invalid reads retain the last authoritative snapshot, but indicate its
@@ -245,6 +247,7 @@ void TrayApplication::startCommand(IpcCommand command, const std::string& payloa
         return;
     }
     if (commands_.request(command, payload, window_, kCommandMessage)) {
+        if (command == IpcCommand::connect) progress_.endSession();
         commandPlacement_ = menuPlacement_;
         pendingCommand_ = command;
     }

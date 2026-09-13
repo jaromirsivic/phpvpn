@@ -3,6 +3,7 @@
 #include "core/wizard/probe_client.h"
 #include "core/wizard/wizard_service.h"
 #include "../../apps/tray/wizard_window.h"
+#include "../../apps/tray/progress_window.h"
 #include "../../apps/tray/window_utils.h"
 #include "platform/windows/ipc_pipe.h"
 #include <atomic>
@@ -163,9 +164,19 @@ public:
     bool swappedPayloadAad = false;
     std::vector<PacketBytes> incoming;
     bool captureDiagnostics = false;
+    bool suppressDiagnostic = false;
+    std::atomic<int> diagnosticCalls{0};
+    HttpExchangeResult postDiagnostic(HttpAction action, std::string_view request) override {
+        ++diagnosticCalls;
+        const bool previous = captureDiagnostics;
+        captureDiagnostics = true;
+        auto result = post(action, request);
+        captureDiagnostics = previous;
+        return result;
+    }
     Status configure(const TransportSettings& settings) override { captureDiagnostics = settings.captureWizardHttpDiagnostics; return ok(); }
     HttpExchangeResult capture(HttpAction action, std::string_view request, HttpExchangeResult result) {
-        if (captureDiagnostics && action != HttpAction::data && result.ok()) {
+        if (captureDiagnostics && !suppressDiagnostic && action != HttpAction::data && result.ok()) {
             HttpDiagnostic d; d.action = action; d.responseComplete = true;
             BoundedHttpCapture req, resp;
             req.append(std::string("POST http://fixture/?action=") + httpActionName(action) + " HTTP/?\r\n\r\n"); req.append(request);
@@ -1297,6 +1308,97 @@ void runNativeHttpDiagnosticIntegration(bool external) {
 PHPVPN_TEST(wizard_service, native_http_diagnostic_local_integration) { runNativeHttpDiagnosticIntegration(false); }
 PHPVPN_TEST(wizard_service, native_http_diagnostic_external_best_effort) { runNativeHttpDiagnosticIntegration(true); }
 
+void runConnectHttpDiagnosticIntegration(bool external, bool infoOnly = false) {
+    wchar_t endpoint[2048]{}, control[2048]{};
+    if (!GetEnvironmentVariableW(external ? L"PHPVPN_DIAGNOSTIC_EXTERNAL" : L"PHPVPN_DIAGNOSTIC_ENDPOINT", endpoint, 2048) ||
+        (!external && !GetEnvironmentVariableW(L"PHPVPN_DIAGNOSTIC_CONTROL", control, 2048))) {
+        std::cout << "[ NOT RUN ] Connect HTTP integration endpoint not configured\n"; return;
+    }
+    const std::vector<std::string> modes = external ? std::vector<std::string>{"external"} : infoOnly ?
+        std::vector<std::string>{"info"} : std::vector<std::string>{"health", "info", "noresponse"};
+    for (const auto& mode : modes) {
+        if (!external) { std::ofstream out(std::filesystem::path(control), std::ios::binary | std::ios::trunc); out << mode; if (!out) throw std::runtime_error("control write failed"); }
+        EngineFixture f; f.clock.realWall = true;
+        auto config = Json::parse(kConfig).value();
+        for (auto& [name, value] : config.objectValue()) if (name == "masterSetup") {
+            for (auto& [key, setting] : value.objectValue()) if (key == "serverUrl")
+                setting = JsonValue::makeString(mode == "noresponse" ? "http://127.0.0.1:1/phpvpn.php" : tray::narrow(endpoint));
+            value.objectValue().emplace_back("trustAnyTlsCertificate", JsonValue::makeBool(false));
+        }
+        f.files->bytes = Json::serialize(config);
+        auto transport = createPlatformTransport().value();
+        struct BootstrapOnly final : Transport {
+            Transport& transport;
+            explicit BootstrapOnly(Transport& value) : transport(value) {}
+            Status configure(const TransportSettings& settings) override { return transport.configure(settings); }
+            HttpExchangeResult post(HttpAction action, std::string_view body) override {
+                if (action == HttpAction::data) return Error(ErrorCode::cancelled);
+                return transport.post(action, body);
+            }
+            HttpExchangeResult postDiagnostic(HttpAction action, std::string_view body) override {
+                if (action == HttpAction::data) return Error(ErrorCode::cancelled);
+                return transport.postDiagnostic(action, body);
+            }
+            void cancelCurrentRequest() override { transport.cancelCurrentRequest(); }
+        } bootstrap(*transport);
+        VpnEngine engine(f.crypto, bootstrap, f.clock, f.driver, f.net,
+            EnginePaths{f.directory / "config.json", f.directory / "journal.json", f.directory.wstring()}, f.store);
+        IpcDispatcher dispatcher(engine);
+        const auto pipe = L"\\\\.\\pipe\\phpvpn-connect-http-" + tray::widen(f.crypto.actual->randomUuidV4().value());
+        IpcPipeServerOptions options; options.pipeName = pipe;
+        IpcPipeServer server([&](std::string_view bytes) { return dispatcher.handle(bytes); }, options);
+        PHPVPN_REQUIRE_OK(engine.start()); PHPVPN_REQUIRE_OK(server.start());
+        auto reply = dispatcher.handle(IpcProtocol::buildRequest(IpcCommand::connect, kMessageId));
+        auto accepted = tray::parseStatusResponse(reply); PHPVPN_CHECK(accepted.valid);
+        tray::ProgressWindow progress(pipe); progress.open(GetModuleHandleW(nullptr)); progress.onSnapshot(accepted);
+        const auto until = [&](const std::function<bool()>& condition) {
+            const auto deadline = GetTickCount64() + (external ? 45000 : 12000);
+            do {
+                MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    if (message.message != WM_QUIT && !progress.translate(message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+                if (condition()) return true; Sleep(1);
+            } while (GetTickCount64() < deadline);
+            return false;
+        };
+        PHPVPN_CHECK(until([&] { return progress.model().view().stage == tray::ProgressStage::failed; }));
+        const auto status = engine.status();
+        const bool available = status.httpDiagnostic.has_value();
+        if (!external) PHPVPN_CHECK_EQ(available, mode != "noresponse");
+        const auto button = GetDlgItem(progress.window(), 412);
+        PHPVPN_CHECK_EQ(IsWindowVisible(button) != FALSE, available);
+        if (available) {
+            PHPVPN_CHECK_EQ(status.httpDiagnostic->action, mode == "info" ? HttpAction::info : HttpAction::health);
+            SendMessageW(button, BM_CLICK, 0, 0);
+            struct Search { HWND owner; HWND found = nullptr; } search{progress.window()};
+            EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM value) -> BOOL {
+                auto& result = *reinterpret_cast<Search*>(value); wchar_t name[64]{};
+                GetClassNameW(window, name, 64);
+                if (GetWindow(window, GW_OWNER) == result.owner && std::wstring_view(name) == L"PhpVpnHttpErrorDetail") result.found = window;
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&search));
+            HWND detail = search.found;
+            PHPVPN_CHECK(detail && GetWindow(detail, GW_OWNER) == progress.window());
+            if (detail) {
+                for (const auto& [id, expected] : std::array<std::pair<int, std::wstring>, 2>{
+                    std::pair{781, diagnosticDisplayText(status.httpDiagnostic->request).text},
+                    std::pair{782, diagnosticDisplayText(status.httpDiagnostic->response).text}}) {
+                    const auto edit = GetDlgItem(detail, id); std::wstring actual(GetWindowTextLengthW(edit) + 1, L'\0');
+                    GetWindowTextW(edit, actual.data(), static_cast<int>(actual.size())); actual.resize(actual.size() - 1);
+                    PHPVPN_CHECK_EQ(actual, expected);
+                }
+            }
+        }
+        SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+        if (available) PHPVPN_CHECK(until([&] { return !engine.status().httpDiagnostic; }));
+        PHPVPN_CHECK_EQ(f.driver.starts.load(), 0); // Real HTTP, isolated fake tunnel and no installed service.
+        engine.shutdown(); server.stop();
+        std::cout << (external && !available ? "[ NOT RUN ] external received-response case unavailable: " : "[ PASS ] Connect HTTP detail ") << mode << "\n";
+    }
+}
+PHPVPN_TEST(runtime, connect_http_local_integration) { runConnectHttpDiagnosticIntegration(false); }
+PHPVPN_TEST(runtime, connect_http_info_local_integration) { runConnectHttpDiagnosticIntegration(false, true); }
+PHPVPN_TEST(runtime, connect_http_external_best_effort) { runConnectHttpDiagnosticIntegration(true); }
+
 PHPVPN_TEST(wizard_service, finish_requires_exact_evidence_is_idempotent_and_last_complete_save_wins) {
     WizardServiceFixture fixture;
     auto premature = fixture.beginFinish();
@@ -1682,10 +1784,10 @@ PHPVPN_TEST(runtime, bootstrap_errors_classify_actual_operation_and_checkpoint) 
     const Case cases[] = {
         {HttpAction::health, ErrorCode::transport_timeout, 0, false, false, "communication_timeout", f,p,p,true},
         {HttpAction::health, ErrorCode::transport_dns_failed, 0, false, false, "endpoint_unavailable_or_invalid", f,p,p,true},
-        {HttpAction::health, ErrorCode::none, 200, false, false, "endpoint_unavailable_or_invalid", f,p,p,true},
+        {HttpAction::health, ErrorCode::none, 200, false, false, "endpoint_unavailable_or_invalid", f,p,p,false},
         {HttpAction::health, ErrorCode::none, 0, true, false, "server_verification_failed", s,f,p,false},
         {HttpAction::info, ErrorCode::transport_timeout, 0, false, false, "communication_timeout", s,f,p,true},
-        {HttpAction::info, ErrorCode::none, 500, false, false, "communication_failed", s,f,p,true},
+        {HttpAction::info, ErrorCode::none, 500, false, false, "communication_failed", s,f,p,false},
         {HttpAction::info, ErrorCode::none, 0, false, true, "server_verification_failed", s,f,p,false},
         {HttpAction::data, ErrorCode::transport_timeout, 0, false, false, "communication_timeout", s,s,f,true},
         {HttpAction::data, ErrorCode::none, 401, false, false, "access_key_rejected", s,s,f,false},
@@ -1712,8 +1814,12 @@ PHPVPN_TEST(runtime, bootstrap_errors_classify_actual_operation_and_checkpoint) 
             PHPVPN_CHECK_EQ(status.lastError->recoverable, item.recoverable);
             const auto diagnostics = fixture.engine.diagnostics();
             PHPVPN_CHECK_EQ(diagnostics.lastError->description, status.lastError->description);
+            // The explicitly requested local HTTP object is the sole raw-data
+            // exception. Public status fields and get-diagnostics stay safe.
+            auto publicStatus = status;
+            publicStatus.httpDiagnostic.reset();
             for (const auto& output : {
-                    IpcProtocol::buildStatusResponse(kMessageId, status),
+                    IpcProtocol::buildStatusResponse(kMessageId, publicStatus),
                     IpcProtocol::buildDiagnosticsResponse(kMessageId, fixture.engine.diagnostics())}) {
                 for (const auto* forbidden : {"private endpoint details", "runtime.invalid", "secret-path",
                                               "runtime-fixture-secret", "010203040506", "212223242526"})
@@ -1721,6 +1827,87 @@ PHPVPN_TEST(runtime, bootstrap_errors_classify_actual_operation_and_checkpoint) 
             }
         }
     }
+}
+
+PHPVPN_TEST(runtime, connect_http_diagnostic_phase_scope_and_cleanup) {
+    for (int mode = 0; mode < 8; ++mode) {
+        EngineFixture f;
+        f.transport.badHealthTag = mode == 2;
+        f.transport.badInfo = mode == 1;
+        f.transport.suppressDiagnostic = mode == 7;
+        f.transport.hook = [mode](HttpAction action, std::string_view, int) -> std::optional<HttpExchangeResult> {
+            if ((mode == 0 || mode == 7) && action == HttpAction::health) return HttpExchangeResult{HttpResponse{200, "invalid-health", "application/json"}, 14};
+            if (mode == 3 && action == HttpAction::health) return HttpExchangeResult{Error(ErrorCode::transport_dns_failed), 0};
+            if (mode == 4 && action == HttpAction::health) return HttpExchangeResult{Error(ErrorCode::transport_timeout), 0};
+            if (mode == 5 && action == HttpAction::data) return HttpExchangeResult{HttpResponse{401, "bad"}, 3};
+            return {};
+        };
+        if (mode == 6) f.driver.failure = ErrorCode::tunnel_library_missing;
+        PHPVPN_REQUIRE_OK(f.engine.start());
+        PHPVPN_REQUIRE_OK(f.engine.connect());
+        PHPVPN_CHECK(eventually([&] { auto s = f.engine.status(); return s.state == ConnectionState::error || s.state == ConnectionState::recovering; }));
+        auto s = f.engine.status();
+        PHPVPN_CHECK_EQ(s.httpDiagnostic.has_value(), mode <= 2);
+        const auto capturedCalls = f.transport.diagnosticCalls.load();
+        const auto healthCalls = f.transport.healthCalls.load();
+        const auto infoCalls = f.transport.infoCalls.load();
+        f.clock.now.store(100000);
+        if (mode <= 2 || mode == 7) {
+            PHPVPN_CHECK_EQ(s.state, ConnectionState::error);
+            PHPVPN_CHECK(!s.lastError->recoverable);
+            std::this_thread::sleep_for(std::chrono::milliseconds(350));
+            PHPVPN_CHECK_EQ(f.transport.healthCalls.load(), healthCalls);
+            PHPVPN_CHECK_EQ(f.transport.infoCalls.load(), infoCalls);
+            PHPVPN_CHECK_EQ(f.engine.status().httpDiagnostic.has_value(), mode <= 2);
+        } else if (mode == 3 || mode == 4) {
+            PHPVPN_CHECK_EQ(s.state, ConnectionState::recovering);
+            PHPVPN_CHECK(eventually([&] { return f.transport.healthCalls.load() > healthCalls; }));
+            PHPVPN_CHECK_EQ(f.transport.diagnosticCalls.load(), capturedCalls);
+            PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
+        }
+        if (s.httpDiagnostic) {
+            PHPVPN_CHECK_EQ(s.httpDiagnostic->action, mode == 1 ? HttpAction::info : HttpAction::health);
+            auto wire = IpcProtocol::buildStatusResponse(kMessageId, s);
+            const auto parsed = tray::parseStatusResponse(wire);
+            PHPVPN_CHECK(parsed.valid && parsed.httpDiagnostic);
+            f.engine.dismissConnectDiagnostic(s.connectionEpoch + 1, *s.connectAttemptId);
+            PHPVPN_CHECK(f.engine.status().httpDiagnostic);
+            f.engine.dismissConnectDiagnostic(s.connectionEpoch, "3f2a7c1e-9b44-4b0e-8d2f-5c6a1e7b9d03");
+            PHPVPN_CHECK(f.engine.status().httpDiagnostic);
+            f.engine.dismissConnectDiagnostic(s.connectionEpoch, *s.connectAttemptId);
+            PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
+        }
+        PHPVPN_CHECK_EQ(f.transport.diagnosticCalls.load(), mode == 0 || mode == 2 || mode == 3 || mode == 4 || mode == 7 ? 1 : 2);
+        PHPVPN_REQUIRE_OK(f.engine.disconnect());
+        PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
+        PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::disconnected; }));
+        f.engine.shutdown();
+        PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
+    }
+}
+
+PHPVPN_TEST(runtime, connect_http_diagnostic_late_cancelled_reply_never_publishes) {
+    EngineFixture f;
+    Gate response;
+    f.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::health && call == 1) {
+            response.block();
+            return HttpExchangeResult{HttpResponse{200, "late invalid", "application/json"}, 12};
+        }
+        return {};
+    };
+    f.transport.cancel = [&] { response.release(); };
+    PHPVPN_REQUIRE_OK(f.engine.start());
+    PHPVPN_REQUIRE_OK(f.engine.connect());
+    PHPVPN_CHECK(response.await());
+    const auto oldEpoch = f.engine.status().connectionEpoch;
+    PHPVPN_REQUIRE_OK(f.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::disconnected; }));
+    PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
+    PHPVPN_REQUIRE_OK(f.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::connected; }));
+    PHPVPN_CHECK(f.engine.status().connectionEpoch > oldEpoch);
+    PHPVPN_CHECK(!f.engine.status().httpDiagnostic);
 }
 
 PHPVPN_TEST(runtime, recovery_retains_failed_bootstrap_and_idempotent_connect) {

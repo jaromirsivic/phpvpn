@@ -5,13 +5,14 @@
 #include "progress_model.h"
 #include "status_reader.h"
 #include "ui_resources.h"
+#include "http_error_detail_window.h"
 #include <commctrl.h>
 #include <windows.h>
 
 namespace phpvpn::tray {
 class ProgressWindow {
   public:
-    explicit ProgressWindow(std::wstring pipeName) : reader_(pipeName), detailsReader_(std::move(pipeName)) {}
+    explicit ProgressWindow(std::wstring pipeName) : reader_(pipeName), detailsReader_(pipeName), dismissReader_(std::move(pipeName)) {}
     ~ProgressWindow();
     void open(HINSTANCE instance, bool disconnect = false);
     void onDisconnectReply(const TrayStatus& snapshot);
@@ -20,7 +21,7 @@ class ProgressWindow {
     }
     void endSession();
     void onSnapshot(const TrayStatus &snapshot);
-    bool translate(MSG &message) const;
+    bool translate(MSG &message);
     HWND window() const { return window_; }
     const ProgressModel &model() const { return model_; }
 
@@ -40,6 +41,11 @@ class ProgressWindow {
     PollSchedule polling_{kProgressIntervalMs};
     StatusReader reader_;
     CommandReader detailsReader_;
+    CommandReader dismissReader_;
+    HttpErrorDetailWindow errorDetail_;
+    HWND errorDetailButton_ = nullptr;
+    std::uint64_t diagnosticEpoch_ = 0;
+    std::string diagnosticAttemptId_;
     ProgressDetails details_;
     UiResources resources_;
     ProgressLayout layout_;

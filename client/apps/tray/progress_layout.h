@@ -8,7 +8,7 @@ struct ProgressLayout {
     Rect eyebrow, card, detailsHeading, checksHeading, separator, panel;
     std::array<Rect, 2> labels, values;
     std::array<Rect, 3> checks, checkIcons, checkLabels;
-    Rect panelHeading, panelAction, countdown;
+    Rect panelHeading, panelAction, countdown, errorDetail;
     int height = 0;
 };
 // Text measurement and placement must use the same available width.
@@ -19,9 +19,13 @@ inline int progressContentRight(int width, int dpi) {
     const int margin = progressHorizontalMargin(width, dpi);
     return std::max(margin, width - margin);
 }
+inline bool progressErrorDetailBeside(int width, int dpi, int buttonWidth) {
+    return buttonWidth > 0 && progressContentRight(width, dpi) - progressHorizontalMargin(width, dpi) -
+        scaleForDpi(48, dpi) >= buttonWidth + scaleForDpi(16 + 160, dpi);
+}
 // Heights are measured with the actual native fonts before layout, in pixels.
 inline ProgressLayout computeProgressLayout(int width, int dpi, int actionHeight, bool success,
-                                            bool disconnect, int panelHeadingHeight = 28) {
+                                            bool disconnect, int panelHeadingHeight = 28, int detailWidth = 0) {
     const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
     const int m = progressHorizontalMargin(width, dpi), pad = p(24);
     const int verticalMargin = std::min(p(width < p(600) ? 16 : 32), width / 8);
@@ -63,11 +67,24 @@ inline ProgressLayout computeProgressLayout(int width, int dpi, int actionHeight
     const int panelTop = y;
     y += pad;
     const bool beside = success && width >= p(760);
-    const int panelRight = beside ? innerRight - p(208) : innerRight;
+    const bool detailBeside = progressErrorDetailBeside(width, dpi, detailWidth);
+    const int panelRight = beside ? innerRight - p(208) : detailBeside ? innerRight - detailWidth - p(16) : innerRight;
     l.panelHeading = {m + pad, y, panelRight, y + panelHeadingHeight};
     y += panelHeadingHeight + p(4);
     l.panelAction = {m + pad, y, panelRight, y + actionHeight};
     y += actionHeight;
+    if (detailWidth > 0) {
+        if (detailBeside) {
+            const int contentHeight = std::max(panelHeadingHeight + p(4) + actionHeight, p(40));
+            const int top = panelTop + pad + (contentHeight - p(40)) / 2;
+            l.errorDetail = {innerRight - detailWidth, top, innerRight, top + p(40)};
+            y = panelTop + pad + contentHeight;
+        } else {
+            y += p(16);
+            l.errorDetail = {std::max(m + pad, innerRight - detailWidth), y, innerRight, y + p(40)};
+            y += p(40);
+        }
+    }
     if (beside)
         l.countdown = {innerRight - p(196), panelTop + pad + p(16), innerRight, panelTop + pad + p(40)};
     else if (success) {

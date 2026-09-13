@@ -77,6 +77,7 @@ Status VpnEngine::start() {
 
 void VpnEngine::shutdown() {
     controlGeneration_.fetch_add(1);
+    { std::lock_guard lock(stateMutex_); connectHttpDiagnostic_.reset(); }
     const bool wasRunning = running_.exchange(false);
     cancelDiagnostics();
     if (!wasRunning) {
@@ -194,6 +195,7 @@ Status VpnEngine::connect() {
     }
     // An action reads once, outside the state lock. Concurrent readers can
     // share acceptance, but only the first accepted snapshot becomes active.
+    { std::lock_guard lock(stateMutex_); connectHttpDiagnostic_.reset(); }
     PHPVPN_TRY(configStore_.operationalStatus());
     auto snapshot = configStore_.read();
     if (!snapshot) return snapshot.error();
@@ -204,6 +206,8 @@ Status VpnEngine::connect() {
     }
     if (!snapshot->config) return Error(snapshot->reasonCode.value_or(ErrorCode::config_invalid_value));
     if (beforeConnect_) PHPVPN_TRY(beforeConnect_());
+    std::string attemptId;
+    PHPVPN_TRY_ASSIGN(attemptId, crypto_.randomUuidV4());
     {
         std::unique_lock lock(stateMutex_);
         if (generation != controlGeneration_.load()) return Error(ErrorCode::cancelled);
@@ -218,6 +222,7 @@ Status VpnEngine::connect() {
                 pendingConfig_ = snapshot->config;
             }
             ++connectionEpoch_;
+            connectAttemptId_ = std::move(attemptId);
             connectCommandPending_ = true;
             pushCommand(Command::connect);
         }
@@ -228,6 +233,7 @@ Status VpnEngine::connect() {
 
 Status VpnEngine::disconnect() {
     controlGeneration_.fetch_add(1);
+    { std::lock_guard lock(stateMutex_); connectHttpDiagnostic_.reset(); }
     cancelDiagnostics();
     connectRequested_.store(false);
     if (!running_.load()) return ok();
@@ -239,6 +245,10 @@ Status VpnEngine::disconnect() {
 ConnectionIdentity VpnEngine::connectionIdentity() const {
     std::lock_guard lock(stateMutex_);
     return {connectionEpoch_, state_, phase_, connectCommandPending_};
+}
+void VpnEngine::dismissConnectDiagnostic(std::uint64_t epoch, std::string_view attemptId) {
+    std::lock_guard lock(stateMutex_);
+    if (epoch == connectionEpoch_ && connectAttemptId_ && *connectAttemptId_ == attemptId) connectHttpDiagnostic_.reset();
 }
 void VpnEngine::setDiagnosticHooks(std::function<Status()> beforeConnect, std::function<void()> cancelWizard) {
     beforeConnect_ = std::move(beforeConnect);
@@ -255,6 +265,7 @@ void VpnEngine::cancelDiagnostics() {
 void VpnEngine::setState(ConnectionState state, ConnectionPhase phase) {
     std::lock_guard<std::mutex> lock(stateMutex_);
     state_ = state;
+    if (state != ConnectionState::error) connectHttpDiagnostic_.reset();
     phase_ = phase;
     stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
     if (state == ConnectionState::connected && !connectionStartedAtUtc_)
@@ -274,6 +285,7 @@ void VpnEngine::recordError(const Error& error) {
 void VpnEngine::clearError() {
     std::lock_guard<std::mutex> lock(stateMutex_);
     lastError_.reset();
+    connectHttpDiagnostic_.reset();
 }
 
 std::int64_t VpnEngine::backoffDelayMs() {
@@ -287,7 +299,9 @@ std::int64_t VpnEngine::backoffDelayMs() {
     return base + jitter;
 }
 
-Status VpnEngine::runConnectSequence(bool initialBootstrap) {
+Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
     setPhase(ConnectionPhase::health);
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
@@ -333,7 +347,7 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap) {
         healthSyntaxUsable_ = true;
         serverReachable_ = Tristate::yes;
         if (initialBootstrap) serverUrlCheck_ = CheckpointResult::success;
-    });
+    }, failedDiagnostic, rejectedResponse);
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         serverReachable_ = healthSyntaxUsable_ ? Tristate::yes : Tristate::no;
@@ -349,7 +363,7 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap) {
 
     setPhase(ConnectionPhase::info);
     if (!running_.load() || !connectRequested_.load()) return Error(ErrorCode::cancelled);
-    auto info = network_.performInfo();
+    auto info = network_.performInfo(failedDiagnostic, rejectedResponse);
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         lastInfoVerified_ = info.ok() ? Tristate::yes : Tristate::no;
@@ -528,17 +542,36 @@ void VpnEngine::runNetworkThread() {
             }
             stateSignal_.notify_all();
             backoffStep_ = 0;
-            auto sequence = runConnectSequence(true);
+            const auto attemptEpoch = connectionIdentity().epoch;
+            const auto attemptControl = controlGeneration_.load();
+            std::optional<HttpDiagnostic> failedDiagnostic;
+            bool rejectedResponse = false;
+            auto sequence = runConnectSequence(true, &failedDiagnostic, &rejectedResponse);
             if (!sequence.ok()) {
-                recordError(sequence.error());
+                SafeError failure;
+                {
+                    std::lock_guard lock(stateMutex_);
+                    failure = SafeError::fromConnection(sequence.error(), phase_, healthSyntaxUsable_);
+                    // A received but rejected initial health/info response is
+                    // one terminal user attempt, just like a Wizard probe.
+                    // Classification must not depend on capture availability.
+                    if (rejectedResponse && sequence.error().code != ErrorCode::cancelled)
+                        failure.recoverable = false;
+                }
                 teardown(/*keepError=*/true);
-                if (status().lastError->recoverable) {
+                if (failure.recoverable) {
                     ++backoffStep_;
                     retryAtMs = clock_.monotonicMs() + backoffDelayMs();
-                    setState(ConnectionState::recovering, ConnectionPhase::idle);
-                } else {
-                    setState(ConnectionState::error, ConnectionPhase::idle);
                 }
+                std::lock_guard lock(stateMutex_);
+                lastError_ = std::move(failure);
+                state_ = lastError_->recoverable ? ConnectionState::recovering : ConnectionState::error;
+                phase_ = ConnectionPhase::idle;
+                stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
+                connectHttpDiagnostic_.reset();
+                if (state_ == ConnectionState::error && sequence.error().code != ErrorCode::cancelled &&
+                    running_.load() && connectRequested_.load() && attemptEpoch == connectionEpoch_ &&
+                    attemptControl == controlGeneration_.load()) connectHttpDiagnostic_ = std::move(failedDiagnostic);
             }
             continue;
         }
@@ -655,6 +688,10 @@ StatusSnapshot VpnEngine::status() const {
     std::lock_guard<std::mutex> lock(stateMutex_);
     StatusSnapshot snapshot;
     snapshot.state = state_;
+    snapshot.connectionEpoch = connectionEpoch_;
+    snapshot.connectAttemptId = connectAttemptId_;
+    if (state_ == ConnectionState::error && running_.load() && connectRequested_.load())
+        snapshot.httpDiagnostic = connectHttpDiagnostic_;
     snapshot.phase = phase_;
     snapshot.stateChangedAtUtc = stateChangedAtUtc_;
     snapshot.connectionStartedAtUtc = connectionStartedAtUtc_;

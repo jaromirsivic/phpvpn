@@ -37,6 +37,9 @@ std::string IpcDispatcher::handle(std::string_view requestJson) {
     const IpcRequest& request = parsed.value();
 
     switch (request.command) {
+        case IpcCommand::dismiss_connect_diagnostic:
+            engine_.dismissConnectDiagnostic(request.connectionEpoch, request.connectAttemptId);
+            return IpcProtocol::buildAcknowledgement(request.requestId);
         case IpcCommand::get_status:
             return IpcProtocol::buildStatusResponse(request.requestId, engine_.status());
 

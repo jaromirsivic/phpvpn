@@ -31,6 +31,9 @@ ProgressWindow::~ProgressWindow() {
         DestroyWindow(window_);
 }
 void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
+    errorDetail_.close();
+    diagnosticEpoch_ = 0;
+    diagnosticAttemptId_.clear();
     reader_.stop();
     detailsReader_.stop();
     readPending_ = false;
@@ -78,6 +81,10 @@ void ProgressWindow::open(HINSTANCE instance, bool disconnect) {
         SetWindowSubclass(panelHeading_, headingProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
         panelAction_ = label(L"");
         countdown_ = label(L"");
+        errorDetailButton_ = CreateWindowExW(0, L"BUTTON", L"Error detail", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(412), instance, nullptr);
+        attachModernButton(errorDetailButton_, resources_, ButtonRole::error);
+        SetWindowSubclass(errorDetailButton_, fieldProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
     }
     setText(eyebrow_, disconnect_ ? L"Disconnecting client from the server." : L"Connecting client to the server.");
     SetWindowTextW(window_, disconnect_ ? L"PHPVPN disconnection" : L"PHPVPN connection");
@@ -112,7 +119,8 @@ void ProgressWindow::endSession() {
     reader_.abandon(); detailsReader_.abandon();
     if (window_) DestroyWindow(window_);
 }
-bool ProgressWindow::translate(MSG &message) const {
+bool ProgressWindow::translate(MSG &message) {
+    if (errorDetail_.translate(message)) return true;
     if (!window_ || (message.hwnd != window_ && !IsChild(window_, message.hwnd)))
         return false;
     if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
@@ -143,10 +151,13 @@ void ProgressWindow::updateResources() {
         font(h, ui::Font::card);
     font(panelAction_, ui::Font::label);
     font(countdown_, ui::Font::value);
+    font(errorDetailButton_, ui::Font::label);
     SendMessageW(window_, WM_SETICON, ICON_SMALL,
                  reinterpret_cast<LPARAM>(resources_.icon(static_cast<std::size_t>(model_.view().shield))));
 }
 void ProgressWindow::refresh() {
+    ShowWindow(errorDetailButton_, model_.httpDiagnostic() ? SW_SHOWNA : SW_HIDE);
+    if (!model_.httpDiagnostic()) errorDetail_.close();
     const auto &v = model_.view();
     const bool success = v.stage == ProgressStage::succeeded, failure = v.stage == ProgressStage::failed;
     const auto &error = progressErrorText(v.statusUnavailable ? "status_unavailable" : v.errorCode);
@@ -198,12 +209,15 @@ void ProgressWindow::onSnapshot(const TrayStatus &snapshot) {
         return;
     const auto before = model_.view();
     model_.onSnapshot(snapshot, nowMs());
+    if (model_.httpDiagnostic()) {
+        diagnosticEpoch_ = model_.connectionEpoch();
+        diagnosticAttemptId_ = model_.connectAttemptId().value_or("");
+    }
     if (model_.view().closeRequested) {
         DestroyWindow(window_);
         return;
     }
-    if (before != model_.view())
-        refresh();
+    refresh();
 }
 void ProgressWindow::layout() {
     if (!eyebrow_ || layingOut_ || IsIconic(window_))
@@ -225,11 +239,14 @@ void ProgressWindow::layout() {
     const int margin = progressHorizontalMargin(width, dpi);
     const int contentWidth = progressContentRight(width, dpi) - margin;
     const bool success = model_.view().stage == ProgressStage::succeeded;
+    const int detailWidth = model_.httpDiagnostic() ? std::max(scaleForDpi(128, dpi),
+        measureText(dc, resources_.font(ui::Font::label), L"Error detail", 10000, false).width + scaleForDpi(32, dpi)) : 0;
     const int panelWidth =
-        contentWidth - scaleForDpi(48 + (success && width >= scaleForDpi(760, dpi) ? 208 : 0), dpi);
+        contentWidth - scaleForDpi(48 + (success && width >= scaleForDpi(760, dpi) ? 208 : 0), dpi) -
+        (progressErrorDetailBeside(width, dpi, detailWidth) ? detailWidth + scaleForDpi(16, dpi) : 0);
     layout_ = computeProgressLayout(width, dpi,
                                     textHeight(panelAction_, ui::Font::label, panelWidth, 24), success, disconnect_,
-                                    textHeight(panelHeading_, ui::Font::card, panelWidth, 28));
+                                    textHeight(panelHeading_, ui::Font::card, panelWidth, 28), detailWidth);
     ReleaseDC(window_, dc);
     scrollMax_ = std::max(0, layout_.height - static_cast<int>(client.bottom));
     scroll_ = std::clamp(scroll_, 0, scrollMax_);
@@ -266,6 +283,7 @@ void ProgressWindow::layout() {
     add(panelHeading_, layout_.panelHeading);
     add(panelAction_, layout_.panelAction);
     add(countdown_, layout_.countdown);
+    add(errorDetailButton_, layout_.errorDetail);
     positionControls(window_, positions);
     InvalidateRect(window_, nullptr, FALSE);
     layingOut_ = false;
@@ -335,7 +353,7 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
                         L"Closing in " + std::to_wstring(seconds) + (seconds == 1 ? L" second" : L" seconds"));
             }
             if (!self->waitingForReply_ && self->polling_.onTimer(nowMs()) && !self->readPending_ &&
-                self->model_.view().stage == ProgressStage::connecting) {
+                (self->model_.view().stage == ProgressStage::connecting || self->model_.httpDiagnostic())) {
                 self->readPending_ = true;
                 self->reader_.request(window, kSnapshotMessage);
             }
@@ -439,6 +457,10 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
     case WM_ERASEBKGND:
         return 1;
     case WM_COMMAND:
+        if (LOWORD(wParam) == 412 && self->model_.httpDiagnostic()) {
+            self->errorDetail_.open(self->instance_, window, *self->model_.httpDiagnostic());
+            return 0;
+        }
         if (LOWORD(wParam) == IDCANCEL) {
             SendMessageW(window, WM_CLOSE, 0, 0);
             return 0;
@@ -451,6 +473,13 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        if (!self->disconnect_ && self->diagnosticEpoch_)
+            self->dismissReader_.request(IpcCommand::dismiss_connect_diagnostic,
+                IpcProtocol::dismissDiagnosticPayload(self->diagnosticEpoch_, self->diagnosticAttemptId_), nullptr, 0);
+        self->diagnosticEpoch_ = 0;
+        self->diagnosticAttemptId_.clear();
+        self->model_.onClose();
+        self->errorDetail_.close();
         KillTimer(window, kTimer);
         self->polling_.stop();
         self->reader_.stop();
@@ -462,6 +491,7 @@ LRESULT CALLBACK ProgressWindow::procedure(HWND window, UINT message, WPARAM wPa
     case WM_NCDESTROY:
         self->resources_.clear();
         self->eyebrow_ = nullptr;
+        self->errorDetailButton_ = nullptr;
         self->detailsHeading_ = self->checksHeading_ = self->panelHeading_ = self->panelAction_ = self->countdown_ =
             nullptr;
         self->fields_ = {};

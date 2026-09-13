@@ -1,7 +1,8 @@
 // Versioned local IPC contract v1, client.md "Verejne lokalni IPC".
 //
 // A request is a UTF-8 JSON object with exactly `ipcVersion`, `requestId` and
-// `command`, plus exactly one `config` member for `set-config`. An unknown
+// `command`, plus `config` for `set-config`, or connectionEpoch/connectAttemptId
+// for dismiss-connect-diagnostic. An unknown
 // version, an unknown command, a duplicate member and an extra member are all
 // rejected with a short safe error and without performing the operation.
 //
@@ -38,6 +39,7 @@ enum class IpcCommand {
     get_config,
     set_config,
     get_diagnostics,
+    dismiss_connect_diagnostic,
 };
 
 const char* ipcCommandName(IpcCommand command) noexcept;
@@ -48,10 +50,13 @@ struct IpcRequest {
     std::string requestId;
     // Present only for `set-config`.
     std::string config;
+    std::uint64_t connectionEpoch = 0;
+    std::string connectAttemptId;
 };
 
 class IpcProtocol {
 public:
+    static std::string dismissDiagnosticPayload(std::uint64_t epoch, std::string_view attemptId);
     // Full validation of one request document.
     static Result<IpcRequest> parseRequest(std::string_view json);
 

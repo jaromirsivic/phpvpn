@@ -8,6 +8,8 @@ struct WizardReply {
 };
 class WizardIpc {
 public:
+    static JsonValue httpDiagnosticValue(const HttpDiagnostic& diagnostic);
+    static Result<HttpDiagnostic> parseHttpDiagnostic(const JsonValue& value);
     static const char* commandName(WizardCommand command);
     static std::optional<WizardCommand> command(std::string_view name);
     static Result<WizardRequest> parseRequest(std::string_view json);

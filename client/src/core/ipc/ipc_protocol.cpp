@@ -4,6 +4,7 @@
 
 #include "core/protocol/json.h"
 #include "core/protocol/uuid.h"
+#include "core/ipc/wizard_ipc.h"
 
 namespace phpvpn {
 namespace {
@@ -13,7 +14,7 @@ struct CommandName {
     const char* name;
 };
 
-constexpr std::array<CommandName, 7> kCommandNames = {{
+constexpr std::array<CommandName, 8> kCommandNames = {{
     {IpcCommand::get_status, "get-status"},
     {IpcCommand::connect, "connect"},
     {IpcCommand::disconnect, "disconnect"},
@@ -21,6 +22,7 @@ constexpr std::array<CommandName, 7> kCommandNames = {{
     {IpcCommand::get_config, "get-config"},
     {IpcCommand::set_config, "set-config"},
     {IpcCommand::get_diagnostics, "get-diagnostics"},
+    {IpcCommand::dismiss_connect_diagnostic, "dismiss-connect-diagnostic"},
 }};
 
 JsonValue tristateValue(Tristate value) {
@@ -128,7 +130,7 @@ Result<IpcRequest> IpcProtocol::parseRequest(std::string_view json) {
     // `config` is allowed for `set-config` only, and every other member is
     // rejected as an extra field.
     const std::size_t expectedMembers =
-        *parsedCommand == IpcCommand::set_config ? 4u : 3u;
+        *parsedCommand == IpcCommand::dismiss_connect_diagnostic ? 5u : *parsedCommand == IpcCommand::set_config ? 4u : 3u;
     if (root.objectValue().size() != expectedMembers) {
         return Error(ErrorCode::ipc_malformed, "the request carries unexpected members");
     }
@@ -143,6 +145,16 @@ Result<IpcRequest> IpcProtocol::parseRequest(std::string_view json) {
     IpcRequest request;
     request.command = *parsedCommand;
     request.requestId = requestId->stringValue();
+    if (*parsedCommand == IpcCommand::dismiss_connect_diagnostic) {
+        const auto* epoch = root.find("connectionEpoch");
+        if (!epoch || (!epoch->isUnsignedInteger() && !epoch->isInteger()) ||
+            (epoch->isInteger() && epoch->integerValue() <= 0) || jsonUnsignedOrZero(epoch) == 0)
+            return Error(ErrorCode::ipc_malformed);
+        request.connectionEpoch = jsonUnsignedOrZero(epoch);
+        const auto* attempt = root.find("connectAttemptId");
+        if (!attempt || !attempt->isString() || !Uuid::isValidV4(attempt->stringValue())) return Error(ErrorCode::ipc_malformed);
+        request.connectAttemptId = attempt->stringValue();
+    }
     if (config != nullptr) {
         request.config = config->stringValue();
     }
@@ -159,7 +171,18 @@ std::string IpcProtocol::buildRequest(IpcCommand command,
     if (command == IpcCommand::set_config) {
         members.emplace_back("config", JsonValue::makeString(std::string(config)));
     }
+    if (command == IpcCommand::dismiss_connect_diagnostic) {
+        auto payload = Json::parse(config);
+        for (const auto* name : {"connectionEpoch", "connectAttemptId"}) {
+            const auto* value = payload && payload->isObject() ? payload->find(name) : nullptr;
+            members.emplace_back(name, value ? *value : JsonValue::makeNull());
+        }
+    }
     return Json::serialize(JsonValue::makeObject(std::move(members)));
+}
+std::string IpcProtocol::dismissDiagnosticPayload(std::uint64_t epoch, std::string_view attemptId) {
+    return Json::serialize(JsonValue::makeObject({{"connectionEpoch", JsonValue::makeUnsignedInteger(epoch)},
+        {"connectAttemptId", JsonValue::makeString(std::string(attemptId))}}));
 }
 
 std::string IpcProtocol::buildAcknowledgement(std::string_view requestId) {
@@ -173,6 +196,9 @@ std::string IpcProtocol::buildAcknowledgement(std::string_view requestId) {
 std::string IpcProtocol::buildStatusResponse(std::string_view requestId,
                                              const StatusSnapshot& snapshot) {
     JsonObject status;
+    status.emplace_back("connectionEpoch", JsonValue::makeUnsignedInteger(snapshot.connectionEpoch));
+    status.emplace_back("connectAttemptId", snapshot.connectAttemptId ? JsonValue::makeString(*snapshot.connectAttemptId) : JsonValue::makeNull());
+    if (snapshot.httpDiagnostic) status.emplace_back("httpDiagnostic", WizardIpc::httpDiagnosticValue(*snapshot.httpDiagnostic));
     status.emplace_back("state", JsonValue::makeString(connectionStateName(snapshot.state)));
     status.emplace_back("phase", JsonValue::makeString(connectionPhaseName(snapshot.phase)));
     status.emplace_back("stateChangedAt", JsonValue::makeString(snapshot.stateChangedAtUtc));

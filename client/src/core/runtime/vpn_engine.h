@@ -75,6 +75,7 @@ public:
     // publication, never for network I/O or the bootstrap result.
     Status connect();
     Status disconnect();
+    void dismissConnectDiagnostic(std::uint64_t epoch, std::string_view attemptId);
     StatusSnapshot status() const;
     DiagnosticsSnapshot diagnostics() const;
 
@@ -108,7 +109,8 @@ private:
     void pushCommand(Command command);
     Command takeCommand(std::int64_t waitMs);
 
-    Status runConnectSequence(bool initialBootstrap);
+    Status runConnectSequence(bool initialBootstrap, std::optional<HttpDiagnostic>* failedDiagnostic = nullptr,
+        bool* rejectedResponse = nullptr);
     void runConnectedIteration();
     void teardown(bool keepError);
 
@@ -129,6 +131,8 @@ private:
     std::optional<Error> startupError_;
     std::mutex transitionMutex_;
     std::uint64_t connectionEpoch_ = 0;
+    std::optional<std::string> connectAttemptId_;
+    std::optional<HttpDiagnostic> connectHttpDiagnostic_;
     std::function<Status()> beforeConnect_;
     std::function<void()> cancelWizard_;
 

@@ -2,9 +2,9 @@
 //
 // The `get-status` snapshot holds the state, checkpoints and nine counters of
 // client.md and must
-// never contain a URL, configuration, an IP address, a key, an authentication or
-// GCM tag, a ciphertext or a detailed network error. The `get-diagnostics`
-// snapshot is wider but obeys the same prohibitions.
+// keep its public fields free of raw protocol data. The optional, bounded
+// initial-Connect httpDiagnostic is the sole explicit local exception.
+// The `get-diagnostics` snapshot never carries this raw HTTP object.
 #pragma once
 
 #include <cstdint>
@@ -14,6 +14,7 @@
 
 #include "core/base/error.h"
 #include "core/runtime/traffic_counters.h"
+#include "core/wizard/http_diagnostic.h"
 
 namespace phpvpn {
 
@@ -40,6 +41,9 @@ struct SafeError {
 };
 
 struct StatusSnapshot {
+    std::uint64_t connectionEpoch = 0;
+    std::optional<std::string> connectAttemptId;
+    std::optional<HttpDiagnostic> httpDiagnostic;
     ConnectionState state = ConnectionState::disconnected;
     ConnectionPhase phase = ConnectionPhase::idle;
     std::string stateChangedAtUtc;

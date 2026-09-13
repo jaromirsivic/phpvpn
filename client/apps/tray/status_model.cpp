@@ -6,6 +6,9 @@
 #include "core/protocol/json.h"
 #include "core/protocol/iso8601.h"
 #include "core/protocol/uuid.h"
+#include "core/ipc/wizard_ipc.h"
+#include "core/ipc/ipc_protocol.h"
+#include "platform/iface/transport.h"
 
 namespace phpvpn::tray {
 namespace {
@@ -33,6 +36,7 @@ CheckpointResult checkpoint(const JsonValue* value) {
 
 TrayStatus parseStatusResponse(std::string_view json) {
     TrayStatus result;
+    if (json.size() > kIpcMaxMessageBytes) return result;
     const auto document = Json::parse(json);
     if (!document.ok() || !document.value().isObject()) return result;
     const auto& root = document.value();
@@ -40,7 +44,8 @@ TrayStatus parseStatusResponse(std::string_view json) {
         !nonemptyString(root.find("requestId")) || !Uuid::isValidV4(root.find("requestId")->stringValue())) return result;
     const auto* status = root.find("status");
     // client.md, get-status: a complete v1 snapshot, never a partial update.
-    if (!status || !status->isObject() || status->objectValue().size() != 23 ||
+    if (!status || !status->isObject() || status->objectValue().size() != (status->find("httpDiagnostic") ? 26u : 25u) ||
+        !unsignedNumber(status->find("connectionEpoch")) ||
         !versionOne(status->find("ipcVersion")) ||
         !nonemptyString(status->find("clientVersion")) ||
         !nonemptyString(status->find("stateChangedAt")) ||
@@ -90,6 +95,28 @@ TrayStatus parseStatusResponse(std::string_view json) {
     result.serverUrl = checkpoint(status->find("serverUrlCheck"));
     result.serverSecret = checkpoint(status->find("serverSecretCheck"));
     result.accessKey = checkpoint(status->find("accessKeyCheck"));
+    result.connectionEpoch = jsonUnsignedOrZero(status->find("connectionEpoch"));
+    const auto* attemptId = status->find("connectAttemptId");
+    if (!attemptId) return TrayStatus{};
+    if (!attemptId->isNull()) {
+        if (!attemptId->isString() || !Uuid::isValidV4(attemptId->stringValue())) return TrayStatus{};
+        result.connectAttemptId = attemptId->stringValue();
+    }
+    if ((result.connectionEpoch != 0) != result.connectAttemptId.has_value()) return TrayStatus{};
+    if (const auto* diagnostic = status->find("httpDiagnostic")) {
+        if (!result.connectionEpoch || result.state != "error" || result.phase != "idle" || !result.hasError ||
+            result.errorRecoverable || result.accessKey != CheckpointResult::pending || result.connectionStartedAtUtcMs)
+            return TrayStatus{};
+        auto parsed = WizardIpc::parseHttpDiagnostic(*diagnostic);
+        if (!parsed) return TrayStatus{};
+        if (parsed->action == HttpAction::health) {
+            if (!((result.serverUrl == CheckpointResult::failed && result.serverSecret == CheckpointResult::pending) ||
+                (result.serverUrl == CheckpointResult::success && result.serverSecret == CheckpointResult::failed))) return TrayStatus{};
+        } else if (result.serverUrl != CheckpointResult::success || result.serverSecret != CheckpointResult::failed) return TrayStatus{};
+        if (result.errorCode != "endpoint_unavailable_or_invalid" && result.errorCode != "server_verification_failed" &&
+            result.errorCode != "communication_failed") return TrayStatus{};
+        result.httpDiagnostic = std::move(*parsed);
+    }
     result.valid = true;
     return result;
 }

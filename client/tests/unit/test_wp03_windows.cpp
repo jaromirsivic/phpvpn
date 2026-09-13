@@ -6,6 +6,7 @@
 #include "contracts_fixture.h"
 #include "harness.h"
 #include "platform/windows/ipc_pipe.h"
+#include "platform/iface/transport.h"
 #include "tray_fixture.h"
 #include "wp03_dialog_test.h"
 #include <atomic>
@@ -28,6 +29,16 @@ std::wstring windowText(HWND h) {
     GetWindowTextW(h, text.data(), n + 1);
     text.resize(n);
     return text;
+}
+HWND httpDetail(HWND owner) {
+    struct Search { HWND owner; HWND found = nullptr; } search{owner};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM value) -> BOOL {
+        auto& result = *reinterpret_cast<Search*>(value); wchar_t name[64]{};
+        GetClassNameW(window, name, 64);
+        if (GetWindow(window, GW_OWNER) == result.owner && std::wstring_view(name) == L"PhpVpnHttpErrorDetail") result.found = window;
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&search));
+    return search.found;
 }
 void pump(unsigned milliseconds = 1) {
     const auto deadline = GetTickCount64() + milliseconds;
@@ -61,6 +72,8 @@ struct Backend {
     std::atomic<unsigned> configs{0}, statuses{0}, other{0}, inflight{0}, maximum{0}, delay{0};
     std::mutex mutex;
     std::string document = contracts_test::document("10.99.99.3");
+    std::optional<StatusSnapshot> statusOverride;
+    std::atomic<std::uint64_t> dismissedEpoch{0};
     IpcPipeServer server;
     Backend() : server([this](std::string_view request) { return reply(request); }, options()) {
         PHPVPN_CHECK(server.start().ok());
@@ -83,6 +96,7 @@ struct Backend {
             return document;
         }
         if (parsed->command == IpcCommand::get_status) {
+            { std::lock_guard lock(mutex); if (statusOverride) return IpcProtocol::buildStatusResponse(parsed->requestId, *statusOverride); }
             ++statuses;
             const auto active = ++inflight;
             auto old = maximum.load();
@@ -93,6 +107,10 @@ struct Backend {
             phpvpn::tray::test::member(fixture, "requestId") = JsonValue::makeString(parsed->requestId);
             --inflight;
             return Json::serialize(fixture);
+        }
+        if (parsed->command == IpcCommand::dismiss_connect_diagnostic) {
+            dismissedEpoch = parsed->connectionEpoch;
+            return IpcProtocol::buildAcknowledgement(parsed->requestId);
         }
         ++other;
         return "{}";
@@ -199,6 +217,63 @@ void capture(HWND h, const wchar_t *name, bool verifyConnectCard = false) {
     ReleaseDC(h, source);
 }
 } // namespace
+PHPVPN_TEST(WP03Windows, ConnectHttpDiagnosticOwnedDialogAndCleanup) {
+    Backend backend;
+    StatusSnapshot status; status.connectionEpoch = 9; status.clientVersion = "test";
+    status.connectAttemptId = "3f2a7c1e-9b44-4b0e-8d2f-5c6a1e7b9d03";
+    status.stateChangedAtUtc = "2026-09-13T08:00:00.000Z"; status.state = ConnectionState::error;
+    status.serverUrlCheck = phpvpn::CheckpointResult::failed;
+    status.lastError = SafeError{"endpoint_unavailable_or_invalid", "Safe failure", false};
+    HttpDiagnostic diagnostic; diagnostic.action = HttpAction::health; diagnostic.responseComplete = true;
+    BoundedHttpCapture request, response;
+    request.append("POST /synthetic?action=health HTTP/1.1\r\n\r\nsynthetic request");
+    response.append("HTTP/1.1 200 OK\r\n\r\nsynthetic invalid response");
+    diagnostic.request = request.finish(); diagnostic.response = response.finish(); status.httpDiagnostic = diagnostic;
+    { std::lock_guard lock(backend.mutex); backend.statusOverride = status; }
+    ProgressWindow progress(backend.pipe); progress.open(GetModuleHandleW(nullptr));
+    auto snapshot = parseStatusResponse(IpcProtocol::buildStatusResponse("3f2a7c1e-9b44-4b0e-8d2f-5c6a1e7b9d03", status));
+    PHPVPN_CHECK(snapshot.valid);
+    progress.onSnapshot(snapshot); pump(10);
+    const auto button = GetDlgItem(progress.window(), 412);
+    PHPVPN_CHECK(IsWindowVisible(button)); PHPVPN_CHECK_EQ(windowText(button), L"Error detail");
+    PHPVPN_CHECK(GetNextDlgTabItem(progress.window(), GetDlgItem(progress.window(), 411), FALSE) == button);
+    for (int width : {940, 600, 360}) {
+        resizeClient(progress.window(), {width, 800}); pump(10);
+        const auto b = bounds(button, progress.window()); RECT client{}; GetClientRect(progress.window(), &client);
+        PHPVPN_CHECK(b.left >= 0 && b.right <= client.right && b.bottom > b.top);
+    }
+    resizeClient(progress.window(), {940, 800}); pump(10);
+    SetFocus(button);
+    SendMessageW(button, WM_KEYDOWN, VK_SPACE, 0);
+    SendMessageW(button, WM_KEYUP, VK_SPACE, 0); pump(10);
+    auto detail = httpDetail(progress.window());
+    PHPVPN_CHECK(detail && GetWindow(detail, GW_OWNER) == progress.window());
+    if (!detail) return;
+    const auto req = GetDlgItem(detail, 781), resp = GetDlgItem(detail, 782), tabs = GetDlgItem(detail, 780);
+    PHPVPN_CHECK((GetWindowLongPtrW(req, GWL_STYLE) & ES_READONLY) != 0);
+    PHPVPN_CHECK((GetWindowLongPtrW(resp, GWL_STYLE) & ES_READONLY) != 0);
+    PHPVPN_CHECK(windowText(req).find(L"synthetic request") != std::wstring::npos);
+    PHPVPN_CHECK(windowText(resp).find(L"synthetic invalid response") != std::wstring::npos);
+    PHPVPN_CHECK(IsWindowVisible(req) && !IsWindowVisible(resp));
+    TabCtrl_SetCurSel(tabs, 1); NMHDR changed{tabs, 780, TCN_SELCHANGE};
+    SendMessageW(detail, WM_NOTIFY, 780, reinterpret_cast<LPARAM>(&changed));
+    PHPVPN_CHECK(IsWindowVisible(resp) && !IsWindowVisible(req));
+    PHPVPN_CHECK(!GetDlgItem(detail, IDOK) && !GetDlgItem(detail, IDCANCEL));
+    SendMessageW(detail, WM_CLOSE, 0, 0); PHPVPN_CHECK(!IsWindow(detail));
+    SendMessageW(button, BM_CLICK, 0, 0); detail = httpDetail(progress.window()); PHPVPN_CHECK(detail);
+    capture(progress.window(), L"connect-http-diagnostic");
+    progress.onSnapshot(TrayStatus{});
+    PHPVPN_CHECK(!IsWindowVisible(button) && !IsWindow(detail));
+    progress.onSnapshot(snapshot); PHPVPN_CHECK(!IsWindowVisible(button));
+    SendMessageW(progress.window(), WM_CLOSE, 0, 0);
+    PHPVPN_CHECK(until([&] { return backend.dismissedEpoch.load() == 9; }));
+    progress.open(GetModuleHandleW(nullptr)); progress.onSnapshot(snapshot);
+    PHPVPN_CHECK(IsWindowVisible(GetDlgItem(progress.window(), 412)));
+    SendMessageW(GetDlgItem(progress.window(), 412), BM_CLICK, 0, 0);
+    detail = httpDetail(progress.window()); progress.endSession();
+    PHPVPN_CHECK(!IsWindow(detail));
+}
+
 PHPVPN_TEST(WP03Windows, ConnectCardKeepsSharedMarginsAndFourPaintedEdgesAfterResize) {
     Backend backend;
     for (const bool success : {false, true}) {

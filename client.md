@@ -674,6 +674,20 @@ Pád služby ruší relace a síťové důkazy. Při restartu během nejasného 
 
 Limit zprávy zahrnuje JSON escaping. Samostatný limit souboru a výsledného dokumentu je 512 KiB podle části Omezené čtení, UTF-8 a snímky a vynucuje se již při čtení před úplným hashováním a parsováním. Dokument, který se s obálkou nevejde do v1, odmítnout před další kontrolou a zápisem s informací o velikosti, nerozdělovat jej na nezdokumentované kusy. Doplnit testy obou horních hranic, escapingu a striktního UTF-8. Limity responseTimeoutSeconds se při převodu do WinHTTP nesmějí násobením přetočit na záporný nebo nekonečný timeout.
 
+### HTTP detail neúspěšného Connect
+
+Úvodní Connect health/info je po přijaté, ale odmítnuté HTTP odpovědi terminální pokus bez automatického retry. Platí to pro neplatný protokolový obsah, HTML místo JSON, neplatný JSON, selhání parsování nebo kryptografického ověření a odmítnutý HTTP status. Runtime přejde do `error` a veřejná chyba má `recoverable: false`. Rozhodnutí vychází ze skutečného výsledku výměny, nikoli z dostupnosti diagnostického objektu. Červený panel a dostupný Error detail zůstávají stabilní do explicitní invalidace uživatelem. Přechodné komunikační chyby bez použitelné přijaté odpovědi zachovávají dosavadní backoff/recovery a nemají Error detail. Configuration Wizard zůstává jedním pokusem na kliknutí. Toto pravidlo nemění obnovu po chybách ACCESS_KEY, tunelu či provozních dat.
+
+Connect znovu používá bounded capture, `http-octets-v1`, Unicode projekci a stejné `HttpErrorDetailWindow` jako Configuration Wizard. Zachytávání je výslovně zapnuté pouze pro jednotlivé úvodní health/info výměny. Nepřenáší úspěšnou health odpověď jako detail chybného info a nezachytává ACCESS_KEY, tunel, datové requesty, časovou synchronizaci ani recovery requesty. DNS, TLS, lokální validace, timeout a zrušení bez zpracovatelné přijaté odpovědi diagnostiku nevytvářejí. Raw obsah se nezapisuje do logů, konfigurace ani běžného `lastError`.
+
+Status nese dvě povinná korelační pole: `connectionEpoch` jako nezáporné uint64 a `connectAttemptId` jako UUIDv4, při nulové epoše null. UUID vznikne pro každý nově přijatý Connect. Idempotentní Connect identitu nemění. Kombinace zabraňuje záměně i po restartu služby. Volitelný `httpDiagnostic` má přesně sdílené schéma popsané v části Životnost a limity Wizard IPC. Null, neznámá pole, vadné délky, neplatný action nebo nesoulad se stavem, chybou a kontrolními body odmítnou celý status. Odpověď bez detailu má 25 členů ve vnitřním status objektu, odpověď s detailem 26. Limit celé UTF-8 zprávy zůstává 4194304 bajtů. Oba směry zachovávají celý obsah do 65536 bajtů, nad tuto mez prvních 64512 a posledních 1024 bajtů s přesně čtyřmi samostatnými řádky `...`. Zobrazení velikosti v KiB na dvě desetinná místa a bezpečné zobrazení neplatných textových bajtů se nemění.
+
+Červené tlačítko `Error detail` je vpravo v chybovém panelu Connect. Text a tlačítko mají oddělené plochy, na úzkém okně je tlačítko pod textem zarovnané doprava. Je dostupné v pořadí Tab za URL/IP a používá stejnou červenou komponentu a high-contrast paletu jako Wizard. Dialog je vlastněný Connect formulářem, má read-only Request/Response, žádnou patičku a zavírá se křížkem. Samotné zavření detailu dovolí znovuotevření stejné chyby.
+
+Nový Connect, úspěch, Disconnect, zrušení, nahrazení identity a ukončení služby odstraní službovou diagnostiku. Zavření chybového formuláře vyprázdní lokální model i owned dialog a odešle `dismiss-connect-diagnostic` s přesnou původní dvojicí identity. Uzavřené schéma požadavku je `ipcVersion`, `requestId`, `command`, `connectionEpoch`, `connectAttemptId`. Epocha musí být kladné uint64 a ID platné UUIDv4. Služba smaže pouze diagnostiku shodného pokusu, ostatní identitu ponechá a vrátí běžné potvrzení `result: "ok"`. Příkaz nemění VPN, konfiguraci ani síť. Při výpadku IPC není potvrzen vzdálený cleanup, kopii stále invaliduje další Connect, Disconnect nebo konec služby. Model po invalidaci nepřijme opožděnou diagnostiku stejného pokusu. Cache tray ikony a statistik raw obsah neuchovávají.
+
+Služba a tray se nasazují společně. Starší striktní parser statusu nová korelační pole nepřijme. Serverový HTTP protokol a protokolové ověřování nejsou změněny.
+
 ### Chyby a bezpečnost rozšíření IPC
 
 Stabilní kódy zahrnují `config_unreadable`, `config_directory_security_invalid`, `config_encoding_error`, `config_too_large`, `wizard_session_expired`, `wizard_prerequisite_failed`, `wizard_attempt_closed`, `wizard_connection_interrupted`, `wizard_commit_unknown`, `wizard_contract_self_conflict` a `wizard_unsupported`, dále rozlišit busy, timeout a chybu souborové publikace. Nezavádět config_conflict pro zastaralou uloženou revizi. Původní chyby neměnit na raw systémové výpisy.
@@ -925,7 +939,7 @@ IPC je Windows named pipe s pevnou verzovanou smlouvou v1. Název pipe je pevná
 
 Instalátor nastaví na řídicí pipe explicitní Windows ACL, která umožní připojení každé lokální aplikaci bez ohledu na jejího uživatele, skupinu nebo efektivní Windows token. Přístup nesmí vyžadovat zvláštní účet, členství ve skupině ani oprávnění vytvořené instalátorem. Služba při připojení klienta neprovádí impersonaci ani autorizaci identity klienta a nesmí rozhodovat podle názvu procesu, PID, cesty spustitelného souboru nebo údajů ve zprávě. Jedinou ochrannou hranicí IPC zůstává pevná verzovaná smlouva, úplná validace zprávy a výhradní seznam povolených příkazů.
 
-Smlouva v1 zachovává původních sedm příkazů uvedených níže a rozšiřuje whitelist pouze o přesné konfigurační a Wizard příkazy v části Rozšíření IPC v1:
+Smlouva v1 zachovává původních sedm příkazů uvedených níže a rozšiřuje whitelist o přesné konfigurační a Wizard příkazy a `dismiss-connect-diagnostic` popsané v části Rozšíření IPC v1:
 
 - `get-status`;
 - `connect`;
@@ -939,7 +953,7 @@ Pipe NESMÍ podporovat průběžný odběr stavu, restart služby, spuštění l
 
 Úspěšné odpovědi kromě `get-info` a `get-config` obsahují `ipcVersion`, původní `requestId`, výsledek příkazu a pouze pole povolená pro daný příkaz. Chyba obsahuje původní `requestId`, stabilní stručný kód, bezpečný uživatelský popis a údaj, zda je chyba obnovitelná. Nesmí obsahovat detail výjimky ani systémový chybový text. Pevná konfigurační cesta a URL jsou povolené pouze v určených nových konfiguračních a Wizard odpovědích, nikoli ve statusu, statistice, běžné IPC chybě nebo logu. Odpovědi `get-info` a `get-config` mají zvláštní přímý formát popsaný níže.
 
-`get-status` vrátí bezpečný lokální snímek obsahující:
+`get-status` vrátí lokální snímek s bezpečnými veřejnými poli a jedinou výslovnou výjimkou raw dat, volitelným bounded HTTP detailem Connect popsaným výše. Korelační dvojice `connectionEpoch` a `connectAttemptId` patří k celému atomickému snímku. Ten dále obsahuje:
 
 - stav právě z množiny `disconnected`, `connecting`, `connected`, `recovering`, `error`;
 - fázi právě z množiny `idle`, `health`, `info`, `access-key-check`, `starting-tunnel`, `running`, `stopping`;

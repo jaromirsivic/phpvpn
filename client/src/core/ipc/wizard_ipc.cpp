@@ -171,6 +171,8 @@ Result<WizardReceipt> parseReceipt(const J& value) {
 }
 
 const char* WizardIpc::commandName(WizardCommand command) { return names.at(static_cast<std::size_t>(command)); }
+JsonValue WizardIpc::httpDiagnosticValue(const HttpDiagnostic& diagnostic) { return diagnosticValue(diagnostic); }
+Result<HttpDiagnostic> WizardIpc::parseHttpDiagnostic(const JsonValue& value) { return parseDiagnostic(value); }
 std::optional<WizardCommand> WizardIpc::command(std::string_view name) {
     for (std::size_t i = 0; i < names.size(); ++i) if (name == names[i]) return static_cast<WizardCommand>(i);
     return {};

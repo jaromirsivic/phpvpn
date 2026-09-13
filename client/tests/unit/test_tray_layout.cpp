@@ -19,6 +19,17 @@ PHPVPN_TEST(TrayLayout, DefaultClientSizeScalesAtEverySupportedDpi) {
         PHPVPN_CHECK_EQ(size.height, 560 * dpi / 96);
     }
 }
+PHPVPN_TEST(TrayLayout, ConnectHttpDiagnosticButtonFitsAndNeverOverlapsText) {
+    for (int dpi : {96, 120, 144, 192}) for (int width : {320, 400, 600, 940, 1200}) {
+        auto p = [dpi](int n) { return scaleForDpi(n, dpi); };
+        const auto l = computeProgressLayout(p(width), dpi, p(120), false, false, p(56), p(160));
+        PHPVPN_CHECK(inside(l.errorDetail, {p(width), l.height}));
+        PHPVPN_CHECK(l.errorDetail.right <= l.panel.right - p(24));
+        PHPVPN_CHECK(l.errorDetail.bottom <= l.panel.bottom - p(24));
+        PHPVPN_CHECK(l.errorDetail.left >= l.panelAction.right + p(16) || l.errorDetail.top >= l.panelAction.bottom + p(16));
+        PHPVPN_CHECK_EQ(l.errorDetail.bottom - l.errorDetail.top, p(40));
+    }
+}
 PHPVPN_TEST(TrayLayout, ProgressUsesSharedMarginsAndStaticContextAtSupportedDpi) {
     for (const int dpi : {96, 120, 144, 192}) {
         const auto p = [dpi](int n) { return scaleForDpi(n, dpi); };

@@ -62,11 +62,12 @@ public:
 
     // One verified `health` exchange. On success the time snapshot is replaced
     // atomically, so a failure keeps the previous verified time.
-    Result<HealthResponse> performHealth(const std::function<void()>& onSyntaxUsable = {});
+    Result<HealthResponse> performHealth(const std::function<void()>& onSyntaxUsable = {},
+        std::optional<HttpDiagnostic>* failedDiagnostic = nullptr, bool* rejectedResponse = nullptr);
 
     // One verified `info` exchange. Also publishes the server limits used by the
     // scheduler and by the polling interval.
-    Result<InfoResponse> performInfo();
+    Result<InfoResponse> performInfo(std::optional<HttpDiagnostic>* failedDiagnostic = nullptr, bool* rejectedResponse = nullptr);
 
     // Verifies that the configured ACCESS_KEY is accepted, by sending an empty
     // authenticated `data` request and requiring a verified response. Payload

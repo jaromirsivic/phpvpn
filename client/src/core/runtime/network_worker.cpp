@@ -79,7 +79,10 @@ Result<std::string> NetworkWorker::currentTimestamp() {
     return timeSync_.requestTimestamp(clock_.monotonicMs());
 }
 
-Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>& onSyntaxUsable) {
+Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>& onSyntaxUsable,
+        std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
     if (!config_) {
         return Error(ErrorCode::config_missing, "no active configuration");
     }
@@ -93,7 +96,12 @@ Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>&
     const std::int64_t sendMono = clock_.monotonicMs();
     if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
     HttpResponse response;
-    PHPVPN_TRY_ASSIGN(response, transport_.post(HttpAction::health, body));
+    auto exchange = failedDiagnostic ? transport_.postDiagnostic(HttpAction::health, body) : transport_.post(HttpAction::health, body);
+    if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
+    if (rejectedResponse) *rejectedResponse = exchange.ok() || exchange.responseProcessingFailed;
+    if (failedDiagnostic && (exchange.ok() || exchange.responseProcessingFailed)) *failedDiagnostic = std::move(exchange.diagnostic);
+    if (!exchange.ok()) return exchange.error();
+    response = std::move(exchange).value();
     const std::int64_t receiveMono = clock_.monotonicMs();
     const std::int64_t receiveSystemUtc = clock_.systemUtcMs();
 
@@ -111,12 +119,16 @@ Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>&
     PHPVPN_TRY_ASSIGN(snapshot, TimeSync::makeSnapshot(health.timestampMs, sendMono, receiveMono,
                                                        receiveSystemUtc));
     timeSync_.publish(snapshot);
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
 
     PHPVPN_LOG_INFO(kComponent, "health response verified and server time accepted");
     return health;
 }
 
-Result<InfoResponse> NetworkWorker::performInfo() {
+Result<InfoResponse> NetworkWorker::performInfo(std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
     if (!config_) {
         return Error(ErrorCode::config_missing, "no active configuration");
     }
@@ -134,7 +146,12 @@ Result<InfoResponse> NetworkWorker::performInfo() {
 
     HttpResponse response;
     if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
-    PHPVPN_TRY_ASSIGN(response, transport_.post(HttpAction::info, body));
+    auto exchange = failedDiagnostic ? transport_.postDiagnostic(HttpAction::info, body) : transport_.post(HttpAction::info, body);
+    if (requestCancelled_ && requestCancelled_()) return Error(ErrorCode::cancelled);
+    if (rejectedResponse) *rejectedResponse = exchange.ok() || exchange.responseProcessingFailed;
+    if (failedDiagnostic && (exchange.ok() || exchange.responseProcessingFailed)) *failedDiagnostic = std::move(exchange.diagnostic);
+    if (!exchange.ok()) return exchange.error();
+    response = std::move(exchange).value();
     if (response.statusCode != 200) {
         return Error(ResponseParser::mapServerError(response.statusCode, response.body),
                      "the server rejected the info request");
@@ -152,6 +169,8 @@ Result<InfoResponse> NetworkWorker::performInfo() {
     const std::int64_t high =
         std::min<std::int64_t>(kMaxPollIntervalMs, serverLimits_.maxDataPollIntervalMs);
     currentPollIntervalMs_ = clampToRange(currentPollIntervalMs_, low, high);
+    if (failedDiagnostic) failedDiagnostic->reset();
+    if (rejectedResponse) *rejectedResponse = false;
 
     PHPVPN_LOG_INFO(kComponent, "info response verified and server limits published");
     return info;

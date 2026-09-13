@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <optional>
+#include "core/wizard/http_diagnostic.h"
 
 namespace phpvpn::tray {
 
@@ -40,6 +41,9 @@ inline constexpr std::array<CounterField, 9> kCounterFields{{
 }};
 
 struct TrayStatus {
+    std::uint64_t connectionEpoch = 0;
+    std::optional<std::string> connectAttemptId;
+    std::optional<phpvpn::HttpDiagnostic> httpDiagnostic;
     std::string state;
     std::string phase;
     CheckpointResult serverUrl = CheckpointResult::pending;

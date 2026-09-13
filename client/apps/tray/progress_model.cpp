@@ -25,6 +25,29 @@ const ProgressErrorText &progressErrorText(std::string_view code) {
     return errors[4]; // Unknown codes cannot inject text or claim key rejection.
 }
 void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/) {
+    if (status.valid && epoch_ && status.connectionEpoch == epoch_ && attemptId_ != status.connectAttemptId) {
+        diagnostic_.reset(); view_.closeRequested = true; return;
+    }
+    if (status.valid && epoch_ && status.connectionEpoch < epoch_) {
+        // A restarted service may have a lower epoch. A foreign UUID can never
+        // keep raw data alive, even when the frozen public error is retained.
+        if (status.connectAttemptId != attemptId_) { diagnostic_.reset(); diagnosticRetired_ = true; }
+        return;
+    }
+    if (!disconnect_) {
+        if (!status.valid || view_.closeRequested) { diagnosticRetired_ = diagnosticRetired_ || diagnostic_.has_value(); diagnostic_.reset(); }
+        else {
+            if (status.connectionEpoch != epoch_) diagnosticRetired_ = false;
+            if (epoch_ && status.connectionEpoch != epoch_ && view_.stage != ProgressStage::connecting)
+                view_.closeRequested = true;
+            epoch_ = status.connectionEpoch;
+            attemptId_ = status.connectAttemptId;
+            if (diagnostic_ && !status.httpDiagnostic) diagnosticRetired_ = true;
+            if (!diagnosticRetired_ && !view_.closeRequested && status.state == "error" && status.phase == "idle" &&
+                status.hasError && !status.errorRecoverable) diagnostic_ = status.httpDiagnostic;
+            else diagnostic_.reset();
+        }
+    }
     if (view_.stage != ProgressStage::connecting || view_.closeRequested)
         return;
     view_.statusUnavailable = !status.valid;
