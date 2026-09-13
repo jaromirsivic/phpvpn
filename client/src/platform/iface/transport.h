@@ -14,6 +14,7 @@
 #include <string_view>
 
 #include "core/base/result.h"
+#include "core/wizard/http_diagnostic.h"
 
 namespace phpvpn {
 
@@ -27,6 +28,7 @@ struct TransportSettings {
     bool trustAnyTlsCertificate = true;
     std::int64_t responseTimeoutSeconds = 30;
     std::int64_t maxResponseBodyBytes = 67108864;
+    bool captureWizardHttpDiagnostics = false;
 };
 
 struct HttpResponse {
@@ -39,6 +41,9 @@ struct HttpResponse {
 struct HttpExchangeResult {
     Result<HttpResponse> result;
     std::uint64_t responseBodyBytesRead = 0;
+    std::optional<HttpDiagnostic> diagnostic;
+    bool responseProcessingFailed = false;
+    std::optional<int> receivedHttpStatus;
 
     HttpExchangeResult(Error error) : result(std::move(error)) {}
     HttpExchangeResult(Result<HttpResponse> outcome, std::uint64_t bytes)

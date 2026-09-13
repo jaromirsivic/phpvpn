@@ -51,6 +51,7 @@ void WizardService::clearOperationEvidenceLocked(Session& session, WizardOperati
     session.accessEvidence.reset();
 }
 void WizardService::cancelLocked(const std::shared_ptr<Operation>& operation) {
+    if (operation) operation->result.httpDiagnostic.reset();
     if (!operation || terminal(*operation) || operation->committing) return;
     operation->cancelled = true;
     operation->result.state = WizardOperationState::cancelling;
@@ -248,6 +249,7 @@ Result<J> WizardService::execute(const WizardRequest& request) {
                 return Error(ErrorCode::wizard_connection_interrupted);
             ++session->generation;
             clearEvidenceLocked(*session);
+            cancelLocked(session->operation);
             session->operation.reset();
             if (request.command == WizardCommand::reset) {
                 session->original = makeNewWizardDocument();
@@ -345,6 +347,7 @@ Result<J> WizardService::startProbe(const WizardRequest& request) {
     // A successfully admitted task cannot enter its body until this lock is released.
     if (!scheduler_.diagnostic || !scheduler_.diagnostic([this, session, operation] { probeTask(session, operation); }))
         return Error(ErrorCode::busy);
+    if (session->operation) session->operation->result.httpDiagnostic.reset();
     session->operation = operation;
     session->view.fields = std::move(fields);
     return acknowledgement(*operation);
@@ -353,6 +356,7 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
     Result<std::size_t> outcome = Error(ErrorCode::cancelled);
     std::optional<std::string> suggestion;
     std::optional<int> httpStatus;
+    std::optional<HttpDiagnostic> diagnostic;
     std::shared_ptr<ProbeClient> probe;
     std::unique_ptr<Transport> transport;
     try {
@@ -367,6 +371,7 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
         else {
             transport = std::move(created).value();
             probe = std::make_shared<ProbeClient>(crypto_, *transport, clock_);
+            probe->captureWizardHttpDiagnostics(operation->result.kind == WizardOperationKind::url || operation->result.kind == WizardOperationKind::secret);
             {
                 std::lock_guard lock(mutex_);
                 operation->probe = probe;
@@ -384,6 +389,7 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
                 } else outcome = checked.error();
             } else outcome = probe->checkAccess(*session->original, operation->fields);
             httpStatus = probe->lastHttpStatus();
+            diagnostic = probe->takeFailedHttpDiagnostic();
         }
     } catch (...) { outcome = Error(ErrorCode::internal); }
     {
@@ -400,7 +406,9 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
             operation->result.state = WizardOperationState::failed;
             const auto field = operation->result.kind == WizardOperationKind::url ? "serverUrl" :
                 operation->result.kind == WizardOperationKind::secret ? "serverSecret" : "accessKey";
-            operation->result.error = WizardIpc::safeError(outcome.error(), httpStatus, field, operation->fields.serverUrl);
+            operation->result.httpDiagnostic = std::move(diagnostic);
+            operation->result.error = WizardIpc::safeError(outcome.error(), httpStatus, field,
+                operation->result.httpDiagnostic ? std::nullopt : std::optional<std::string>(operation->fields.serverUrl));
         } else {
             operation->result.state = WizardOperationState::succeeded;
             operation->result.suggestedIp = suggestion; operation->result.discardedRecordCount = outcome.value();

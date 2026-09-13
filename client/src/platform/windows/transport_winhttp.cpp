@@ -23,6 +23,32 @@ std::wstring widen(std::string_view text) {
     if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), size)) return {};
     return result;
 }
+std::string narrow(std::wstring_view text) {
+    if (text.empty() || text.size() > INT_MAX) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string out(static_cast<std::size_t>(size), '\0');
+    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr)) return {};
+    return out;
+}
+std::optional<std::string> queryHeaderText(HINTERNET request, DWORD flags) {
+    DWORD size = 0;
+    WinHttpQueryHeaders(request, flags, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &size, WINHTTP_NO_HEADER_INDEX);
+    for (int retry = 0; retry < 3 && GetLastError() == ERROR_INSUFFICIENT_BUFFER && size; ++retry) {
+        std::wstring buffer((size + sizeof(wchar_t) - 1) / sizeof(wchar_t), L'\0');
+        if (WinHttpQueryHeaders(request, flags, WINHTTP_HEADER_NAME_BY_INDEX, buffer.data(), &size, WINHTTP_NO_HEADER_INDEX)) {
+            buffer.resize(size / sizeof(wchar_t));
+            while (!buffer.empty() && buffer.back() == L'\0') buffer.pop_back();
+            auto text = narrow(buffer);
+            if (!buffer.empty() && text.empty()) return {};
+            return text;
+        }
+    }
+    return {};
+}
+void stripHeaderFraming(std::string& block) {
+    while (block.size() >= 2 && block.compare(block.size() - 2, 2, "\r\n") == 0) block.resize(block.size() - 2);
+}
 ErrorCode mapError(DWORD error) {
     switch (error) {
         case ERROR_WINHTTP_NAME_NOT_RESOLVED: return ErrorCode::transport_dns_failed;
@@ -50,6 +76,11 @@ struct RequestState {
     std::uint64_t bytes = 0;
     bool cancelled = false, resultChosen = false;
     std::array<char, 64 * 1024> buffer{};
+    std::optional<HttpDiagnostic> diagnostic;
+    BoundedHttpCapture diagnosticBody;
+    std::string diagnosticHeaders;
+    bool responseProcessingFailed = false;
+    std::optional<int> receivedHttpStatus;
     ~RequestState() {
         if (changed) CloseHandle(changed);
         if (cancel) CloseHandle(cancel);
@@ -168,7 +199,19 @@ public:
         std::uint64_t bytes;
         { std::lock_guard stateLock(state->mutex); bytes = state->bytes; }
         { std::lock_guard currentLock(currentMutex_); current_.reset(); }
-        return {std::move(result), bytes};
+        HttpExchangeResult outcome{std::move(result), bytes};
+        // The existing final cancellation/deadline decision always wins.
+        if (state->diagnostic && (outcome.ok() || (state->responseProcessingFailed &&
+            outcome.error().code != ErrorCode::cancelled && outcome.error().code != ErrorCode::transport_timeout))) {
+            auto message = prependHttpHeaders(state->diagnosticHeaders, state->diagnosticBody.finish());
+            if (message) {
+                state->diagnostic->response = std::move(*message);
+                outcome.diagnostic = std::move(state->diagnostic);
+                outcome.responseProcessingFailed = state->responseProcessingFailed;
+                outcome.receivedHttpStatus = state->receivedHttpStatus;
+            }
+        }
+        return outcome;
     }
 private:
     Status wait(RequestState& state, ULONGLONG deadline, DWORD expected) {
@@ -216,11 +259,51 @@ private:
         PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE));
         if (!WinHttpReceiveResponse(request, nullptr)) return Error(mapError(GetLastError()));
         PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE));
+        if (settings_.captureWizardHttpDiagnostics && action != HttpAction::data) {
+            state.diagnostic.emplace();
+            auto& diagnostic = *state.diagnostic;
+            diagnostic.action = action;
+            auto rawRequest = queryHeaderText(request, WINHTTP_QUERY_RAW_HEADERS_CRLF | WINHTTP_QUERY_FLAG_REQUEST_HEADERS);
+            const auto requestHeaders = reconstructDiagnosticRequestHeaders(std::move(rawRequest), narrow(headers));
+            diagnostic.requestHeadersSource = requestHeaders.source;
+            const auto schemeEnd = url_.original.find("://") + 3;
+            const auto authorityEnd = url_.original.find('/', schemeEnd);
+            BoundedHttpCapture requestCapture;
+            requestCapture.append("POST ");
+            requestCapture.append(std::string_view(url_.original).substr(0, authorityEnd));
+            requestCapture.append(url_.path);
+            requestCapture.append(std::string("?action=") + httpActionName(action) + " " + requestHeaders.version + "\r\n");
+            requestCapture.append(requestHeaders.block);
+            requestCapture.append("\r\n\r\n");
+            requestCapture.append(body);
+            diagnostic.request = requestCapture.finish();
+            auto rawResponse = queryHeaderText(request, WINHTTP_QUERY_RAW_HEADERS_CRLF);
+            std::optional<unsigned> diagnosticStatus;
+            std::vector<std::pair<std::string, std::string>> availableHeaders;
+            if (!rawResponse || !rawResponse->starts_with("HTTP/")) {
+                DWORD code = 0, codeSize = sizeof(code);
+                const bool gotStatus = WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                    WINHTTP_HEADER_NAME_BY_INDEX, &code, &codeSize, WINHTTP_NO_HEADER_INDEX) != FALSE;
+                if (gotStatus) diagnosticStatus = code;
+                for (const auto& entry : {std::pair<DWORD, const char*>{WINHTTP_QUERY_CONTENT_TYPE, "Content-Type"},
+                    {WINHTTP_QUERY_CONTENT_LENGTH, "Content-Length"}, {WINHTTP_QUERY_SERVER, "Server"}, {WINHTTP_QUERY_DATE, "Date"}}) {
+                    if (auto value = queryHeaderText(request, entry.first)) {
+                        availableHeaders.emplace_back(entry.second, std::move(*value));
+                    }
+                }
+            }
+            auto responseHeaders = reconstructDiagnosticResponseHeaders(std::move(rawResponse), diagnosticStatus, availableHeaders);
+            diagnostic.responseHeadersSource = responseHeaders.source;
+            state.diagnosticHeaders = std::move(responseHeaders.block);
+        }
+        // Only local processing of received headers/body is diagnostic failure.
+        state.responseProcessingFailed = true;
         DWORD status = 0, size = sizeof(status);
         if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX)) return Error(ErrorCode::transport_receive_failed);
         HttpResponse response;
         response.statusCode = static_cast<int>(status);
+        state.receivedHttpStatus = response.statusCode;
         wchar_t contentType[256]{};
         size = sizeof(contentType);
         if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX,
@@ -242,14 +325,33 @@ private:
             }
             length = parsed;
         } else if (GetLastError() != ERROR_WINHTTP_HEADER_NOT_FOUND) return Error(ErrorCode::transport_receive_failed);
+        state.responseProcessingFailed = false;
+        const auto eof = [&]() -> Result<HttpResponse> {
+            if (length && response.body.size() != *length) {
+                state.responseProcessingFailed = true;
+                return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
+            }
+            if (state.diagnostic) {
+                state.diagnostic->responseComplete = true;
+#ifdef WINHTTP_QUERY_FLAG_TRAILERS
+                if (auto trailers = queryHeaderText(request, WINHTTP_QUERY_RAW_HEADERS_CRLF | WINHTTP_QUERY_FLAG_TRAILERS); trailers && !trailers->empty()) {
+                    stripHeaderFraming(*trailers);
+                    if (!trailers->empty()) {
+                        stripHeaderFraming(state.diagnosticHeaders);
+                        state.diagnosticHeaders += "\r\n[Response trailers]\r\n" + *trailers + "\r\n\r\n";
+                    }
+                }
+#endif
+            }
+            return std::move(response);
+        };
         for (;;) {
             if (!WinHttpQueryDataAvailable(request, nullptr)) return Error(mapError(GetLastError()));
             PHPVPN_TRY(wait(state, deadline, WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE));
             DWORD available;
             { std::lock_guard lock(state.mutex); available = state.available; }
             if (!available) {
-                if (length && response.body.size() != *length) return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
-                return response;
+                return eof();
             }
             const auto requested = (std::min)(available, static_cast<DWORD>(state.buffer.size()));
             if (!WinHttpReadData(request, state.buffer.data(), requested, nullptr))
@@ -258,11 +360,13 @@ private:
             DWORD read;
             { std::lock_guard lock(state.mutex); read = state.read; }
             if (!read) {
-                if (length && response.body.size() != *length) return Error(ErrorCode::transport_receive_failed, "the response body is incomplete");
-                return response;
+                return eof();
             }
-            if (read > static_cast<std::uint64_t>(settings_.maxResponseBodyBytes) - response.body.size())
+            if (state.diagnostic) state.diagnosticBody.append(std::string_view(state.buffer.data(), read));
+            if (read > static_cast<std::uint64_t>(settings_.maxResponseBodyBytes) - response.body.size()) {
+                state.responseProcessingFailed = true;
                 return Error(ErrorCode::transport_response_too_large);
+            }
             response.body.append(state.buffer.data(), read);
         }
     }

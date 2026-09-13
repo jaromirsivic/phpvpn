@@ -65,7 +65,8 @@ void invalidateChanged(HWND window, Rect region, bool changed);
 // exposes the checkbox role/state through the standard accessibility provider.
 // Resources must outlive the control, as they do for the containing window.
 bool attachToggleSwitch(HWND window, const UiResources& resources);
-enum class ButtonRole { neutral, primary, reset };
+enum class ButtonRole { neutral, primary, reset, error };
+bool drawModernTab(const DRAWITEMSTRUCT& item, HWND tabs, const UiResources& resources);
 // Attach only to a hidden, borderless, single-line native EDIT, including read-only.
 // Keeps the original HWND, parent, ID and native text/accessibility provider.
 bool attachModernTextBox(HWND window, const UiResources& resources,

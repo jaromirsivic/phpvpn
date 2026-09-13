@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <mutex>
 #include <thread>
 
@@ -55,10 +56,14 @@ ClientConfigPtr fixtureConfig() {
 
 class TestClock final : public Clock {
 public:
+    bool realWall = false;
     std::atomic<std::int64_t> now{0};
     std::atomic<unsigned> reads{0};
     std::int64_t monotonicMs() override { ++reads; return now.load(); }
-    std::int64_t systemUtcMs() override { return *Iso8601::parse(kTimestamp) + now.load(); }
+    std::int64_t systemUtcMs() override {
+        if (realWall) return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        return *Iso8601::parse(kTimestamp) + now.load();
+    }
 };
 
 class Gate {
@@ -157,7 +162,18 @@ public:
     bool defer = false;
     bool swappedPayloadAad = false;
     std::vector<PacketBytes> incoming;
-    Status configure(const TransportSettings&) override { return ok(); }
+    bool captureDiagnostics = false;
+    Status configure(const TransportSettings& settings) override { captureDiagnostics = settings.captureWizardHttpDiagnostics; return ok(); }
+    HttpExchangeResult capture(HttpAction action, std::string_view request, HttpExchangeResult result) {
+        if (captureDiagnostics && action != HttpAction::data && result.ok()) {
+            HttpDiagnostic d; d.action = action; d.responseComplete = true;
+            BoundedHttpCapture req, resp;
+            req.append(std::string("POST http://fixture/?action=") + httpActionName(action) + " HTTP/?\r\n\r\n"); req.append(request);
+            resp.append("HTTP/? " + std::to_string(result.value().statusCode) + "\r\nContent-Type: " + result.value().contentType + "\r\n\r\n"); resp.append(result.value().body);
+            d.request = req.finish(); d.response = resp.finish(); result.diagnostic = std::move(d);
+        }
+        return result;
+    }
     void cancelCurrentRequest() override { if (cancel) cancel(); }
     HttpExchangeResult post(HttpAction action, std::string_view request) override {
         const int call = action == HttpAction::health ? ++healthCalls : action == HttpAction::info ? ++infoCalls : ++dataCalls;
@@ -166,7 +182,7 @@ public:
             auto result = hook(action, request, call);
             if (result) {
                 if (action == HttpAction::data) dataResponseBytes += result->responseBodyBytesRead;
-                return std::move(*result);
+                return capture(action, request, std::move(*result));
             }
         }
         const auto auth = Json::parse(request.substr(0, request.find('\n'))).value();
@@ -180,7 +196,7 @@ public:
         if (action == HttpAction::data) dataResponseBytes += bytes;
         HttpResponse response{200, std::move(body), httpActionContentType(action)};
         if (mutateResponse) mutateResponse(response);
-        return {std::move(response), bytes};
+        return capture(action, request, {std::move(response), bytes});
     }
 private:
     std::string health(const std::string& id) {
@@ -379,6 +395,8 @@ struct WizardServiceFixture {
     std::unique_ptr<WizardService> service;
     std::uint64_t sequence = 0;
     unsigned httpCalls = 0;
+    std::function<void(ScriptedTransport&)> configureProbe;
+    bool platformProbe = false;
     WizardRequest request;
     WizardServiceFixture() {
         WizardScheduler scheduler;
@@ -391,8 +409,10 @@ struct WizardServiceFixture {
             diagnosticTask = std::move(task); return true;
         };
         scheduler.transport = [&]() -> Result<std::unique_ptr<Transport>> {
+            if (platformProbe) return createPlatformTransport();
             auto transport = std::make_unique<ScriptedTransport>(*runtime.crypto.actual, relayConfig);
             transport->hook = [&](HttpAction, std::string_view, int) -> std::optional<HttpExchangeResult> { ++httpCalls; return {}; };
+            if (configureProbe) configureProbe(*transport);
             return std::unique_ptr<Transport>(std::move(transport));
         };
         request.requestId = runtime.crypto.actual->randomUuidV4().value();
@@ -410,7 +430,7 @@ struct WizardServiceFixture {
         const auto parsed = WizardIpc::parseRequest(encoded).value();
         const auto response = service->handle(parsed);
         auto reply = WizardIpc::parseReply(input.command, input.requestId, response);
-        if (!reply) throw std::runtime_error("Wizard reply failed strict schema validation: " + response);
+        if (!reply) throw std::runtime_error("Wizard reply failed strict schema validation");
         return std::move(reply).value();
     }
     WizardReply call(WizardCommand command) { request.command = command; return ask(request); }
@@ -693,6 +713,108 @@ PHPVPN_TEST(probe, url_requires_only_fresh_health_syntax_then_secret_verifies_cr
     ProbeClient placeholder(crypto, transport, clock);
     PHPVPN_REQUIRE_ERROR(placeholder.checkUrl(document.context, fields), ErrorCode::config_invalid_url);
     PHPVPN_CHECK_EQ(transport.healthCalls.load(), 2);
+}
+PHPVPN_TEST(probe, diagnostics_belong_only_to_the_failing_received_exchange) {
+    const auto document = analyzeWizardDocument(kConfig).value();
+    for (int scenario = 0; scenario < 10; ++scenario) {
+        ObservedCrypto crypto; ScriptedTransport transport(*crypto.actual); TestClock clock;
+        ProbeClient probe(crypto, transport, clock); probe.captureWizardHttpDiagnostics(true);
+        std::string sent, received;
+        if (scenario == 0 || scenario == 1) transport.badHealthTag = true;
+        if (scenario == 2) transport.badInfo = true;
+        if (scenario == 3 || scenario == 4 || scenario == 5 || scenario == 9) {
+            transport.hook = [&](HttpAction action, std::string_view request, int) -> std::optional<HttpExchangeResult> {
+                if (scenario == 5 && action != HttpAction::info) return {};
+                sent = std::string(request);
+                received = scenario == 3 ? "" : "<script>inert-fixture</script>";
+                return HttpExchangeResult{HttpResponse{scenario == 3 ? 503 : 200, received, scenario == 4 ? "text/html" : "application/json"}, received.size()};
+            };
+        }
+        if (scenario == 6) transport.hook = [](HttpAction action, std::string_view, int) -> std::optional<HttpExchangeResult> {
+            if (action == HttpAction::info) return HttpExchangeResult{Error(ErrorCode::transport_tls_failed)};
+            return {};
+        };
+        if (scenario == 7) crypto.beforeHealthCrypto = [&] { crypto.failRandom = true; };
+        if (scenario == 8) probe.cancel();
+        const bool url = scenario == 0 || scenario == 3 || scenario == 4 || scenario == 9;
+        if (url) { auto result = probe.checkUrl(document.context, document.fields); PHPVPN_CHECK_EQ(result.ok(), scenario == 0); }
+        else { auto result = probe.checkSecret(document.context, document.fields); PHPVPN_CHECK(!result); }
+        auto d = probe.takeFailedHttpDiagnostic();
+        const bool expected = scenario >= 1 && scenario <= 5 || scenario == 9;
+        PHPVPN_CHECK_EQ(d.has_value(), expected);
+        if (d) {
+            PHPVPN_CHECK_EQ(d->action, scenario == 2 || scenario == 5 ? HttpAction::info : HttpAction::health);
+            if (!sent.empty()) PHPVPN_CHECK(d->request.prefix.ends_with(sent));
+            if (scenario == 3 || scenario == 4 || scenario == 5 || scenario == 9) PHPVPN_CHECK(d->response.prefix.ends_with("\r\n\r\n" + received));
+        }
+        PHPVPN_CHECK(!probe.takeFailedHttpDiagnostic());
+        if (scenario == 6 || scenario == 7) PHPVPN_CHECK(!probe.lastHttpStatus());
+        if (scenario == 1) PHPVPN_CHECK_EQ(transport.infoCalls.load(), 0);
+    }
+    ObservedCrypto crypto; ScriptedTransport transport(*crypto.actual); TestClock clock;
+    transport.badHealthTag = true;
+    ProbeClient normal(crypto, transport, clock);
+    PHPVPN_CHECK(!normal.checkSecret(document.context, document.fields)); PHPVPN_CHECK(!normal.takeFailedHttpDiagnostic());
+    ProbeClient access(crypto, transport, clock); access.captureWizardHttpDiagnostics(true);
+    PHPVPN_CHECK(!access.checkAccess(document, document.fields)); PHPVPN_CHECK(!access.takeFailedHttpDiagnostic());
+}
+PHPVPN_TEST(wizard_service, diagnostic_retention_and_late_cancel_are_attempt_scoped) {
+    for (int cleanup = 0; cleanup < 7; ++cleanup) {
+        WizardServiceFixture fixture;
+        fixture.request.fields.serverUrl = "http://localhost/" + std::string(100000, 'a');
+        fixture.configureProbe = [](ScriptedTransport& transport) {
+            transport.mutateResponse = [](HttpResponse& response) { response.body = "<html>fixture</html>"; };
+        };
+        const auto startFailed = [&] {
+            fixture.request.attemptSequence = ++fixture.sequence;
+            fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+            const auto started = fixture.call(WizardCommand::check_url);
+            PHPVPN_CHECK(!started.error);
+            fixture.request.operationId = started.result.find("operationId")->stringValue();
+            fixture.runDiagnostic();
+        };
+        startFailed();
+        auto reply = fixture.call(WizardCommand::get_operation);
+        auto result = WizardIpc::parseOperation(reply.result); PHPVPN_REQUIRE_OK(result);
+        PHPVPN_CHECK(result->httpDiagnostic);
+        PHPVPN_CHECK(!result->error->serverUrl && !result->error->configPath);
+        auto old = fixture.request;
+        if (cleanup == 0) { const auto cancelled = fixture.call(WizardCommand::cancel_attempt); PHPVPN_CHECK(!cancelled.error); }
+        if (cleanup == 1) { const auto cancelled = fixture.call(WizardCommand::cancel_operation); PHPVPN_CHECK(!cancelled.error); }
+        if (cleanup == 2) { const auto reset = fixture.call(WizardCommand::reset); PHPVPN_CHECK(!reset.error); }
+        if (cleanup == 3) { const auto closed = fixture.call(WizardCommand::close); PHPVPN_CHECK(!closed.error); }
+        if (cleanup == 4) { fixture.runtime.clock.now = kWizardLeaseMs; fixture.service->tick(); }
+        if (cleanup == 5) { PHPVPN_REQUIRE_OK(fixture.service->interruptForConnect()); }
+        if (cleanup == 6) {
+            startFailed(); old.command = WizardCommand::cancel_attempt;
+            const auto late = fixture.ask(old); PHPVPN_CHECK(!late.error);
+        }
+        reply = fixture.call(WizardCommand::get_operation);
+        if (cleanup == 0 || cleanup == 1 || cleanup == 5 || cleanup == 6) {
+            result = WizardIpc::parseOperation(reply.result); PHPVPN_REQUIRE_OK(result);
+            PHPVPN_CHECK_EQ(result->httpDiagnostic.has_value(), cleanup == 6);
+        } else PHPVPN_CHECK(reply.error.has_value());
+    }
+}
+PHPVPN_TEST(wizard_service, diagnostic_never_publishes_after_cancel_or_closed_worker) {
+    for (int invalidation = 0; invalidation < 4; ++invalidation) {
+        WizardServiceFixture fixture;
+        fixture.request.fields.serverUrl = "http://localhost/";
+        fixture.configureProbe = [&](ScriptedTransport& transport) {
+            transport.mutateResponse = [&](HttpResponse& response) {
+                response.body = "<html>fixture</html>";
+                if (invalidation == 0) { const auto reply = fixture.call(WizardCommand::cancel_attempt); PHPVPN_CHECK(!reply.error); }
+                if (invalidation == 1) { const auto reply = fixture.call(WizardCommand::close); PHPVPN_CHECK(!reply.error); }
+                if (invalidation == 2) { fixture.runtime.clock.now = kWizardLeaseMs; fixture.service->tick(); }
+                if (invalidation == 3) fixture.service->shutdown();
+            };
+        };
+        fixture.request.attemptSequence = 1; fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+        auto started = fixture.call(WizardCommand::check_url); PHPVPN_CHECK(!started.error);
+        fixture.request.operationId = started.result.find("operationId")->stringValue(); fixture.runDiagnostic();
+        auto result = fixture.call(WizardCommand::get_operation);
+        if (!result.error) PHPVPN_CHECK(!result.result.find("httpDiagnostic"));
+    }
 }
 
 PHPVPN_TEST(probe, access_discards_invalid_payload_without_opening_it_and_uses_one_empty_request) {
@@ -1030,6 +1152,150 @@ PHPVPN_TEST(wizard_service, native_lost_start_reply_cancels_attempt_before_delay
         server.stop();
     }
 }
+
+// Explicit opt-in only. The caller owns a separate PHP fixture endpoint and
+// its control file, and restores the environment in finally. Never logs HTTP.
+void runNativeHttpDiagnosticIntegration(bool external) {
+    wchar_t endpointBuffer[2048]{}, controlBuffer[2048]{};
+    if (!GetEnvironmentVariableW(external ? L"PHPVPN_DIAGNOSTIC_EXTERNAL" : L"PHPVPN_DIAGNOSTIC_ENDPOINT", endpointBuffer, 2048) ||
+        (!external && !GetEnvironmentVariableW(L"PHPVPN_DIAGNOSTIC_CONTROL", controlBuffer, 2048))) {
+        std::cout << "[ NOT RUN ] isolated HTTP diagnostic endpoint not configured\n";
+        return;
+    }
+    const auto setMode = [&](std::string_view mode) {
+        if (external) return;
+        std::ofstream out(std::filesystem::path(controlBuffer), std::ios::binary | std::ios::trunc);
+        out.write(mode.data(), static_cast<std::streamsize>(mode.size()));
+        if (!out) throw std::runtime_error("fixture control write failed");
+    };
+    const auto narrowUrl = phpvpn::tray::narrow(endpointBuffer);
+    const std::vector<std::string> scenarios = external ? std::vector<std::string>{"external"} :
+        std::vector<std::string>{"health", "secret-health", "info", "single", "size65535", "size65536", "size65537", "empty", "noresponse"};
+    for (const std::string& scenario : scenarios) {
+        WizardServiceFixture fixture; fixture.platformProbe = true; fixture.runtime.clock.realWall = true;
+        const bool secret = scenario == "secret-health" || scenario == "info";
+        std::string mode = scenario == "secret-health" ? "health" : scenario;
+        std::uint64_t targetSize = 0;
+        if (scenario.starts_with("size")) {
+            targetSize = std::stoull(scenario.substr(4));
+            setMode("body65000");
+            auto transport = createPlatformTransport().value(); TransportSettings settings;
+            settings.serverUrl = narrowUrl; settings.captureWizardHttpDiagnostics = true;
+            PHPVPN_REQUIRE_OK(transport->configure(settings));
+            const auto calibrated = transport->post(HttpAction::health, "{}");
+            if (!calibrated.diagnostic) throw std::runtime_error("fixture calibration received no diagnostic");
+            const auto headerSize = calibrated.diagnostic->response.prefix.find("\r\n\r\n") + 4;
+            if (headerSize < 4 || headerSize > 10000) throw std::runtime_error("fixture header calibration failed");
+            mode = "body" + std::to_string(targetSize - headerSize);
+        }
+        setMode(secret ? "valid" : mode);
+        std::mutex mutex;
+        std::vector<std::jthread> workers;
+        unsigned starts = 0, cancellations = 0;
+        std::optional<WizardOperationResult> observed;
+        const auto pipe = L"\\\\.\\pipe\\phpvpn-http-diagnostic-" + phpvpn::tray::widen(fixture.runtime.crypto.actual->randomUuidV4().value());
+        IpcPipeServerOptions options; options.pipeName = pipe;
+        IpcPipeServer server([&](std::string_view bytes) {
+            const auto request = WizardIpc::parseRequest(bytes); if (!request) return std::string{};
+            std::lock_guard lock(mutex);
+            auto reply = fixture.service->handle(*request);
+            if (request->command == WizardCommand::check_url || request->command == WizardCommand::check_secret) {
+                ++starts;
+                auto task = std::move(fixture.diagnosticTask); fixture.diagnosticTask = {};
+                if (task) workers.emplace_back(std::move(task));
+            }
+            if (request->command == WizardCommand::cancel_attempt) ++cancellations;
+            if (request->command == WizardCommand::get_operation) {
+                auto parsed = WizardIpc::parseReply(request->command, request->requestId, reply);
+                if (parsed && !parsed->error) observed = WizardIpc::parseOperation(parsed->result).value();
+            }
+            return reply;
+        }, options);
+        PHPVPN_REQUIRE_OK(server.start());
+        phpvpn::tray::WizardWindow wizard(pipe);
+        if (!wizard.open(GetModuleHandleW(nullptr))) throw std::runtime_error("integration wizard failed to open");
+        const auto top = [](const wchar_t* type) {
+            struct Search { const wchar_t* type; HWND found = nullptr; } search{type};
+            EnumThreadWindows(GetCurrentThreadId(), [](HWND h, LPARAM p) -> BOOL {
+                auto& s = *reinterpret_cast<Search*>(p); wchar_t name[100]{}; GetClassNameW(h, name, 100);
+                if (std::wstring_view(name) == s.type) s.found = h; return TRUE;
+            }, reinterpret_cast<LPARAM>(&search)); return search.found;
+        };
+        const auto window = top(L"PhpVpnConfigurationWizard");
+        const auto child = [&](int id) {
+            struct Search { int id; HWND found = nullptr; } search{id};
+            EnumChildWindows(window, [](HWND h, LPARAM p) -> BOOL {
+                auto& s = *reinterpret_cast<Search*>(p); if (GetDlgCtrlID(h) == s.id) { s.found = h; return FALSE; } return TRUE;
+            }, reinterpret_cast<LPARAM>(&search)); return search.found;
+        };
+        const auto until = [&](const std::function<bool()>& predicate) {
+            const auto deadline = GetTickCount64() + (external ? 65000 : 12000);
+            do {
+                MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    if (message.message != WM_QUIT && !wizard.translate(message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+                if (predicate()) return true; Sleep(1);
+            } while (GetTickCount64() < deadline);
+            return false;
+        };
+        const auto require = [&](bool value) { if (!value) { wizard.endSession(); throw std::runtime_error("native HTTP diagnostic integration assertion failed"); } };
+        require(until([&] { return child(710) && IsWindowEnabled(child(701)); }));
+        SetWindowTextW(child(710), scenario == "noresponse" ? L"http://127.0.0.1:1/phpvpn.php" : endpointBuffer);
+        SendMessageW(child(701), BM_CLICK, 0, 0);
+        if (secret) {
+            require(until([&] { return child(711) && IsWindowEnabled(child(701)); }));
+            setMode(mode); SendMessageW(child(701), BM_CLICK, 0, 0);
+        }
+        require(until([&] { std::lock_guard lock(mutex); return observed &&
+            (observed->state == WizardOperationState::failed || (external && observed->state == WizardOperationState::succeeded)) && IsWindowEnabled(child(701)); }));
+        if (external && observed->state == WizardOperationState::succeeded) {
+            require(!IsWindowVisible(child(705))); wizard.endSession(); server.stop();
+            std::cout << "[ NOT RUN ] external malformed response unavailable, valid URL probe succeeded without detail\n";
+            continue;
+        }
+        std::optional<HttpDiagnostic> diagnostic;
+        { std::lock_guard lock(mutex); diagnostic = observed->httpDiagnostic; }
+        const bool noResponse = external ? !diagnostic : scenario == "noresponse";
+        require(diagnostic.has_value() != noResponse);
+        require((IsWindowVisible(child(705)) != FALSE) != noResponse);
+        HWND detail = nullptr;
+        if (diagnostic) {
+            require(diagnostic->action == (scenario == "info" ? HttpAction::info : HttpAction::health));
+            if (!external) {
+                require(diagnostic->responseComplete);
+                require(diagnostic->response.prefix.find("X-Diagnostic-Duplicate: first\r\nX-Diagnostic-Duplicate: second") != std::string::npos);
+            }
+            if (targetSize) {
+                require(diagnostic->response.originalSizeBytes == targetSize);
+                require(diagnostic->response.prefix.size() == (targetSize <= 65536 ? targetSize : 64512));
+                require(diagnostic->response.suffix.size() == (targetSize <= 65536 ? 0 : 1024));
+            }
+            SendMessageW(child(705), BM_CLICK, 0, 0); detail = top(L"PhpVpnHttpErrorDetail");
+            require(detail && GetWindow(detail, GW_OWNER) == window);
+            const auto readText = [](HWND h) { std::wstring value(GetWindowTextLengthW(h) + 1, L'\0'); GetWindowTextW(h, value.data(), static_cast<int>(value.size())); value.resize(value.size() - 1); return value; };
+            require(readText(GetDlgItem(detail, 781)) == diagnosticDisplayText(diagnostic->request).text);
+            require(readText(GetDlgItem(detail, 782)) == diagnosticDisplayText(diagnostic->response).text);
+            if (scenario == "health" || scenario == "secret-health" || scenario == "info") {
+                require(diagnostic->response.prefix.find("<script>fixture") != std::string::npos);
+                require(diagnostic->response.prefix.ends_with("</script>tail"));
+            }
+        }
+        if (external) {
+            const auto code = observed->error ? observed->error->code : "missing-error";
+            wizard.endSession(); server.stop();
+            std::cout << (noResponse ? "[ NOT RUN ] external received-response scenario unavailable, negative wizard result PASS: " : "[ PASS ] external received-error detail: ") << code << "\n";
+            continue;
+        }
+        unsigned before = 0; { std::lock_guard lock(mutex); before = starts; }
+        setMode("empty"); SendMessageW(child(701), BM_CLICK, 0, 0);
+        require(!detail || !IsWindow(detail));
+        require(until([&] { std::lock_guard lock(mutex); return starts > before && IsWindowEnabled(child(701)); }));
+        wizard.endSession(); server.stop();
+        require(!detail || !IsWindow(detail));
+        std::cout << "[ PASS ] local HTTP diagnostic " << scenario << "\n";
+    }
+}
+PHPVPN_TEST(wizard_service, native_http_diagnostic_local_integration) { runNativeHttpDiagnosticIntegration(false); }
+PHPVPN_TEST(wizard_service, native_http_diagnostic_external_best_effort) { runNativeHttpDiagnosticIntegration(true); }
 
 PHPVPN_TEST(wizard_service, finish_requires_exact_evidence_is_idempotent_and_last_complete_save_wins) {
     WizardServiceFixture fixture;

@@ -17,43 +17,6 @@ namespace {
 constexpr wchar_t kClass[] = L"PhpVpnTrayEditor";
 constexpr int kReset = 304;
 constexpr UINT_PTR kResetTimer = 1;
-bool drawInfoTab(const DRAWITEMSTRUCT& item, HWND tabs, const UiResources& resources) {
-    if (!tabs || item.CtlType != ODT_TAB || item.hwndItem != tabs || !item.hDC ||
-        item.itemID >= static_cast<UINT>(TabCtrl_GetItemCount(tabs)) || resources.dpi() <= 0)
-        return false;
-
-    std::array<wchar_t, 128> label{};
-    TCITEMW tab{};
-    tab.mask = TCIF_TEXT;
-    tab.pszText = label.data();
-    tab.cchTextMax = static_cast<int>(label.size());
-    if (!TabCtrl_GetItem(tabs, static_cast<int>(item.itemID), &tab)) return false;
-
-    const bool selected = static_cast<int>(item.itemID) == TabCtrl_GetCurSel(tabs);
-    const auto background = selected ? ui::Color::selectedStep : ui::Color::primary;
-    const auto foreground = selected ? ui::Color::text : ui::Color::primaryText;
-    RECT bounds = item.rcItem;
-    FillRect(item.hDC, &bounds, resources.brush(background));
-    FrameRect(item.hDC, &bounds, resources.brush(ui::Color::border));
-
-    const int saved = SaveDC(item.hDC);
-    SelectObject(item.hDC, resources.font(ui::Font::label));
-    SetBkMode(item.hDC, TRANSPARENT);
-    SetTextColor(item.hDC, resources.color(foreground));
-    const int padding = scaleForDpi(2, resources.dpi());
-    RECT text = bounds;
-    InflateRect(&text, -padding, 0);
-    DrawTextW(item.hDC, label.data(), -1, &text,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    if (selected && GetFocus() == tabs) {
-        RECT focus = bounds;
-        const int inset = std::max(2, scaleForDpi(3, resources.dpi()));
-        InflateRect(&focus, -inset, -inset);
-        if (focus.right > focus.left && focus.bottom > focus.top) DrawFocusRect(item.hDC, &focus);
-    }
-    if (saved) RestoreDC(item.hDC, saved);
-    return true;
-}
 std::string prettyEditorJson(const std::string& text) {
     if (!Json::parse(text)) return text;
     // Reflow only whitespace after validation. Retain exact number tokens
@@ -449,7 +412,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
     if (!self) return DefWindowProcW(window, message, wParam, lParam);
     switch (message) {
         case WM_DRAWITEM:
-            if (lParam && drawInfoTab(*reinterpret_cast<DRAWITEMSTRUCT*>(lParam), self->tabs_, self->resources_))
+            if (lParam && drawModernTab(*reinterpret_cast<DRAWITEMSTRUCT*>(lParam), self->tabs_, self->resources_))
                 return TRUE;
             break;
         case WM_NOTIFY: {

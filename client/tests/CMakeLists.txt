@@ -8,6 +8,7 @@ add_executable(phpvpn-client-tests
     unit/test_config_files_win.cpp
     unit/test_config_store.cpp
     unit/test_wizard_ipc.cpp
+    unit/test_http_diagnostic.cpp
     unit/test_wizard_document.cpp
     unit/test_wizard_model.cpp
     unit/test_wizard_layout.cpp
@@ -53,6 +54,7 @@ add_executable(phpvpn-client-tests
     ../apps/tray/statistics_window.cpp
     ../apps/tray/editor_window.cpp
     ../apps/tray/wizard_window.cpp
+    ../apps/tray/http_error_detail_window.cpp
     ../apps/tray/contracts_save_controller.cpp
     ../apps/tray/password_sha_window.cpp
     ../apps/tray/contracts_window.cpp
@@ -134,6 +136,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/wizard_reader.cpp
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
+        ../apps/tray/http_error_detail_window.cpp
         ../apps/tray/contracts_save_controller.cpp
         ../apps/tray/password_sha_window.cpp
         ../apps/tray/contracts_window.cpp
@@ -172,6 +175,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/wizard_reader.cpp
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
+        ../apps/tray/http_error_detail_window.cpp
         ../apps/tray/editor_window.cpp
         ../apps/tray/contracts_save_controller.cpp
         ../apps/tray/password_sha_window.cpp

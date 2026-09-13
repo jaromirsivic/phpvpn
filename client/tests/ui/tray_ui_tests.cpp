@@ -115,6 +115,7 @@ void CALLBACK answerModal(HWND, UINT, UINT_PTR, DWORD) {
         // dismisses an MB_OK message box. Activate its real HWND in that case.
         if (!button && modalAnswer == IDOK) button = GetDlgItem(dialog, IDCANCEL);
         if (button && IsWindowEnabled(button)) SendMessageW(button, BM_CLICK, 0, 0);
+        else if (!button) SendMessageW(dialog, TDM_CLICK_BUTTON, modalAnswer, 0);
     }
 }
 template<class Action> void answer(int button, Action action) {
@@ -149,6 +150,9 @@ struct Backend {
     std::uint64_t epoch = 0;
     WizardView view;
     WizardOperationResult operation;
+    std::optional<HttpDiagnostic> diagnosticFixture;
+    bool failWithoutDiagnostic = false;
+    unsigned diagnosticCancels = 0;
     std::vector<WizardRequest> starts;
     std::string storedSecret = "ui-test-secret", observedSecret;
     std::optional<std::string> suggestion = "10.99.99.2";
@@ -247,6 +251,12 @@ struct Backend {
             operation.state = WizardOperationState::succeeded; operation.connectionEpoch = epoch;
             operation.clientAttemptId = r.clientAttemptId; operation.attemptSequence = r.attemptSequence;
             if (operation.kind == WizardOperationKind::secret) operation.suggestedIp = suggestion;
+            if (diagnosticFixture || failWithoutDiagnostic) {
+                operation.state = WizardOperationState::failed;
+                operation.error = WizardIpc::safeError(Error(ErrorCode::response_invalid), 200,
+                    operation.kind == WizardOperationKind::url ? "serverUrl" : "serverSecret");
+                operation.httpDiagnostic = diagnosticFixture;
+            }
             if (startDelayMs) { const auto ms = std::exchange(startDelayMs, 0u); delay(lock, ms); }
             return result(J::makeObject({{"operationId", str(operation.operationId)}, {"operationState", str("pending")}}));
         case WizardCommand::get_operation: {
@@ -260,6 +270,9 @@ struct Backend {
             return result(WizardIpc::operationValue(visible));
         }
         case WizardCommand::cancel_attempt:
+            if (operation.clientAttemptId == r.clientAttemptId && operation.attemptSequence == r.attemptSequence) {
+                operation.httpDiagnostic.reset(); ++diagnosticCancels;
+            }
             return result(J::makeObject({{"attemptSequence", J::makeUnsignedInteger(r.attemptSequence)}, {"attemptState", str("closed")}}));
         case WizardCommand::close:
             ++closeCalls;
@@ -311,6 +324,7 @@ struct Gui {
         if (active->onSuccessNotification) active->onSuccessNotification();
         const auto button = GetDlgItem(dialog, IDOK) ? GetDlgItem(dialog, IDOK) : GetDlgItem(dialog, IDCANCEL);
         if (button) SendMessageW(button, BM_CLICK, 0, 0);
+        else SendMessageW(dialog, TDM_CLICK_BUTTON, IDOK, 0);
     }
     explicit Gui(bool editing = false) : backend(editing), server([this](std::string_view request) { return backend.handle(request); }, options()) {
         check(server.start().ok(), "private UI pipe could not start");
@@ -482,6 +496,62 @@ void happyPath() {
     check(!findTop(L"PhpVpnCommunicationContracts") && !gui.contracts.isOpen(), "Finish opened Contracts");
     check(gui.notifications == 1 && gui.closesAtNotification == 0, "success notice did not precede exactly one close");
     check(gui.backend.count(&Backend::connects) == 0, "Finish connected VPN");
+}
+void wizardHttpDiagnostic() {
+    for (bool secret : {false, true}) {
+        Gui gui(true); gui.open();
+        if (secret) gui.nextTo(secretId);
+        HttpDiagnostic d; d.action = secret ? HttpAction::info : HttpAction::health; d.responseComplete = true;
+        BoundedHttpCapture req, resp;
+        req.append("POST http://fixture/?action=" + std::string(httpActionName(d.action)) + " HTTP/?\r\n\r\n{}");
+        resp.append("HTTP/1.1 200 OK\r\n\r\n<script>window.fixtureExecuted=true;</script>");
+        d.request = req.finish(); d.response = resp.finish();
+        { std::lock_guard lock(gui.backend.mutex); gui.backend.diagnosticFixture = d; }
+        click(gui.hwnd(), nextId);
+        gui.until([&] { return IsWindowVisible(child(gui.hwnd(), 705)) && IsWindowEnabled(child(gui.hwnd(), 705)); }, "diagnostic button missing");
+        check(text(child(gui.hwnd(), 705)) == L"Error detail", "diagnostic button label changed");
+        footer(gui.hwnd(), {resetId, backId, 705, nextId});
+        const auto detailButton = boundsIn(gui.hwnd(), child(gui.hwnd(), 705));
+        const auto neighbor = boundsIn(gui.hwnd(), child(gui.hwnd(), secret ? backId : nextId));
+        check(secret ? detailButton.left - neighbor.right == scaleForDpi(8, GetDpiForWindow(gui.hwnd())) :
+            neighbor.left - detailButton.right == scaleForDpi(8, GetDpiForWindow(gui.hwnd())), "diagnostic footer gap differs");
+        check(GetNextDlgTabItem(gui.hwnd(), child(gui.hwnd(), 705), FALSE) == child(gui.hwnd(), nextId), "diagnostic tab order differs");
+        captureWizard(gui.hwnd(), secret ? L"http-diagnostic-secret.bmp" : L"http-diagnostic-url.bmp");
+        click(gui.hwnd(), 705);
+        auto detail = findTop(L"PhpVpnHttpErrorDetail");
+        check(detail && GetWindow(detail, GW_OWNER) == gui.hwnd(), "diagnostic owner missing");
+        check(TabCtrl_GetItemCount(child(detail, 780)) == 2, "diagnostic must have two tabs");
+        check(!GetDlgItem(detail, IDOK) && !GetDlgItem(detail, IDCANCEL), "diagnostic has footer buttons");
+        const auto requestEditor = child(detail, 781), responseEditor = child(detail, 782);
+        check(text(requestEditor) == diagnosticDisplayText(d.request).text, "request projection differs");
+        check(text(responseEditor) == diagnosticDisplayText(d.response).text, "inert response projection differs");
+        check((GetWindowLongPtrW(responseEditor, GWL_STYLE) & (ES_MULTILINE | ES_READONLY)) == (ES_MULTILINE | ES_READONLY), "response EDIT style differs");
+        auto tabs = child(detail, 780); TabCtrl_SetCurSel(tabs, 1);
+        NMHDR changed{tabs, 780, TCN_SELCHANGE}; SendMessageW(detail, WM_NOTIFY, 780, reinterpret_cast<LPARAM>(&changed));
+        check(IsWindowVisible(responseEditor) && !IsWindowVisible(requestEditor), "tab switch does not select response");
+        captureWizard(detail, L"http-diagnostic-response.bmp");
+        SetFocus(tabs); SendMessageW(tabs, WM_KEYDOWN, VK_LEFT, 0);
+        check(TabCtrl_GetCurSel(tabs) == 0 && IsWindowVisible(requestEditor), "left arrow failed to select request");
+        SendMessageW(tabs, WM_KEYDOWN, VK_RIGHT, 0);
+        check(TabCtrl_GetCurSel(tabs) == 1 && IsWindowVisible(responseEditor), "right arrow failed to select response");
+        check(GetNextDlgTabItem(detail, tabs, FALSE) == responseEditor, "Tab does not reach active editor");
+        check(GetNextDlgTabItem(detail, responseEditor, TRUE) == tabs, "Shift+Tab does not return to tabs");
+        SendMessageW(responseEditor, EM_SETSEL, 4, 12);
+        TabCtrl_SetCurSel(tabs, 0); SendMessageW(detail, WM_NOTIFY, 780, reinterpret_cast<LPARAM>(&changed));
+        TabCtrl_SetCurSel(tabs, 1); SendMessageW(detail, WM_NOTIFY, 780, reinterpret_cast<LPARAM>(&changed));
+        DWORD first = 0, last = 0; SendMessageW(responseEditor, EM_GETSEL, reinterpret_cast<WPARAM>(&first), reinterpret_cast<LPARAM>(&last));
+        check(first == 4 && last == 12, "tab switch lost selection");
+        SendMessageW(detail, WM_CLOSE, 0, 0); check(!IsWindow(detail), "X failed to close detail");
+        click(gui.hwnd(), 705); detail = findTop(L"PhpVpnHttpErrorDetail"); check(detail != nullptr, "reopening failed");
+        if (secret) click(gui.hwnd(), backId); else edit(gui.hwnd(), urlId, L"http://changed.invalid/phpvpn.php");
+        gui.until([&] { return !IsWindow(detail) && !IsWindowVisible(child(gui.hwnd(), 705)) && gui.backend.count(&Backend::diagnosticCancels) == 1; }, "invalidation did not clear both copies");
+        { std::lock_guard lock(gui.backend.mutex); gui.backend.diagnosticFixture.reset(); gui.backend.failWithoutDiagnostic = true; }
+        gui.until([&] { return IsWindowEnabled(child(gui.hwnd(), nextId)); }, "cleanup left controls locked");
+        click(gui.hwnd(), nextId);
+        gui.until([&] { return IsWindowEnabled(child(gui.hwnd(), nextId)); }, "negative diagnostic attempt did not complete");
+        check(!IsWindowVisible(child(gui.hwnd(), 705)), "error without response exposed detail");
+        gui.wizard.endSession();
+    }
 }
 
 void wizardGateConsentAndIdle() {
@@ -1638,6 +1708,7 @@ int main(int argc, char** argv) {
     }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"http_diagnostic_wizard_owned_window_cleanup", wizardHttpDiagnostic},
         {"plan_v001_server_information_tabs", serverInformationTabs},
         {"plan_v001_editor_footer_resize", editorFooterResize},
         {"plan_v001_editor_password_footers", editorPasswordFooters},

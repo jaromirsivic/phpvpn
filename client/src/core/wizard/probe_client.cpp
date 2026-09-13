@@ -10,7 +10,7 @@ ProbeClient::ProbeClient(CryptoProvider& crypto, Transport& transport, Clock& cl
 void ProbeClient::cancel() { cancelled_.store(true); transport_.cancelCurrentRequest(); }
 Status ProbeClient::prepare(const WizardContext& context, const WizardFields& fields) {
     time_.reset();
-    lastHttpStatus_.reset();
+    clearExchange();
     if (cancelled_.load()) return Error(ErrorCode::cancelled);
     auto url = parseServerUrl(fields.serverUrl);
     if (!url) return url.error();
@@ -23,19 +23,22 @@ Status ProbeClient::prepare(const WizardContext& context, const WizardFields& fi
     secret_ = normalizeServerSecret(fields.serverSecret);
     bodyLimit_ = context.runtime.maxResponseBodyBytes;
     return transport_.configure({fields.serverUrl, context.trustAnyTlsCertificate,
-        context.runtime.responseTimeoutSeconds, bodyLimit_});
+        context.runtime.responseTimeoutSeconds, bodyLimit_, captureDiagnostics_});
 }
 Result<HttpResponse> ProbeClient::post(HttpAction action, std::string_view body) {
-    lastHttpStatus_.reset();
+    clearExchange();
     if (cancelled_.load()) return Error(ErrorCode::cancelled);
     auto response = transport_.post(action, body);
     if (cancelled_.load()) return Error(ErrorCode::cancelled);
-    if (!response.ok()) return response.error();
+    if (captureDiagnostics_ && action != HttpAction::data && (response.ok() || response.responseProcessingFailed))
+        candidate_ = std::move(response.diagnostic);
+    if (candidate_) lastHttpStatus_ = response.receivedHttpStatus;
+    if (!response.ok()) return diagnosticFailure(response.error());
     lastHttpStatus_ = response.value().statusCode;
     if (response.value().statusCode != 200)
-        return Error(ResponseParser::mapServerError(response.value().statusCode, response.value().body));
+        return diagnosticFailure(Error(ResponseParser::mapServerError(response.value().statusCode, response.value().body)));
     if (response.value().body.size() > static_cast<std::uint64_t>(bodyLimit_))
-        return Error(ErrorCode::transport_response_too_large);
+        return diagnosticFailure(Error(ErrorCode::transport_response_too_large));
     auto type = response.value().contentType.substr(0, response.value().contentType.find(';'));
     while (!type.empty() && (type.back() == ' ' || type.back() == '\t')) type.pop_back();
     const auto first = type.find_first_not_of(" \t");
@@ -44,10 +47,11 @@ Result<HttpResponse> ProbeClient::post(HttpAction action, std::string_view body)
         return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
     });
     const std::string_view expected = httpActionContentType(action);
-    if (type != expected.substr(0, expected.find(';'))) return Error(ErrorCode::response_invalid, "unexpected response content type");
+    if (type != expected.substr(0, expected.find(';'))) return diagnosticFailure(Error(ErrorCode::response_invalid, "unexpected response content type"));
     return std::move(response).value();
 }
 Result<HealthSyntax> ProbeClient::health(bool verify) {
+    clearExchange();
     std::string id;
     PHPVPN_TRY_ASSIGN(id, crypto_.randomUuidV4());
     const auto sent = clock_.monotonicMs();
@@ -56,17 +60,19 @@ Result<HealthSyntax> ProbeClient::health(bool verify) {
     const auto wall = clock_.systemUtcMs();
     if (!response) return response.error();
     auto syntax = ResponseParser::parseHealthSyntax(id, response->body);
-    if (!syntax) return syntax.error();
+    if (!syntax) return diagnosticFailure(syntax.error());
     if (verify) {
         auto health = ResponseParser::verifyHealth(crypto_, keys_, secret_, *syntax);
-        if (!health) return health.error();
+        if (!health) return diagnosticFailure(health.error());
         auto sample = TimeSync::makeSnapshot(health->timestampMs, sent, received, wall);
-        if (!sample) return sample.error();
+        if (!sample) return diagnosticFailure(sample.error());
         time_.publish(*sample);
     }
+    candidate_.reset();
     return syntax;
 }
 Result<InfoResponse> ProbeClient::info() {
+    clearExchange();
     std::string id, timestamp, body;
     PHPVPN_TRY_ASSIGN(id, crypto_.randomUuidV4());
     PHPVPN_TRY_ASSIGN(timestamp, time_.requestTimestamp(clock_.monotonicMs()));
@@ -75,7 +81,10 @@ Result<InfoResponse> ProbeClient::info() {
     PHPVPN_TRY_ASSIGN(body, RequestBuilder::buildAuthSemi(crypto_, semi, timestamp, id));
     auto response = post(HttpAction::info, body);
     if (!response) return response.error();
-    return ResponseParser::parseInfo(crypto_, keys_, secret_, id, response->body);
+    auto result = ResponseParser::parseInfo(crypto_, keys_, secret_, id, response->body);
+    if (!result) return diagnosticFailure(result.error());
+    candidate_.reset();
+    return result;
 }
 Status ProbeClient::checkUrl(const WizardContext& context, const WizardFields& fields) {
     PHPVPN_TRY(prepare(context, fields));
@@ -88,6 +97,8 @@ Result<InfoResponse> ProbeClient::checkSecret(const WizardContext& context, cons
     return info();
 }
 Result<std::size_t> ProbeClient::checkAccess(const WizardDocument& document, const WizardFields& fields) {
+    captureDiagnostics_ = false;
+    clearExchange();
     // Reject local identity/contract conflicts before a request can consume data.
     PHPVPN_TRY(validateWizardIdentity(document, fields));
     PHPVPN_TRY(prepare(document.context, fields));

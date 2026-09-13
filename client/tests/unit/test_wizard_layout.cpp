@@ -103,6 +103,7 @@ PHPVPN_TEST(WizardLayout, FooterRemainsAccessibleAcrossDpiAndSmallWorkAreas) {
         const std::array specs{
             FooterButtonSpec{scaleForDpi(88, dpi), FooterSide::leading, true},
             FooterButtonSpec{scaleForDpi(88, dpi), FooterSide::trailing, true},
+            FooterButtonSpec{scaleForDpi(108, dpi), FooterSide::trailing, false},
             FooterButtonSpec{scaleForDpi(200, dpi), FooterSide::trailing, true},
         };
         const auto footer = computeButtonFooterLayout(client, dpi, specs);
@@ -115,14 +116,33 @@ PHPVPN_TEST(WizardLayout, FooterRemainsAccessibleAcrossDpiAndSmallWorkAreas) {
         PHPVPN_CHECK(layout.compact ? layout.content.top >= layout.steps.bottom : layout.content.left >= layout.steps.right);
         PHPVPN_CHECK(layout.content.right <= client.width);
         for (std::size_t i = 0; i < layout.buttons.size(); ++i) {
+            if (i == 2) { PHPVPN_CHECK_EQ(layout.buttons[i], Rect{}); continue; }
             const auto& button = layout.buttons[i];
             PHPVPN_CHECK(button.left >= 0 && button.right <= client.width && button.top >= 0 && button.bottom <= client.height);
             PHPVPN_CHECK(button.right > button.left);
-            if (i) PHPVPN_CHECK(button.left > layout.buttons[i - 1].right || button.top > layout.buttons[i - 1].bottom);
+            if (i) PHPVPN_CHECK(button.left > layout.buttons[i == 3 ? 1 : i - 1].right || button.top > layout.buttons[i == 3 ? 1 : i - 1].bottom);
         }
     }
     PHPVPN_CHECK(sawOneRow);
     PHPVPN_CHECK(sawTwoRows);
+}
+PHPVPN_TEST(WizardLayout, ErrorDetailHasStandardGapAndNoCollision) {
+    for (int dpi : {96, 144, 192}) for (int width : {320, 480, 600, 1000}) {
+        const auto s = [dpi](int n) { return scaleForDpi(n, dpi); };
+        const auto layout = computeWizardLayout({s(width), s(680)}, dpi, s(220), true, s(120));
+        for (std::size_t i = 0; i < 4; ++i) {
+            const auto& a = layout.buttons[i];
+            PHPVPN_CHECK(a.right > a.left && a.left >= 0 && a.right <= s(width));
+            for (std::size_t j = 0; j < i; ++j) {
+                const auto& b = layout.buttons[j];
+                PHPVPN_CHECK(a.left >= b.right || a.right <= b.left || a.top >= b.bottom || a.bottom <= b.top);
+            }
+        }
+        if (width >= 600) {
+            PHPVPN_CHECK_EQ(layout.buttons[2].left - layout.buttons[1].right, s(8));
+            PHPVPN_CHECK_EQ(layout.buttons[3].left - layout.buttons[2].right, s(8));
+        }
+    }
 }
 PHPVPN_TEST(TrayMenu, ExactOrderAndOnlyChosenStateActions) {
     constexpr MenuAction expected[]{MenuAction::toggle, MenuAction::separator, MenuAction::wizard, MenuAction::contracts,

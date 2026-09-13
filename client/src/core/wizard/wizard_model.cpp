@@ -23,6 +23,7 @@ void WizardModel::load(WizardView view, bool preserveFields) {
     step_ = view_.vpnState == ConnectionState::disconnected && view_.vpnPhase == ConnectionPhase::idle ? WizardStep::serverUrl : WizardStep::disconnectGate;
 }
 void WizardModel::invalidate(std::size_t from) {
+    clearHttpDiagnostic();
     if (from <= 1) suggestedIp_.reset();
     for (auto i = from; i < checks_.size(); ++i) checks_[i] = CheckpointResult::pending;
 }
@@ -99,7 +100,7 @@ bool WizardModel::back() {
     else if (step_ == WizardStep::identity) step_ = WizardStep::serverSecret;
     else if (step_ == WizardStep::serverSecret) step_ = WizardStep::serverUrl;
     else return false;
-    error_.reset(); return true;
+    clearHttpDiagnostic(); error_.reset(); return true;
 }
 Status WizardModel::validateCurrent() const {
     if (!view_.context) return Error(ErrorCode::wizard_prerequisite_failed);
@@ -122,6 +123,7 @@ Status WizardModel::validateCurrent() const {
 }
 Result<WizardAttempt> WizardModel::beginCheck(std::string attemptId, std::int64_t nowMs) {
     if (busy_ || committing_) return Error(ErrorCode::busy);
+    clearHttpDiagnostic();
     PHPVPN_TRY(validateCurrent());
     if (!Uuid::isValidV4(attemptId) || sequence_ == (std::numeric_limits<std::uint64_t>::max)()) return Error(ErrorCode::invalid_argument);
     const auto kind = step_ == WizardStep::serverUrl ? WizardOperationKind::url :
@@ -147,7 +149,9 @@ bool WizardModel::applyOperation(const WizardOperationResult& operation, std::in
     if (operation.connectionEpoch != view_.connectionEpoch || operation.state == WizardOperationState::interrupted) { interrupt(); return true; }
     if (operation.state == WizardOperationState::pending || operation.state == WizardOperationState::running || operation.state == WizardOperationState::cancelling) return true;
     if (operation.state != WizardOperationState::succeeded) {
-        fail(operation.error.value_or(WizardIpc::safeError(Error(ErrorCode::cancelled)))); return true;
+        fail(operation.error.value_or(WizardIpc::safeError(Error(ErrorCode::cancelled))));
+        if (operation.httpDiagnostic && WizardIpc::parseOperation(WizardIpc::operationValue(operation))) diagnostic_ = operation.httpDiagnostic;
+        return true;
     }
     busy_ = false; attempt_->closed = true;
     checks_[static_cast<std::size_t>(operation.kind)] = CheckpointResult::success;
@@ -164,6 +168,7 @@ bool WizardModel::expireAttempt(std::int64_t nowMs) {
     fail(WizardIpc::safeError(Error(ErrorCode::timeout))); return true;
 }
 void WizardModel::fail(WizardError error) {
+    clearHttpDiagnostic();
     error_ = std::move(error); busy_ = false;
     if (attempt_ && !attempt_->closed) { checks_[static_cast<std::size_t>(attempt_->kind)] = CheckpointResult::failed; attempt_->closed = true; }
 }
@@ -185,5 +190,5 @@ void WizardModel::commitFailed(WizardError error) {
     committing_ = busy_ = false; step_ = WizardStep::contracts; fail(std::move(error));
 }
 void WizardModel::confirmed() { committing_ = busy_ = false; step_ = WizardStep::finished; }
-void WizardModel::cancellationFinished() { busy_ = false; if (attempt_) attempt_->closed = true; }
+void WizardModel::cancellationFinished() { clearHttpDiagnostic(); busy_ = false; if (attempt_) attempt_->closed = true; }
 } // namespace phpvpn

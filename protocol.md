@@ -103,6 +103,8 @@ V URL je pouze `?action=<akce>`. Identita klienta, tokeny, autentizační HMAC t
 
 ### 4.2 Hranice ochrany při HTTP
 
+Lokální diagnostika prvních dvou kroků klientského Configuration Wizardu tento serverový wire protokol nemění. Zachytí konkrétní aplikační request a přijatou response před protokolovým parsováním, aby bylo možné jako prostý inertní text zobrazit také obsah vložený hostingem. Je to rekonstrukce údajů dostupných ve WinHTTP, nikoli paketový nebo TLS záznam. Odesílaná těla, endpointy, autentizace a kryptografické ověřování zůstávají stejné. Rozšířeno je výhradně lokální Wizard IPC mezi službou a tray. Jeho přesný bajtový řez, reverzibilní `http-octets-v1`, Unicode projekci, životnost a limit definuje [HTTP detail neúspěšného Wizard probe v client.md](client.md#http-detail-neúspěšného-wizard-probe).
+
 Čisté HTTP je platný a podporovaný režim. Aplikační kryptografie v něm chrání tajné hodnoty a autenticitu v rozsahu popsaném tímto dokumentem, nenahrazuje však zabezpečený transport.
 
 Pasivní pozorovatel HTTP spojení vidí URL, metodu, velikosti, časování, VPN adresy `src` a `dst`, identifikátory zpráv a objem provozu. Nevidí plaintext payloadu ani plaintext odpovědi `info`.

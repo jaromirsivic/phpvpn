@@ -209,6 +209,64 @@ if ($VerifyOnly) {
 
 # -------------------------------------------------------- 5. directories
 
+function Request-TrayExit {
+    param([int]$ProcessId)
+    if (-not ('PhpVpnInstaller.TrayExit' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace PhpVpnInstaller {
+    public static class TrayExit {
+        private delegate bool EnumProc(IntPtr window, IntPtr data);
+        [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr data);
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int size);
+        [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+        public static bool Request(int processId) {
+            bool posted = false;
+            EnumWindows((window, data) => {
+                uint owner;
+                GetWindowThreadProcessId(window, out owner);
+                var name = new StringBuilder(256);
+                GetClassName(window, name, name.Capacity);
+                if (owner == processId && name.ToString() == "PhpVpnTrayWindow")
+                    posted = PostMessage(window, 0x0010, IntPtr.Zero, IntPtr.Zero) || posted;
+                return true;
+            }, IntPtr.Zero);
+            return posted;
+        }
+    }
+}
+'@
+    }
+    return [PhpVpnInstaller.TrayExit]::Request($ProcessId)
+}
+
+function Stop-InstalledClients {
+    param([string]$InstallRoot)
+    $rootPrefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+    foreach ($tray in @(Get-Process -Name 'phpvpn-tray' -ErrorAction SilentlyContinue)) {
+        if (-not $tray.Path) { throw 'Cannot identify a running tray. Close it and retry installation.' }
+        if (-not ([IO.Path]::GetFullPath($tray.Path)).StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not $tray.HasExited) {
+            Write-Host 'tray          : requesting Exit, confirm any unsaved work in the tray'
+            if (-not (Request-TrayExit -ProcessId $tray.Id)) {
+                throw 'Cannot request tray Exit in its desktop. Close the installed tray in all sessions and retry.'
+            }
+            if (-not $tray.WaitForExit(30000)) {
+                throw 'Tray Exit was cancelled or is still pending. Finish or cancel your work, close the tray and retry.'
+            }
+        }
+    }
+    $service = Get-Service -Name 'phpvpn' -ErrorAction SilentlyContinue
+    if ($null -ne $service) {
+        Write-Host 'service       : stopping the previous generation before replacing files'
+        Stop-Service -Name 'phpvpn' -ErrorAction Stop
+        $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(30))
+    }
+}
+
 function New-ProtectedDirectory {
     param([string]$Path)
 
@@ -242,6 +300,21 @@ New-ProtectedDirectory $installRoot
 # Do not touch the existing data tree before that validation.
 New-ProtectedDirectory $generation
 
+# Both equal-version upgrades and different-version upgrades must release the
+# old tray and service before copying or publishing the generation pointer.
+# WM_CLOSE uses the tray's normal Exit workflow, including unsaved-work consent.
+# Refusal/timeout aborts without forcing processes or discarding user drafts.
+Stop-InstalledClients -InstallRoot $installRoot
+
+# Refuse remaining locks (for example an open CLI) before the first overwrite.
+foreach ($entry in $manifest.files) {
+    $destination = Join-Path $generation $entry.path
+    if (Test-Path -LiteralPath $destination -PathType Leaf) {
+        $handle = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $handle.Dispose()
+    }
+}
+
 foreach ($entry in $manifest.files) {
     Copy-Item -LiteralPath (Join-Path $package $entry.path) -Destination $generation -Force
 }
@@ -262,9 +335,8 @@ Write-Host "installed to  : $generation"
 $serviceBinary = Join-Path $generation "phpvpn-service.exe"
 $existing = Get-Service -Name "phpvpn" -ErrorAction SilentlyContinue
 if ($null -ne $existing) {
-    Write-Host "service       : stopping the previous generation"
-    Stop-Service -Name "phpvpn" -Force -ErrorAction SilentlyContinue
     & $serviceBinary --uninstall | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail 'the previous service could not be unregistered' }
 }
 
 & $serviceBinary --install

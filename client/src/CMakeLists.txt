@@ -12,6 +12,7 @@ add_library(phpvpn-core STATIC
     core/config/config_defaults.cpp
     core/wizard/wizard_defaults.cpp
     core/wizard/probe_client.cpp
+    core/wizard/http_diagnostic.cpp
     core/wizard/wizard_service.cpp
     core/wizard/wizard_model.cpp
     core/config/config.cpp

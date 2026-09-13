@@ -2,6 +2,7 @@
 #include "core/wizard/wizard_model.h"
 #include "core/wizard/wizard_defaults.h"
 #include "core/config/config_defaults.h"
+#include "core/ipc/wizard_ipc.h"
 
 namespace phpvpn {
 namespace {
@@ -54,6 +55,58 @@ PHPVPN_TEST(WizardModel, DefaultKeyTransitionsAndExistingValue) {
     view.fields->useDefaultAccessKeyInWizard = false;
     model.load(view);
     PHPVPN_CHECK(!model.useDefaultAccessKey());
+}
+namespace {
+WizardOperationResult failedDiagnostic(WizardModel& model) {
+    auto result = success(model, 0);
+    result.state = WizardOperationState::failed;
+    result.error = WizardIpc::safeError(Error(ErrorCode::response_invalid), 200,
+        result.kind == WizardOperationKind::url ? "serverUrl" : "serverSecret");
+    HttpDiagnostic d;
+    d.action = HttpAction::health; d.responseComplete = true;
+    d.request = {4, "req!", {}}; d.response = {4, "bad!", {}};
+    result.httpDiagnostic = d; return result;
+}
+}
+PHPVPN_TEST(WizardModel, DiagnosticCorrelatesEveryIdentityAndClearsOnAllInvalidations) {
+    for (int mismatch = 0; mismatch < 6; ++mismatch) {
+        WizardModel model; model.load(modelView());
+        auto result = failedDiagnostic(model);
+        if (mismatch == 0) result.operationId = id;
+        if (mismatch == 1) result.clientAttemptId = opid;
+        if (mismatch == 2) result.attemptSequence = 2;
+        if (mismatch == 3) result.kind = WizardOperationKind::secret;
+        if (mismatch == 4) result.connectionEpoch = 1;
+        model.applyOperation(result, mismatch == 5 ? 1000000 : 1);
+        PHPVPN_CHECK(!model.httpDiagnostic());
+    }
+    for (int invalidation = 0; invalidation < 11; ++invalidation) {
+        WizardModel model; model.load(modelView());
+        auto result = failedDiagnostic(model); PHPVPN_CHECK(model.applyOperation(result, 1));
+        PHPVPN_CHECK(model.httpDiagnostic());
+        PHPVPN_CHECK(!model.applyOperation(result, 2));
+        if (invalidation == 0) { const auto next = model.beginCheck(id, 2); PHPVPN_CHECK(next.ok()); }
+        if (invalidation == 1) model.setUrl("bad-url");
+        if (invalidation == 2) model.fail(WizardIpc::safeError(Error(ErrorCode::ipc_unavailable)));
+        if (invalidation == 3) model.interrupt();
+        if (invalidation == 4) model.sessionExpired();
+        if (invalidation == 5) model.cancellationFinished();
+        if (invalidation == 6) model.load(modelView());
+        if (invalidation == 7) model.load(modelView(), true);
+        if (invalidation == 8) model.setDefaultSecret(false);
+        if (invalidation == 9) { model.setUrl("bad-url"); PHPVPN_CHECK(!model.beginCheck(id, 2)); }
+        if (invalidation == 10) model.clearHttpDiagnostic();
+        PHPVPN_CHECK(!model.httpDiagnostic());
+        PHPVPN_CHECK(!model.applyOperation(result, 3));
+    }
+    for (bool back : {false, true}) {
+        WizardModel model; model.load(modelView());
+        const auto good = success(model, 0); PHPVPN_CHECK(model.applyOperation(good, 1));
+        auto result = failedDiagnostic(model); PHPVPN_CHECK(model.applyOperation(result, 1));
+        PHPVPN_CHECK(model.httpDiagnostic());
+        if (back) model.back(); else { model.setDefaultSecret(false); model.setSecretEditor("changed"); }
+        PHPVPN_CHECK(!model.httpDiagnostic());
+    }
 }
 PHPVPN_TEST(WizardModel, ExactSecretAndLiteralRoundTrip) {
     for (const auto& secret : {std::string{}, std::string(32, '0'), std::string(64, '0'), std::string(" a "), std::string("a\0b\n", 4)}) {

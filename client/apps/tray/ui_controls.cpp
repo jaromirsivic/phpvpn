@@ -412,22 +412,24 @@ void paintModernButton(HWND window, HDC dc, const ModernButton& button) {
     const auto state = SendMessageW(window, BM_GETSTATE, 0, 0);
     const bool pressed = (state & BST_PUSHED) != 0;
     const bool primary = button.role == ButtonRole::primary, reset = button.role == ButtonRole::reset;
+    const bool error = button.role == ButtonRole::error;
     const auto fill = !enabled ? (primary ? ui::Color::buttonPrimaryDisabled : reset ?
-        ui::Color::buttonResetDisabled : ui::Color::disabledBackground) : primary ?
+        ui::Color::buttonResetDisabled : error ? ui::Color::errorBackground : ui::Color::disabledBackground) : error ?
+        (resources.highContrast() ? ui::Color::primary : pressed ? ui::Color::buttonResetPressed : button.hover ? ui::Color::buttonResetHover : ui::Color::error) : primary ?
         (pressed ? ui::Color::primaryPressed : button.hover ? ui::Color::primaryHover : ui::Color::primary) : reset ?
         (pressed ? ui::Color::buttonResetPressed : button.hover ? ui::Color::buttonResetHover : ui::Color::buttonReset) :
         (pressed ? ui::Color::buttonNeutralPressed : button.hover ? ui::Color::buttonNeutralHover : ui::Color::buttonNeutral);
-    const auto textColor = !enabled ? ui::Color::disabledText : primary || reset ? ui::Color::primaryText : ui::Color::text;
+    const auto textColor = !enabled ? ui::Color::disabledText : primary || reset || error ? ui::Color::primaryText : ui::Color::text;
     // A single contiguous contour: focus changes its thickness, default only
     // its shade. Neither state adds a detached ring or changes the outer size.
     const bool isDefault = button.isDefault;
     const bool focused = enabled && GetFocus() == window &&
         !(SendMessageW(window, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS);
     const int inset = s(2);
-    const auto contour = primary ? ui::Color::primaryPressed : reset ?
+    const auto contour = error ? (resources.highContrast() ? ui::Color::primaryPressed : ui::Color::buttonResetPressed) : primary ? ui::Color::primaryPressed : reset ?
         ui::Color::buttonResetPressed : ui::Color::buttonNeutralFocus;
     const auto border = enabled && (isDefault || focused) ? contour :
-        primary || reset ? fill : ui::Color::border;
+        primary || reset || error ? fill : ui::Color::border;
     paintRoundedShape(dc, {inset, inset, bounds.right - inset, bounds.bottom - inset}, s(12), resources,
         focused ? border : fill, border);
     if (focused) {
@@ -720,6 +722,43 @@ Size measureText(HDC dc, HFONT font, std::wstring_view text, int availableWidth,
 int measuredButtonWidth(HDC dc, HFONT font, std::wstring_view text, int dpi) {
     return std::max(scaleForDpi(ui::buttonMinWidth, dpi),
         measureText(dc, font, text, 1, false).width + 2 * scaleForDpi(ui::buttonPadding, dpi));
+}
+bool drawModernTab(const DRAWITEMSTRUCT& item, HWND tabs, const UiResources& resources) {
+    if (!tabs || item.CtlType != ODT_TAB || item.hwndItem != tabs || !item.hDC ||
+        item.itemID >= static_cast<UINT>(TabCtrl_GetItemCount(tabs)) || resources.dpi() <= 0)
+        return false;
+
+    std::array<wchar_t, 128> label{};
+    TCITEMW tab{};
+    tab.mask = TCIF_TEXT;
+    tab.pszText = label.data();
+    tab.cchTextMax = static_cast<int>(label.size());
+    if (!TabCtrl_GetItem(tabs, static_cast<int>(item.itemID), &tab)) return false;
+
+    const bool selected = static_cast<int>(item.itemID) == TabCtrl_GetCurSel(tabs);
+    const auto background = selected ? ui::Color::selectedStep : ui::Color::primary;
+    const auto foreground = selected ? ui::Color::text : ui::Color::primaryText;
+    RECT bounds = item.rcItem;
+    FillRect(item.hDC, &bounds, resources.brush(background));
+    FrameRect(item.hDC, &bounds, resources.brush(ui::Color::border));
+
+    const int saved = SaveDC(item.hDC);
+    SelectObject(item.hDC, resources.font(ui::Font::label));
+    SetBkMode(item.hDC, TRANSPARENT);
+    SetTextColor(item.hDC, resources.color(foreground));
+    const int padding = scaleForDpi(2, resources.dpi());
+    RECT text = bounds;
+    InflateRect(&text, -padding, 0);
+    DrawTextW(item.hDC, label.data(), -1, &text,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    if (selected && GetFocus() == tabs) {
+        RECT focus = bounds;
+        const int inset = std::max(2, scaleForDpi(3, resources.dpi()));
+        InflateRect(&focus, -inset, -inset);
+        if (focus.right > focus.left && focus.bottom > focus.top) DrawFocusRect(item.hDC, &focus);
+    }
+    if (saved) RestoreDC(item.hDC, saved);
+    return true;
 }
 void paintCard(HDC dc, Rect rect, const UiResources& resources, ui::Color fill, ui::Color border) {
     const int diameter = scaleForDpi(2 * ui::cardRadius, resources.dpi());

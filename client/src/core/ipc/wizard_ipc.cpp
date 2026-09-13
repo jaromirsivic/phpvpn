@@ -56,6 +56,46 @@ bool shape(const J& value, std::initializer_list<std::string_view> names) {
     return true;
 }
 Error malformed() { return Error(ErrorCode::ipc_malformed); }
+J diagnosticMessageValue(const BoundedHttpMessage& m) {
+    return J::makeObject({{"originalSizeBytes", J::makeUnsignedInteger(m.originalSizeBytes)},
+        {"prefix", str(encodeDiagnosticOctets(m.prefix))}, {"separator", str(m.truncated() ? kHttpDiagnosticSeparator : "")},
+        {"suffix", str(encodeDiagnosticOctets(m.suffix))}});
+}
+constexpr std::array requestSources = {"winhttp", "merged", "application"};
+constexpr std::array responseSources = {"winhttp", "available", "unavailable"};
+J diagnosticValue(const HttpDiagnostic& d) {
+    return J::makeObject({{"format", str("http-octets-v1")}, {"action", str(httpActionName(d.action))},
+        {"responseComplete", J::makeBool(d.responseComplete)},
+        {"requestHeadersSource", str(requestSources.at(static_cast<std::size_t>(d.requestHeadersSource)))},
+        {"responseHeadersSource", str(responseSources.at(static_cast<std::size_t>(d.responseHeadersSource)))},
+        {"request", diagnosticMessageValue(d.request)}, {"response", diagnosticMessageValue(d.response)}});
+}
+Result<BoundedHttpMessage> parseDiagnosticMessage(const J& value) {
+    if (!shape(value, {"originalSizeBytes", "prefix", "separator", "suffix"}) || !number(value.find("originalSizeBytes"), true) ||
+        !text(value.find("prefix")) || !text(value.find("separator")) || !text(value.find("suffix"))) return malformed();
+    BoundedHttpMessage m;
+    m.originalSizeBytes = jsonUnsignedOrZero(value.find("originalSizeBytes"));
+    if (value.find("separator")->stringValue() != (m.truncated() ? kHttpDiagnosticSeparator : "")) return malformed();
+    auto prefix = decodeDiagnosticOctets(value.find("prefix")->stringValue(), m.truncated() ? kHttpDiagnosticPrefix : static_cast<std::size_t>(m.originalSizeBytes));
+    auto suffix = decodeDiagnosticOctets(value.find("suffix")->stringValue(), m.truncated() ? kHttpDiagnosticTail : 0);
+    if (!prefix || !suffix) return malformed();
+    m.prefix = std::move(*prefix); m.suffix = std::move(*suffix);
+    return m;
+}
+Result<HttpDiagnostic> parseDiagnostic(const J& value) {
+    if (!shape(value, {"format", "action", "responseComplete", "requestHeadersSource", "responseHeadersSource", "request", "response"}) ||
+        !oneOf(value.find("format"), {"http-octets-v1"}) || !oneOf(value.find("action"), {"health", "info"}) ||
+        !value.find("responseComplete")->isBool() || !oneOf(value.find("requestHeadersSource"), {"winhttp", "merged", "application"}) ||
+        !oneOf(value.find("responseHeadersSource"), {"winhttp", "available", "unavailable"})) return malformed();
+    HttpDiagnostic d;
+    d.action = value.find("action")->stringValue() == "health" ? HttpAction::health : HttpAction::info;
+    d.responseComplete = value.find("responseComplete")->boolValue();
+    for (std::size_t i = 0; i < requestSources.size(); ++i) if (value.find("requestHeadersSource")->stringValue() == requestSources[i]) d.requestHeadersSource = static_cast<RequestHeadersSource>(i);
+    for (std::size_t i = 0; i < responseSources.size(); ++i) if (value.find("responseHeadersSource")->stringValue() == responseSources[i]) d.responseHeadersSource = static_cast<ResponseHeadersSource>(i);
+    PHPVPN_TRY_ASSIGN(d.request, parseDiagnosticMessage(*value.find("request")));
+    PHPVPN_TRY_ASSIGN(d.response, parseDiagnosticMessage(*value.find("response")));
+    return d;
+}
 constexpr std::array names = {
     "get-config-state", "get-config-document", "get-default-config", "create-default-config",
     "wizard-open", "wizard-reset", "wizard-keepalive", "wizard-check-url", "wizard-check-secret",
@@ -402,13 +442,19 @@ J WizardIpc::operationValue(const WizardOperationResult& result) {
             payload = J::makeObject({{"verified", J::makeBool(true)}, {"discardedRecordCount", J::makeUnsignedInteger(result.discardedRecordCount)}});
         else payload = J::makeObject({{"verified", J::makeBool(true)}});
     }
-    return J::makeObject({{"operationId", str(result.operationId)}, {"kind", str(kinds.at(static_cast<std::size_t>(result.kind)))},
+    auto value = J::makeObject({{"operationId", str(result.operationId)}, {"kind", str(kinds.at(static_cast<std::size_t>(result.kind)))},
         {"operationState", str(states.at(static_cast<std::size_t>(result.state)))}, {"connectionEpoch", J::makeUnsignedInteger(result.connectionEpoch)},
         {"clientAttemptId", nullable(result.clientAttemptId)}, {"attemptSequence", result.attemptSequence ? J::makeUnsignedInteger(*result.attemptSequence) : J::makeNull()},
         {"error", result.error ? errorValue(*result.error) : J::makeNull()}, {"payload", std::move(payload)}});
+    if (result.httpDiagnostic) value.objectValue().emplace_back("httpDiagnostic", diagnosticValue(*result.httpDiagnostic));
+    return value;
 }
 Result<WizardOperationResult> WizardIpc::parseOperation(const J& value) {
-    if (!shape(value, {"operationId", "kind", "operationState", "connectionEpoch", "clientAttemptId", "attemptSequence", "error", "payload"}) ||
+    const auto* diagnostic = value.find("httpDiagnostic");
+    const bool validShape = diagnostic
+        ? shape(value, {"operationId", "kind", "operationState", "connectionEpoch", "clientAttemptId", "attemptSequence", "error", "payload", "httpDiagnostic"})
+        : shape(value, {"operationId", "kind", "operationState", "connectionEpoch", "clientAttemptId", "attemptSequence", "error", "payload"});
+    if (!validShape ||
         !uuid(value.find("operationId")) || !number(value.find("connectionEpoch"))) return malformed();
     const auto kind = index(value.find("kind"), kinds), state = index(value.find("operationState"), states);
     if (!kind || !state) return malformed();
@@ -429,6 +475,17 @@ Result<WizardOperationResult> WizardIpc::parseOperation(const J& value) {
         result.error = std::move(error);
     }
     const auto& payload = *value.find("payload");
+    if (diagnostic) {
+        if (result.state != WizardOperationState::failed || !result.error || !payload.isNull() ||
+            (result.kind != WizardOperationKind::url && result.kind != WizardOperationKind::secret)) return malformed();
+        const auto& error = *result.error;
+        if (error.serverUrl || error.configPath || error.code.size() > 128 || error.description.size() > 4096 || error.suggestedAction.size() > 4096 ||
+            error.field != (result.kind == WizardOperationKind::url ? "serverUrl" : "serverSecret")) return malformed();
+        HttpDiagnostic parsed;
+        PHPVPN_TRY_ASSIGN(parsed, parseDiagnostic(*diagnostic));
+        if (result.kind == WizardOperationKind::url && parsed.action != HttpAction::health) return malformed();
+        result.httpDiagnostic = std::move(parsed);
+    }
     if (result.state != WizardOperationState::succeeded) {
         if (!payload.isNull()) return malformed();
         if (result.state == WizardOperationState::failed && !result.error) return malformed();

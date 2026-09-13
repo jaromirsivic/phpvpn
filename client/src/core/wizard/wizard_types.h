@@ -1,6 +1,7 @@
 #pragma once
 #include "core/config/config_document.h"
 #include "core/runtime/status_snapshot.h"
+#include "platform/iface/transport.h"
 
 namespace phpvpn {
 enum class WizardCommand {
@@ -39,6 +40,7 @@ struct WizardOperationResult {
     std::optional<std::string> suggestedIp;
     std::size_t discardedRecordCount = 0;
     std::optional<WizardReceipt> receipt;
+    std::optional<HttpDiagnostic> httpDiagnostic;
 };
 struct WizardView {
     std::string sessionId, serviceInstanceId, revisionToken;

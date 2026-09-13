@@ -32,6 +32,8 @@ public:
     std::size_t contractCount() const;
     std::size_t missingContractCount() const;
     const std::optional<WizardError>& error() const { return error_; }
+    const std::optional<HttpDiagnostic>& httpDiagnostic() const { return diagnostic_; }
+    void clearHttpDiagnostic() { diagnostic_.reset(); }
     const std::optional<WizardAttempt>& attempt() const { return attempt_; }
     const std::array<CheckpointResult, 3>& checks() const { return checks_; }
     bool setUrl(std::string text);
@@ -70,6 +72,7 @@ private:
     std::uint64_t sequence_ = 0;
     std::optional<WizardAttempt> attempt_;
     std::optional<WizardError> error_;
+    std::optional<HttpDiagnostic> diagnostic_;
     std::array<CheckpointResult, 3> checks_{CheckpointResult::pending, CheckpointResult::pending, CheckpointResult::pending};
 };
 } // namespace phpvpn

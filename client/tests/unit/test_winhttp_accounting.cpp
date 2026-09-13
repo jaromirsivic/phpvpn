@@ -25,7 +25,7 @@ using namespace std::chrono_literals;
 class BodyServer {
 public:
     enum class Mode { complete, httpError, incomplete, truncated, reset, slowBody, slowHeaders, tlsHandshake };
-    explicit BodyServer(Mode mode, std::size_t bytes) : mode_(mode), body_(bytes, 'x') {
+    explicit BodyServer(Mode mode, std::size_t bytes, std::string extraHeaders = {}) : mode_(mode), body_(bytes, 'x'), extraHeaders_(std::move(extraHeaders)) {
         WSADATA data{};
         if (WSAStartup(MAKEWORD(2, 2), &data) != 0) throw std::runtime_error("WSAStartup failed");
         listener_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -52,6 +52,7 @@ public:
         WSACleanup();
     }
     std::string url() const { return std::string(mode_ == Mode::tlsHandshake ? "https" : "http") + "://127.0.0.1:" + std::to_string(port_) + "/phpvpn.php"; }
+    std::string receivedRequest() { std::lock_guard lock(mutex_); return request_; }
     bool waitForBody() {
         std::unique_lock lock(mutex_);
         return wake_.wait_for(lock, 5s, [this] { return bodySent_; });
@@ -87,13 +88,19 @@ private:
             if (received <= 0) { closesocket(peer); return; }
             request.append(block, static_cast<std::size_t>(received));
             const auto headerEnd = request.find("\r\n\r\n");
-            if (headerEnd != std::string::npos && request.size() >= headerEnd + 6) break;
+            if (headerEnd != std::string::npos) {
+                const auto lengthAt = request.find("Content-Length:");
+                if (lengthAt == std::string::npos) { closesocket(peer); return; }
+                const auto length = std::stoull(request.substr(lengthAt + 15));
+                if (request.size() >= headerEnd + 4 + length) break;
+            }
         }
+        { std::lock_guard lock(mutex_); request_ = request; }
         const bool incomplete = mode_ == Mode::incomplete || mode_ == Mode::truncated || mode_ == Mode::reset;
         const std::string response = std::string("HTTP/1.1 ") +
             (mode_ == Mode::httpError ? "503 Service Unavailable" : "200 OK") +
             "\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\nContent-Length: " +
-            std::to_string(body_.size() + (incomplete ? 100 : 0)) + "\r\n\r\n";
+            std::to_string(body_.size() + (incomplete ? 100 : 0)) + "\r\n" + extraHeaders_ + "\r\n";
         if (mode_ == Mode::slowHeaders) {
             std::unique_lock lock(mutex_);
             wake_.wait_for(lock, 3s, [this] { return released_; });
@@ -128,6 +135,7 @@ private:
     }
     Mode mode_;
     std::string body_;
+    std::string extraHeaders_, request_;
     SOCKET listener_ = INVALID_SOCKET;
     unsigned short port_ = 0;
     std::thread worker_;
@@ -137,7 +145,7 @@ private:
     bool released_ = false;
 };
 
-std::unique_ptr<Transport> transportFor(const BodyServer& server, std::int64_t cap = 1000000) {
+std::unique_ptr<Transport> transportFor(const BodyServer& server, std::int64_t cap = 1000000, bool capture = false) {
     auto created = createPlatformTransport();
     if (!created.ok()) throw std::runtime_error("platform transport creation failed");
     auto transport = std::move(created).value();
@@ -145,6 +153,7 @@ std::unique_ptr<Transport> transportFor(const BodyServer& server, std::int64_t c
     settings.serverUrl = server.url();
     settings.responseTimeoutSeconds = 1;
     settings.maxResponseBodyBytes = cap;
+    settings.captureWizardHttpDiagnostics = capture;
     if (!transport->configure(settings).ok()) throw std::runtime_error("transport configuration failed");
     return transport;
 }
@@ -214,6 +223,80 @@ PHPVPN_TEST(WinHttpAccounting, PartialBodySurvivesConnectionResetReadError) {
     auto response = transport->post(HttpAction::data, "{}");
     PHPVPN_CHECK(!response.ok());
     PHPVPN_CHECK_EQ(response.responseBodyBytesRead, 65536U);
+}
+
+PHPVPN_TEST(WinHttpDiagnostic, CapturesApplicationExchangeBeforeProcessingAndNeverData) {
+    for (auto action : {HttpAction::health, HttpAction::info, HttpAction::data}) {
+        for (bool enabled : {false, true}) {
+            BodyServer server(BodyServer::Mode::httpError, 65537);
+            auto transport = transportFor(server, 1000000, enabled);
+            auto result = transport->post(action, "{}");
+            PHPVPN_REQUIRE_OK(result);
+            PHPVPN_CHECK_EQ(result.diagnostic.has_value(), enabled && action != HttpAction::data);
+            if (!result.diagnostic) continue;
+            const auto& d = *result.diagnostic;
+            PHPVPN_CHECK_EQ(d.action, action);
+            PHPVPN_CHECK(d.responseComplete);
+            PHPVPN_CHECK(d.request.prefix.starts_with("POST " + server.url() + "?action=" + httpActionName(action) + " HTTP/"));
+            PHPVPN_CHECK(d.request.prefix.ends_with("\r\n\r\n{}"));
+            PHPVPN_CHECK(d.request.prefix.find("Content-Type: " + std::string(httpActionContentType(action))) != std::string::npos);
+            PHPVPN_CHECK_EQ(d.requestHeadersSource, RequestHeadersSource::winhttp);
+            PHPVPN_CHECK(d.response.prefix.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+            PHPVPN_CHECK_EQ(d.response.prefix.size(), 64512u);
+            PHPVPN_CHECK_EQ(d.response.suffix, std::string(1024, 'x'));
+            PHPVPN_CHECK(d.response.originalSizeBytes > 65537);
+        }
+    }
+}
+PHPVPN_TEST(WinHttpDiagnostic, LimitIncludesRejectedBlockButTimeoutDoesNotPublish) {
+    {
+        BodyServer server(BodyServer::Mode::complete, 32768);
+        auto transport = transportFor(server, 100, true);
+        auto result = transport->post(HttpAction::health, "{}");
+        PHPVPN_REQUIRE_ERROR(result, ErrorCode::transport_response_too_large);
+        PHPVPN_CHECK(result.responseProcessingFailed && result.diagnostic);
+        if (result.diagnostic) {
+            PHPVPN_CHECK(!result.diagnostic->responseComplete);
+            const auto& r = result.diagnostic->response;
+            PHPVPN_CHECK_EQ(r.originalSizeBytes, r.prefix.find("\r\n\r\n") + 4 + result.responseBodyBytesRead);
+        }
+    }
+    {
+        BodyServer server(BodyServer::Mode::incomplete, 16384);
+        auto transport = transportFor(server, 1000000, true);
+        auto result = transport->post(HttpAction::health, "{}");
+        PHPVPN_REQUIRE_ERROR(result, ErrorCode::transport_timeout);
+        PHPVPN_CHECK(!result.diagnostic);
+    }
+}
+
+PHPVPN_TEST(WinHttpDiagnostic, ExactRequestBytesIndependentBoundsDuplicatesAndImplicitPath) {
+    for (std::size_t requestSize : {0u, 1u, 65536u, 65537u}) {
+        BodyServer server(BodyServer::Mode::httpError, requestSize % 2, "X-Dup: first\r\nX-Dup: second\r\n");
+        auto transport = createPlatformTransport().value();
+        TransportSettings settings; settings.captureWizardHttpDiagnostics = true;
+        settings.serverUrl = server.url().substr(0, server.url().find("/phpvpn.php"));
+        PHPVPN_REQUIRE_OK(transport->configure(settings));
+        std::string sent(requestSize, 's');
+        if (sent.size() > 10) sent.replace(2, 8, std::string("\0\xff\r\n...\n", 8));
+        const auto result = transport->post(HttpAction::info, sent);
+        PHPVPN_CHECK(result.ok() && result.diagnostic.has_value());
+        if (!result.diagnostic) continue;
+        const auto& d = *result.diagnostic;
+        const auto received = server.receivedRequest();
+        const auto bodyStart = received.find("\r\n\r\n");
+        PHPVPN_CHECK(bodyStart != std::string::npos);
+        PHPVPN_CHECK_EQ(received.substr(bodyStart + 4), sent);
+        PHPVPN_CHECK(received.starts_with("POST /?action=info HTTP/1.1\r\n"));
+        PHPVPN_CHECK(d.request.prefix.starts_with("POST " + settings.serverUrl + "/?action=info HTTP/"));
+        const auto start = d.request.prefix.find("\r\n\r\n") + 4;
+        const auto full = d.request.prefix.substr(0, start) + sent;
+        PHPVPN_CHECK_EQ(d.request.originalSizeBytes, full.size());
+        PHPVPN_CHECK_EQ(d.request.prefix, full.substr(0, full.size() <= 65536 ? full.size() : 64512));
+        PHPVPN_CHECK_EQ(d.request.suffix, full.size() <= 65536 ? std::string{} : full.substr(full.size() - 1024));
+        PHPVPN_CHECK(d.response.prefix.find("X-Dup: first\r\nX-Dup: second") != std::string::npos);
+        PHPVPN_CHECK(d.responseComplete && !d.response.truncated());
+    }
 }
 
 PHPVPN_TEST(WinHttpDeadline, HeadersTlsAndTrickleBodyShareOneAbsoluteBudget) {

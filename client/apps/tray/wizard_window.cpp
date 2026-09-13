@@ -18,7 +18,7 @@ constexpr wchar_t windowClass[] = L"PhpVpnConfigurationWizard";
 constexpr wchar_t bodyClass[] = L"PhpVpnWizardContent";
 constexpr UINT primaryMessage = WM_APP + 51, controlMessage = WM_APP + 52, heartbeatMessage = WM_APP + 53;
 constexpr UINT disconnectMessage = WM_APP + 54, statusMessage = WM_APP + 55;
-constexpr int nextId = 701, backId = 702, resetId = 703;
+constexpr int nextId = 701, backId = 702, resetId = 703, errorDetailId = 705;
 constexpr int urlId = 710, secretId = 711, defaultSecretId = 712, ipId = 713, keyId = 714, defaultKeyId = 715, contractsId = 716;
 constexpr int automaticIpId = 717;
 std::uint64_t nextWindowGeneration() {
@@ -83,6 +83,19 @@ void WizardWindow::endSession() {
     destroy();
 }
 void WizardWindow::draftChanged() { draftDirty_ = true; ++draftGeneration_; }
+void WizardWindow::syncHttpDiagnostic() {
+    if (model_.httpDiagnostic()) {
+        if (!diagnosticRequest_) { diagnosticRequest_ = request(WizardCommand::cancel_attempt); diagnosticRequest_->fields = {}; }
+    } else {
+        detail_.close();
+        if (diagnosticRequest_) {
+            if (!control_.busy() && !endingSession_ && control_.request(*diagnosticRequest_, window_, controlMessage, generation_))
+                diagnosticCleanup_ = std::pair{diagnosticRequest_->clientAttemptId, diagnosticRequest_->attemptSequence};
+            diagnosticRequest_.reset();
+        }
+    }
+    if (window_) ShowWindow(GetDlgItem(window_, errorDetailId), model_.httpDiagnostic() ? SW_SHOWNA : SW_HIDE);
+}
 bool WizardWindow::open(HINSTANCE instance, std::function<void()> onConfirmed) {
     if (endingSession_) return false;
     if (window_) { reactivateWindow(window_); return true; }
@@ -104,11 +117,12 @@ bool WizardWindow::open(HINSTANCE instance, std::function<void()> onConfirmed) {
     body_ = CreateWindowExW(WS_EX_CONTROLPARENT, bodyClass, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
         0, 0, 1, 1, window_, nullptr, instance, this);
     steps_ = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW, 0, 0, 1, 1, window_, nullptr, instance, nullptr);
-    for (const auto& [id, text] : {std::pair{resetId, L"Reset"}, {backId, L"Back"}, {nextId, wizardText::verify}})
+    for (const auto& [id, text] : {std::pair{resetId, L"Reset"}, {backId, L"Back"}, {errorDetailId, L"Error detail"}, {nextId, wizardText::verify}})
         CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
     if (!attachModernButton(GetDlgItem(window_, resetId), resources_, ButtonRole::reset) ||
         !attachModernButton(GetDlgItem(window_, backId), resources_) ||
+        !attachModernButton(GetDlgItem(window_, errorDetailId), resources_, ButtonRole::error) ||
         !attachModernButton(GetDlgItem(window_, nextId), resources_, ButtonRole::primary)) {
         destroy(); return false;
     }
@@ -245,6 +259,12 @@ void WizardWindow::receive(WizardReader& reader) {
     if (!result) return;
     if (result->generation != generation_) return;
     const auto command = result->request.command;
+    if (command == WizardCommand::cancel_attempt && diagnosticCleanup_ &&
+        diagnosticCleanup_->first == result->request.clientAttemptId && diagnosticCleanup_->second == result->request.attemptSequence) {
+        diagnosticCleanup_.reset();
+        if (closing_ || resetting_) send(resetting_ ? WizardCommand::reset : WizardCommand::close, control_);
+        render(); return;
+    }
     if (command == WizardCommand::close && confirmationShown_) {
         const auto callback = onConfirmed_;
         destroy();
@@ -377,6 +397,7 @@ void WizardWindow::tick() {
         (model_.busy() && model_.attempt() && !model_.attempt()->operationId.empty()))) send(WizardCommand::get_operation, primary_);
 }
 void WizardWindow::destroy() {
+    detail_.close(); diagnosticRequest_.reset(); diagnosticCleanup_.reset();
     ++generation_;
     windowGeneration_ = nextWindowGeneration(); ++draftGeneration_; ++attemptGeneration_; ++operationGeneration_;
     primary_.stop(); control_.stop(); heartbeat_.stop(); disconnect_.stop(); status_.stop();
@@ -462,6 +483,8 @@ void WizardWindow::separator() {
 }
 void WizardWindow::render() {
     if (!body_) return;
+    syncHttpDiagnostic();
+    const bool detailActive = detail_.handle() && GetForegroundWindow() == detail_.handle();
     LayoutFrame frame(window_);
     updating_ = true;
     const HWND previousFocus = GetFocus(); const int focusId = GetDlgCtrlID(previousFocus);
@@ -653,7 +676,8 @@ void WizardWindow::render() {
         step == WizardStep::serverUrl ? wizardText::checkingUrl : step == WizardStep::serverSecret ? wizardText::checkingSecret : step == WizardStep::identity ? wizardText::checkingIdentity : L"Waiting for the service…");
     contentHeight_ = cursorY_;
     for (const auto& item : children_) if (locked) EnableWindow(item.first, FALSE);
-    for (int id : {nextId, backId, resetId}) SendMessageW(GetDlgItem(window_, id), WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    for (int id : {nextId, backId, resetId, errorDetailId}) SendMessageW(GetDlgItem(window_, id), WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    EnableWindow(GetDlgItem(window_, errorDetailId), model_.httpDiagnostic().has_value() && !locked);
     const bool back = step == WizardStep::serverSecret || step == WizardStep::identity || step == WizardStep::contracts;
     ShowWindow(GetDlgItem(window_, backId), back ? SW_SHOW : SW_HIDE);
     EnableWindow(GetDlgItem(window_, backId), back && !locked);
@@ -684,7 +708,8 @@ void WizardWindow::render() {
     layout(); scroll(scroll_); InvalidateRect(body_, nullptr, TRUE); updating_ = false;
     HWND focus = GetDlgItem(body_, focusId);
     if (!focus) focus = GetDlgItem(window_, focusId);
-    if (!stepChanged && focus && IsWindowEnabled(focus) && IsWindowVisible(focus)) {
+    if (detailActive) { /* Preserve focus in the owned diagnostic window. */ }
+    else if (!stepChanged && focus && IsWindowEnabled(focus) && IsWindowVisible(focus)) {
         SetFocus(focus);
         if (textFocus) SendMessageW(focus, EM_SETSEL, selectionStart, selectionEnd);
     }
@@ -702,12 +727,13 @@ void WizardWindow::layout() {
     HDC dc = GetDC(window_);
     const int primaryWidth = std::max(measuredButtonWidth(dc, font_, wizardText::verify, dpi_),
         measuredButtonWidth(dc, font_, wizardText::disconnect, dpi_));
+    const int detailWidth = measuredButtonWidth(dc, font_, L"Error detail", dpi_);
     ReleaseDC(window_, dc);
-    geometry_ = computeWizardLayout({rect.right, rect.bottom}, dpi_, primaryWidth);
+    geometry_ = computeWizardLayout({rect.right, rect.bottom}, dpi_, primaryWidth, model_.httpDiagnostic().has_value(), detailWidth);
     const auto& geometry = geometry_;
     std::vector<ControlPlacement> positions{{steps_, geometry.steps}, {body_, geometry.content}};
     std::size_t index = 0;
-    for (int id : {resetId, backId, nextId})
+    for (int id : {resetId, backId, errorDetailId, nextId})
         positions.push_back({GetDlgItem(window_, id), geometry.buttons[index++]});
     positionControls(window_, positions);
     RECT bodyRect{}; GetClientRect(body_, &bodyRect); contentWidth_ = bodyRect.right;
@@ -790,11 +816,12 @@ void WizardWindow::drawSteps(const DRAWITEMSTRUCT& original) {
     SelectObject(item.hDC, old);
 }
 bool WizardWindow::translate(MSG& message) {
+    if (detail_.translate(message)) return true;
     if (!window_ || (message.hwnd != window_ && !IsChild(window_, message.hwnd))) return false;
     if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) { cancel(false); return true; }
     if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
         const int id = GetDlgCtrlID(GetFocus());
-        if (id == resetId || id == backId || id == nextId) command(id, BN_CLICKED); else next();
+        if (id == resetId || id == backId || id == nextId || id == errorDetailId) command(id, BN_CLICKED); else next();
         return true;
     }
     if (IsDialogMessageW(window_, &message)) { revealFocus(); return true; }
@@ -823,14 +850,16 @@ void WizardWindow::command(int id, int notification) {
                 updating_ = true; SetWindowTextW(GetDlgItem(body_, keyId), widen(model_.fields().accessKey).c_str()); updating_ = false;
             }
         }
+        syncHttpDiagnostic(); layout();
         return;
     }
     if (notification != BN_CLICKED) return;
-    const bool footerButton = id == nextId || id == backId || id == resetId;
+    const bool footerButton = id == nextId || id == backId || id == resetId || id == errorDetailId;
     const HWND button = GetDlgItem(footerButton ? window_ : body_, id);
     if (!button || !IsWindowEnabled(button) || !IsWindowVisible(button)) return;
     if (id == defaultSecretId || id == defaultKeyId || id == automaticIpId || id == contractsId) draftChanged();
     if (id == nextId) next();
+    else if (id == errorDetailId && model_.httpDiagnostic()) detail_.open(instance_, window_, *model_.httpDiagnostic());
     else if (id == backId) { model_.back(); scroll_ = 0; render(); }
     else if (id == resetId) cancel(true);
     else if (id == defaultSecretId) { model_.setDefaultSecret(SendMessageW(GetDlgItem(body_, id), BM_GETCHECK, 0, 0) == BST_CHECKED); render(); }

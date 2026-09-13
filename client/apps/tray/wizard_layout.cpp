@@ -2,12 +2,13 @@
 #include <algorithm>
 #include <array>
 namespace phpvpn::tray {
-WizardLayout computeWizardLayout(Size client, int dpi, int primaryWidth) {
+WizardLayout computeWizardLayout(Size client, int dpi, int primaryWidth, bool detailVisible, int detailWidth) {
     const int width = std::max(1, client.width), height = std::max(1, client.height);
     primaryWidth = std::max(scaleForDpi(200, dpi), primaryWidth);
     const std::array specs{
         FooterButtonSpec{scaleForDpi(88, dpi), FooterSide::leading, true},
         FooterButtonSpec{scaleForDpi(88, dpi), FooterSide::trailing, true},
+        FooterButtonSpec{std::max(scaleForDpi(108, dpi), detailWidth), FooterSide::trailing, detailVisible},
         FooterButtonSpec{primaryWidth, FooterSide::trailing, true},
     };
     const auto footer = computeButtonFooterLayout({width, height}, dpi, specs);

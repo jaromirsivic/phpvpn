@@ -59,6 +59,119 @@ PHPVPN_TEST(wizard_ipc, all_seventeen_request_schemas_are_closed_and_strict) {
         PHPVPN_CHECK(!WizardIpc::parseRequest(duplicate));
     }
 }
+namespace {
+WizardOperationResult diagnosticOperation() {
+    WizardOperationResult op;
+    op.operationId = id; op.clientAttemptId = other; op.attemptSequence = 1;
+    op.state = WizardOperationState::failed;
+    op.error = WizardIpc::safeError(Error(ErrorCode::response_invalid), 200, "serverUrl");
+    HttpDiagnostic d;
+    d.action = HttpAction::health; d.responseComplete = true;
+    BoundedHttpCapture request, response;
+    request.append("POST http://localhost/?action=health HTTP/?\r\n\r\n{}");
+    response.append("HTTP/1.1 200 OK\r\n\r\n<script>fixture</script>");
+    d.request = request.finish(); d.response = response.finish(); op.httpDiagnostic = std::move(d);
+    return op;
+}
+}
+PHPVPN_TEST(wizard_ipc, diagnostic_schema_closed_roundtrip_and_illegal_placement) {
+    const auto op = diagnosticOperation();
+    const auto valid = WizardIpc::operationValue(op);
+    PHPVPN_CHECK(accepts(WizardCommand::get_operation, valid));
+    auto roundtrip = WizardIpc::parseOperation(valid);
+    PHPVPN_REQUIRE_OK(roundtrip);
+    PHPVPN_CHECK_EQ(roundtrip->httpDiagnostic->request.prefix, op.httpDiagnostic->request.prefix);
+    for (const auto* level : {"httpDiagnostic", "request", "response"}) {
+        auto base = *valid.find("httpDiagnostic");
+        const auto object = std::string_view(level) == "httpDiagnostic" ? base : *base.find(level);
+        for (const auto& [key, ignored] : object.objectValue()) {
+            (void)ignored;
+            auto changed = object;
+            std::erase_if(changed.objectValue(), [&](const auto& item) { return item.first == key; });
+            auto d = base; if (std::string_view(level) == "httpDiagnostic") d = changed; else set(d, level, changed);
+            auto value = valid; set(value, "httpDiagnostic", d);
+            PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
+        }
+        auto changed = object; changed.objectValue().emplace_back("extra", J::makeNull());
+        auto d = base; if (std::string_view(level) == "httpDiagnostic") d = changed; else set(d, level, changed);
+        auto value = valid; set(value, "httpDiagnostic", d);
+        PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
+    }
+    for (const auto& [key, replacement] : std::vector<std::pair<std::string, J>>{
+        {"httpDiagnostic", J::makeNull()}, {"kind", string("access")}, {"kind", string("finish")},
+        {"operationState", string("succeeded")}, {"operationState", string("running")}, {"operationState", string("cancelled")},
+        {"operationState", string("interrupted")}, {"error", J::makeNull()}, {"payload", J::makeObject({})}}) {
+        auto value = valid; set(value, key, replacement); PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
+    }
+    for (const auto& [key, replacement] : std::vector<std::pair<std::string, J>>{
+        {"format", string("unknown")}, {"action", string("data")}, {"action", string("info")},
+        {"responseComplete", J::makeInteger(1)}, {"requestHeadersSource", string("available")}, {"responseHeadersSource", string("application")}}) {
+        auto value = valid, d = *valid.find("httpDiagnostic"); set(d, key, replacement); set(value, "httpDiagnostic", d);
+        PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
+    }
+    for (const auto& [key, replacement] : std::vector<std::pair<std::string, J>>{
+        {"serverUrl", string("http://localhost/")}, {"configPath", string("C:/fixture.json")},
+        {"code", string(std::string(129, 'a'))}, {"description", string(std::string(4097, 'a'))},
+        {"suggestedAction", string(std::string(4097, 'a'))}, {"field", string("serverSecret")}}) {
+        auto value = valid, error = *valid.find("error"); set(error, key, replacement); set(value, "error", error);
+        PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
+    }
+    auto secret = op; secret.kind = WizardOperationKind::secret; secret.error->field = "serverSecret"; secret.httpDiagnostic->action = HttpAction::info;
+    PHPVPN_CHECK(accepts(WizardCommand::get_operation, WizardIpc::operationValue(secret)));
+    auto old = op; old.httpDiagnostic.reset(); PHPVPN_CHECK_EQ(WizardIpc::operationValue(old).objectValue().size(), 8u);
+    PHPVPN_CHECK(accepts(WizardCommand::get_operation, WizardIpc::operationValue(old)));
+}
+PHPVPN_TEST(wizard_ipc, diagnostic_octet_lengths_numbers_and_separator_are_exact) {
+    auto op = diagnosticOperation();
+    op.httpDiagnostic->response = {65537, std::string(64512, 'a'), std::string(1024, 'b')};
+    auto valid = WizardIpc::operationValue(op);
+    PHPVPN_CHECK(accepts(WizardCommand::get_operation, valid));
+    const auto real = Json::parse("1.5").value();
+    for (const auto& [key, replacement] : std::vector<std::pair<std::string, J>>{
+        {"originalSizeBytes", J::makeInteger(-1)}, {"originalSizeBytes", J::makeInteger(0)}, {"originalSizeBytes", real},
+        {"originalSizeBytes", string("65537")}, {"originalSizeBytes", J::makeInteger(65536)},
+        {"prefix", string(std::string(64511, 'a'))}, {"prefix", string(std::string(64513, 'a'))},
+        {"prefix", string(std::string(64511, 'a') + "\xc4\x80")}, {"suffix", string(std::string(1023, 'b'))},
+        {"separator", string("\n...\n...\n...\n...\n")}, {"separator", string("")}}) {
+        auto value = valid, d = *valid.find("httpDiagnostic"), r = *d.find("response");
+        set(r, key, replacement); set(d, "response", r); set(value, "httpDiagnostic", d);
+        PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
+    }
+    auto json = WizardIpc::buildResult(id, valid);
+    const auto pos = json.find("65537"); json.replace(pos, 5, "18446744073709551616");
+    PHPVPN_CHECK(!WizardIpc::parseReply(WizardCommand::get_operation, id, json));
+    json = WizardIpc::buildResult(id, valid);
+    const auto format = json.find("\"format\":"); json.insert(format, "\"format\":\"http-octets-v1\",");
+    PHPVPN_CHECK(!WizardIpc::parseReply(WizardCommand::get_operation, id, json));
+}
+PHPVPN_TEST(wizard_ipc, diagnostic_worst_case_envelope_has_proven_headroom) {
+    auto op = diagnosticOperation();
+    const auto max = (std::numeric_limits<std::uint64_t>::max)();
+    op.connectionEpoch = max; op.attemptSequence = max;
+    op.httpDiagnostic->request = {max, std::string(64512, '\1'), std::string(1024, '\1')};
+    op.httpDiagnostic->response = op.httpDiagnostic->request;
+    op.error->code.assign(128, '\1'); op.error->description.assign(4096, '\1'); op.error->suggestedAction.assign(4096, '\1');
+    auto encoded = WizardIpc::buildResult(id, WizardIpc::operationValue(op));
+    PHPVPN_CHECK(encoded.size() <= 852232);
+    PHPVPN_CHECK(encoded.size() < kIpcMaxMessageBytes);
+    auto reply = WizardIpc::parseReply(WizardCommand::get_operation, id, encoded);
+    PHPVPN_REQUIRE_OK(reply);
+    PHPVPN_CHECK(!reply->error);
+    auto parsed = WizardIpc::parseOperation(reply->result); PHPVPN_REQUIRE_OK(parsed);
+    PHPVPN_CHECK_EQ(parsed->httpDiagnostic->request.originalSizeBytes, max);
+    PHPVPN_CHECK_EQ(parsed->httpDiagnostic->request.prefix, op.httpDiagnostic->request.prefix);
+}
+PHPVPN_TEST(wizard_ipc, diagnostic_safe_error_catalog_satisfies_envelope_bounds) {
+    for (int value = static_cast<int>(ErrorCode::none); value <= static_cast<int>(ErrorCode::state_conflict); ++value) {
+        auto operation = diagnosticOperation();
+        operation.error = WizardIpc::safeError(Error(static_cast<ErrorCode>(value)), 200, "serverUrl");
+        PHPVPN_CHECK(operation.error->code.size() <= 128);
+        PHPVPN_CHECK(operation.error->description.size() <= 4096);
+        PHPVPN_CHECK(operation.error->suggestedAction.size() <= 4096);
+        PHPVPN_CHECK(!operation.error->serverUrl && !operation.error->configPath);
+        PHPVPN_CHECK(accepts(WizardCommand::get_operation, WizardIpc::operationValue(operation)));
+    }
+}
 PHPVPN_TEST(wizard_ipc, sequence_full_unsigned_range_and_exact_secret_round_trip) {
     auto request = requestFor(WizardCommand::check_access);
     request.attemptSequence = (std::numeric_limits<std::uint64_t>::max)();

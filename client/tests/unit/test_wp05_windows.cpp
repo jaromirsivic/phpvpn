@@ -4,6 +4,10 @@
 #include "wp03_dialog_test.h"
 #include "../../apps/tray/tray_application.h"
 #include "../../apps/tray/resource.h"
+#include "../../apps/tray/http_error_detail_window.h"
+#include "../../apps/tray/ui_controls.h"
+#include <commctrl.h>
+#include <ole2.h>
 #include "platform/windows/ipc_pipe.h"
 #include <atomic>
 #include <condition_variable>
@@ -11,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <iostream>
 #pragma comment(lib, "psapi.lib")
 
 namespace {
@@ -197,6 +202,152 @@ PHPVPN_TEST(WP05Windows, NativeRowsKeysChildrenAndImmutableTargets) {
     PHPVPN_CHECK_EQ(backend.saves.load(),1u); PHPVPN_CHECK_EQ(backend.documents.load(),0u);
     auto saved=ContractsDocument::parse(backend.stored); PHPVPN_CHECK(saved && saved.value()->existingKey(contracts_test::ip("10.99.99.3"))==narrow(secondHash));
     PHPVPN_CHECK_EQ(backend.unexpected.load(),0u);
+}
+class DiagnosticClipboardRestore {
+    std::vector<std::pair<UINT, HANDLE>> data_;
+    HWND owner_;
+    bool captured_ = false;
+public:
+    explicit DiagnosticClipboardRestore(HWND owner) : owner_(owner) {}
+    bool capture() {
+        bool opened = false;
+        for (int retry = 0; retry < 100 && !opened; ++retry) {
+            opened = OpenClipboard(owner_) != FALSE;
+            if (!opened) Sleep(10);
+        }
+        if (!opened) { std::cout << "[ EVIDENCE ] clipboard open unavailable: " << GetLastError() << '\n'; return false; }
+        bool ok = true;
+        for (UINT format = EnumClipboardFormats(0); format; format = EnumClipboardFormats(format)) {
+            auto source = GetClipboardData(format);
+            auto copy = source ? OleDuplicateData(source, static_cast<CLIPFORMAT>(format), 0) : nullptr;
+            // Registered zero-byte marker formats have valid discarded HGLOBALs.
+            // OleDuplicateData cannot lock those, but their exact empty value is
+            // reproducible without reading or dropping any clipboard format.
+            if (!copy && source && format >= 0xc000 && GlobalFlags(source) != GMEM_INVALID_HANDLE) {
+                SetLastError(ERROR_SUCCESS);
+                const auto bytes = GlobalSize(source);
+                if (!bytes && GetLastError() == ERROR_SUCCESS) copy = GlobalAlloc(GMEM_MOVEABLE, 0);
+            }
+            if (!copy) {
+                wchar_t name[256]{}; GetClipboardFormatNameW(format, name, 256);
+                std::wcout << L"[ EVIDENCE ] clipboard format cannot be duplicated: " << format << L" " << name << L", source=" << (source != nullptr) << L"\n";
+                ok = false; break;
+            }
+            data_.emplace_back(format, copy);
+        }
+        CloseClipboard();
+        captured_ = ok;
+        return ok;
+    }
+    ~DiagnosticClipboardRestore() {
+        if (captured_) {
+            bool opened = false;
+            for (int retry = 0; retry < 100 && !opened; ++retry) {
+                opened = OpenClipboard(owner_) != FALSE;
+                if (!opened) Sleep(10);
+            }
+            PHPVPN_CHECK(opened);
+            if (opened) {
+                PHPVPN_CHECK(EmptyClipboard());
+                for (auto& [format, handle] : data_) {
+                    if (SetClipboardData(format, handle)) handle = nullptr;
+                    else PHPVPN_CHECK(false);
+                }
+                CloseClipboard();
+            }
+        }
+        for (auto [format, handle] : data_) if (handle) {
+            if (format == CF_BITMAP || format == CF_PALETTE || format == CF_DSPBITMAP) DeleteObject(handle);
+            else if (format == CF_ENHMETAFILE || format == CF_DSPENHMETAFILE) DeleteEnhMetaFile(static_cast<HENHMETAFILE>(handle));
+            else {
+                if (format == CF_METAFILEPICT || format == CF_DSPMETAFILEPICT) {
+                    auto picture = static_cast<METAFILEPICT*>(GlobalLock(handle));
+                    if (picture) { DeleteMetaFile(picture->hMF); GlobalUnlock(handle); }
+                }
+                GlobalFree(handle);
+            }
+        }
+    }
+};
+PHPVPN_TEST(WP05Windows, HttpDiagnosticErrorButtonPaletteStates) {
+    const auto instance = GetModuleHandleW(nullptr);
+    const auto owner = CreateWindowExW(0, L"STATIC", L"palette fixture", WS_OVERLAPPEDWINDOW, 0, 0, 200, 100, nullptr, nullptr, instance, nullptr);
+    require(owner != nullptr);
+    UiResources resources; require(resources.update(instance, 96, false));
+    const auto button = CreateWindowExW(0, L"BUTTON", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 160, 40, owner, nullptr, instance, nullptr);
+    require(button && attachModernButton(button, resources, ButtonRole::error));
+    const auto fill = [&] {
+        const auto source = GetDC(button), memory = CreateCompatibleDC(source);
+        const auto bitmap = CreateCompatibleBitmap(source, 160, 40); const auto old = SelectObject(memory, bitmap);
+        SendMessageW(button, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(memory), PRF_CLIENT);
+        const auto color = GetPixel(memory, 80, 20);
+        SelectObject(memory, old); DeleteObject(bitmap); DeleteDC(memory); ReleaseDC(button, source);
+        return color;
+    };
+    PHPVPN_CHECK_EQ(fill(), resources.color(resources.highContrast() ? ui::Color::primary : ui::Color::error));
+    SendMessageW(button, WM_MOUSEMOVE, 0, MAKELPARAM(80, 20));
+    PHPVPN_CHECK_EQ(fill(), resources.color(resources.highContrast() ? ui::Color::primary : ui::Color::buttonResetHover));
+    SendMessageW(button, BM_SETSTATE, TRUE, 0);
+    PHPVPN_CHECK_EQ(fill(), resources.color(resources.highContrast() ? ui::Color::primary : ui::Color::buttonResetPressed));
+    SendMessageW(button, BM_SETSTATE, FALSE, 0); EnableWindow(button, FALSE);
+    PHPVPN_CHECK_EQ(fill(), resources.color(ui::Color::errorBackground));
+    DestroyWindow(owner);
+}
+PHPVPN_TEST(WP05Windows, HttpDiagnosticMaximumProjectionTabsAndOwnerDestruction) {
+    const auto instance = GetModuleHandleW(nullptr);
+    HWND owner = CreateWindowExW(0, L"STATIC", L"diagnostic fixture owner", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr, nullptr, instance, nullptr);
+    require(owner != nullptr);
+    HttpDiagnostic d; d.action = HttpAction::health; d.responseComplete = false;
+    d.request = {65537, std::string(64512, '\0'), std::string(1024, '\0')};
+    const std::string response = "HTTP/? 200\r\n\r\n<script>inert</script>\nlast\r\n";
+    d.response = {response.size(), response, {}};
+    HttpErrorDetailWindow detail; require(detail.open(instance, owner, d));
+    const auto h = detail.handle();
+    PHPVPN_CHECK_EQ(GetWindow(h, GW_OWNER), owner);
+    auto request = field(h, 781), responseEdit = field(h, 782), tabs = field(h, 780);
+    PHPVPN_CHECK_EQ(text(request).size(), kHttpDiagnosticDisplayLimit);
+    PHPVPN_CHECK_EQ(text(request), diagnosticDisplayText(d.request).text);
+    PHPVPN_CHECK_EQ(text(responseEdit), diagnosticDisplayText(d.response).text);
+    {
+        DiagnosticClipboardRestore clipboard(h);
+        const bool saved = clipboard.capture();
+        if (!saved) std::cout << "[ NOT RUN ] HTTP diagnostic Ctrl+C: existing clipboard formats cannot be preserved\n";
+        if (saved) {
+            SendMessageW(request, EM_SETSEL, kHttpDiagnosticDisplayLimit - 4, kHttpDiagnosticDisplayLimit);
+            SetFocus(request);
+            BYTE previousKeys[256]{}, copyKeys[256]{}; GetKeyboardState(previousKeys);
+            std::copy(std::begin(previousKeys), std::end(previousKeys), std::begin(copyKeys));
+            copyKeys[VK_CONTROL] = 0x80; SetKeyboardState(copyKeys);
+            SendMessageW(request, WM_KEYDOWN, 'C', 0); SetKeyboardState(previousKeys);
+            const bool opened = OpenClipboard(h) != FALSE; PHPVPN_CHECK(opened);
+            if (opened) {
+                const auto handle = GetClipboardData(CF_UNICODETEXT);
+                const auto value = handle ? static_cast<const wchar_t*>(GlobalLock(handle)) : nullptr;
+                PHPVPN_CHECK(value != nullptr);
+                if (value) { PHPVPN_CHECK_EQ(std::wstring(value), L"\\x00"); GlobalUnlock(handle); }
+                CloseClipboard();
+            }
+        }
+    }
+    PHPVPN_CHECK_EQ(TabCtrl_GetItemCount(tabs), 2);
+    for (int i = 0; i < 2; ++i) {
+        wchar_t label[32]{}; TCITEMW item{}; item.mask = TCIF_TEXT; item.pszText = label; item.cchTextMax = 32;
+        PHPVPN_CHECK(TabCtrl_GetItem(tabs, i, &item)); PHPVPN_CHECK_EQ(std::wstring(label), i ? L"Response" : L"Request");
+    }
+    SendMessageW(request, EM_SETSEL, kHttpDiagnosticDisplayLimit - 4, kHttpDiagnosticDisplayLimit);
+    SendMessageW(request, EM_SCROLLCARET, 0, 0);
+    DWORD start = 0, end = 0; SendMessageW(request, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+    PHPVPN_CHECK_EQ(end, kHttpDiagnosticDisplayLimit);
+    PHPVPN_CHECK_EQ(start, kHttpDiagnosticDisplayLimit - 4);
+    const auto previous = text(request);
+    SendMessageW(request, WM_CHAR, 'z', 0); PHPVPN_CHECK_EQ(text(request), previous);
+    for (int dpi : {96, 144, 192}) {
+        RECT bounds{}; GetWindowRect(h, &bounds); SendMessageW(h, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&bounds));
+        resizeClient(h, 480, 400); pump();
+        PHPVPN_CHECK_EQ(text(request).size(), kHttpDiagnosticDisplayLimit);
+    }
+    PHPVPN_CHECK(!GetDlgItem(h, IDOK) && !GetDlgItem(h, IDCANCEL));
+    DestroyWindow(owner); pump(); PHPVPN_CHECK(!detail.handle());
 }
 PHPVPN_TEST(WP05Windows, PasswordUnicodeLimitPreservesSelectionAndResult) {
     contracts_test::Crypto crypto; auto model=ContractsModel::create(crypto,contracts_test::document()).value();
