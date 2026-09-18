@@ -10,7 +10,7 @@ public:
     using CryptoFactory = std::function<Result<std::unique_ptr<CryptoProvider>>() >;
     explicit ContractsWindow(std::wstring pipeName = {}, CryptoFactory cryptoFactory = createPlatformCryptoProvider,
         decltype(&CreateWindowExW) createWindow = CreateWindowExW)
-        : controller_(std::move(pipeName)), cryptoFactory_(std::move(cryptoFactory)), createWindow_(createWindow) {}
+        : controller_(pipeName), savedStatus_(std::move(pipeName)), cryptoFactory_(std::move(cryptoFactory)), createWindow_(createWindow) {}
     ContractsWindow(const ContractsWindow&) = delete;
     ContractsWindow& operator=(const ContractsWindow&) = delete;
     ~ContractsWindow();
@@ -24,6 +24,7 @@ public:
     bool approvedDiscard(const ContractsLifecycleSnapshot& approved);
     ContractsLifecycleSnapshot lifecycleSnapshot() const { return controller_.snapshot(); }
     void setConnectionActive(bool active);
+    std::function<void(const TrayStatus&)> disconnectAfterSave;
 private:
     struct Row {
         Ipv4Address remote;
@@ -41,6 +42,7 @@ private:
     void fonts();
     void refresh();
     void poll();
+    void finishSavedStatus();
     void save(bool repeat);
     void closeChildren();
     void reveal(HWND field);
@@ -56,6 +58,9 @@ private:
     int pageCount() const;
     bool acceptKey(Ipv4Address remote, std::wstring_view text);
     ContractsSaveController controller_;
+    CommandReader savedStatus_;
+    std::optional<ContractsLifecycleSnapshot> savedSnapshot_;
+    std::optional<TrayStatus> disconnectIdentity_;
     CryptoFactory cryptoFactory_;
     decltype(&CreateWindowExW) createWindow_;
     std::unique_ptr<CryptoProvider> crypto_;
@@ -76,6 +81,5 @@ private:
     std::wstring localError_;
     std::wstring saveText_ = L"Save";
     bool validationNotice_ = false;
-    bool notifyAfterSave_ = false;
 };
 } // namespace phpvpn::tray

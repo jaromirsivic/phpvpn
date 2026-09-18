@@ -26,9 +26,11 @@ class ServerInfoWindow {
     void page(int value);
     void selectTab();
     void destroyPager();
+    void stopAutoRefresh();
+    void scheduleAutoRefresh();
     CommandReader reader_;
     HWND window_ = nullptr, heading_ = nullptr, tabs_ = nullptr, table_ = nullptr, raw_ = nullptr, refresh_ = nullptr,
-         ok_ = nullptr, notice_ = nullptr;
+         ok_ = nullptr, notice_ = nullptr, autoRefresh_ = nullptr, count_ = nullptr;
     HINSTANCE instance_ = nullptr;
     UiResources resources_;
     std::optional<ServerInfoModel> model_;
@@ -37,6 +39,8 @@ class ServerInfoWindow {
     Rect tableBounds_{};
     HIMAGELIST rowHeightImages_ = nullptr;
     bool pending_ = false;
+    UINT_PTR autoTimer_ = 0, nextTimer_ = 1;
+    ULONGLONG autoDeadline_ = 0;
     std::uint64_t generation_ = 0, requestGeneration_ = 0;
     IAccPropServices *accessibility_ = nullptr;
     bool comInitialised_ = false;

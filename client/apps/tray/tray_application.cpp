@@ -44,7 +44,13 @@ TrayApplication::TrayApplication(TrayRuntime runtime)
       statusReader_(runtime_.pipeName), commands_(runtime_.pipeName),
       disconnect_(runtime_.pipeName), config_(runtime_.pipeName),
       editor_(runtime_.pipeName), infoWindow_(runtime_.pipeName), wizard_(runtime_.pipeName),
-      contracts_(runtime_.pipeName), progress_(runtime_.pipeName), disconnectProgress_(runtime_.pipeName) {}
+      contracts_(runtime_.pipeName), progress_(runtime_.pipeName), disconnectProgress_(runtime_.pipeName) {
+    contracts_.disconnectAfterSave = [this](const TrayStatus& status) {
+        if (endingSession_ || exitRequested_ || disconnectPending_) return;
+        onSnapshot(status);
+        startCommand(IpcCommand::disconnect);
+    };
+}
 TrayApplication::~TrayApplication() {
     endSession();
     commands_.stop(); disconnect_.stop(); config_.stop(); statusReader_.stop();

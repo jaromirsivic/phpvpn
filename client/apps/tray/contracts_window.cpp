@@ -296,17 +296,16 @@ void ContractsWindow::save(bool repeat) {
     }
     auto prepared = controller_.prepare(repeat);
     if (!prepared) { refresh(); return; }
-    notifyAfterSave_ = connectionActive_ && controller_.model()->dirty();
     closeChildren(); controller_.dispatch(window_, resultMessage); refresh();
 }
 void ContractsWindow::poll() {
     const auto event = controller_.poll();
     if (event == ContractsEvent::saved) {
-        const auto before = lifecycleSnapshot();
-        if (notifyAfterSave_)
-            showSystemMessage(window_, L"Your changes have been saved. Disconnect and connect again to apply them.",
-                L"Configuration saved", SystemDialogIcon::information, L"Configuration saved");
-        if (window_ && lifecycleSnapshot() == before) { endSession(); ending_ = false; }
+        savedSnapshot_ = lifecycleSnapshot();
+        disconnectIdentity_.reset();
+        if (!savedStatus_.request(IpcCommand::get_status, {}, window_, WM_APP + 281)) {
+            endSession(); ending_ = false;
+        }
         return;
     }
     if (event == ContractsEvent::matched) {
@@ -316,6 +315,32 @@ void ContractsWindow::poll() {
         return;
     }
     if (event != ContractsEvent::none) refresh();
+}
+void ContractsWindow::finishSavedStatus() {
+    const auto response = savedStatus_.take();
+    if (!response || !window_ || !savedSnapshot_ || lifecycleSnapshot() != *savedSnapshot_) return;
+    const auto status = std::optional{parseStatusResponse(*response)};
+    const auto before = *savedSnapshot_;
+    if (disconnectIdentity_) {
+        const auto identity = *disconnectIdentity_;
+        disconnectIdentity_.reset();
+        if (status->valid && status->state == "connected" && status->connectionEpoch == identity.connectionEpoch &&
+            status->connectAttemptId == identity.connectAttemptId && status->connectionStartedAtUtcMs == identity.connectionStartedAtUtcMs &&
+            disconnectAfterSave) disconnectAfterSave(*status);
+    } else if (status->valid && status->state == "connected") {
+        const bool yes = confirmSystemAction(window_,
+            L"Your changes have been saved. It is strictly required that you disconnect and connect again to apply them. Do you want to disconnect now?",
+            L"Configuration saved", true);
+        if (!window_ || !savedSnapshot_ || lifecycleSnapshot() != before) return;
+        if (yes) {
+            disconnectIdentity_ = *status;
+            if (!savedStatus_.request(IpcCommand::get_status, {}, window_, WM_APP + 281)) {
+                endSession(); ending_ = false;
+            }
+            return;
+        }
+    }
+    if (window_ && lifecycleSnapshot() == before) { endSession(); ending_ = false; }
 }
 void ContractsWindow::refresh() {
     if (!window_ || !ok_ || !controller_.model()) return;
@@ -405,6 +430,7 @@ bool ContractsWindow::approvedDiscard(const ContractsLifecycleSnapshot& approved
     endSession(); ending_ = false; return true;
 }
 void ContractsWindow::endSession() {
+    savedStatus_.abandon(); savedSnapshot_.reset(); disconnectIdentity_.reset();
     ending_ = true; closeChildren();
     if (window_) DestroyWindow(window_);
     controller_.close(); rows_.clear(); pageButtons_.clear(); crypto_.reset();
@@ -632,6 +658,7 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
     case WM_COMMAND: self->command(LOWORD(w), HIWORD(w)); return 0;
     case WM_TIMER: if (h == self->window_ && w == timer) self->poll(); return 0;
     case resultMessage: self->poll(); return 0;
+    case WM_APP + 281: self->finishSavedStatus(); return 0;
     case pageMessage:
         self->changePage(static_cast<int>(w));
         if (l == 1 && !self->rows_.empty() && self->controller_.model() && !self->controller_.model()->frozen()) SetFocus(self->rows_.back().controls[0]);
@@ -682,6 +709,7 @@ LRESULT CALLBACK ContractsWindow::procedure(HWND h, UINT m, WPARAM w, LPARAM l) 
     case WM_CLOSE: if (h == self->window_) self->close(); return 0;
     case WM_DESTROY:
         if (h == self->window_) {
+            self->savedStatus_.abandon(); self->savedSnapshot_.reset(); self->disconnectIdentity_.reset();
             KillTimer(h,timer); self->changing_ = true; self->closeChildren();
             for (auto& row : self->rows_) { row.edit.clear(); if (self->accessibility_) for (auto field : row.controls) { const MSAAPROPID props[]{PROPID_ACC_NAME,PROPID_ACC_DESCRIPTION}; self->accessibility_->ClearHwndProps(field, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, props, 2); } }
             if (self->accessibility_) for (const auto& button : self->pageButtons_) {

@@ -69,6 +69,8 @@ void NetworkWorker::reset() {
     timeSync_.reset();
     hasServerLimits_ = false;
     serverLimits_ = ServerLimits{};
+    lastPacketAtMs_.reset();
+    currentPollIntervalMs_ = clampToRange(serverLimits_.minDataPollIntervalMs, kMinPollIntervalMs, kMaxPollIntervalMs);
     scheduler_.reset();
 }
 
@@ -162,14 +164,7 @@ Result<InfoResponse> NetworkWorker::performInfo(std::optional<HttpDiagnostic>* f
     PHPVPN_TRY_ASSIGN(info, ResponseParser::parseInfo(crypto_, keys_, normalisedServerSecret_,
                                                       requestId, response.body));
 
-    serverLimits_ = info.limits;
-    hasServerLimits_ = true;
-
-    const std::int64_t low =
-        std::max<std::int64_t>(kMinPollIntervalMs, serverLimits_.minDataPollIntervalMs);
-    const std::int64_t high =
-        std::min<std::int64_t>(kMaxPollIntervalMs, serverLimits_.maxDataPollIntervalMs);
-    currentPollIntervalMs_ = clampToRange(currentPollIntervalMs_, low, high);
+    PHPVPN_TRY(publishLimits(info.limits));
     if (failedDiagnostic) failedDiagnostic->reset();
     if (rejectedResponse) *rejectedResponse = false;
 
@@ -357,6 +352,8 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
         }
         counters_->recordRequest(!plan.records.empty(), bodyResult.value().size(), packets, packetBytes);
     }
+    const auto handedOffAtMs = clock_.monotonicMs();
+    const bool sentPayload = !plan.records.empty();
     auto response = transport_.post(HttpAction::data, bodyResult.value());
     if (counters_) counters_->recordResponseBody(response.responseBodyBytesRead);
     if (!response.ok()) {
@@ -386,6 +383,7 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
     const DataResponse& data = parsed.value();
 
     DataExchangeOutcome outcome;
+    if (sentPayload) outcome.lastPacketAtMs = handedOffAtMs;
     outcome.decodedCiphertextBytes = data.decodedCiphertextBytes;
 
     // Only a messageId the server confirmed as accepted may leave the queue.
@@ -404,27 +402,51 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
     }
 
     for (const DataResponseRecord& record : data.records) {
+        const auto previous = outcome.packetsReceived;
         ingestRecord(record, inbound, inboundDrops, outcome);
+        if (outcome.packetsReceived > previous) outcome.lastPacketAtMs = clock_.monotonicMs();
     }
 
     outcome.serverHadMore = !data.records.empty();
+    outcome.completedAtMs = clock_.monotonicMs();
     return outcome;
 }
 
-std::int64_t NetworkWorker::nextPollDelayMs(bool hadTraffic) {
+void NetworkWorker::beginDataSession() {
+    lastPacketAtMs_ = clock_.monotonicMs();
+    currentPollIntervalMs_ = std::max<std::int64_t>(kMinPollIntervalMs, serverLimits_.minDataPollIntervalMs);
+}
+
+Status NetworkWorker::publishLimits(const ServerLimits& limits) {
+    const auto low = std::max<std::int64_t>(kMinPollIntervalMs, limits.minDataPollIntervalMs);
+    const auto high = std::min<std::int64_t>(kMaxPollIntervalMs, limits.maxDataPollIntervalMs);
+    if (limits.minDataPollIntervalMs <= 0 || limits.maxDataPollIntervalMs < limits.minDataPollIntervalMs || low > high)
+        return Error(ErrorCode::response_invalid, "unusable server polling limits");
+    serverLimits_ = limits;
+    hasServerLimits_ = true;
+    const auto now = clock_.monotonicMs();
+    const bool fast = lastPacketAtMs_ && (now < *lastPacketAtMs_ ||
+        static_cast<std::uint64_t>(now) - static_cast<std::uint64_t>(*lastPacketAtMs_) < 5000);
+    currentPollIntervalMs_ = fast ? low : clampToRange(currentPollIntervalMs_, low, high);
+    return ok();
+}
+
+std::int64_t NetworkWorker::nextPollDelayMs(const DataExchangeOutcome& exchange) {
     const std::int64_t low =
         std::max<std::int64_t>(kMinPollIntervalMs,
-                               hasServerLimits_ ? serverLimits_.minDataPollIntervalMs
-                                                : kMinPollIntervalMs);
+                               serverLimits_.minDataPollIntervalMs);
     const std::int64_t high =
         std::min<std::int64_t>(kMaxPollIntervalMs,
-                               hasServerLimits_ ? serverLimits_.maxDataPollIntervalMs
-                                                : kMaxPollIntervalMs);
+                               serverLimits_.maxDataPollIntervalMs);
 
-    if (hadTraffic) {
+    if (exchange.lastPacketAtMs) lastPacketAtMs_ = exchange.lastPacketAtMs;
+    const bool fast = lastPacketAtMs_ && (exchange.completedAtMs < *lastPacketAtMs_ ||
+        static_cast<std::uint64_t>(exchange.completedAtMs) - static_cast<std::uint64_t>(*lastPacketAtMs_) < 5000);
+    if (exchange.lastPacketAtMs || fast) {
         currentPollIntervalMs_ = low;
     } else if (currentPollIntervalMs_ < high) {
-        currentPollIntervalMs_ *= kPollBackoffFactor;
+        currentPollIntervalMs_ = currentPollIntervalMs_ > high / kPollBackoffFactor
+            ? high : currentPollIntervalMs_ * kPollBackoffFactor;
     }
     currentPollIntervalMs_ = clampToRange(currentPollIntervalMs_, low, high);
     return currentPollIntervalMs_;
@@ -465,14 +487,7 @@ Result<InfoResponse> NetworkWorker::performExtendedInfo(const InfoRequestOptions
     PHPVPN_TRY_ASSIGN(info, ResponseParser::parseInfo(crypto_, keys_, normalisedServerSecret_,
                                                       requestId, response.body, (options.includeMaskedCommunicationContracts.value_or(false) ? std::optional<Ipv4Address>(config_->virtualIp) : std::nullopt)));
 
-    serverLimits_ = info.limits;
-    hasServerLimits_ = true;
-
-    const std::int64_t low =
-        std::max<std::int64_t>(kMinPollIntervalMs, serverLimits_.minDataPollIntervalMs);
-    const std::int64_t high =
-        std::min<std::int64_t>(kMaxPollIntervalMs, serverLimits_.maxDataPollIntervalMs);
-    currentPollIntervalMs_ = clampToRange(currentPollIntervalMs_, low, high);
+    PHPVPN_TRY(publishLimits(info.limits));
     if (failedDiagnostic) failedDiagnostic->reset();
     if (rejectedResponse) *rejectedResponse = false;
 

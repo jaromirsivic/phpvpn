@@ -74,3 +74,7 @@ values to the repository.
   Refresh must retain both old views. Disconnect must remain available.
 - [ ] Verify screen reader text and focus, high contrast, physical monitor/DPI
   migration and 320-DIP width. Record actual Windows settings and results.
+
+## Polling a Server Information
+
+Ověř dva klienty proti aktuálnímu serveru: po skončení pingu celé monotónní 5s minimum, poté exponenciální backoff a po novém paketu opět minimum. Rozliš skutečné VPN pakety od health a prázdných pollů. Ověř Yes/No po uložených contracts, výchozí Enter=Yes a standardní Disconnect bez Connect. V Server Information zkontroluj zelený/žlutý/offline řádek, zelenou celou závorku pro 0/1/2 klienty, modré OK, raw kopírování a výběr, Auto refresh na obou kartách včetně pomalého požadavku, vypnutí a Show Info reaktivace. Opakuj na 100/125/150/200 % DPI, na malé ploše, s klávesnicí, čtečkou a high contrast. Tento checklist není doklad provedení.

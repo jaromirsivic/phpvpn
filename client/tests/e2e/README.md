@@ -73,6 +73,13 @@ the service's packet counters must increase in both directions. A valid zero
 UDP checksum is used for the IPv4 reply. Firewall or routing failure is reported
 as failure without changing firewall policy. This peer creates no second adapter.
 
+UDP mode then observes ten seconds without further VPN payload. It records only
+monotonic elapsed time, observed poll gaps and counters, rejects unexpected packet
+activity, and requires the idle service to leave fast polling. A second real UDP
+roundtrip must restore fast polling. IPC sampling and OS scheduling add tolerance
+to these observed gaps. The exact 5000 ms boundary is covered separately by the
+deterministic runtime polling tests.
+
 All operation/poll waits have finite deadlines, and a failed Next is never
 automatically retried. The outer runner provides a final process watchdog.
 Cleanup errors are reported explicitly. The controller leaves fixture files to

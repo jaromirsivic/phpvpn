@@ -15,7 +15,10 @@ PHPVPN_TEST(ServerInfo, layout_dpi_small_screen_and_footer) {
                 PHPVPN_CHECK(layout.content.bottom <= layout.pager.top);
                 PHPVPN_CHECK(layout.pager.bottom <= layout.notice.top);
                 PHPVPN_CHECK(layout.notice.bottom <= layout.refresh.top);
-                PHPVPN_CHECK(layout.refresh.right < layout.ok.left);
+                PHPVPN_CHECK(layout.refresh.right < layout.autoRefresh.left);
+                PHPVPN_CHECK_EQ(layout.refresh.top, layout.autoRefresh.top);
+                PHPVPN_CHECK(layout.autoRefresh.right <= p(width - 16));
+                PHPVPN_CHECK(layout.autoRefresh.right < layout.ok.left || layout.autoRefresh.bottom < layout.ok.top);
                 PHPVPN_CHECK(layout.ok.bottom <= p(360));
                 PHPVPN_CHECK(layout.pagerButtonWidth * count <= layout.pager.right - layout.pager.left);
             }

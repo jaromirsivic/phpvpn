@@ -276,6 +276,10 @@ PHPVPN_TEST(server_contract, masked_contracts_full_auth_publish_and_read_only_sn
     PHPVPN_CHECK(withdrawn!=model.rows.end());
     if(withdrawn!=model.rows.end())PHPVPN_CHECK_EQ(withdrawn->state,ServerClientState::invalid);
     auto standard=require(first.performInfo());
+    PHPVPN_CHECK(standard.plaintext.starts_with("{\n    \"serverVersion\":"));
+    PHPVPN_CHECK(standard.plaintext.size() <= 262144);
+    PHPVPN_CHECK(response.plaintext.starts_with("{\n    \"serverVersion\":"));
+    PHPVPN_CHECK(response.plaintext.size() <= 262144);
     PHPVPN_CHECK(standard.plaintext.find("maskedCommunicationContracts")==std::string::npos);
 }
 PHPVPN_TEST(server_contract, server_info_operation_reads_current_config_once_without_connecting) {

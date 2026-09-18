@@ -329,7 +329,7 @@ Podpis nemá koncový LF. Tag je canonical unpadded Base64URL HMAC-SHA-256 s `fu
 
 ### 8.2 Plaintext odpovědi
 
-Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
+Server sestaví jeden JSON objekt pomocí `JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT`. Odsazení a LF jsou součástí autentizovaného plaintextu. Pole, jejich pořadí a hodnoty zůstávají stejné. Následující kompaktní zápis ukazuje minimální obsah, nikoli přesné serializované whitespace:
 
 ```json
 {"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":983040,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":3200}}
@@ -341,7 +341,7 @@ Server sestaví jeden kompaktní JSON objekt. Minimální obsah je:
 
 Při `includeMaskedCommunicationContracts:true` má každý vrácený klient navíc pole `maskedCommunicationContracts`. Pro cizího klienta obsahuje nejvýše jednu publikovanou dvojici, jejíž peer je přesně autentizované src žadatele. Bez shody je pole prázdné. Vlastní záznam má vždy []. O vztazích dvou jiných klientů se nevrací hashe, peery, původní délka seznamu ani počty skrytých položek. Standardní odpověď bez include true nemá žádné nové pole, ani po publikaci.
 
-Klienti bez platného lastSeen se vždy vynechávají, žádné null ani Never. Adresy se procházejí numericky. Při dosažení MAX_INFO_PLAINTEXT_BYTES = 262144 se ubírají celé položky od nejvyšší IP. Pokud se nevejde ani základní objekt, odpověď je server_misconfigured. GeneratedAt vzniká po publikaci či touch. Čtení každého uloženého seznamu a jeho mtime patří jednomu file handle.
+Klienti bez platného lastSeen se vždy vynechávají, žádné null ani Never. Adresy se procházejí numericky. Limit MAX_INFO_PLAINTEXT_BYTES = 262144 se měří pomocí `strlen` nad skutečnými výslednými UTF-8 bajty včetně pretty whitespace. Při překročení se ubírají celé položky od nejvyšší IP a objekt se znovu serializuje. Přesná rovnost limitu je přípustná. Pokud se nevejde ani základní objekt, odpověď je server_misconfigured. GeneratedAt vzniká po publikaci či touch. Čtení každého uloženého seznamu a jeho mtime patří jednomu file handle.
 
 Rozšířený klientský parser vyžaduje extension pole u každého klienta, unikátní adresy, validní časy, self s [] a nejvýše jeden peer rovný očekávanému src u každého cizího klienta. Vadná poslední položka odmítá celý snapshot včetně limitů. Prázdné clients se v rozšířeném toku konzervativně odmítá, protože bez záznamu nelze odlišit starý server. Pouze vlastní marker reprezentuje platný přehled s nulou cizích klientů. Standardní parser prázdné clients přijímá.
 
@@ -366,7 +366,7 @@ aad = "PHPVPN-INFO" LF
       BASE64URL(iv)
 ```
 
-Server šifruje přesné UTF-8 bajty plaintext JSON pomocí AES-256-GCM s uvedeným `key`, `iv` a `aad`. Vrací jeden JSON objekt:
+Server šifruje přesné UTF-8 bajty odsazeného plaintext JSON pomocí AES-256-GCM s uvedeným `key`, `iv` a `aad`. Vrací jeden JSON objekt:
 
 ```json
 {"type":"info","requestId":"4e94de3a-b9ad-4bc3-9297-82b98a19a143","salt":"BASE64URL","iv":"BASE64URL","ciphertext":"BASE64URL","tag":"BASE64URL"}

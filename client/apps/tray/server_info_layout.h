@@ -5,7 +5,7 @@
 
 namespace phpvpn::tray {
 struct ServerInfoLayout {
-    Rect heading, tabs, content, pager, notice, refresh, ok;
+    Rect heading, tabs, content, pager, notice, refresh, autoRefresh, ok;
     int pagerButtonWidth = 0;
 };
 
@@ -13,12 +13,15 @@ struct ServerInfoLayout {
 inline ServerInfoLayout computeServerInfoLayout(Size client, int dpi, int headingHeight, int noticeHeight,
                                                 int pagerButtons) {
     const auto p = [dpi](int value) { return scaleForDpi(value, dpi); };
-    const std::array buttons{FooterButtonSpec{p(104), FooterSide::leading, true},
+    const std::array buttons{FooterButtonSpec{p(280), FooterSide::leading, true},
                              FooterButtonSpec{p(88), FooterSide::trailing, true}};
     const auto footer = computeButtonFooterLayout(client, dpi, buttons);
     const int left = footer.margin, right = client.width - left;
     ServerInfoLayout result;
     result.refresh = footer.buttons[0];
+    result.refresh.right = result.refresh.left + p(104);
+    result.autoRefresh = {result.refresh.right + p(8), result.refresh.top,
+        footer.buttons[0].right, result.refresh.bottom};
     result.ok = footer.buttons[1];
     result.heading = {left, left, right, left + std::max(p(40), headingHeight)};
     const int tabsTop = result.heading.bottom + p(8);

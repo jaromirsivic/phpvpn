@@ -153,3 +153,7 @@ The storage test creates and removes only its temporary directory below `work`.
 Concurrent publication can safely fail while a Windows reader holds a file. The
 test requires complete old/new snapshots, rather than assuming every competing
 rename succeeds. The HTTP handler reports failed publication as 503.
+
+## Pretty info plaintext
+
+`decrypt_info_bytes` returns the exact AESGCM-authenticated bytes. Info size assertions measure these bytes and never recompact a DOM. Standard and extended replies check pretty whitespace. Run `php tests-info-pretty-boundaries.php` for isolated fresh-process exact-limit, one-byte overflow, deterministic trimming, oversized-base and serialization-failure checks against the production builder. Its reduced test constants do not modify the deployed source or production limit. Pass `--large-body-url` explicitly when using an isolated fixture.

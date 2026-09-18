@@ -13,8 +13,11 @@ function extendedInfoBody(Harness $h, string $src, array $extension): string {
 function extendedInfoPlaintext(Harness $h, string $body): array {
     $v = json_decode($body, true);
     $key = KeyDerivation::infoKey($h->config->serverSecret, Base64Url::decode($v['salt']), $v['requestId']);
-    return json_decode((new AesGcm($key))->open(Base64Url::decode($v['iv']), Base64Url::decode($v['ciphertext']),
-        Base64Url::decode($v['tag']), Authenticator::infoAad($v['requestId'], $v['salt'], $v['iv'])), true);
+    $bytes = (new AesGcm($key))->open(Base64Url::decode($v['iv']), Base64Url::decode($v['ciphertext']),
+        Base64Url::decode($v['tag']), Authenticator::infoAad($v['requestId'], $v['salt'], $v['iv']));
+    if (!str_starts_with($bytes, "{\n    \"serverVersion\":") || strlen($bytes) > \PhpVpn\MAX_INFO_PLAINTEXT_BYTES)
+        throw new RuntimeException('Extended info must authenticate bounded pretty plaintext');
+    return json_decode($bytes, true);
 }
 $runner->group('InfoExtensions');
 $runner->run('Cross-language fixed canonical vectors', function(Runner $t): void {

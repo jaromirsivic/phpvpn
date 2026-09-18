@@ -138,3 +138,11 @@ boundaries, future timestamps, sorting, local-key changes and 96/120/144/192 DPI
 layout. `wp06_scene_matrix` checks the production preview dispatch. These tests
 use synthetic private IPC. Physical monitor migration, high contrast and screen
 reader checks remain manual and must be recorded separately.
+
+## Polling/UI regression filters
+
+`phpvpn-tray-ui-tests.exe server_information` includes `server_information_auto_refresh_lifecycle`, real five-second timers on both tabs, slow requests, disable/error/reopen, exact maximum raw plaintext and accessibility. `phpvpn-wp03-ui-tests.exe ContractsSavedDisconnect` covers actual default Enter/Yes, No, Escape, failed/unknown Save and connection/window identity changes through the production tray Disconnect. Run UI executables sequentially in an interactive session. Zero selected tests is not success.
+
+Raw text checks cover visible LF and CRLF line breaks as well as exact copied LF
+text. Server information has a 320 by 480 DIP minimum client area, preserving
+at least one visible table row when the heading and footer wrap.

@@ -10,6 +10,7 @@
 namespace phpvpn::tray::test {
 inline int dialogAnswer = IDOK;
 inline std::vector<std::wstring> dialogTexts;
+inline std::function<void(HWND)> dialogObserver;
 // TaskDialog content lives in DirectUI rather than native STATIC controls.
 inline void appendAccessibleText(IAccessible* object, std::wstring& text, unsigned depth = 0) {
     if (!object || depth > 12) return;
@@ -57,6 +58,13 @@ inline void CALLBACK answerDialog(HWND, UINT, UINT_PTR, DWORD) {
             appendAccessibleText(accessible, content); accessible->Release();
         }
         dialogTexts.push_back(std::move(content));
+        if (dialogObserver) dialogObserver(window);
+        if (!IsWindow(window)) return TRUE;
+        if (dialogAnswer == 0) {
+            PostMessageW(window, WM_KEYDOWN, VK_RETURN, 0);
+            PostMessageW(window, WM_KEYUP, VK_RETURN, 0);
+            return TRUE;
+        }
         // TaskDialog uses DirectUI controls whose native button ID is zero.
         // Its public message takes the logical IDOK/IDYES/IDNO button ID.
         if (FindWindowExW(window, nullptr, L"DirectUIHWND", nullptr)) {

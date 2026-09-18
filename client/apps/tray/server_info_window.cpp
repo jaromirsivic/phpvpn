@@ -8,7 +8,10 @@
 namespace phpvpn::tray {
 namespace {
 constexpr UINT kResult = WM_APP + 271;
-constexpr int kRefresh = 7101, kTable = 7102, kFirstPage = 7200;
+// CommCtrl.h hides these Windows 10 1809 messages at our generic Win10 target.
+constexpr UINT kEditSetExtendedStyle = ECM_FIRST + 10;
+constexpr LPARAM kEditAllowAllLineEndings = 0x0003;
+constexpr int kRefresh = 7101, kTable = 7102, kAutoRefresh = 7103, kFirstPage = 7200;
 constexpr wchar_t kClass[] = L"PHPVPN.ServerInformation";
 std::wstring localTime(std::int64_t ms) {
     ULARGE_INTEGER ticks{};
@@ -25,6 +28,7 @@ std::wstring localTime(std::int64_t ms) {
 } // namespace
 void ServerInfoWindow::open(HINSTANCE instance) {
     if (window_) {
+        stopAutoRefresh();
         if (model_)
             reactivateWindow(window_);
         return;
@@ -55,6 +59,7 @@ void ServerInfoWindow::open(HINSTANCE instance) {
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
     };
     heading_ = create(L"STATIC", L"Server information", WS_VISIBLE | SS_NOPREFIX, 0);
+    count_ = create(L"STATIC", L"", WS_VISIBLE | SS_NOPREFIX, 7104);
     tabs_ = create(WC_TABCONTROLW, L"", WS_VISIBLE | WS_TABSTOP | TCS_OWNERDRAWFIXED | TCS_FOCUSONBUTTONDOWN,
                    IDC_INFO_TABS);
     for (auto text : {L"Who is online", L"Raw server information"}) {
@@ -84,16 +89,21 @@ void ServerInfoWindow::open(HINSTANCE instance) {
                   WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
                   IDC_TEXT_AREA);
     SendMessageW(raw_, EM_SETLIMITTEXT, kIpcMaxMessageBytes, 0);
+    // Render server LF and CRLF directly without rewriting authenticated text.
+    SendMessageW(raw_, kEditSetExtendedStyle, kEditAllowAllLineEndings, kEditAllowAllLineEndings);
     refresh_ = create(L"BUTTON", L"Refresh", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, kRefresh);
+    autoRefresh_ = create(L"BUTTON", L"Auto refresh", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, kAutoRefresh);
     ok_ = create(L"BUTTON", L"OK", WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, IDOK);
     notice_ = create(L"STATIC", L"", WS_VISIBLE | SS_NOPREFIX, 0);
     fonts();
     attachModernButton(refresh_, resources_, ButtonRole::primary);
-    attachModernButton(ok_, resources_, ButtonRole::neutral);
+    attachModernButton(ok_, resources_, ButtonRole::primary);
+    attachToggleSwitch(autoRefresh_, resources_);
     layout();
     request();
 }
 void ServerInfoWindow::endSession() {
+    stopAutoRefresh();
     ++generation_;
     reader_.abandon();
     pending_ = false;
@@ -102,6 +112,7 @@ void ServerInfoWindow::endSession() {
         DestroyWindow(window_);
     window_ = nullptr;
     heading_ = tabs_ = table_ = raw_ = refresh_ = ok_ = notice_ = nullptr;
+    autoRefresh_ = count_ = nullptr;
     pager_.clear();
     model_.reset();
     if (rowHeightImages_) {
@@ -117,10 +128,25 @@ void ServerInfoWindow::endSession() {
         comInitialised_ = false;
     }
 }
+void ServerInfoWindow::stopAutoRefresh() {
+    if (window_ && autoTimer_) KillTimer(window_, autoTimer_);
+    autoTimer_ = 0;
+    autoDeadline_ = 0;
+    if (autoRefresh_) SendMessageW(autoRefresh_, BM_SETCHECK, BST_UNCHECKED, 0);
+}
+void ServerInfoWindow::scheduleAutoRefresh() {
+    if (window_ && autoTimer_) KillTimer(window_, autoTimer_);
+    autoTimer_ = 0;
+    if (!window_ || pending_ || SendMessageW(autoRefresh_, BM_GETCHECK, 0, 0) != BST_CHECKED) return;
+    autoDeadline_ = GetTickCount64() + 5000;
+    autoTimer_ = SetTimer(window_, ++nextTimer_, 5000, nullptr);
+}
 void ServerInfoWindow::request() {
     if (pending_ || !window_)
         return;
     pending_ = true;
+    if (autoTimer_) KillTimer(window_, autoTimer_);
+    autoTimer_ = 0;
     requestGeneration_ = generation_;
     EnableWindow(refresh_, FALSE);
     SetWindowTextW(notice_, L"Loading...");
@@ -133,6 +159,7 @@ void ServerInfoWindow::request() {
             MessageBoxW(window_, L"Server information is busy. Try opening it again.", L"PHPVPN", MB_OK | MB_ICONERROR);
             endSession();
         }
+        scheduleAutoRefresh();
     }
 }
 void ServerInfoWindow::finish() {
@@ -140,6 +167,7 @@ void ServerInfoWindow::finish() {
     if (!response || !window_ || requestGeneration_ != generation_)
         return;
     pending_ = false;
+    scheduleAutoRefresh();
     EnableWindow(refresh_, TRUE);
     auto snapshot = parseServerInfoResult(*response);
     if (!snapshot) {
@@ -156,8 +184,16 @@ void ServerInfoWindow::finish() {
         return;
     }
     auto model = buildServerInfoModel(std::move(snapshot).value());
-    if (!model)
+    if (!model) {
+        if (model_) {
+            SetWindowTextW(notice_, L"Refresh failed. Previous information is retained.");
+            layout();
+        } else {
+            MessageBoxW(window_, L"Server information could not be verified.", L"PHPVPN", MB_OK | MB_ICONERROR);
+            endSession();
+        }
         return;
+    }
     std::optional<Ipv4Address> selected;
     const int row = ListView_GetNextItem(table_, -1, LVNI_SELECTED);
     if (model_ && row >= 0 && static_cast<std::size_t>(page_ * kTablePageSize + row) < model_->rows.size())
@@ -199,9 +235,10 @@ void ServerInfoWindow::finish() {
 void ServerInfoWindow::display() {
     if (!model_)
         return;
-    const auto title =
-        L"Server information (" + std::to_wstring(model_->validOnlineClients) + L" valid online clients)";
-    SetWindowTextW(heading_, title.c_str());
+    const auto countText = L"(" + std::to_wstring(model_->validOnlineClients) +
+        (model_->validOnlineClients == 1 ? L" valid online client)" : L" valid online clients)");
+    const auto title = L"Server information " + countText;
+    SetWindowTextW(count_, countText.c_str());
     SetWindowTextW(window_, title.c_str());
     ListView_DeleteAllItems(table_);
     const auto start = static_cast<std::size_t>(page_ * kTablePageSize);
@@ -280,9 +317,10 @@ void ServerInfoWindow::selectTab() {
 }
 void ServerInfoWindow::fonts() {
     resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)), false);
-    for (auto h : {tabs_, table_, refresh_, ok_, notice_})
+    for (auto h : {tabs_, table_, refresh_, autoRefresh_, ok_, notice_})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::value)), TRUE);
     SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
+    SendMessageW(count_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
     SendMessageW(raw_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::mono)), TRUE);
     SendMessageW(table_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
     const auto images = ImageList_Create(1, scaleForDpi(40, resources_.dpi()), ILC_COLOR32, 1, 1);
@@ -308,6 +346,13 @@ void ServerInfoWindow::layout() {
     GetWindowTextW(heading_, title, 256);
     RECT measured{0, 0, w, 0};
     DrawTextW(dc, title, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    const int baseWidth = measured.right, baseHeight = measured.bottom;
+    wchar_t count[256]{};
+    GetWindowTextW(count_, count, 256);
+    RECT countRect{0, 0, w, 0};
+    DrawTextW(dc, count, -1, &countRect, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    const bool wrapCount = baseWidth + p(8) + countRect.right > w;
+    measured.bottom = wrapCount ? baseHeight + countRect.bottom : (std::max<LONG>)(baseHeight, countRect.bottom);
     SelectObject(dc, old);
     ReleaseDC(window_, dc);
     wchar_t notice[256]{};
@@ -325,7 +370,10 @@ void ServerInfoWindow::layout() {
         SetWindowPos(h, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                      SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
     };
-    move(heading_, geometry.heading);
+    move(heading_, {m, m, m + baseWidth, m + baseHeight});
+    const int countX = wrapCount ? m : m + baseWidth + p(8);
+    const int countY = wrapCount ? m + baseHeight : m;
+    move(count_, {countX, countY, countX + countRect.right, countY + countRect.bottom});
     move(tabs_, geometry.tabs);
     move(raw_, geometry.content);
     tableBounds_ = geometry.content;
@@ -346,6 +394,7 @@ void ServerInfoWindow::layout() {
         x += geometry.pagerButtonWidth;
     }
     move(refresh_, geometry.refresh);
+    move(autoRefresh_, geometry.autoRefresh);
     move(ok_, geometry.ok);
     move(notice_, geometry.notice);
     InvalidateRect(window_, nullptr, FALSE);
@@ -430,17 +479,38 @@ LRESULT CALLBACK ServerInfoWindow::procedure(HWND window, UINT message, WPARAM w
     if (!self)
         return DefWindowProcW(window, message, w, l);
     switch (message) {
+    case WM_TIMER:
+        if (w == self->autoTimer_ && self->autoTimer_ && GetTickCount64() >= self->autoDeadline_) {
+            KillTimer(window, self->autoTimer_);
+            self->autoTimer_ = 0;
+            if (!self->pending_ && SendMessageW(self->autoRefresh_, BM_GETCHECK, 0, 0) == BST_CHECKED)
+                self->request();
+        }
+        return 0;
+    case WM_SHOWWINDOW:
+        if (!w) {
+            self->stopAutoRefresh();
+            ++self->generation_;
+            self->reader_.abandon();
+            self->pending_ = false;
+            if (self->refresh_) EnableWindow(self->refresh_, TRUE);
+        }
+        break;
     case WM_DRAWITEM:
         if (l && drawModernTab(*reinterpret_cast<DRAWITEMSTRUCT *>(l), self->tabs_, self->resources_))
             return TRUE;
         break;
     case WM_GETMINMAXINFO:
-        setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO *>(l), {320, 360});
+        setMinimumClientTrackSize(window, *reinterpret_cast<MINMAXINFO *>(l), {320, 480});
         return 0;
     case kResult:
         self->finish();
         return 0;
     case WM_COMMAND:
+        if (LOWORD(w) == kAutoRefresh && HIWORD(w) == BN_CLICKED) {
+            self->scheduleAutoRefresh();
+            return 0;
+        }
         if (LOWORD(w) == IDOK) {
             self->endSession();
             return 0;
@@ -469,8 +539,8 @@ LRESULT CALLBACK ServerInfoWindow::procedure(HWND window, UINT message, WPARAM w
                 if (index < self->model_->rows.size()) {
                     const auto state = self->model_->rows[index].state;
                     draw->clrTextBk =
-                        self->resources_.color(state == ServerClientState::valid     ? ui::Color::successBackground
-                                               : state == ServerClientState::invalid ? ui::Color::warningBackground
+                        self->resources_.color(state == ServerClientState::valid     ? ui::Color::serverInfoValid
+                                               : state == ServerClientState::invalid ? ui::Color::contractsChanged
                                                                                      : ui::Color::disabledBackground);
                     draw->clrText = self->resources_.color(ui::Color::text);
                 }
@@ -511,12 +581,16 @@ LRESULT CALLBACK ServerInfoWindow::procedure(HWND window, UINT message, WPARAM w
     }
     case WM_CTLCOLORSTATIC:
         SetBkMode(reinterpret_cast<HDC>(w), TRANSPARENT);
-        SetTextColor(reinterpret_cast<HDC>(w), self->resources_.color(ui::Color::text));
+        SetTextColor(reinterpret_cast<HDC>(w), self->resources_.color(reinterpret_cast<HWND>(l) == self->count_ ? ui::Color::success : ui::Color::text));
         return reinterpret_cast<LRESULT>(self->resources_.brush(ui::Color::background));
     case WM_CLOSE:
         self->endSession();
         return 0;
     case WM_NCDESTROY:
+        self->stopAutoRefresh();
+        ++self->generation_;
+        self->pending_ = false;
+        self->reader_.abandon();
         self->window_ = nullptr;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         break;

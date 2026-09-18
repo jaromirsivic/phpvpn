@@ -31,13 +31,13 @@ enum class Color { background, surface, text, secondaryText, border, separator, 
     successBorder, warning, warningBackground, error, errorBackground, errorBorder,
     disabledText, disabledBackground, focus, buttonNeutral, buttonNeutralHover,
     buttonNeutralPressed, buttonReset, buttonResetHover, buttonResetPressed,
-    buttonPrimaryDisabled, buttonResetDisabled, buttonNeutralFocus, contractsHeader, readOnlyText, contractsChanged, count };
+    buttonPrimaryDisabled, buttonResetDisabled, buttonNeutralFocus, contractsHeader, readOnlyText, contractsChanged, serverInfoValid, count };
 inline constexpr std::array<std::uint32_t, static_cast<std::size_t>(Color::count)> colors{
     0xF7F8FA, 0xFFFFFF, 0x0D1533, 0x4B5C82, 0xD6DCE7, 0xE1E5ED, 0x0062E8,
     0x0056CE, 0x0049AF, 0xFFFFFF, 0xE5EDF8, 0x087C2B, 0xF0FAF2, 0xA8D8B1,
     0x995400, 0xFFF6E5, 0xC82020, 0xFFF2F2, 0xE9A4A4, 0x747C8B, 0xF0F2F5, 0x005FCC,
     0xF0F2F5, 0xE4E8EF, 0xD6DCE7, 0xE02E2A, 0xC42724, 0xA8201D,
-    0xB4C9E5, 0xDEBABA, 0x454B54, 0x454B54, 0x454B54, 0xFFF2B3};
+    0xB4C9E5, 0xDEBABA, 0x454B54, 0x454B54, 0x454B54, 0xFFF2B3, 0xDDF2E2};
 // Exact uint64 rendering, independent of the process/Windows locale.
 inline std::wstring englishInteger(std::uint64_t value) {
     auto result = std::to_wstring(value);

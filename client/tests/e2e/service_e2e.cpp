@@ -256,7 +256,7 @@ void verifyNetwork(NetConfig& network, const NetworkSnapshot& baseline, std::uin
 
 // The peer owns no adapter. It authenticates as .3 through the production
 // NetworkWorker and returns an IPv4 UDP reply to the actual Windows .2 socket.
-void udpRoundtrip(Client& client, const ClientConfigPtr& stored) {
+void udpRoundtrip(Client& client, const ClientConfigPtr& stored, bool verifyIdle = true) {
     WSADATA data{};
     check(WSAStartup(MAKEWORD(2, 2), &data) == 0, "WSAStartup failed");
     struct Winsock { ~Winsock() { WSACleanup(); } } winsock;
@@ -358,6 +358,38 @@ void udpRoundtrip(Client& client, const ClientConfigPtr& stored) {
           after.counters.ipv4PacketsReceived > before.counters.ipv4PacketsReceived,
           "actual service did not account both Wintun directions");
     pass("actual UDP socket -> Wintun -> service -> PHP -> production .3 peer -> PHP -> Wintun -> socket, exact nonce");
+    if (verifyIdle) {
+        const auto idleStart = GetTickCount64();
+        auto previousPollAt = idleStart;
+        auto previous = after;
+        ULONGLONG largestIdleGap = 0;
+        while (GetTickCount64() - idleStart < 10000) {
+            Sleep(25);
+            const auto now = GetTickCount64();
+            const auto current = client.status();
+            check(current.counters.ipv4PacketsSent == after.counters.ipv4PacketsSent &&
+                  current.counters.ipv4PacketsReceived == after.counters.ipv4PacketsReceived,
+                  "unexpected VPN payload invalidated the idle polling observation");
+            if (current.counters.dataPollsTotal != previous.counters.dataPollsTotal) {
+                const auto gap = now - previousPollAt;
+                if (now - idleStart >= 6000) largestIdleGap = (std::max)(largestIdleGap, gap);
+                std::cout << "[ POLLING ] idleElapsedMs=" << now - idleStart << " observedPollGapMs=" << gap
+                          << " polls=" << current.counters.dataPollsTotal << " payloadDelta=0\n";
+                previousPollAt = now;
+                previous = current;
+            }
+        }
+        check(largestIdleGap >= 400, "real service remained at fast polling after ten payload-free seconds");
+        udpRoundtrip(client, stored, false);
+        const auto resumed = client.status();
+        Sleep(600);
+        const auto fastAgain = client.status();
+        check(fastAgain.counters.dataPollsTotal >= resumed.counters.dataPollsTotal + 4,
+              "new real UDP traffic did not restore fast polling");
+        std::cout << "[ EVIDENCE ] largest idle poll gap " << largestIdleGap
+                  << " ms, resumed polls in 600 ms " << fastAgain.counters.dataPollsTotal - resumed.counters.dataPollsTotal << '\n';
+        pass("real SCM/Wintun idle backoff with no new payload and fast polling restored by new UDP traffic");
+    }
 }
 
 void run(bool udp);

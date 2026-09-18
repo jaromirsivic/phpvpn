@@ -899,7 +899,7 @@ class PhpVpnClient:
         body, request_id = self.build_info_full(src, extensions)
         return self.info(body=body, request_id=request_id)
 
-    def decrypt_info(self, payload: Mapping[str, Any], request_id: str) -> dict[str, Any]:
+    def decrypt_info_bytes(self, payload: Mapping[str, Any], request_id: str) -> bytes:
         """Authenticate and decrypt an `info` response, chapter 8.3."""
         salt = b64u_decode(payload["salt"])
         iv = b64u_decode(payload["iv"])
@@ -910,8 +910,11 @@ class PhpVpnClient:
         assert len(tag) == 16, "the info GCM tag must be 16 bytes, chapter 8.3"
         key = derive_info_key(self.configuration.server_secret, salt, request_id)
         aad = info_aad(request_id, payload["salt"], payload["iv"])
-        plaintext = AESGCM(key).decrypt(iv, ciphertext + tag, aad)
-        return json.loads(plaintext.decode("utf-8"))
+        return AESGCM(key).decrypt(iv, ciphertext + tag, aad)
+
+    def decrypt_info(self, payload: Mapping[str, Any], request_id: str) -> dict[str, Any]:
+        """Parse the exact authenticated bytes without changing the wire-size evidence."""
+        return json.loads(self.decrypt_info_bytes(payload, request_id).decode("utf-8"))
 
     def info_plaintext(self) -> tuple[dict[str, Any], Response]:
         """Fetch, verify and decrypt one `info` response."""

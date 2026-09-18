@@ -760,6 +760,9 @@ $runner->run('Successful info response decrypts', function (Runner $t): void {
             $aad
         );
         $t->ok($plaintext !== null, 'tag verifies');
+        $t->ok(str_starts_with($plaintext, "{\n    \"serverVersion\":"), 'authenticated plaintext is pretty JSON');
+        $t->ok(strlen($plaintext) <= \PhpVpn\MAX_INFO_PLAINTEXT_BYTES, 'exact authenticated byte limit');
+        $t->same(strlen($plaintext), strlen(Base64Url::decode($decoded['ciphertext'])), 'ciphertext preserves byte count');
 
         $info = json_decode((string) $plaintext, true);
         $t->same(['serverVersion', 'generatedAt', 'clients', 'limits'], array_keys($info), 'plaintext fields');

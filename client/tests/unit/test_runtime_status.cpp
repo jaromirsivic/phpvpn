@@ -28,6 +28,15 @@
 
 namespace phpvpn {
 struct VpnEngineTestAccess {
+    static Status limits(NetworkWorker& worker, std::int64_t low, std::int64_t high) {
+        ServerLimits limits;
+        limits.minDataPollIntervalMs = low; limits.maxDataPollIntervalMs = high;
+        return worker.publishLimits(limits);
+    }
+    static std::int64_t pollInterval(VpnEngine& engine) { return engine.network_.currentPollIntervalMs_; }
+    static void enqueue(VpnEngine& engine, PacketBytes bytes) {
+        engine.outbound_->pushFront(*Ipv4Address::parse("10.99.99.3"), {std::move(bytes)});
+    }
     static void startBehindBarrier(VpnEngine& engine, std::function<void()> barrier) {
         engine.running_.store(true);
         engine.thread_ = std::thread([&engine, barrier] { barrier(); engine.runNetworkThread(); });
@@ -1577,6 +1586,139 @@ PHPVPN_TEST(runtime, recovery_retains_accepted_config_after_save_and_external_de
     PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
     PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
     PHPVPN_REQUIRE_ERROR(fixture.engine.connect(), ErrorCode::config_not_found);
+}
+
+PHPVPN_TEST(runtime, polling_monotonic_window_bounds_and_lifecycle) {
+    ObservedCrypto crypto;
+    TestClock clock;
+    ScriptedTransport transport(*crypto.actual);
+    NetworkWorker worker(crypto, transport, clock);
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig()));
+    PHPVPN_REQUIRE_OK(VpnEngineTestAccess::limits(worker, 50, 3200));
+    worker.beginDataSession();
+    auto step = [&](std::int64_t at, bool packet = false) {
+        clock.now = at;
+        DataExchangeOutcome result;
+        result.completedAtMs = at;
+        if (packet) result.lastPacketAtMs = at;
+        return worker.nextPollDelayMs(result);
+    };
+    for (int i = 0; i < 200; ++i) PHPVPN_CHECK_EQ(step(0), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(4999), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(5000), std::int64_t(100));
+    for (auto expected : {200, 400, 800, 1600, 3200, 3200})
+        PHPVPN_CHECK_EQ(step(5001), std::int64_t(expected));
+    PHPVPN_CHECK_EQ(step(5002, true), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(10000), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(10001, true), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(15000), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(15001), std::int64_t(100));
+    PHPVPN_REQUIRE_OK(VpnEngineTestAccess::limits(worker, 50, 750));
+    for (auto expected : {200, 400, 750, 750}) PHPVPN_CHECK_EQ(step(15002), std::int64_t(expected));
+    PHPVPN_CHECK_EQ(step(16000, true), std::int64_t(50));
+    PHPVPN_REQUIRE_OK(VpnEngineTestAccess::limits(worker, 100, 750));
+    PHPVPN_CHECK_EQ(step(20999), std::int64_t(100));
+    PHPVPN_CHECK_EQ(step(21000), std::int64_t(200));
+    PHPVPN_REQUIRE_OK(VpnEngineTestAccess::limits(worker, 20, 20));
+    PHPVPN_CHECK_EQ(step(99999), std::int64_t(20));
+    PHPVPN_REQUIRE_OK(VpnEngineTestAccess::limits(worker, 1, INT64_MAX));
+    for (int i = 0; i < 15; ++i) step(100000);
+    PHPVPN_CHECK_EQ(step(100000), std::int64_t(5000));
+    for (auto bounds : {std::pair{0LL, 50LL}, {100LL, 50LL}, {5001LL, 6000LL}, {1LL, 19LL}})
+        PHPVPN_REQUIRE_ERROR(VpnEngineTestAccess::limits(worker, bounds.first, bounds.second), ErrorCode::response_invalid);
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig()));
+    PHPVPN_REQUIRE_OK(VpnEngineTestAccess::limits(worker, 50, 3200));
+    clock.now = 1000000; // Slow bootstrap does not consume the new window.
+    worker.beginDataSession();
+    PHPVPN_CHECK_EQ(step(1004999), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(1005000), std::int64_t(100));
+    PHPVPN_CHECK_EQ(step(INT64_MAX, true), std::int64_t(50));
+    PHPVPN_CHECK_EQ(step(INT64_MIN), std::int64_t(50)); // Fake clock rollback never overflows.
+    worker.reset();
+    clock.now = 0;
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig()));
+    worker.beginDataSession();
+    PHPVPN_CHECK_EQ(step(4999), std::int64_t(50));
+}
+
+PHPVPN_TEST(runtime, polling_packet_handoff_rx_and_control_exchanges) {
+    ObservedCrypto crypto;
+    TestClock clock;
+    ScriptedTransport transport(*crypto.actual);
+    NetworkWorker worker(crypto, transport, clock);
+    bool cancelled = false;
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(), nullptr, [&] { return cancelled; }));
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    PHPVPN_REQUIRE_OK(worker.performInfo());
+    worker.beginDataSession();
+    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
+    DropCounters outDrops, inDrops;
+    auto exchange = [&] { return worker.exchangeData(outgoing, incoming, outDrops, inDrops, true); };
+    clock.now = 5000;
+    auto idle = exchange(); PHPVPN_REQUIRE_OK(idle);
+    PHPVPN_CHECK(!idle->lastPacketAtMs);
+    PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*idle), std::int64_t(160));
+    outgoing.pushFront(*Ipv4Address::parse("10.99.99.3"), {packet(40, false)});
+    cancelled = true;
+    PHPVPN_REQUIRE_ERROR(exchange(), ErrorCode::cancelled);
+    PHPVPN_CHECK_EQ(transport.dataCalls.load(), 1);
+    cancelled = false; transport.defer = true;
+    auto deferred = exchange(); PHPVPN_REQUIRE_OK(deferred);
+    PHPVPN_CHECK_EQ(deferred->packetsSent, std::size_t(0));
+    PHPVPN_CHECK_EQ(*deferred->lastPacketAtMs, std::int64_t(5000));
+    PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*deferred), std::int64_t(80));
+    transport.defer = false;
+    PHPVPN_REQUIRE_OK(exchange()); // Drain the returned outgoing packet.
+    clock.now = 9999;
+    transport.incoming = {packet(40, true)};
+    auto rx = exchange(); PHPVPN_REQUIRE_OK(rx);
+    PHPVPN_CHECK_EQ(rx->packetsReceived, std::size_t(1));
+    PHPVPN_CHECK_EQ(*rx->lastPacketAtMs, std::int64_t(9999));
+    PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*rx), std::int64_t(80));
+    transport.incoming.clear();
+    clock.now = 14998;
+    idle = exchange(); PHPVPN_REQUIRE_OK(idle);
+    clock.now = 20000; // A slow health after data cannot change data's completion time.
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*idle), std::int64_t(80));
+    idle = exchange(); PHPVPN_REQUIRE_OK(idle);
+    PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*idle), std::int64_t(160));
+    transport.incoming = {packet(40, true)}; transport.badPacket = true;
+    auto rejected = exchange(); PHPVPN_REQUIRE_OK(rejected);
+    PHPVPN_CHECK(!rejected->lastPacketAtMs);
+    PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*rejected), std::int64_t(320));
+}
+
+PHPVPN_TEST(runtime, polling_historical_tx_does_not_pin_minimum) {
+    EngineFixture fixture;
+    Gate bootstrap, finished;
+    std::int64_t observed = 0;
+    std::chrono::steady_clock::time_point emptyStarted;
+    std::int64_t waitedMs = 0;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action != HttpAction::data) return {};
+        if (call == 1) bootstrap.block();
+        if (call == 2) fixture.clock.now = 5000;
+        if (call == 3) emptyStarted = std::chrono::steady_clock::now();
+        if (call == 4) {
+            observed = VpnEngineTestAccess::pollInterval(fixture.engine);
+            waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-emptyStarted).count();
+            finished.block();
+        }
+        return {};
+    };
+    fixture.transport.cancel = [&] { bootstrap.release(); finished.release(); };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(bootstrap.await());
+    VpnEngineTestAccess::enqueue(fixture.engine, packet(40, false));
+    bootstrap.release();
+    PHPVPN_CHECK(finished.await());
+    std::cout << "last TX=0 ms, empty poll completion=5000 ms, next interval=" << observed << " ms\n";
+    PHPVPN_CHECK_EQ(observed, std::int64_t(160));
+    PHPVPN_CHECK(waitedMs >= 140); // The real command wait uses the computed delay.
+    PHPVPN_CHECK_EQ(fixture.engine.status().counters.ipv4PacketsSent, std::uint64_t(1));
+    fixture.engine.shutdown();
 }
 
 PHPVPN_TEST(runtime, simultaneous_status_reads_do_not_block_live_verified_packet_traffic) {

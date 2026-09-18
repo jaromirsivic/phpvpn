@@ -80,6 +80,9 @@ struct Backend {
     std::wstring pipe = L"\\\\.\\pipe\\phpvpn-wp05-" + suffix;
     std::atomic<unsigned> saves{0}, documents{0}, states{0}, statuses{0}, connects{0}, disconnects{0}, unexpected{0}, held{0};
     std::atomic<bool> holdSave{false}, holdStatus{false}, invalidReply{false}, publish{true}, documentError{false};
+    std::atomic<bool> connected{false}, invalidStatus{false}, rejectSave{false};
+    std::atomic<std::uint64_t> connectionEpoch{1};
+    const std::string connectionAttempt = createPlatformCryptoProvider().value()->randomUuidV4().value();
     std::mutex mutex;
     std::condition_variable changed;
     bool released = false;
@@ -106,18 +109,25 @@ struct Backend {
         if (const auto request = IpcProtocol::parseRequest(bytes)) {
             if (request->command == IpcCommand::set_config) {
                 ++saves; std::unique_lock lock(mutex); saveIds.push_back(request->requestId);
+                if (rejectSave) return IpcProtocol::buildError(request->requestId,Error(ErrorCode::config_invalid_value));
                 if (publish) stored = request->config;
                 if (holdSave) { ++held; changed.wait(lock,[&] { return released; }); }
                 return invalidReply ? "{}" : IpcProtocol::buildAcknowledgement(request->requestId);
             }
             if (request->command == IpcCommand::get_config) { std::lock_guard lock(mutex); return stored; }
             if (request->command == IpcCommand::connect) ++connects;
-            else if (request->command == IpcCommand::disconnect) ++disconnects;
+            else if (request->command == IpcCommand::disconnect) { ++disconnects; connected=false; }
             else if (request->command == IpcCommand::get_status) {
                 ++statuses;
                 if (holdStatus) { ++held; std::unique_lock lock(mutex); changed.wait(lock,[&] { return released; }); }
             } else ++unexpected;
             StatusSnapshot status; status.stateChangedAtUtc = "2026-09-08T00:00:00.000Z"; status.clientVersion = "wp05-fixture";
+            if (invalidStatus && request->command == IpcCommand::get_status) return "{}";
+            if (connected) {
+                status.state=ConnectionState::connected; status.phase=ConnectionPhase::running;
+                status.connectionEpoch=connectionEpoch.load(); status.connectAttemptId=connectionAttempt;
+                status.connectionStartedAtUtc="2026-09-08T00:00:00.000Z";
+            }
             if (request->command == IpcCommand::connect) { status.state = ConnectionState::connecting; status.phase = ConnectionPhase::health; }
             return IpcProtocol::buildStatusResponse(request->requestId,status);
         }
@@ -144,6 +154,60 @@ struct Backend {
         require(result->initialise(GetModuleHandleW(nullptr))); return result;
     }
 };
+}
+PHPVPN_TEST(WP05Windows, ContractsSavedDisconnectConsentAndIdentity) {
+    // 0 = real Enter/default, 1 = explicit Yes, 2 = No, 3 = Escape,
+    // 4 = connection changed during modal, 5 = disconnected during Save,
+    // 6 = unknown status, 7 = rejected Save, 8 = unknown Save,
+    // 9 = connected during Save, 10 = end session inside the modal.
+    for (int scenario=0; scenario<=10; ++scenario) {
+        Backend backend;
+        backend.connected=scenario!=9;
+        backend.holdSave=scenario==5 || scenario==9;
+        backend.invalidStatus=scenario==6;
+        backend.rejectSave=scenario==7;
+        backend.invalidReply=scenario==8;
+        auto app=backend.app();
+        SendMessageW(app->window(),WM_COMMAND,207,0);
+        require(until([&] { return app->contractsLifecycleSnapshot().open; }));
+        const auto root=top(L"PhpVpnContracts");
+        click(root,1000); replace(field(root,1001),std::wstring(64,L'a'));
+        dialogs::dialogTexts.clear();
+        unsigned observed=0;
+        dialogs::dialogObserver=[&](HWND dialog) {
+            ++observed;
+            if(scenario==4) ++backend.connectionEpoch;
+            if(scenario==10) app->endSession();
+            if(scenario==3) PostMessageW(dialog,WM_CLOSE,0,0);
+            if(observed>100) { dialogs::dialogAnswer=IDNO; PHPVPN_CHECK(false); }
+        };
+        struct ClearObserver { ~ClearObserver() { dialogs::dialogObserver={}; } } clear;
+        dialogs::answer(scenario==0?0:scenario==2?IDNO:scenario==3?IDCANCEL:IDYES,[&] {
+            click(root,IDOK);
+            if(backend.holdSave) {
+                require(until([&] { return backend.saves==1; }));
+                backend.connected=scenario==9;
+                backend.release();
+            }
+            if(scenario==7 || scenario==8) {
+                require(until([&] { return !app->contractsLifecycleSnapshot().saving; }));
+            } else require(until([&] { return !app->contractsLifecycleSnapshot().open; }));
+        });
+        const bool expectDisconnect=scenario==0 || scenario==1 || scenario==9;
+        if(expectDisconnect) require(until([&] { return backend.disconnects==1; }));
+        PHPVPN_CHECK_EQ(backend.disconnects.load(),expectDisconnect?1u:0u);
+        PHPVPN_CHECK_EQ(backend.connects.load(),0u);
+        PHPVPN_CHECK_EQ(backend.saves.load(),1u);
+        PHPVPN_CHECK_EQ(backend.documents.load(),1u); // Status checking never rereads config.
+        const bool expectDialog=scenario<=4 || scenario==9 || scenario==10;
+        PHPVPN_CHECK_EQ(!dialogs::dialogTexts.empty(),expectDialog);
+        if(expectDialog) PHPVPN_CHECK(std::any_of(dialogs::dialogTexts.begin(),dialogs::dialogTexts.end(),[](const auto& value) {
+            return value.find(L"It is strictly required that you disconnect and connect again to apply them. Do you want to disconnect now?")!=std::wstring::npos;
+        }));
+        if(expectDisconnect) PHPVPN_CHECK(top(L"PhpVpnConnectingProgress")!=nullptr);
+        app->endSession(); app.reset(); pump();
+        std::cout << "[ CONTRACT CONSENT ] scenario=" << scenario << " disconnects=" << backend.disconnects << " dialogs=" << observed << '\n';
+    }
 }
 PHPVPN_TEST(WP05Windows, NativeRowsKeysChildrenAndImmutableTargets) {
     Backend backend; ContractsWindow window(backend.pipe);
@@ -190,8 +254,8 @@ PHPVPN_TEST(WP05Windows, NativeRowsKeysChildrenAndImmutableTargets) {
     click(second,IDOK); PHPVPN_CHECK_EQ(text(key),secondHash);
     click(root,1004); // Leave the other Password draft unconfirmed and disabled.
     click(root,1002); const auto unconfirmed=top(L"PhpVpnPasswordSha"); replace(field(unconfirmed,501),L"discard child");
-    window.setConnectionActive(true); dialogs::dialogTexts.clear();
-    dialogs::answer(IDOK,[&] {
+    window.setConnectionActive(true); backend.connected=true; dialogs::dialogTexts.clear();
+    dialogs::answer(IDNO,[&] {
         click(root,IDOK); PHPVPN_CHECK(!IsWindow(unconfirmed)&&!IsWindow(different));
         require(until([&] { return !window.isOpen(); }));
     });

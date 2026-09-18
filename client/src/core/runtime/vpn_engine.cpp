@@ -473,12 +473,13 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
 
     backoffStep_ = 0;
     clearError();
+    network_.beginDataSession();
     setState(ConnectionState::connected, ConnectionPhase::running);
     PHPVPN_LOG_INFO(kComponent, "the connection is established");
     return Status::success();
 }
 
-void VpnEngine::runConnectedIteration() {
+std::int64_t VpnEngine::runConnectedIteration() {
     auto outcome = network_.exchangeData(*outbound_, *inbound_, outboundDrops_, inboundDrops_,
                                          /*allowSending=*/true);
     if (!outcome.ok()) {
@@ -486,7 +487,7 @@ void VpnEngine::runConnectedIteration() {
         ++responsesRejected_;
         lastDataVerified_ = Tristate::no;
         lastError_ = SafeError::fromConnection(outcome.error(), ConnectionPhase::running);
-        return;
+        return 0;
     }
 
     const DataExchangeOutcome& result = outcome.value();
@@ -503,6 +504,7 @@ void VpnEngine::runConnectedIteration() {
     if (result.packetsReceived > 0 && outputWorker_) {
         outputWorker_->notifyDataAvailable();
     }
+    return network_.nextPollDelayMs(result);
 }
 
 void VpnEngine::teardown(bool keepError) {
@@ -638,7 +640,7 @@ void VpnEngine::runNetworkThread() {
 
         if (currentState == ConnectionState::connected) {
             const std::int64_t before = clock_.monotonicMs();
-            runConnectedIteration();
+            const std::int64_t delay = runConnectedIteration();
 
             bool healthy = true;
             {
@@ -690,9 +692,11 @@ void VpnEngine::runNetworkThread() {
                 lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
             }
 
-            const std::int64_t elapsed = clock_.monotonicMs() - before;
-            const std::int64_t delay = network_.nextPollDelayMs(
-                packetsReceived_ > 0 || packetsSent_ > 0);
+            const auto finished = clock_.monotonicMs();
+            const auto duration = finished > before
+                ? static_cast<std::uint64_t>(finished) - static_cast<std::uint64_t>(before) : 0;
+            const auto elapsed = static_cast<std::int64_t>(std::min<std::uint64_t>(
+                duration, std::numeric_limits<std::int64_t>::max()));
             const std::int64_t remaining = delay > elapsed ? delay - elapsed : 0;
             if (remaining > 0) {
                 const Command queued = takeCommand(remaining);

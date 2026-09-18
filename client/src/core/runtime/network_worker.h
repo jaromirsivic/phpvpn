@@ -42,9 +42,12 @@ struct DataExchangeOutcome {
     std::size_t deferredRecords = 0;
     std::size_t decodedCiphertextBytes = 0;
     bool serverHadMore = false;
+    std::optional<std::int64_t> lastPacketAtMs;
+    std::int64_t completedAtMs = 0;
 };
 
 class NetworkWorker {
+    friend struct VpnEngineTestAccess;
 public:
     NetworkWorker(CryptoProvider& crypto, Transport& transport, Clock& clock);
 
@@ -86,12 +89,14 @@ public:
 
     // Milliseconds the worker should wait before the next `data` request, kept
     // inside the intersection of the local and the server bounds.
-    std::int64_t nextPollDelayMs(bool hadTraffic);
+    std::int64_t nextPollDelayMs(const DataExchangeOutcome& exchange);
+    void beginDataSession();
 
     // Discards the derived keys and the verified time.
     void reset();
 
 private:
+    Status publishLimits(const ServerLimits& limits);
     Result<std::string> newRequestId();
     Result<std::string> currentTimestamp();
 
@@ -127,6 +132,7 @@ private:
 
     // Adaptive polling state, client.md "Pollingovy interval".
     std::int64_t currentPollIntervalMs_ = 80;
+    std::optional<std::int64_t> lastPacketAtMs_;
 };
 
 }  // namespace phpvpn

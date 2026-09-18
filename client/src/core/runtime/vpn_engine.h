@@ -112,7 +112,7 @@ private:
 
     Status runConnectSequence(bool initialBootstrap, std::optional<HttpDiagnostic>* failedDiagnostic = nullptr,
         bool* rejectedResponse = nullptr);
-    void runConnectedIteration();
+    std::int64_t runConnectedIteration();
     void teardown(bool keepError);
 
     void setState(ConnectionState state, ConnectionPhase phase);

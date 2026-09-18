@@ -42,11 +42,11 @@ void showSystemMessage(HWND owner, const wchar_t* text, const wchar_t* title,
                         taskDialogIcon(icon), selectedButton, heading);
 }
 
-bool confirmSystemAction(HWND owner, const wchar_t* text, const wchar_t* title) noexcept {
+bool confirmSystemAction(HWND owner, const wchar_t* text, const wchar_t* title, bool defaultYes) noexcept {
     int selectedButton = IDNO;
     const HRESULT result = runTaskDialog(owner, text, title,
                                          TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
-                                         IDNO, nullptr, selectedButton);
+                                         defaultYes ? IDYES : IDNO, nullptr, selectedButton);
     return SUCCEEDED(result) && selectedButton == IDYES;
 }
 

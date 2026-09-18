@@ -111,9 +111,11 @@ def test_info_plaintext_structure(client: PhpVpnClient) -> None:
 def test_info_plaintext_is_within_the_size_limit(client: PhpVpnClient) -> None:
     """Chapter 11.1, the plaintext stays below MAX_INFO_PLAINTEXT_BYTES."""
     response, request_id = client.info()
-    plaintext = client.decrypt_info(response.json(), request_id)
-    encoded = json.dumps(plaintext, separators=(",", ":")).encode("utf-8")
+    encoded = client.decrypt_info_bytes(response.json(), request_id)
     assert len(encoded) <= DEFAULT_MAX_INFO_PLAINTEXT_BYTES
+    assert encoded.startswith(b'{\n    "serverVersion":')
+    assert b'\n    "limits": {\n        ' in encoded
+    assert len(encoded) == len(b64u_decode(response.json()["ciphertext"]))
 
 
 def test_info_plaintext_hides_storage_and_secrets(client: PhpVpnClient) -> None:

@@ -36,6 +36,9 @@ PHPVPN_TEST(TrayResources, HighContrastAndSystemPaletteKeepFontsAndIconsAtSameDp
     const auto font = resources.font(ui::Font::label);
     const auto icon = resources.icon(0);
     const auto normalColor = resources.color(ui::Color::surface);
+    PHPVPN_CHECK_EQ(resources.color(ui::Color::serverInfoValid), RGB(221,242,226));
+    PHPVPN_CHECK_EQ(resources.color(ui::Color::successBackground), RGB(240,250,242));
+    PHPVPN_CHECK_EQ(resources.color(ui::Color::contractsChanged), RGB(255,242,179));
     auto previousPen = resources.pen(ui::Color::surface);
     for (int transition = 0; transition < 3; ++transition) {
         testHighContrast = transition != 2;
@@ -49,6 +52,7 @@ PHPVPN_TEST(TrayResources, HighContrastAndSystemPaletteKeepFontsAndIconsAtSameDp
         PHPVPN_CHECK(GetObjectW(resources.pen(ui::Color::surface), sizeof(pen), &pen) != 0);
         PHPVPN_CHECK_EQ(pen.lopnColor, testHighContrast ? testWindowColor : normalColor);
         PHPVPN_CHECK_EQ(resources.color(ui::Color::surface), pen.lopnColor);
+        if(testHighContrast) PHPVPN_CHECK_EQ(resources.color(ui::Color::serverInfoValid), testWindowColor);
         previousPen = resources.pen(ui::Color::surface);
         PHPVPN_CHECK(resources.update(instance, 96));
         PHPVPN_CHECK_EQ(resources.pen(ui::Color::surface), previousPen);

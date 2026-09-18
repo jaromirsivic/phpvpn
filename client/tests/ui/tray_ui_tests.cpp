@@ -10,6 +10,7 @@
 #include "window_utils.h"
 #include "resource.h"
 #include "../unit/wp03_dialog_test.h"
+#include "../unit/clipboard_snapshot.h"
 #include "platform/windows/ipc_pipe.h"
 #include "core/config/config_defaults.h"
 #include "core/wizard/wizard_defaults.h"
@@ -181,6 +182,10 @@ struct Backend {
         if (ms) changed.wait_for(lock, std::chrono::milliseconds(ms), [&] { return stopping; });
     }
     unsigned infoRowCount = 1;
+    unsigned infoWaitMs = 3500;
+    std::string lastInfoPlaintext;
+    bool maximumInfoPlaintext = false;
+    bool infoCrLf = false;
     bool infoError = false;
     std::string handle(std::string_view bytes) {
         {
@@ -196,7 +201,7 @@ struct Backend {
             std::unique_lock lock(mutex);
             if (legacy->command == IpcCommand::get_info || legacy->command == IpcCommand::get_server_info) {
                 ++infoStarted;
-                changed.wait_for(lock, std::chrono::milliseconds(3500), [&] { return stopping || releaseInfo; });
+                changed.wait_for(lock, std::chrono::milliseconds(infoWaitMs), [&] { return stopping || releaseInfo; });
                 ++infoCompleted;
                 if (legacy->command == IpcCommand::get_server_info) {
                     ServerInfoSnapshot snapshot;
@@ -210,7 +215,14 @@ struct Backend {
                         if(i)snapshot.localMaskedCommunicationContracts.push_back({address,std::string(64,'a')});
                         clients.push_back(J::makeObject({{"address",str(address.toString())},{"lastSeen",str(i && i%3==0?"2026-09-13T11:58:00.000Z":"2026-09-13T11:59:30.000Z")},{"maskedCommunicationContracts",maskedContractsJson(published)}}));
                     }
-                    snapshot.infoPlaintext=Json::serialize(J::makeObject({{"serverVersion",str("uiFixtureInfo")},{"generatedAt",str("2026-09-13T12:00:00.000Z")},{"clients",J::makeArray(std::move(clients))},{"limits",J::makeObject({{"maxDataRecordsPerRequest",J::makeInteger(16)},{"maxRequestBodyBytes",J::makeInteger(983040)},{"maxQueueBytesPerClient",J::makeInteger(16777216)},{"queueTtlSeconds",J::makeInteger(60)},{"minDataPollIntervalMs",J::makeInteger(50)},{"maxDataPollIntervalMs",J::makeInteger(3200)}})}}));
+                    snapshot.infoPlaintext=Json::serializePretty(J::makeObject({{"serverVersion",str("uiFixtureInfo")},{"generatedAt",str("2026-09-13T12:00:00.000Z")},{"clients",J::makeArray(std::move(clients))},{"limits",J::makeObject({{"maxDataRecordsPerRequest",J::makeInteger(16)},{"maxRequestBodyBytes",J::makeInteger(983040)},{"maxQueueBytesPerClient",J::makeInteger(16777216)},{"queueTtlSeconds",J::makeInteger(60)},{"minDataPollIntervalMs",J::makeInteger(50)},{"maxDataPollIntervalMs",J::makeInteger(3200)}})}}));
+                    if (infoCrLf) {
+                        std::string crlf;
+                        for (char c : snapshot.infoPlaintext) { if (c == '\n') crlf += '\r'; crlf += c; }
+                        snapshot.infoPlaintext = std::move(crlf);
+                    }
+                    if (maximumInfoPlaintext) snapshot.infoPlaintext.append(262144 - snapshot.infoPlaintext.size(), ' ');
+                    lastInfoPlaintext = snapshot.infoPlaintext;
                     return IpcProtocol::buildServerInfoResponse(legacy->requestId,snapshot);
                 }
                 return "{\"uiFixtureInfo\":true}";
@@ -827,7 +839,7 @@ void serverInformationIdlePaint() {
 }
 void serverInformationTabs() {
     Gui gui;
-    { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo = true; gui.backend.auditInfoCommands = true; }
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo = true; gui.backend.auditInfoCommands = true; gui.backend.infoCrLf = true; }
     TrayApplication app({gui.pipe, L"Local\\phpvpn-info-" + widen(uuid()), std::make_unique<WizardFixtureShell>(), L"Info synthetic"});
     check(app.initialise(GetModuleHandleW(nullptr)), "production application did not initialise");
     SendMessageW(app.window(), WM_COMMAND, IDM_SHOW_INFO, 0);
@@ -839,6 +851,16 @@ void serverInformationTabs() {
     check(TabCtrl_GetCurSel(tabs) == 0 && !IsWindowVisible(field) && GetFocus() == tabs, "wrong initial Info page/focus");
     const auto original = text(field);
     check(original.find(L"uiFixtureInfo") != std::wstring::npos, "production JSON missing");
+    { std::lock_guard lock(gui.backend.mutex); check(original == widen(gui.backend.lastInfoPlaintext), "raw plaintext changed in IPC/EDIT"); }
+    check(original.find(L'\n') != std::wstring::npos, "pretty fixture not multiline");
+    check(original.find(L"\r\n") != std::wstring::npos && SendMessageW(field,EM_GETLINECOUNT,0,0)>2,"CRLF plaintext is not displayed as multiple lines");
+    check(text(window) == L"Server information (1 valid online client)", "singular title");
+    check(text(child(window, 7104)) == L"(1 valid online client)", "whole bracket count");
+    auto dc = GetDC(window);
+    SendMessageW(window, WM_CTLCOLORSTATIC, reinterpret_cast<WPARAM>(dc), reinterpret_cast<LPARAM>(child(window,7104)));
+    UiResources palette; palette.update(GetModuleHandleW(nullptr), GetDpiForWindow(window), false);
+    check(GetTextColor(dc) == palette.color(ui::Color::success), "count is not success green");
+    ReleaseDC(window, dc);
     for (int i = 0; i < 12; ++i) {
         const int index = (i + 1) % 2;
         if (i % 4 < 2) {
@@ -891,10 +913,85 @@ void serverInformationRefresh() {
     check(text(raw)==original && ListView_GetItemCount(table)==12,"failed Refresh replaced part of snapshot");
     {std::lock_guard lock(gui.backend.mutex);gui.backend.infoError=false;gui.backend.infoRowCount=1;}
     SendMessageW(child(window,7101),BM_CLICK,0,0);
-    gui.until([&]{return text(window)==L"Server information (1 valid online clients)";},"new snapshot not installed");
+    gui.until([&]{return text(window)==L"Server information (1 valid online client)";},"new snapshot not installed");
     check(ListView_GetItemCount(table)==1 && text(raw)!=original,"successful Refresh did not replace both views");
     check(gui.backend.count(&Backend::unexpectedInfoCommands)==0,"extra info commands");
     editorClick(window,IDOK);gui.until([&]{return !IsWindow(window);},"Info close");
+}
+void serverInformationAutoRefresh() {
+    Gui gui;
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo = true; gui.backend.infoRowCount = 0; }
+    ServerInfoWindow info(gui.pipe);
+    info.open(GetModuleHandleW(nullptr));
+    gui.until([&] { return info.window() && IsWindowVisible(info.window()); }, "initial info");
+    auto root = info.window(), toggle = child(root,7103), refresh = child(root,7101);
+    check(text(root) == L"Server information (0 valid online clients)", "zero grammar");
+    check(text(toggle) == L"Auto refresh" && SendMessageW(toggle,BM_GETCHECK,0,0) == BST_UNCHECKED, "initial auto state/name");
+    check(GetNextDlgTabItem(root,refresh,FALSE) == toggle && GetNextDlgTabItem(root,toggle,FALSE) == GetDlgItem(root,IDOK), "auto tab order");
+    check(GetNextDlgTabItem(root,toggle,TRUE) == refresh, "auto reverse tab order");
+    IAccessible* acc = nullptr;
+    check(SUCCEEDED(AccessibleObjectFromWindow(toggle,static_cast<DWORD>(OBJID_CLIENT),IID_IAccessible,reinterpret_cast<void**>(&acc))), "auto accessibility");
+    VARIANT self{}; self.vt=VT_I4; self.lVal=CHILDID_SELF;
+    VARIANT role{}, state{}; BSTR name=nullptr;
+    acc->get_accRole(self,&role); acc->get_accState(self,&state); acc->get_accName(self,&name);
+    const bool accessible = role.vt==VT_I4 && role.lVal==ROLE_SYSTEM_CHECKBUTTON && state.vt==VT_I4 &&
+        !(state.lVal&STATE_SYSTEM_CHECKED) && name && std::wstring(name)==L"Auto refresh";
+    SysFreeString(name); acc->Release(); check(accessible,"auto MSAA role/state/name");
+    SetFocus(toggle); SendMessageW(toggle,WM_KEYDOWN,VK_SPACE,0); SendMessageW(toggle,WM_KEYUP,VK_SPACE,0);
+    check(SendMessageW(toggle,BM_GETCHECK,0,0)==BST_CHECKED,"Space did not enable auto");
+    const auto enabledAt=GetTickCount64();
+    SendMessageW(root,WM_TIMER,2,0); // Early queued/synthetic tick is not a deadline.
+    gui.wait(100);
+    check(gui.backend.count(&Backend::infoStarted)==1,"auto fired immediately");
+    gui.until([&] { return gui.backend.count(&Backend::infoCompleted)==2 && IsWindowEnabled(refresh); },"auto did not refresh online tab",6500);
+    check(GetTickCount64()-enabledAt>=5000,"auto fired before five seconds");
+    const auto tabs=child(root,IDC_INFO_TABS);
+    TabCtrl_SetCurSel(tabs,1); NMHDR header{tabs,IDC_INFO_TABS,TCN_SELCHANGE};
+    SendMessageW(root,WM_NOTIFY,IDC_INFO_TABS,reinterpret_cast<LPARAM>(&header));
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.releaseInfo=false; gui.backend.infoWaitMs=12000; }
+    gui.until([&] { return gui.backend.count(&Backend::infoStarted)==3; },"auto did not refresh raw tab",6500);
+    const auto original=text(child(root,IDC_TEXT_AREA));
+    check(SendMessageW(child(root,IDC_TEXT_AREA),EM_GETLINECOUNT,0,0)>2,"pretty LF plaintext is not displayed as multiple lines");
+    captureWizard(root,L"server-info-raw.bmp");
+    gui.wait(5200);
+    SendMessageW(root,WM_COMMAND,7101,0); SendMessageW(root,WM_TIMER,3,0);
+    check(gui.backend.count(&Backend::infoStarted)==3,"pending auto/manual overlap");
+    SendMessageW(toggle,BM_CLICK,0,0);
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.infoError=true; gui.backend.releaseInfo=true; }
+    gui.backend.changed.notify_all();
+    gui.until([&] { return IsWindowEnabled(refresh); },"pending error completion");
+    check(text(child(root,IDC_TEXT_AREA))==original,"error discarded raw");
+    gui.wait(5100);
+    check(gui.backend.count(&Backend::infoStarted)==3,"disable during request restarted timer");
+    SendMessageW(toggle,BM_CLICK,0,0);
+    info.open(GetModuleHandleW(nullptr));
+    check(SendMessageW(toggle,BM_GETCHECK,0,0)==BST_UNCHECKED,"Show Info did not reset auto");
+    check(gui.backend.count(&Backend::infoStarted)==3,"Show Info added request");
+    SendMessageW(toggle,BM_CLICK,0,0);
+    info.endSession();
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.infoError=false; gui.backend.maximumInfoPlaintext=true; }
+    info.open(GetModuleHandleW(nullptr));
+    gui.until([&] { return info.window() && IsWindowVisible(info.window()); },"auto reopen");
+    root=info.window(); toggle=child(root,7103);
+    check(SendMessageW(toggle,BM_GETCHECK,0,0)==BST_UNCHECKED,"auto persisted on reopen");
+    SendMessageW(root,WM_TIMER,5,0); gui.wait(100);
+    check(gui.backend.count(&Backend::infoStarted)==4,"late timer affected new window");
+    const auto raw=child(root,IDC_TEXT_AREA);
+    { std::lock_guard lock(gui.backend.mutex); check(text(raw)==widen(gui.backend.lastInfoPlaintext) && text(raw).size()==262144,"maximum exact IPC/EDIT plaintext truncated"); }
+    {
+    test::clipboardRestoreSucceeded=true;
+    test::ClipboardSnapshot clipboard(root);
+    check(clipboard.capture(),"preserve clipboard before raw copy test");
+    SendMessageW(raw,EM_SETSEL,0,200); SendMessageW(raw,WM_COPY,0,0);
+    check(OpenClipboard(root)!=FALSE,"copy clipboard");
+    const auto copied=static_cast<const wchar_t*>(GlobalLock(GetClipboardData(CF_UNICODETEXT)));
+    const bool copiedExactly=copied && std::wstring(copied)==text(raw).substr(0,200);
+    if(copied)GlobalUnlock(GetClipboardData(CF_UNICODETEXT)); CloseClipboard();
+    check(copiedExactly,"raw copy changed text");
+    }
+    check(test::clipboardRestoreSucceeded,"clipboard restore failed");
+    info.endSession();
+    std::cout << "[ EVIDENCE ] real 5s timers, both tabs, slow pending, manual overlap, error, disable, Show Info, reopen, MSAA, Tab and 262144 exact bytes/copy\n";
 }
 void serverInformationClosePending() {
     Gui gui;
@@ -905,7 +1002,7 @@ void serverInformationClosePending() {
     check(hidden && !IsWindowVisible(hidden),"unverified initial snapshot was shown");
     info.endSession();
     check(!info.window() && !IsWindow(hidden),"pending Info did not close");
-    {std::lock_guard lock(gui.backend.mutex);gui.backend.releaseInfo=true;gui.backend.infoRowCount=21;}
+    {std::lock_guard lock(gui.backend.mutex);gui.backend.releaseInfo=true;gui.backend.infoRowCount=252;}
     gui.backend.changed.notify_all();
     gui.until([&]{return gui.backend.count(&Backend::infoCompleted)==1;},"cancelled fixture request did not finish");
     gui.wait(100);
@@ -914,12 +1011,17 @@ void serverInformationClosePending() {
     gui.until([&]{return info.window() && IsWindowVisible(info.window());},"Info did not reopen after cancellation");
     check(ListView_GetItemCount(child(info.window(),7102))==20,"reopened Info has wrong snapshot");
     check(gui.backend.count(&Backend::infoStarted)==2,"reopen must issue exactly one fresh request");
-    for(const auto size : {Size{320,360},Size{640,480},Size{1080,560}}) {
+    // Exercise the longest supported count label in the actual native layout.
+    SetWindowTextW(child(info.window(),7104),L"(252 valid online clients)");
+    for(const auto size : {Size{320,480},Size{640,480},Size{1080,560}}) {
         resizeClient(info.window(),size.width,size.height);gui.pump();
         const auto refresh=boundsIn(info.window(),child(info.window(),7101));
         const auto ok=boundsIn(info.window(),GetDlgItem(info.window(),IDOK));
         RECT client{};GetClientRect(info.window(),&client);
-        check(refresh.left>=0 && refresh.right<ok.left && ok.right<=client.right && ok.bottom<=client.bottom,"small Info footer clipped");
+        const auto automatic=boundsIn(info.window(),child(info.window(),7103));
+        check(refresh.left>=0 && refresh.right<automatic.left && refresh.top==automatic.top &&
+            (automatic.right<ok.left || automatic.bottom<ok.top) && ok.right<=client.right && ok.bottom<=client.bottom,"small Info footer clipped");
+        check(ListView_GetCountPerPage(child(info.window(),7102))>=1,"minimum Info height hides every table row");
         if(size.width==320)captureWizard(info.window(),L"server-info-small.bmp");
     }
     info.endSession();
@@ -1939,6 +2041,7 @@ int main(int argc, char** argv) {
         {"server_information_idle_paint", serverInformationIdlePaint},
         {"connect_default_result_fits", connectDefaultResultFits},
         {"server_information_refresh_and_pagination", serverInformationRefresh},
+        {"server_information_auto_refresh_lifecycle", serverInformationAutoRefresh},
         {"server_information_close_pending_reopen_resize", serverInformationClosePending},
         {"server_information_live_resize_repaint", serverInformationLiveResizeRepaint},
         {"plan_v001_editor_footer_resize", editorFooterResize},

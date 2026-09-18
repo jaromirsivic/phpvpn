@@ -20,6 +20,9 @@ def test_private_four_client_publication(client: PhpVpnClient):
     response,rid=client.extended_info(a,{"includeMaskedCommunicationContracts":True})
     assert response.status_code==200
     info=client.decrypt_info(response.json(),rid)
+    exact=client.decrypt_info_bytes(response.json(),rid)
+    assert exact.startswith(b'{\n    "serverVersion":') and len(exact) <= 262144
+    assert json.loads(exact) == info
     rows={row["address"]:row for row in info["clients"]}
     assert rows[a]["maskedCommunicationContracts"]==[]
     assert rows[b]["maskedCommunicationContracts"]==[{"peer":a,"hash":"a"*64}]
