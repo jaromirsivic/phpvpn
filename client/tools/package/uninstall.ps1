@@ -40,8 +40,9 @@ function Assert-Administrator {
 if (-not (Assert-Administrator)) {
     $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
     if ($RemoveData) { $arguments += "-RemoveData" }
-    Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs
-    exit 0
+    $elevated = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs -PassThru
+    $elevated.WaitForExit()
+    exit $elevated.ExitCode
 }
 
 $generation = $null
@@ -57,6 +58,7 @@ if ($null -ne $generation -and (Test-Path -LiteralPath (Join-Path $generation "p
     if ($null -ne $service -and $service.Status -eq "Running") {
         Write-Host "disconnecting the tunnel before the service is removed"
         & (Join-Path $generation "phpvpn.exe") disconnect | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The tunnel could not be disconnected.' }
         Start-Sleep -Seconds 2
     }
 }
@@ -69,9 +71,11 @@ $service = Get-Service -Name "phpvpn" -ErrorAction SilentlyContinue
 if ($null -ne $service) {
     if ($null -ne $generation -and (Test-Path -LiteralPath (Join-Path $generation "phpvpn-service.exe"))) {
         & (Join-Path $generation "phpvpn-service.exe") --uninstall | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The service could not be unregistered.' }
     } else {
-        Stop-Service -Name "phpvpn" -Force -ErrorAction SilentlyContinue
+        Stop-Service -Name "phpvpn" -Force -ErrorAction Stop
         & sc.exe delete phpvpn | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The service could not be unregistered by sc.exe.' }
     }
     Write-Host "the phpvpn service was stopped and unregistered"
 }
@@ -89,6 +93,7 @@ if (Test-Path -LiteralPath $installRoot) {
     $item = Get-Item -LiteralPath $installRoot -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
         Write-Host "the installation directory is a reparse point and was left in place" -ForegroundColor Yellow
+        throw 'Uninstallation is incomplete because the installation directory was left in place.'
     } else {
         Remove-Item -LiteralPath $installRoot -Recurse -Force
         Write-Host "the installation directory was removed"
@@ -106,3 +111,12 @@ if ($RemoveData) {
 
 Write-Host ""
 Write-Host "phpvpn was removed. The shared Wintun driver was left untouched."
+
+# Keep the result in the console that performed the operation, including UAC.
+Write-Host ""
+Write-Host "+------------------------------------------------------------+"
+Write-Host "| PHPVPN uninstalled successfully                            |"
+Write-Host "| The service and client removal is complete.                |"
+Write-Host "+------------------------------------------------------------+"
+Start-Sleep -Seconds 3
+exit 0

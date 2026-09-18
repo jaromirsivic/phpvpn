@@ -57,8 +57,11 @@ function Assert-Administrator {
 if (-not $VerifyOnly -and -not (Assert-Administrator)) {
     # Re-launch elevated once. The user sees exactly one consent prompt.
     $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
-    Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs
-    exit 0
+    $arguments += @("-ExpectedThumbprint", "`"$ExpectedThumbprint`"")
+    $elevated = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs -PassThru
+    # Wait only for the installer, not its long-running tray child process.
+    $elevated.WaitForExit()
+    exit $elevated.ExitCode
 }
 
 # --------------------------------------------------- 1. manifest and signature
@@ -370,7 +373,7 @@ New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" `
 
 # ------------------------------------------------- 9. the tray in this session
 
-Start-Process -FilePath $trayBinary -ErrorAction SilentlyContinue
+Start-Process -FilePath $trayBinary -ErrorAction Stop
 
 Write-Host ""
 Write-Host "phpvpn $($manifest.releaseVersion) is installed."
@@ -380,3 +383,12 @@ Write-Host "  console       : $(Join-Path $generation 'phpvpn.exe') status"
 Write-Host "Service startup creates the shared default configuration only when missing, after secure storage recovery. Existing bytes are preserved."
 Write-Host "Configure the file using Configuration Wizard or Edit Config. If it was deleted while running, Edit Config can confirm its recreation."
 Write-Host "Then choose Connect to start the VPN. Existing configuration is preserved."
+
+# Keep the result in the console that performed the operation, including UAC.
+Write-Host ""
+Write-Host "+------------------------------------------------------------+"
+Write-Host "| PHPVPN installed successfully                              |"
+Write-Host "| The service and client installation is complete.           |"
+Write-Host "+------------------------------------------------------------+"
+Start-Sleep -Seconds 3
+exit 0

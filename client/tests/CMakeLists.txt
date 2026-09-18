@@ -75,6 +75,16 @@ target_link_options(phpvpn-client-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_D
 
 add_test(NAME phpvpn-client-tests COMMAND phpvpn-client-tests)
 
+if(WIN32)
+    find_program(PHPVPN_POWERSHELL powershell.exe REQUIRED)
+    foreach(package_test IN ITEMS upgrade feedback)
+        add_test(NAME phpvpn-package-${package_test}
+            COMMAND ${PHPVPN_POWERSHELL} -NoProfile -ExecutionPolicy Bypass
+                -File ${CMAKE_CURRENT_SOURCE_DIR}/test_package_${package_test}.ps1)
+        set_tests_properties(phpvpn-package-${package_test} PROPERTIES LABELS "package" TIMEOUT 60)
+    endforeach()
+endif()
+
 # Isolate the singleton logger and its temporary filesystem fixture from other suites.
 add_executable(phpvpn-logger-tests unit/harness.cpp unit/test_logger.cpp)
 target_include_directories(phpvpn-logger-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
