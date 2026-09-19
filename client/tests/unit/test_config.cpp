@@ -67,7 +67,7 @@ PHPVPN_TEST(config, applies_the_documented_defaults) {
     const RuntimeLimits& runtime = config.value()->runtime;
     PHPVPN_CHECK_EQ(runtime.maxOutboundQueueBytes, kDefaultMaxOutboundQueueBytes);
     PHPVPN_CHECK_EQ(runtime.maxInboundQueueBytes, kDefaultMaxInboundQueueBytes);
-    PHPVPN_CHECK_EQ(runtime.minPerPeerQueueBytes, kDefaultMinPerPeerQueueBytes);
+    PHPVPN_CHECK_EQ(runtime.minOutboundPerPeerQueueBytes, kDefaultMinOutboundPerPeerQueueBytes);
     PHPVPN_CHECK_EQ(runtime.maxResponseBodyBytes, kDefaultMaxResponseBodyBytes);
     PHPVPN_CHECK_EQ(runtime.responseTimeoutSeconds, kDefaultResponseTimeoutSeconds);
     PHPVPN_CHECK_EQ(runtime.timeSyncIntervalSeconds, kDefaultTimeSyncIntervalSeconds);
@@ -212,14 +212,14 @@ PHPVPN_TEST(config, rejects_a_queue_budget_that_cannot_cover_the_reservation) {
     // 252 possible peers times 128 KiB needs at least 33030144 bytes per side.
     const std::string tooSmall =
         documentWith(std::string(),
-                     R"({"maxOutboundQueueBytes":1048576,"minPerPeerQueueBytes":131072})");
+                     R"({"maxOutboundQueueBytes":1048576,"minOutboundPerPeerQueueBytes":131072})");
     auto result = parseAndValidateConfig(tooSmall, warnings);
     PHPVPN_REQUIRE_ERROR(result, ErrorCode::config_queue_budget);
 
     const std::string sufficient =
         documentWith(std::string(),
                      R"({"maxOutboundQueueBytes":33030144,"maxInboundQueueBytes":33030144,)"
-                     R"("minPerPeerQueueBytes":131072})");
+                     R"("minOutboundPerPeerQueueBytes":131072,"minInboundPerPeerQueueBytes":131072})");
     PHPVPN_CHECK(parseAndValidateConfig(sufficient, warnings).ok());
 }
 
@@ -338,7 +338,7 @@ PHPVPN_TEST(config, cidr_queue_reservations_check_both_sides_and_overflow) {
         const auto make = [&](std::int64_t outbound, std::int64_t inbound, std::int64_t perPeer) {
             auto text = documentWith({}, "{\"maxOutboundQueueBytes\":" + std::to_string(outbound) +
                 ",\"maxInboundQueueBytes\":" + std::to_string(inbound) +
-                ",\"minPerPeerQueueBytes\":" + std::to_string(perPeer) + "}");
+                ",\"minOutboundPerPeerQueueBytes\":" + std::to_string(perPeer) + ",\"minInboundPerPeerQueueBytes\":" + std::to_string(perPeer) + "}");
             text.replace(text.find("/24"), 3, "/" + std::to_string(prefix));
             return text;
         };
@@ -409,3 +409,56 @@ PHPVPN_TEST(config, rejects_a_document_that_is_not_json) {
 }
 
 }  // namespace phpvpn
+namespace phpvpn {
+PHPVPN_TEST(config, flow_queue_defaults_are_exact_and_only_materialized_in_memory) {
+    for(const auto runtime : {std::string(),std::string("{}")}) {
+        const auto text=documentWith({},runtime);
+        ConfigWarnings warnings;
+        auto config=parseAndValidateConfig(text,warnings);PHPVPN_REQUIRE_OK(config);
+        const auto& r=config.value()->runtime;
+        PHPVPN_CHECK_EQ(r.maxOutboundQueueBytes,std::int64_t(134217728));
+        PHPVPN_CHECK_EQ(r.maxInboundQueueBytes,std::int64_t(134217728));
+        PHPVPN_CHECK_EQ(r.minOutboundPerPeerQueueBytes,std::int64_t(262144));
+        PHPVPN_CHECK_EQ(r.minInboundPerPeerQueueBytes,std::int64_t(262144));
+        PHPVPN_CHECK_EQ(r.minOutboundPerPeerQueueBytes/16,std::int64_t(16384));
+        PHPVPN_CHECK_EQ(r.maxQueuedPacketAgeMs,std::int64_t(5000));
+        PHPVPN_CHECK_EQ(r.maxResponseBodyBytes,std::int64_t(67108864));
+        PHPVPN_CHECK_EQ(r.maxNdjsonLineBytes,std::int64_t(67108864));
+        auto draft=analyzeWizardDocument(text);PHPVPN_REQUIRE_OK(draft);
+        PHPVPN_CHECK_EQ(draft->context.runtime.maxQueuedPacketAgeMs,std::int64_t(5000));
+        PHPVPN_CHECK_EQ(config.value()->rawJson,text);
+    }
+}
+PHPVPN_TEST(config, directional_minima_and_ttl_validate_every_type_without_legacy_alias) {
+    ConfigWarnings warnings;
+    for(const auto name : {"minOutboundPerPeerQueueBytes","minInboundPerPeerQueueBytes","maxQueuedPacketAgeMs"}) {
+        for(const auto invalid : {"0","-1","1.5","true","false","null","\"123\"","9223372036854775808"}) {
+            const auto text=documentWith({},std::string("{\"")+name+"\":"+invalid+"}");
+            PHPVPN_CHECK(!parseAndValidateConfig(text,warnings));
+            PHPVPN_CHECK(!analyzeWizardDocument(text));
+        }
+    }
+    PHPVPN_CHECK(!parseAndValidateConfig(documentWith({},"{\"minPerPeerQueueBytes\":262144}"),warnings));
+    for(const std::int64_t minimum : {1,15,16,17,262144}) {
+        const auto text=documentWith({},"{\"minOutboundPerPeerQueueBytes\":"+std::to_string(minimum)+
+            ",\"minInboundPerPeerQueueBytes\":17,\"maxQueuedPacketAgeMs\":9223372036854775807}");
+        auto result=parseAndValidateConfig(text,warnings);PHPVPN_REQUIRE_OK(result);
+        PHPVPN_CHECK_EQ(result.value()->runtime.minOutboundPerPeerQueueBytes,minimum);
+        PHPVPN_CHECK_EQ(result.value()->runtime.minInboundPerPeerQueueBytes,std::int64_t(17));
+        PHPVPN_CHECK_EQ(result.value()->runtime.maxQueuedPacketAgeMs,INT64_MAX);
+    }
+}
+PHPVPN_TEST(config, missing_queue_fields_keep_independent_defaults) {
+    ConfigWarnings warnings;
+    for(const auto name : {"maxOutboundQueueBytes","maxInboundQueueBytes","minOutboundPerPeerQueueBytes","minInboundPerPeerQueueBytes","maxQueuedPacketAgeMs"}) {
+        const auto value=std::string(name).find("maxQueued")!=std::string::npos ? 42 : 134217728;
+        // Explicit global limits can be large, peer minima must fit all potential peers.
+        const auto number=std::string(name).starts_with("min") ? 17 : value;
+        const auto text=documentWith({},std::string("{\"")+name+"\":"+std::to_string(number)+"}");
+        auto result=parseAndValidateConfig(text,warnings);PHPVPN_REQUIRE_OK(result);
+        PHPVPN_CHECK_EQ(result.value()->rawJson,text);
+        PHPVPN_CHECK_EQ(result.value()->runtime.maxQueuedPacketAgeMs,
+            std::string(name)=="maxQueuedPacketAgeMs"?std::int64_t(42):std::int64_t(5000));
+    }
+}
+} // namespace phpvpn

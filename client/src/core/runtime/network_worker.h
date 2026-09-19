@@ -107,7 +107,7 @@ private:
                                       std::vector<std::string>& messageIds);
 
     // Decrypts and validates one response record, then queues its packets.
-    void ingestRecord(const DataResponseRecord& record,
+    Status ingestRecord(const DataResponseRecord& record,
                       DirectionQueues& inbound,
                       DropCounters& inboundDrops,
                       DataExchangeOutcome& outcome);

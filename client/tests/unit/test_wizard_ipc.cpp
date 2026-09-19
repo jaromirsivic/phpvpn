@@ -405,7 +405,13 @@ PHPVPN_TEST(wizard_ipc, context_rejects_impossible_budgets_and_overflow) {
     const auto context = makeNewWizardDocument().context;
     const auto encoded = WizardIpc::contextValue(context);
     PHPVPN_REQUIRE_OK(WizardIpc::parseContext(encoded));
-    const auto reservation = static_cast<std::int64_t>(context.vpnCidr.clientAddressCount() - 1) * context.runtime.minPerPeerQueueBytes;
+    const auto defaults = WizardIpc::parseContext(encoded);
+    PHPVPN_CHECK(defaults->runtime.maxOutboundQueueBytes == 134217728);
+    PHPVPN_CHECK(defaults->runtime.maxInboundQueueBytes == 134217728);
+    PHPVPN_CHECK(defaults->runtime.minOutboundPerPeerQueueBytes == 262144);
+    PHPVPN_CHECK(defaults->runtime.minInboundPerPeerQueueBytes == 262144);
+    PHPVPN_CHECK(defaults->runtime.maxQueuedPacketAgeMs == 5000);
+    const auto reservation = static_cast<std::int64_t>(context.vpnCidr.clientAddressCount() - 1) * context.runtime.minOutboundPerPeerQueueBytes;
     for (const auto key : {"maxInboundQueueBytes", "maxOutboundQueueBytes"}) {
         auto changed = encoded;
         set(changed, key, J::makeInteger(reservation - 1));
@@ -414,8 +420,20 @@ PHPVPN_TEST(wizard_ipc, context_rejects_impossible_budgets_and_overflow) {
         PHPVPN_REQUIRE_OK(WizardIpc::parseContext(changed));
     }
     auto changed = encoded;
-    set(changed, "minPerPeerQueueBytes", J::makeInteger((std::numeric_limits<std::int64_t>::max)()));
+    set(changed, "minOutboundPerPeerQueueBytes", J::makeInteger((std::numeric_limits<std::int64_t>::max)()));
     PHPVPN_CHECK(!WizardIpc::parseContext(changed));
+    changed = encoded;
+    set(changed, "minInboundPerPeerQueueBytes", J::makeInteger((std::numeric_limits<std::int64_t>::max)()));
+    PHPVPN_CHECK(!WizardIpc::parseContext(changed));
+    changed = encoded;
+    set(changed, "minOutboundPerPeerQueueBytes", J::makeInteger(16));
+    set(changed, "minInboundPerPeerQueueBytes", J::makeInteger(17));
+    set(changed, "maxQueuedPacketAgeMs", J::makeInteger(1234));
+    const auto asymmetric = WizardIpc::parseContext(changed);
+    PHPVPN_REQUIRE_OK(asymmetric);
+    PHPVPN_CHECK(asymmetric->runtime.minOutboundPerPeerQueueBytes == 16);
+    PHPVPN_CHECK(asymmetric->runtime.minInboundPerPeerQueueBytes == 17);
+    PHPVPN_CHECK(asymmetric->runtime.maxQueuedPacketAgeMs == 1234);
     changed = encoded;
     set(changed, "maxNdjsonLineBytes", J::makeInteger(context.runtime.maxResponseBodyBytes + 1));
     PHPVPN_CHECK(!WizardIpc::parseContext(changed));

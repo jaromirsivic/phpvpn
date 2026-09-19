@@ -112,7 +112,7 @@ PHPVPN_TEST(ContractsDocument, strict_schema_full_validation_encoding_bom_and_si
     text.insert(1, "\"unknown\":true,");
     PHPVPN_REQUIRE_ERROR(ContractsDocument::parse(text), ErrorCode::config_invalid_value);
     auto dom = Json::parse(document()).value();
-    dom.objectValue().emplace_back("runtime", JsonValue::makeObject({{"minPerPeerQueueBytes", JsonValue::makeInteger(67108864)}}));
+    dom.objectValue().emplace_back("runtime", JsonValue::makeObject({{"minOutboundPerPeerQueueBytes", JsonValue::makeInteger(67108864)}}));
     PHPVPN_REQUIRE_ERROR(ContractsDocument::parse(Json::serialize(dom)), ErrorCode::config_queue_budget);
     PHPVPN_REQUIRE_ERROR(ContractsDocument::parse("\xff"), ErrorCode::config_encoding_error);
     PHPVPN_REQUIRE_OK(ContractsDocument::parse("\xef\xbb\xbf" + document()));

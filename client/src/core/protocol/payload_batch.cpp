@@ -15,6 +15,13 @@ std::size_t PayloadBatch::encodedSizeForSinglePacket(std::size_t packetSize) noe
 }
 
 Result<std::vector<std::uint8_t>> PayloadBatch::encode(std::span<const PacketBytes> packets) {
+    std::vector<std::span<const std::uint8_t>> views;
+    views.reserve(packets.size());
+    for (const auto& packet : packets) views.emplace_back(packet);
+    return encodeViews(views);
+}
+Result<std::vector<std::uint8_t>> PayloadBatch::encodeViews(
+    std::span<const std::span<const std::uint8_t>> packets) {
     if (packets.empty()) {
         return Error(ErrorCode::wire_invalid_batch, "packetCount must be at least 1");
     }
@@ -23,7 +30,7 @@ Result<std::vector<std::uint8_t>> PayloadBatch::encode(std::span<const PacketByt
     }
 
     std::size_t total = kHeaderBytes + packets.size() * kLengthEntryBytes;
-    for (const PacketBytes& packet : packets) {
+    for (const auto& packet : packets) {
         if (packet.size() < kMinPacketBytes || packet.size() > kMaxPacketBytes) {
             return Error(ErrorCode::wire_invalid_batch, "packet length out of range");
         }
@@ -39,12 +46,12 @@ Result<std::vector<std::uint8_t>> PayloadBatch::encode(std::span<const PacketByt
     out.push_back(static_cast<std::uint8_t>((count >> 8) & 0xFFu));
     out.push_back(static_cast<std::uint8_t>(count & 0xFFu));
 
-    for (const PacketBytes& packet : packets) {
+    for (const auto& packet : packets) {
         const auto length = static_cast<std::uint16_t>(packet.size());
         out.push_back(static_cast<std::uint8_t>((length >> 8) & 0xFFu));
         out.push_back(static_cast<std::uint8_t>(length & 0xFFu));
     }
-    for (const PacketBytes& packet : packets) {
+    for (const auto& packet : packets) {
         out.insert(out.end(), packet.begin(), packet.end());
     }
 

@@ -44,6 +44,7 @@ add_library(phpvpn-core STATIC
     core/protocol/response_parser.cpp
     core/protocol/uuid.cpp
 
+    core/queues/flow_key.cpp
     core/queues/packet_queues.cpp
     core/queues/scheduler.cpp
 

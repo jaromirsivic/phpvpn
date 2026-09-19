@@ -225,6 +225,8 @@ bool validateIpv4Packet(std::span<const std::uint8_t> packet, Ipv4PacketView& ou
 
     out.headerLength = headerLength;
     out.totalLength = totalLength;
+    out.protocol = packet[9];
+    out.fragmentField = static_cast<std::uint16_t>((packet[6] << 8) | packet[7]);
     out.source = Ipv4Address::fromNetworkBytes(packet.data() + 12);
     out.destination = Ipv4Address::fromNetworkBytes(packet.data() + 16);
     return true;

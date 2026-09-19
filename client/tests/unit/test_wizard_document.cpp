@@ -159,3 +159,23 @@ PHPVPN_TEST(wizard_document, cidr_finish_revalidates_the_actual_dom_in_full_and_
     }
 }
 }
+namespace phpvpn {
+PHPVPN_TEST(wizard_document, flow_queue_defaults_remain_omitted_and_explicit_runtime_survives_edit) {
+    auto crypto=createPlatformCryptoProvider();PHPVPN_REQUIRE_OK(crypto);
+    for(const bool explicitRuntime:{false,true}) {
+        auto source=Json::parse(makeDefaultEditorDocument()).value();
+        if(explicitRuntime) source.objectValue().emplace_back("runtime",JsonValue::makeObject({
+            {"minOutboundPerPeerQueueBytes",JsonValue::makeInteger(17)},
+            {"minInboundPerPeerQueueBytes",JsonValue::makeInteger(31)},
+            {"maxQueuedPacketAgeMs",JsonValue::makeInteger(1234)}}));
+        auto draft=analyzeWizardDocument(Json::serialize(source));PHPVPN_REQUIRE_OK(draft);
+        auto fields=draft->fields;fields.virtualIp="10.99.99.4";
+        auto output=buildWizardDocument(**crypto,*draft,WizardMode::edit,fields,false);PHPVPN_REQUIRE_OK(output);
+        auto after=Json::parse(*output);PHPVPN_REQUIRE_OK(after);
+        PHPVPN_CHECK_EQ(after->find("runtime")!=nullptr,explicitRuntime);
+        if(explicitRuntime) PHPVPN_CHECK_EQ(Json::serialize(*after->find("runtime")),Json::serialize(*source.find("runtime")));
+        auto context=analyzeWizardDocument(*output);PHPVPN_REQUIRE_OK(context);
+        PHPVPN_CHECK_EQ(context->context.runtime.maxQueuedPacketAgeMs,std::int64_t(explicitRuntime?1234:5000));
+    }
+}
+} // namespace phpvpn

@@ -14,7 +14,7 @@ constexpr const char* kOutputComponent = "tunnel-out";
 
 // The largest IPv4 packet the protocol allows in a batch. The receive buffer is
 // allocated once per worker, so no allocation happens on the packet path.
-constexpr std::size_t kReceiveBufferBytes = 65535;
+constexpr std::size_t kReceiveBufferBytes = kMaxTunnelPacketBytes;
 
 // Bounded wait so the worker notices a stop request even when the ring stays
 // empty and no event is signalled.
@@ -102,7 +102,12 @@ void TunnelInputWorker::run() {
 
         PacketBytes owned(packet.begin(), packet.end());
         DropReason reason = DropReason::global_limit;
-        if (!outbound_.tryEnqueue(view.destination, std::move(owned), reason)) {
+        auto admitted = outbound_.tryEnqueue(view.destination, std::move(owned), reason);
+        if (!admitted) {
+            PHPVPN_LOG_ERROR(kInputComponent, admitted.error().message());
+            break;
+        }
+        if (!*admitted) {
             counters_.packetsDropped.fetch_add(1);
             drops_.record(view.destination, reason);
         }
@@ -162,12 +167,14 @@ void TunnelOutputWorker::run() {
             if (!running_.load()) {
                 break;
             }
-            auto packet = inbound_.popFront(peer);
-            if (!packet.has_value()) {
+            PacketLease lease(inbound_, peer);
+            if (!inbound_.select(lease)) {
                 continue;
             }
 
-            auto sent = tunnel_->send(std::span<const std::uint8_t>(packet->data(), packet->size()));
+            const auto& packet = lease.packets().front().bytes;
+            auto sent = tunnel_->send(packet);
+            lease.commit(); // Both success and terminal write failure consume exactly once.
             if (sent.ok()) {
                 counters_.packetsWritten.fetch_add(1);
                 wroteSomething = true;

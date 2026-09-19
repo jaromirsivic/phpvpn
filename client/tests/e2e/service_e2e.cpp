@@ -298,8 +298,10 @@ void udpRoundtrip(Client& client, const ClientConfigPtr& stored, bool verifyIdle
     TrafficCounters counters;
     require(peer.configure(peerConfig, &counters));
     require(peer.performHealth()); require(peer.performInfo());
-    DirectionQueues outgoing(1024 * 1024, 0, 1), incoming(1024 * 1024, 0, 1);
     DropCounters outDrops, inDrops;
+    auto hasher = require(HmacFlowHasher::create(*client.crypto));
+    DirectionQueues outgoing(1024 * 1024, 0, 1, *clock, *hasher, outDrops),
+        incoming(1024 * 1024, 0, 1, *clock, *hasher, inDrops);
     require(peer.verifyAccessKey(incoming, inDrops));
     // Isolated relay may contain earlier fixture packets. Exact per-run nonce
     // prevents treating one of them as our successful UDP exchange.
@@ -313,7 +315,7 @@ void udpRoundtrip(Client& client, const ClientConfigPtr& stored, bool verifyIdle
     while (!actualPacket) {
         check(GetTickCount64() < deadline, "actual Windows UDP packet did not reach peer through Wintun/PHP");
         require(peer.exchangeData(outgoing, incoming, outDrops, inDrops, true));
-        while (auto packet = incoming.popFront(a2)) {
+        while (auto packet = incoming.takePacket(a2)) {
             Ipv4PacketView view;
             if (!validateIpv4Packet(*packet, view) || view.source != a2 || view.destination != a3 || (*packet)[9] != IPPROTO_UDP ||
                 packet->size() != view.headerLength + 8 + payload.size()) continue;
@@ -340,7 +342,7 @@ void udpRoundtrip(Client& client, const ClientConfigPtr& stored, bool verifyIdle
     const auto checksum = ipv4HeaderChecksum(std::span<const std::uint8_t>(reply.data(), headerLength));
     reply[10] = static_cast<std::uint8_t>(checksum >> 8); reply[11] = static_cast<std::uint8_t>(checksum);
     DropReason reason{};
-    check(outgoing.tryEnqueue(a2, std::move(reply), reason), "peer reply was rejected by production queue");
+    check(outgoing.tryEnqueue(a2, std::move(reply), reason).valueOr(false), "peer reply was rejected by production queue");
     require(peer.exchangeData(outgoing, incoming, outDrops, inDrops, true));
     std::array<char, 2048> received{};
     for (;;) {

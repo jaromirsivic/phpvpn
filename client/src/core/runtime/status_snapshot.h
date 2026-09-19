@@ -67,6 +67,9 @@ struct QueueDiagnostics {
     std::int64_t occupiedBytes = 0;
     std::int64_t limitBytes = 0;
     std::uint64_t peerQueueCount = 0;
+    std::uint64_t activeSubBucketCount = 0;
+    std::int64_t inFlightBytes = 0;
+    std::uint64_t queuedItemCount = 0;
 };
 
 struct DiagnosticsSnapshot {
@@ -91,6 +94,9 @@ struct DiagnosticsSnapshot {
 
     TrafficCountersSnapshot counters;
     std::uint64_t packetsDropped = 0;
+    std::uint64_t queueExpiredPackets = 0;
+    std::uint64_t outboundQueueExpiredPackets = 0;
+    std::uint64_t inboundQueueExpiredPackets = 0;
     std::uint64_t batchesRejected = 0;
     std::uint64_t responsesRejected = 0;
     std::uint64_t peakResponseCiphertextBytes = 0;

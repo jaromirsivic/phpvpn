@@ -219,7 +219,9 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
         }
         static constexpr std::string_view kRuntimeMembers[] = {"maxOutboundQueueBytes",
                                                                "maxInboundQueueBytes",
-                                                               "minPerPeerQueueBytes",
+                                                               "minOutboundPerPeerQueueBytes",
+                                                               "minInboundPerPeerQueueBytes",
+                                                               "maxQueuedPacketAgeMs",
                                                                "maxResponseBodyBytes",
                                                                "maxNdjsonLineBytes",
                                                                "maxDataRecordsPerResponse",
@@ -233,9 +235,15 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
         PHPVPN_TRY_ASSIGN(limits.maxInboundQueueBytes,
                           optionalPositiveInteger(*runtime, "maxInboundQueueBytes",
                                                   kDefaultMaxInboundQueueBytes));
-        PHPVPN_TRY_ASSIGN(limits.minPerPeerQueueBytes,
-                          optionalPositiveInteger(*runtime, "minPerPeerQueueBytes",
-                                                  kDefaultMinPerPeerQueueBytes));
+        PHPVPN_TRY_ASSIGN(limits.minOutboundPerPeerQueueBytes,
+                          optionalPositiveInteger(*runtime, "minOutboundPerPeerQueueBytes",
+                                                  kDefaultMinOutboundPerPeerQueueBytes));
+        PHPVPN_TRY_ASSIGN(limits.minInboundPerPeerQueueBytes,
+                          optionalPositiveInteger(*runtime, "minInboundPerPeerQueueBytes",
+                                                  kDefaultMinInboundPerPeerQueueBytes));
+        PHPVPN_TRY_ASSIGN(limits.maxQueuedPacketAgeMs,
+                          optionalPositiveInteger(*runtime, "maxQueuedPacketAgeMs",
+                                                  kDefaultMaxQueuedPacketAgeMs));
         PHPVPN_TRY_ASSIGN(limits.maxResponseBodyBytes,
                           optionalPositiveInteger(*runtime, "maxResponseBodyBytes",
                                                   kDefaultMaxResponseBodyBytes));
@@ -297,10 +305,10 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
 
     // Admission invariant of client.md: every possible peer queue keeps a
     // logical reservation in both directions, so the global limit has to cover
-    // maxRemotePeers * minPerPeerQueueBytes on each side.
+    // maxRemotePeers * the direction's peer minimum on each side.
     const auto peers = static_cast<std::int64_t>((config->vpnCidr.clientAddressCount() - 1));
     std::int64_t requiredBytes = 0;
-    if (!multiplyChecked(peers, limits.minPerPeerQueueBytes, requiredBytes)) {
+    if (!multiplyChecked(peers, limits.minOutboundPerPeerQueueBytes, requiredBytes)) {
         return Error(ErrorCode::config_queue_budget,
                      "the per peer reservation overflows for this prefix");
     }
@@ -308,7 +316,8 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
         return Error(ErrorCode::config_queue_budget,
                      "maxOutboundQueueBytes is smaller than the total per peer reservation");
     }
-    if (limits.maxInboundQueueBytes < requiredBytes) {
+    if (!multiplyChecked(peers, limits.minInboundPerPeerQueueBytes, requiredBytes) ||
+        limits.maxInboundQueueBytes < requiredBytes) {
         return Error(ErrorCode::config_queue_budget,
                      "maxInboundQueueBytes is smaller than the total per peer reservation");
     }

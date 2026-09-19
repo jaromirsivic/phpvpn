@@ -28,7 +28,7 @@ public:
     static constexpr std::size_t kHeaderBytes = 4;
     static constexpr std::size_t kLengthEntryBytes = 2;
     static constexpr std::size_t kMinPacketBytes = 20;
-    static constexpr std::size_t kMaxPacketBytes = 65535;
+    static constexpr std::size_t kMaxPacketBytes = kMaxTunnelPacketBytes;
 
     // Exact serialised size of a batch holding packets of the given sizes.
     static std::size_t encodedSize(std::span<const std::size_t> packetSizes) noexcept;
@@ -37,6 +37,9 @@ public:
     // Serialises the packets in order. Fails when the batch is empty or any
     // packet is outside the normative length range.
     static Result<std::vector<std::uint8_t>> encode(std::span<const PacketBytes> packets);
+
+    static Result<std::vector<std::uint8_t>> encodeViews(
+        std::span<const std::span<const std::uint8_t>> packets);
 
     // Structural decode only. The caller still has to run the address checks of
     // client.md before anything reaches a queue.

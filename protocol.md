@@ -446,6 +446,10 @@ aad = "PHPVPN-DATA" LF
       BASE64URL(iv)
 ```
 
+Klientské `maxQueuedPacketAgeMs`, výchozích 5000 ms, používá lokální monotónní hodiny a omezuje čekání před místním výběrem. Je nezávislé na serverovém `QUEUE_TTL_SECONDS` a protokolovém UTC timestampu. Nezavádí serverovou rezervaci, serverový TTL požadavek ani omezení již zahájeného přenosu.
+
+Lokální flow fair queuing nemění drátový formát, AES-GCM, HMAC autentizaci, serverové API ani význam datových záznamů. Autoritativní popis peer front, šestnácti sub-bucketů, DRR a logických rezervací je v [client.md](client.md#symetrické-flow-fronty-a-logické-rezervace). Výběr před sestavením dávky a plánování po úplném ověření dávky jsou interní klientské operace. Pořadí paketů již sestaveného plaintextu i autentizovaných NDJSON řádků se při kódování, dekódování a ověřování zachovává. Metadata bucketu, vlastníka, deficitu a monotónního času se neserializují.
+
 Plaintext je jedna binární dávka IPv4 paketů pro přesnou uspořádanou dvojici `src`, `dst`. Všechny vícebajtové hodnoty používají network byte order (big-endian):
 
 ```text
@@ -464,7 +468,7 @@ Odesílatel sestaví dávku pouze z paketů, jejichž vnitřní zdrojová a cíl
 4. ověřit GCM tag a teprve poté získat plaintext;
 5. ověřit `packetCount`, tabulku délek, přesnou délku plaintextu a každý IPv4 paket;
 6. ověřit shodu vnitřních zdrojových a cílových adres každého paketu s `src` a `dst`;
-7. předat všechny platné pakety dávky virtuální kartě sekvenčně v pořadí, v jakém jsou uloženy v plaintextu. Neplatná dávka se nesmí předat částečně.
+7. teprve po validaci celé dávky předat platné pakety v pořadí plaintextu do lokálního klientského plánování. Neplatná dávka se nesmí předat částečně. Pořadí následného zápisu do virtuální karty určuje klientská flow politika popsaná v [client.md](client.md#symetrické-flow-fronty-a-logické-rezervace), s FIFO uvnitř sub-bucketů.
 
 Relay tag neověřuje, protože nemá `PAYLOAD_KEY`. Změna `src`, `dst`, `messageId`, IV nebo ciphertextu způsobí u příjemce neplatný tag.
 
@@ -495,6 +499,8 @@ Záznam `data-result`:
 ```
 
 - `acceptedMessageIds` jsou jediné položky, které smí odesílatel odstranit ze své odchozí fronty;
+  Nepotvrzené místní výběry se vracejí do původních klientských bucketů se stejným časem prvního zařazení podle [pravidel rollbacku a expirace](client.md#monotónní-expirace-a-rozpracované-pakety). Klientská expirace před dalším výběrem není potvrzením serveru ani novou garancí doručení.
+
 - `deferredMessageIds` zůstávají klientovi pro pozdější pokus;
 - obě pole bez průniku přesně pokrývají všechny `messageId` v požadavku;
 - `acceptedBytes` je součet přijatých serializovaných datových řádků včetně LF.

@@ -215,8 +215,11 @@ PHPVPN_TEST(server_contract, diagnostic_consumes_without_payload_gcm_while_boots
     require(receive.configure(runtimeConfig(3, 2)));
     require(receive.performHealth());
     require(receive.performInfo());
-    DirectionQueues outbound(1024 * 1024, 0, 1), inbound(1024 * 1024, 0, 1), senderInbound(1024 * 1024, 0, 1);
     DropCounters outDrops, inDrops, senderDrops;
+    auto hasher = require(HmacFlowHasher::create(sender.crypto));
+    DirectionQueues outbound(1024 * 1024, 0, 1, *sender.clock, *hasher, outDrops),
+        inbound(1024 * 1024, 0, 1, *receiver.clock, *hasher, inDrops),
+        senderInbound(1024 * 1024, 0, 1, *sender.clock, *hasher, senderDrops);
     const auto malformed = badPayloadRecord(sender);
     queueRecord(sender, send, malformed);
     const auto beforePosts = receiver.transport.dataPosts;
@@ -236,13 +239,13 @@ PHPVPN_TEST(server_contract, diagnostic_consumes_without_payload_gcm_while_boots
     // A genuinely encrypted batch travels through both production NetworkWorkers.
     const auto expected = packet();
     DropReason reason{};
-    PHPVPN_CHECK(outbound.tryEnqueue(*Ipv4Address::parse("10.99.99.3"), expected, reason));
+    PHPVPN_CHECK(outbound.tryEnqueue(*Ipv4Address::parse("10.99.99.3"), expected, reason).valueOr(false));
     auto sent = send.exchangeData(outbound, senderInbound, outDrops, senderDrops, true);
     PHPVPN_REQUIRE_OK(sent);
     PHPVPN_CHECK_EQ(sent->packetsSent, std::size_t(1));
     require(receive.verifyAccessKey(inbound, inDrops));
     PHPVPN_CHECK_EQ(receiver.crypto.payloadOpens, beforeOpens + 2);
-    auto delivered = inbound.popFront(*Ipv4Address::parse("10.99.99.2"));
+    auto delivered = inbound.takePacket(*Ipv4Address::parse("10.99.99.2"));
     PHPVPN_CHECK(delivered.has_value());
     if (delivered) PHPVPN_CHECK_EQ(*delivered, expected);
     PHPVPN_CHECK_EQ(receiver.poll(), std::size_t(0));

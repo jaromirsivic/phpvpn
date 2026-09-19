@@ -47,6 +47,17 @@ Status VpnEngine::start() {
         return Error(ErrorCode::service_already_running, "the engine is already running");
     }
 
+    if (!flowHasher_) {
+        auto created = HmacFlowHasher::create(crypto_);
+        if (!created) {
+            running_.store(false);
+            startupError_ = created.error();
+            recordError(created.error());
+            setState(ConnectionState::error, ConnectionPhase::idle);
+            return created.error();
+        }
+        flowHasher_ = std::move(created).value();
+    }
     startedAtMs_ = clock_.monotonicMs();
     startupError_.reset();
     {
@@ -361,11 +372,13 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         outbound_ = std::make_unique<DirectionQueues>(config->runtime.maxOutboundQueueBytes,
-                                                     config->runtime.minPerPeerQueueBytes,
-                                                     config->maxRemotePeers());
+                                                     config->runtime.minOutboundPerPeerQueueBytes,
+                                                     config->maxRemotePeers(), clock_, *flowHasher_, outboundDrops_,
+                                                     config->runtime.maxQueuedPacketAgeMs);
         inbound_ = std::make_unique<DirectionQueues>(config->runtime.maxInboundQueueBytes,
-                                                    config->runtime.minPerPeerQueueBytes,
-                                                    config->maxRemotePeers());
+                                                    config->runtime.minInboundPerPeerQueueBytes,
+                                                    config->maxRemotePeers(), clock_, *flowHasher_, inboundDrops_,
+                                                    config->runtime.maxQueuedPacketAgeMs);
     }
 
     auto configured = network_.configure(config, &counters_,
@@ -780,12 +793,20 @@ DiagnosticsSnapshot VpnEngine::diagnostics() const {
     }
 
     std::lock_guard<std::mutex> lock(stateMutex_);
+    snapshot.outboundQueueExpiredPackets = outboundDrops_.totalForReason(DropReason::queue_expired);
+    snapshot.inboundQueueExpiredPackets = inboundDrops_.totalForReason(DropReason::queue_expired);
+    std::uint64_t outboundDropped = outboundDrops_.total(), inboundDropped = inboundDrops_.total();
     if (outbound_) {
         const QueueStatistics stats = outbound_->statistics();
         snapshot.outbound.itemCount = stats.itemCount;
         snapshot.outbound.occupiedBytes = stats.occupiedBytes;
         snapshot.outbound.limitBytes = stats.limitBytes;
         snapshot.outbound.peerQueueCount = stats.peerQueueCount;
+        snapshot.outbound.activeSubBucketCount = stats.activeSubBucketCount;
+        snapshot.outbound.inFlightBytes = stats.inFlightBytes;
+        snapshot.outbound.queuedItemCount = stats.queuedItemCount;
+        snapshot.outboundQueueExpiredPackets = stats.expiredPackets;
+        outboundDropped = stats.droppedPackets;
     }
     if (inbound_) {
         const QueueStatistics stats = inbound_->statistics();
@@ -793,9 +814,15 @@ DiagnosticsSnapshot VpnEngine::diagnostics() const {
         snapshot.inbound.occupiedBytes = stats.occupiedBytes;
         snapshot.inbound.limitBytes = stats.limitBytes;
         snapshot.inbound.peerQueueCount = stats.peerQueueCount;
+        snapshot.inbound.activeSubBucketCount = stats.activeSubBucketCount;
+        snapshot.inbound.inFlightBytes = stats.inFlightBytes;
+        snapshot.inbound.queuedItemCount = stats.queuedItemCount;
+        snapshot.inboundQueueExpiredPackets = stats.expiredPackets;
+        inboundDropped = stats.droppedPackets;
     }
 
-    snapshot.packetsDropped = outboundDrops_.total() + inboundDrops_.total();
+    snapshot.packetsDropped = outboundDropped + inboundDropped;
+    snapshot.queueExpiredPackets = snapshot.outboundQueueExpiredPackets + snapshot.inboundQueueExpiredPackets;
 
     snapshot.state = state_;
     snapshot.phase = phase_;

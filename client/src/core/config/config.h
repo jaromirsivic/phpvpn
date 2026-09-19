@@ -23,9 +23,11 @@ namespace phpvpn {
 inline constexpr std::string_view kDefaultServerSecret = "CHANGE_THIS_SERVER_SECRET";
 inline constexpr const char* kDefaultVpnCidr = "10.99.99.0/24";
 inline constexpr bool kDefaultTrustAnyTlsCertificate = true;
-inline constexpr std::int64_t kDefaultMaxOutboundQueueBytes = 67108864;
-inline constexpr std::int64_t kDefaultMaxInboundQueueBytes = 67108864;
-inline constexpr std::int64_t kDefaultMinPerPeerQueueBytes = 131072;
+inline constexpr std::int64_t kDefaultMaxOutboundQueueBytes = 134217728;
+inline constexpr std::int64_t kDefaultMaxInboundQueueBytes = 134217728;
+inline constexpr std::int64_t kDefaultMinOutboundPerPeerQueueBytes = 262144;
+inline constexpr std::int64_t kDefaultMinInboundPerPeerQueueBytes = 262144;
+inline constexpr std::int64_t kDefaultMaxQueuedPacketAgeMs = 5000;
 inline constexpr std::int64_t kDefaultMaxResponseBodyBytes = 67108864;
 inline constexpr std::int64_t kDefaultMaxNdjsonLineBytes = 67108864;
 inline constexpr std::int64_t kDefaultMaxDataRecordsPerResponse = 65535;
@@ -63,7 +65,9 @@ inline constexpr std::int64_t kMaxPollIntervalMs = 5000;
 struct RuntimeLimits {
     std::int64_t maxOutboundQueueBytes = kDefaultMaxOutboundQueueBytes;
     std::int64_t maxInboundQueueBytes = kDefaultMaxInboundQueueBytes;
-    std::int64_t minPerPeerQueueBytes = kDefaultMinPerPeerQueueBytes;
+    std::int64_t minOutboundPerPeerQueueBytes = kDefaultMinOutboundPerPeerQueueBytes;
+    std::int64_t minInboundPerPeerQueueBytes = kDefaultMinInboundPerPeerQueueBytes;
+    std::int64_t maxQueuedPacketAgeMs = kDefaultMaxQueuedPacketAgeMs;
     std::int64_t maxResponseBodyBytes = kDefaultMaxResponseBodyBytes;
     std::int64_t maxNdjsonLineBytes = kDefaultMaxNdjsonLineBytes;
     std::int64_t maxDataRecordsPerResponse = kDefaultMaxDataRecordsPerResponse;

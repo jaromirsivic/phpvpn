@@ -14,6 +14,7 @@
 #include <string_view>
 
 namespace phpvpn {
+inline constexpr std::size_t kMaxTunnelPacketBytes = 65535;
 
 // Host order IPv4 address with the exact decimal spelling required by the
 // protocol, that is four parts without leading zeros.
@@ -78,6 +79,8 @@ struct Ipv4PacketView {
     Ipv4Address destination;
     std::size_t headerLength = 0;
     std::size_t totalLength = 0;
+    std::uint8_t protocol = 0;
+    std::uint16_t fragmentField = 0;
 };
 
 // Full structural validation: at least 20 bytes, version 4, IHL at least 5, the

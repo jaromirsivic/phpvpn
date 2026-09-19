@@ -24,10 +24,15 @@ namespace phpvpn {
 // One planned `data` record: the batch of packets for exactly one destination.
 struct PlannedRecord {
     Ipv4Address peer;
-    std::vector<PacketBytes> packets;
+    PacketLease lease;
 };
 
 struct RequestPlan {
+    RequestPlan() = default;
+    RequestPlan(RequestPlan&&) noexcept = default;
+    RequestPlan& operator=(RequestPlan&&) noexcept = default;
+    RequestPlan(const RequestPlan&) = delete;
+    RequestPlan& operator=(const RequestPlan&) = delete;
     std::vector<PlannedRecord> records;
     std::size_t bodyBytes = 0;
 
@@ -50,7 +55,7 @@ public:
     RequestScheduler(Ipv4Address localAddress, std::size_t requestIdLength = 36,
                      std::size_t timestampLength = 24);
 
-    // Builds the plan for the next request by popping the selected packets from
+    // Builds a rollback-on-destruction plan by leasing selected packets from
     // `queues`. A packet that cannot fit even into an otherwise empty valid
     // request is atomically removed from the head of its queue and permanently
     // dropped, which is reported through `drops`.

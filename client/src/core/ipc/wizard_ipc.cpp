@@ -274,12 +274,12 @@ J WizardIpc::contextValue(const WizardContext& context) {
     const auto& r = context.runtime;
     return J::makeObject({{"httpHeaders", str(context.httpHeaders)}, {"vpnCidr", str(context.vpnCidr.toString())}, {"trustAnyTlsCertificate", J::makeBool(context.trustAnyTlsCertificate)},
         {"maxOutboundQueueBytes", J::makeInteger(r.maxOutboundQueueBytes)}, {"maxInboundQueueBytes", J::makeInteger(r.maxInboundQueueBytes)},
-        {"minPerPeerQueueBytes", J::makeInteger(r.minPerPeerQueueBytes)}, {"maxResponseBodyBytes", J::makeInteger(r.maxResponseBodyBytes)},
+        {"minOutboundPerPeerQueueBytes", J::makeInteger(r.minOutboundPerPeerQueueBytes)}, {"minInboundPerPeerQueueBytes", J::makeInteger(r.minInboundPerPeerQueueBytes)}, {"maxQueuedPacketAgeMs", J::makeInteger(r.maxQueuedPacketAgeMs)}, {"maxResponseBodyBytes", J::makeInteger(r.maxResponseBodyBytes)},
         {"maxNdjsonLineBytes", J::makeInteger(r.maxNdjsonLineBytes)}, {"maxDataRecordsPerResponse", J::makeInteger(r.maxDataRecordsPerResponse)},
         {"responseTimeoutSeconds", J::makeInteger(r.responseTimeoutSeconds)}, {"timeSyncIntervalSeconds", J::makeInteger(r.timeSyncIntervalSeconds)}});
 }
 Result<WizardContext> WizardIpc::parseContext(const J& value) {
-    if (!shape(value, {"httpHeaders", "vpnCidr", "trustAnyTlsCertificate", "maxOutboundQueueBytes", "maxInboundQueueBytes", "minPerPeerQueueBytes",
+    if (!shape(value, {"httpHeaders", "vpnCidr", "trustAnyTlsCertificate", "maxOutboundQueueBytes", "maxInboundQueueBytes", "minOutboundPerPeerQueueBytes", "minInboundPerPeerQueueBytes", "maxQueuedPacketAgeMs",
         "maxResponseBodyBytes", "maxNdjsonLineBytes", "maxDataRecordsPerResponse", "responseTimeoutSeconds", "timeSyncIntervalSeconds"}) ||
         !text(value.find("vpnCidr")) || !value.find("trustAnyTlsCertificate")->isBool()) return malformed();
     auto cidr = Ipv4Cidr::parse(value.find("vpnCidr")->stringValue());
@@ -292,7 +292,7 @@ Result<WizardContext> WizardIpc::parseContext(const J& value) {
     auto& r = context.runtime;
     for (const auto& [name, target] : std::initializer_list<std::pair<const char*, std::int64_t*>>{
         {"maxOutboundQueueBytes", &r.maxOutboundQueueBytes}, {"maxInboundQueueBytes", &r.maxInboundQueueBytes},
-        {"minPerPeerQueueBytes", &r.minPerPeerQueueBytes}, {"maxResponseBodyBytes", &r.maxResponseBodyBytes},
+        {"minOutboundPerPeerQueueBytes", &r.minOutboundPerPeerQueueBytes}, {"minInboundPerPeerQueueBytes", &r.minInboundPerPeerQueueBytes}, {"maxQueuedPacketAgeMs", &r.maxQueuedPacketAgeMs}, {"maxResponseBodyBytes", &r.maxResponseBodyBytes},
         {"maxNdjsonLineBytes", &r.maxNdjsonLineBytes}, {"maxDataRecordsPerResponse", &r.maxDataRecordsPerResponse},
         {"responseTimeoutSeconds", &r.responseTimeoutSeconds}, {"timeSyncIntervalSeconds", &r.timeSyncIntervalSeconds}}) {
         const auto* field = value.find(name);
@@ -302,9 +302,8 @@ Result<WizardContext> WizardIpc::parseContext(const J& value) {
     if (r.responseTimeoutSeconds > kMaxHttpTimeoutSeconds || r.maxNdjsonLineBytes > r.maxResponseBodyBytes) return malformed();
     const auto peers = static_cast<std::int64_t>(context.vpnCidr.clientAddressCount() - 1);
     // Divide before multiplying: hostile limits cannot wrap the reservation.
-    if (r.minPerPeerQueueBytes > (std::numeric_limits<std::int64_t>::max)() / peers) return malformed();
-    const auto reserved = peers * r.minPerPeerQueueBytes;
-    if (r.maxInboundQueueBytes < reserved || r.maxOutboundQueueBytes < reserved) return malformed();
+    if (r.minOutboundPerPeerQueueBytes > r.maxOutboundQueueBytes / peers ||
+        r.minInboundPerPeerQueueBytes > r.maxInboundQueueBytes / peers) return malformed();
     return context;
 }
 J WizardIpc::viewValue(const WizardView& view) {

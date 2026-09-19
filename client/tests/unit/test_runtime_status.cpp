@@ -25,6 +25,8 @@
 #include "core/protocol/json.h"
 #include "core/runtime/vpn_engine.h"
 #include "harness.h"
+#include "queue_test_support.h"
+#include "recording_tunnel.h"
 
 namespace phpvpn {
 struct VpnEngineTestAccess {
@@ -33,14 +35,28 @@ struct VpnEngineTestAccess {
         limits.minDataPollIntervalMs = low; limits.maxDataPollIntervalMs = high;
         return worker.publishLimits(limits);
     }
+    static Status requestLimits(NetworkWorker& worker, std::int64_t bytes) {
+        auto limits=worker.serverLimits_;
+        limits.maxRequestBodyBytes=bytes;
+        limits.maxDataRecordsPerRequest=16;
+        limits.minDataPollIntervalMs=80;limits.maxDataPollIntervalMs=1000;
+        return worker.publishLimits(limits);
+    }
     static std::int64_t pollInterval(VpnEngine& engine) { return engine.network_.currentPollIntervalMs_; }
     static void enqueue(VpnEngine& engine, PacketBytes bytes) {
-        engine.outbound_->pushFront(*Ipv4Address::parse("10.99.99.3"), {std::move(bytes)});
+        DropReason reason{};
+        PHPVPN_CHECK(engine.outbound_->tryEnqueue(*Ipv4Address::parse("10.99.99.3"), std::move(bytes), reason).valueOr(false));
     }
     static void startBehindBarrier(VpnEngine& engine, std::function<void()> barrier) {
+        engine.flowHasher_ = std::move(HmacFlowHasher::create(engine.crypto_)).value();
         engine.running_.store(true);
         engine.thread_ = std::thread([&engine, barrier] { barrier(); engine.runNetworkThread(); });
     }
+    static std::uint64_t queueAge(VpnEngine& engine) {
+        std::lock_guard lock(engine.stateMutex_);
+        return engine.outbound_ ? engine.outbound_->maxQueuedPacketAgeMs() : 0;
+    }
+    static const void* flowHasherIdentity(VpnEngine& engine) { return engine.flowHasher_.get(); }
     static std::size_t queuedCommands(VpnEngine& engine) {
         std::lock_guard<std::mutex> lock(engine.commandMutex_);
         return engine.commands_.size();
@@ -113,7 +129,8 @@ class ObservedCrypto final : public CryptoProvider {
 public:
     std::unique_ptr<CryptoProvider> actual = std::move(createPlatformCryptoProvider()).value();
     std::function<void()> beforeHealthCrypto;
-    bool failRandom = false;
+    bool failRandom = false, failSeal = false;
+    unsigned randomCalls=0, failRandomAt=0;
     unsigned opens = 0;
     Result<Sha256Digest> sha256(std::span<const std::uint8_t> data) override {
         if (beforeHealthCrypto && toString(data).find("health") != std::string::npos) beforeHealthCrypto();
@@ -130,6 +147,7 @@ public:
     Status aesGcmSeal(std::span<const std::uint8_t> key, std::span<const std::uint8_t> iv,
                       std::span<const std::uint8_t> aad, std::span<const std::uint8_t> plaintext,
                       std::vector<std::uint8_t>& ciphertext, GcmTag& tag) override {
+        if(failSeal) return Error(ErrorCode::crypto_failed);
         return actual->aesGcmSeal(key, iv, aad, plaintext, ciphertext, tag);
     }
     Result<SecureBuffer> aesGcmOpen(std::span<const std::uint8_t> key,
@@ -141,7 +159,8 @@ public:
         return actual->aesGcmOpen(key, iv, aad, ciphertext, tag);
     }
     Status randomBytes(std::span<std::uint8_t> out) override {
-        return failRandom ? Status(Error(ErrorCode::crypto_failed)) : actual->randomBytes(out);
+        ++randomCalls;
+        return failRandom || (failRandomAt && randomCalls==failRandomAt) ? Status(Error(ErrorCode::crypto_failed)) : actual->randomBytes(out);
     }
 };
 
@@ -170,6 +189,7 @@ public:
     std::atomic<std::uint64_t> dataRequestBytes{0}, dataResponseBytes{0};
     bool badHealthTag = false, badInfo = false, badMac = false, badPacket = false, badPayloadTag = false;
     bool defer = false;
+    std::function<bool(std::string_view)> acceptTarget;
     bool swappedPayloadAad = false;
     std::vector<PacketBytes> incoming;
     bool captureDiagnostics = false;
@@ -272,7 +292,7 @@ private:
         while (offset < request.size()) {
             const auto end = request.find('\n', offset);
             const auto line = Json::parse(request.substr(offset, end - offset)).value();
-            (defer ? deferred : accepted).push_back(*line.find("messageId"));
+            (defer || (acceptTarget && !acceptTarget(line.find("dst")->stringValue())) ? deferred : accepted).push_back(*line.find("messageId"));
             offset = end + 1;
         }
         const auto result = "{\"type\":\"data-result\",\"requestId\":\"" + id + "\",\"acceptedMessageIds\":" +
@@ -520,13 +540,14 @@ PHPVPN_TEST(runtime, worker_counts_handoff_retry_and_verified_queue_admission) {
     PHPVPN_REQUIRE_OK(worker.performHealth());
     PHPVPN_REQUIRE_OK(worker.performInfo());
     PHPVPN_CHECK_EQ(counters.snapshot().serializedDataRequestBodyBytes, std::uint64_t(0));
-    DirectionQueues outgoing(100000, 0, 1), incoming(100000, 0, 1);
     DropCounters outDrops, inDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues outgoing(100000, 0, 1, clock, flowHasher, outDrops), incoming(100000, 0, 1, clock, flowHasher, inDrops);
     PHPVPN_REQUIRE_OK(worker.verifyAccessKey(incoming, inDrops));
     PHPVPN_CHECK_EQ(counters.snapshot().dataPollsEmpty, std::uint64_t(1));
     DropReason reason{};
     const auto peer = *Ipv4Address::parse("10.99.99.3");
-    PHPVPN_CHECK(outgoing.tryEnqueue(peer, packet(100, false), reason));
+    PHPVPN_CHECK(outgoing.tryEnqueue(peer, packet(100, false), reason).valueOr(false));
     transport.defer = true;
     PHPVPN_REQUIRE_OK(worker.exchangeData(outgoing, incoming, outDrops, inDrops, true));
     transport.defer = false;
@@ -551,7 +572,7 @@ PHPVPN_TEST(runtime, worker_counts_handoff_retry_and_verified_queue_admission) {
     transport.badPacket = true;
     PHPVPN_REQUIRE_OK(worker.exchangeData(outgoing, incoming, outDrops, inDrops, true));
     transport.badPacket = false;
-    DirectionQueues full(0, 0, 1);
+    DirectionQueues full(0, 0, 1, clock, flowHasher, inDrops);
     PHPVPN_REQUIRE_OK(worker.exchangeData(outgoing, full, outDrops, inDrops, true));
     PHPVPN_CHECK_EQ(counters.snapshot().ipv4PacketsReceived, std::uint64_t(3));
     PHPVPN_CHECK_EQ(counters.snapshot().serializedDataResponseBodyBytes, transport.dataResponseBytes.load());
@@ -569,8 +590,9 @@ PHPVPN_TEST(runtime, worker_rejects_whole_batch_when_second_packet_has_wrong_add
     TrafficCounters counters;
     PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(), &counters));
     PHPVPN_REQUIRE_OK(worker.performHealth());
-    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
     DropCounters outDrops, inDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues outgoing(10000, 0, 1, clock, flowHasher, outDrops), incoming(10000, 0, 1, clock, flowHasher, inDrops);
     // Both headers/checksums are valid. Only the second packet's addresses
     // disagree with the authenticated incoming record (.3 -> .2).
     transport.incoming = {packet(40, true), packet(100, false)};
@@ -599,13 +621,14 @@ PHPVPN_TEST(runtime, worker_uses_one_peer_key_in_both_directions_and_binds_aad) 
     TrafficCounters counters;
     PHPVPN_REQUIRE_OK(worker.configure(config, &counters));
     PHPVPN_REQUIRE_OK(worker.performHealth());
-    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
     DropCounters outDrops, inDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues outgoing(10000, 0, 1, clock, flowHasher, outDrops), incoming(10000, 0, 1, clock, flowHasher, inDrops);
     const auto peer = *Ipv4Address::parse("10.99.99.3");
     DropReason reason{};
     const auto sent = packet(100, false);
     const auto received = packet(40, true);
-    PHPVPN_CHECK(outgoing.tryEnqueue(peer, sent, reason));
+    PHPVPN_CHECK(outgoing.tryEnqueue(peer, sent, reason).valueOr(false));
     transport.incoming = {received};
     unsigned verifiedOutgoing = 0;
     const auto verifyRequest = [&](std::string_view request) {
@@ -641,7 +664,7 @@ PHPVPN_TEST(runtime, worker_uses_one_peer_key_in_both_directions_and_binds_aad) 
     PHPVPN_CHECK_EQ(verifiedOutgoing, 1u);
     PHPVPN_CHECK_EQ(result.value().packetsSent, std::size_t(1));
     PHPVPN_CHECK_EQ(result.value().packetsReceived, std::size_t(1));
-    PHPVPN_CHECK_EQ(incoming.popFront(peer), std::optional<PacketBytes>(received));
+    PHPVPN_CHECK_EQ(incoming.takePacket(peer), std::optional<PacketBytes>(received));
 
     transport.hook = {};
     transport.swappedPayloadAad = true;
@@ -665,8 +688,9 @@ PHPVPN_TEST(runtime, worker_accounts_partial_bodies_once_on_every_error) {
     TrafficCounters counters;
     PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(), &counters));
     PHPVPN_REQUIRE_OK(worker.performHealth());
-    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
     DropCounters outDrops, inDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues outgoing(10000, 0, 1, clock, flowHasher, outDrops), incoming(10000, 0, 1, clock, flowHasher, inDrops);
     std::uint64_t expected = 0;
     for (auto code : {ErrorCode::transport_timeout, ErrorCode::cancelled,
                       ErrorCode::transport_receive_failed, ErrorCode::transport_response_too_large}) {
@@ -694,10 +718,11 @@ PHPVPN_TEST(runtime, cancelled_before_transport_handoff_does_not_count_a_request
     PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(), &counters, [&] { return cancelled; }));
     PHPVPN_REQUIRE_OK(worker.performHealth());
     cancelled = true;
-    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
     DropCounters outDrops, inDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues outgoing(10000, 0, 1, clock, flowHasher, outDrops), incoming(10000, 0, 1, clock, flowHasher, inDrops);
     DropReason reason{};
-    PHPVPN_CHECK(outgoing.tryEnqueue(*Ipv4Address::parse("10.99.99.3"), packet(100, false), reason));
+    PHPVPN_CHECK(outgoing.tryEnqueue(*Ipv4Address::parse("10.99.99.3"), packet(100, false), reason).valueOr(false));
     PHPVPN_CHECK(!worker.exchangeData(outgoing, incoming, outDrops, inDrops, true).ok());
     PHPVPN_CHECK_EQ(transport.dataCalls.load(), 0);
     PHPVPN_CHECK_EQ(counters.snapshot().dataPollsTotal, std::uint64_t(0));
@@ -1573,10 +1598,15 @@ PHPVPN_TEST(runtime, recovery_retains_accepted_config_after_save_and_external_de
     PHPVPN_REQUIRE_OK(fixture.engine.start());
     PHPVPN_REQUIRE_OK(fixture.engine.connect());
     PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::recovering; }));
-    PHPVPN_REQUIRE_OK(fixture.engine.setConfigJson(makeDefaultEditorDocument()));
+    auto saved=Json::parse(makeDefaultEditorDocument()).value();
+    saved.objectValue().emplace_back("runtime",JsonValue::makeObject({{"maxQueuedPacketAgeMs",JsonValue::makeInteger(1234)}}));
+    const auto* originalHasher=VpnEngineTestAccess::flowHasherIdentity(fixture.engine);
+    PHPVPN_REQUIRE_OK(fixture.engine.setConfigJson(Json::serialize(saved)));
     fixture.files->bytes.reset();
     fixture.clock.now += 10000;
     PHPVPN_CHECK(data.await());
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::queueAge(fixture.engine),std::uint64_t(5000));
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::flowHasherIdentity(fixture.engine),originalHasher);
     // Scripted relay still authenticates with the original secret and key.
     PHPVPN_CHECK(fixture.engine.status().state == ConnectionState::connected);
     for (const auto& request : fixture.transport.observedHeaders()) PHPVPN_CHECK_EQ(request.headers, "X-Test: fixture");
@@ -1651,14 +1681,16 @@ PHPVPN_TEST(runtime, polling_packet_handoff_rx_and_control_exchanges) {
     PHPVPN_REQUIRE_OK(worker.performHealth());
     PHPVPN_REQUIRE_OK(worker.performInfo());
     worker.beginDataSession();
-    DirectionQueues outgoing(10000, 0, 1), incoming(10000, 0, 1);
     DropCounters outDrops, inDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues outgoing(10000, 0, 1, clock, flowHasher, outDrops), incoming(10000, 0, 1, clock, flowHasher, inDrops);
     auto exchange = [&] { return worker.exchangeData(outgoing, incoming, outDrops, inDrops, true); };
     clock.now = 5000;
     auto idle = exchange(); PHPVPN_REQUIRE_OK(idle);
     PHPVPN_CHECK(!idle->lastPacketAtMs);
     PHPVPN_CHECK_EQ(worker.nextPollDelayMs(*idle), std::int64_t(160));
-    outgoing.pushFront(*Ipv4Address::parse("10.99.99.3"), {packet(40, false)});
+    DropReason reason{};
+    PHPVPN_CHECK(outgoing.tryEnqueue(*Ipv4Address::parse("10.99.99.3"), packet(40, false), reason).valueOr(false));
     cancelled = true;
     PHPVPN_REQUIRE_ERROR(exchange(), ErrorCode::cancelled);
     PHPVPN_CHECK_EQ(transport.dataCalls.load(), 1);
@@ -2446,8 +2478,9 @@ PHPVPN_TEST(runtime_http_headers, worker_three_actions_authenticated_time_refres
     PHPVPN_CHECK_EQ(worker.timeSync().snapshot()->authenticatedServerTimestampMs, *Iso8601::parse(kTimestamp));
     clock.now = 2500;
     PHPVPN_REQUIRE_OK(worker.performInfo());
-    DirectionQueues incoming(10000, 0, 1), outgoing(10000, 0, 1);
     DropCounters inDrops, outDrops;
+    test::FixedFlowHasher flowHasher;
+    DirectionQueues incoming(10000, 0, 1, clock, flowHasher, inDrops), outgoing(10000, 0, 1, clock, flowHasher, outDrops);
     PHPVPN_REQUIRE_OK(worker.verifyAccessKey(incoming, inDrops));
     PHPVPN_REQUIRE_OK(worker.exchangeData(outgoing, incoming, outDrops, inDrops, true));
     const auto observations = transport.observedHeaders();
@@ -2542,3 +2575,181 @@ PHPVPN_TEST(runtime_http_headers, invalid_save_keeps_active_config_and_new_conne
 }
 #include "runtime_info_extensions.inc"
 }
+namespace phpvpn {
+PHPVPN_TEST(flow_integration, production_network_and_tunnel_keep_interactive_flows_ahead_of_continuous_bulk) {
+    for(unsigned mode=0;mode<3;++mode) {
+        const bool tx=mode!=1,rx=mode!=0;
+        ObservedCrypto crypto;ScriptedTransport transport(*crypto.actual);TestClock clock;
+        NetworkWorker worker(crypto,transport,clock);TrafficCounters counters;
+        PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(),&counters));
+        PHPVPN_REQUIRE_OK(worker.performHealth());
+        PHPVPN_REQUIRE_OK(VpnEngineTestAccess::requestLimits(worker,4000));
+        test::FixedFlowHasher hasher;DropCounters outDrops,inDrops;
+        DirectionQueues outbound(1000000,0,1,clock,hasher,outDrops,5000,1000);
+        DirectionQueues inbound(1000000,0,1,clock,hasher,inDrops,5000,1000);
+        const auto peer=*Ipv4Address::parse("10.99.99.3");DropReason reason{};
+        if(tx) {
+            for(unsigned i=0;i<100;++i) PHPVPN_CHECK(outbound.tryEnqueue(peer,test::flowPacket(1000,1),reason).valueOr(false));
+            PHPVPN_CHECK(outbound.tryEnqueue(peer,test::flowPacket(100,2,42),reason).valueOr(false));
+        }
+        if(rx) {
+            for(unsigned i=0;i<101;++i) {
+                auto bytes=test::flowPacket(i==100?100:1000,i==100?std::uint16_t(2):std::uint16_t(1),i==100?std::uint16_t(42):std::uint16_t(0));
+                std::swap_ranges(bytes.begin()+12,bytes.begin()+16,bytes.begin()+16);test::checksum(bytes);
+                transport.incoming.push_back(std::move(bytes));
+            }
+        }
+        bool sentInteractive=false;
+        transport.hook=[&](HttpAction action,std::string_view request,int)->std::optional<HttpExchangeResult> {
+            if(action!=HttpAction::data || !tx) return {};
+            const auto start=request.find('\n')+1;
+            auto record=DataRecord::parse(request.substr(start,request.find('\n',start)-start)).value();
+            std::vector<std::uint8_t> iv,tag,ciphertext;
+            PHPVPN_CHECK(Base64Url::decode(record.iv,iv));PHPVPN_CHECK(Base64Url::decode(record.tag,tag));PHPVPN_CHECK(Base64Url::decode(record.ciphertext,ciphertext));
+            const auto aad=dataAad(record.messageId,record.src,record.dst,record.iv);
+            auto opened=crypto.actual->aesGcmOpen(fixtureConfig()->contracts.front().payloadKey.span(),iv,asBytes(aad),ciphertext,tag).value();
+            auto packets=PayloadBatch::decodeAndValidate(opened.span(),fixtureConfig()->virtualIp,peer).value();
+            PHPVPN_CHECK(request.size()<=4000);
+            PHPVPN_CHECK(outbound.statistics().inFlightBytes>0);
+            unsigned position=0;
+            for(const auto& bytes:packets) {
+                if(test::packetId(bytes)==42) { sentInteractive=true;PHPVPN_CHECK(position<=1);PHPVPN_CHECK(outbound.statistics().queuedItemCount>0); }
+                else PHPVPN_CHECK(outbound.tryEnqueue(peer,bytes,reason).valueOr(false));
+                ++position;
+            }
+            return {};
+        };
+        auto exchange=worker.exchangeData(outbound,inbound,outDrops,inDrops,true);PHPVPN_REQUIRE_OK(exchange);
+        if(tx) PHPVPN_CHECK(sentInteractive);
+        if(rx) {
+            PHPVPN_CHECK_EQ(exchange->packetsReceived,std::size_t(101));
+            auto tunnel=std::make_shared<test::RecordingTunnel>();TunnelWorkerCounters tunnelCounters;
+            std::atomic<bool> continuousBulkValid{true},interactiveWithBacklog{false};
+            tunnel->onSend=[&](std::span<const std::uint8_t> bytes) {
+                if(bytes[5]==42) interactiveWithBacklog=inbound.statistics().queuedItemCount>0;
+                else {
+                    DropReason drop{};
+                    if(!inbound.tryEnqueue(peer,PacketBytes(bytes.begin(),bytes.end()),drop).valueOr(false)) continuousBulkValid=false;
+                }
+                return ok();
+            };
+            TunnelOutputWorker output(tunnel,inbound,inDrops,tunnelCounters);
+            output.start();PHPVPN_CHECK(tunnel->awaitCount(3));output.stop();
+            const auto delivered=tunnel->packets();
+            PHPVPN_CHECK(delivered.size()>=2);
+            if(delivered.size()>=2) PHPVPN_CHECK_EQ(test::packetId(delivered[1]),std::uint16_t(42));
+            PHPVPN_CHECK(continuousBulkValid.load());PHPVPN_CHECK(interactiveWithBacklog.load());
+            PHPVPN_CHECK_EQ(tunnelCounters.writeFailures.load(),std::uint64_t(0));
+        }
+        PHPVPN_CHECK_EQ(outDrops.total()+inDrops.total(),std::uint64_t(0));
+        PHPVPN_CHECK_EQ(outbound.statistics().inFlightBytes,std::int64_t(0));
+        PHPVPN_CHECK_EQ(inbound.statistics().inFlightBytes,std::int64_t(0));
+    }
+}
+PHPVPN_TEST(flow_integration, every_request_failure_rolls_back_original_nodes_age_and_order) {
+    for(unsigned failure=0;failure<12;++failure) {
+        ObservedCrypto crypto;ScriptedTransport transport(*crypto.actual);TestClock clock;
+        NetworkWorker worker(crypto,transport,clock);bool cancelled=false;
+        PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig(),nullptr,[&]{return cancelled;}));
+        PHPVPN_REQUIRE_OK(worker.performHealth());
+        test::QueueContext context;DropCounters inDrops;
+        DirectionQueues outbound(10000,0,2,context.clock,context.hasher,context.drops);
+        DirectionQueues inbound(10000,0,2,context.clock,context.hasher,inDrops);
+        const auto peer=*Ipv4Address::parse(failure==11?"10.99.99.4":"10.99.99.3");DropReason reason{};
+        for(std::uint16_t id=1;id<=3;++id) PHPVPN_CHECK(outbound.tryEnqueue(peer,test::flowPacket(100,1,id),reason).valueOr(false));
+        if(failure<3) crypto.failRandomAt=crypto.randomCalls+failure+1;
+        if(failure==3) crypto.failSeal=true;
+        if(failure==4) cancelled=true;
+        if(failure==5) transport.hook=[](HttpAction,std::string_view,int)->std::optional<HttpExchangeResult>{return HttpExchangeResult(Error(ErrorCode::transport_send_failed));};
+        if(failure==6) transport.mutateResponse=[](HttpResponse& response){response.statusCode=503;};
+        if(failure==7) transport.badMac=true;
+        if(failure==8) transport.defer=true;
+        if(failure==9) transport.hook=[](HttpAction,std::string_view,int)->std::optional<HttpExchangeResult>{throw std::runtime_error("injected transport exception");};
+        if(failure==10) clock.now=-1;
+        bool threw=false;
+        try {
+            const auto result=worker.exchangeData(outbound,inbound,context.drops,inDrops,true);
+            if(failure==8) { PHPVPN_REQUIRE_OK(result);PHPVPN_CHECK_EQ(result->packetsSent,std::size_t(0)); }
+            else PHPVPN_CHECK(!result);
+        } catch(const std::runtime_error&) {threw=true;}
+        PHPVPN_CHECK_EQ(threw,failure==9);
+        PHPVPN_CHECK_EQ(outbound.statistics().occupiedBytes,std::int64_t(300));
+        PHPVPN_CHECK_EQ(outbound.statistics().inFlightBytes,std::int64_t(0));
+        PacketLease returned(outbound,peer);
+        for(std::uint16_t id=1;id<=3;++id) {
+            PHPVPN_CHECK(outbound.select(returned));
+            PHPVPN_CHECK_EQ(test::packetId(returned.packets().back().bytes),id);
+            PHPVPN_CHECK_EQ(returned.packets().back().queuedAt,std::uint64_t(0));
+            PHPVPN_CHECK_EQ(returned.packets().back().bucket,std::uint8_t(0));
+        }
+        returned.rollback();context.clock.now=5000;
+        PHPVPN_CHECK(!outbound.takePacket(peer));
+        PHPVPN_CHECK_EQ(context.drops.totalForReason(DropReason::queue_expired),std::uint64_t(3));
+    }
+}
+PHPVPN_TEST(flow_integration, partial_ack_commits_only_confirmed_peer_record) {
+    auto document=Json::parse(kConfig).value();
+    for(auto& [name,value]:document.objectValue()) if(name=="communicationContracts")
+        value.objectValue().emplace_back("10.99.99.4",value.objectValue().front().second);
+    ConfigWarnings warnings;auto config=parseAndValidateConfig(Json::serialize(document),warnings).value();
+    ObservedCrypto crypto;ScriptedTransport transport(*crypto.actual,config);TestClock clock;
+    NetworkWorker worker(crypto,transport,clock);PHPVPN_REQUIRE_OK(worker.configure(config));PHPVPN_REQUIRE_OK(worker.performHealth());
+    test::FixedFlowHasher hasher;DropCounters outDrops,inDrops;
+    DirectionQueues outbound(10000,0,2,clock,hasher,outDrops),inbound(10000,0,2,clock,hasher,inDrops);
+    DropReason reason{};
+    const auto a=*Ipv4Address::parse("10.99.99.3"),b=*Ipv4Address::parse("10.99.99.4");
+    PHPVPN_CHECK(outbound.tryEnqueue(a,test::flowPacket(100,1,1),reason).valueOr(false));
+    PHPVPN_CHECK(outbound.tryEnqueue(b,test::flowPacket(100,2,2),reason).valueOr(false));
+    transport.acceptTarget=[](std::string_view target){return target=="10.99.99.3";};
+    const auto result=worker.exchangeData(outbound,inbound,outDrops,inDrops,true);PHPVPN_REQUIRE_OK(result);
+    PHPVPN_CHECK_EQ(result->packetsSent,std::size_t(1));PHPVPN_CHECK_EQ(result->deferredRecords,std::size_t(1));
+    PHPVPN_CHECK_EQ(outbound.statistics().itemCount,std::size_t(1));PHPVPN_CHECK_EQ(outbound.statistics().inFlightBytes,std::int64_t(0));
+    PHPVPN_CHECK(outbound.bucketSnapshot(b)[0].owner.has_value());
+    PHPVPN_CHECK(!outbound.takePacket(a));auto retained=outbound.takePacket(b);
+    PHPVPN_CHECK(retained && test::packetId(*retained)==2);
+}
+PHPVPN_TEST(flow_integration, inbound_hash_failure_is_propagated_after_authenticated_ingest) {
+    ObservedCrypto crypto;ScriptedTransport transport(*crypto.actual);TestClock clock;
+    NetworkWorker worker(crypto,transport,clock);PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig()));PHPVPN_REQUIRE_OK(worker.performHealth());
+    test::FixedFlowHasher hasher;hasher.fail=true;DropCounters outDrops,inDrops;
+    DirectionQueues outbound(100000,0,1,clock,hasher,outDrops),inbound(100000,0,1,clock,hasher,inDrops);
+    for(std::uint16_t flow=1;flow<=17;++flow) {
+        auto bytes=test::flowPacket(100,flow);std::swap_ranges(bytes.begin()+12,bytes.begin()+16,bytes.begin()+16);test::checksum(bytes);
+        transport.incoming.push_back(std::move(bytes));
+    }
+    PHPVPN_REQUIRE_ERROR(worker.exchangeData(outbound,inbound,outDrops,inDrops,false),ErrorCode::crypto_failed);
+    PHPVPN_CHECK_EQ(inbound.statistics().itemCount,std::size_t(16));
+    PHPVPN_CHECK_EQ(inDrops.total(),std::uint64_t(0));
+}
+} // namespace phpvpn
+namespace phpvpn {
+PHPVPN_TEST(flow_lifecycle, ttl_changes_only_on_new_connect_and_hash_secret_survives) {
+    EngineFixture fixture;Gate data;
+    fixture.transport.hook=[&](HttpAction action,std::string_view,int call)->std::optional<HttpExchangeResult>{
+        if(action==HttpAction::data && call==2) data.block();return {};
+    };
+    fixture.transport.cancel=[&]{data.release();};
+    PHPVPN_REQUIRE_OK(fixture.engine.start());PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(data.await());
+    const auto* hasher=VpnEngineTestAccess::flowHasherIdentity(fixture.engine);
+    auto document=Json::parse(kConfig).value();
+    document.objectValue().emplace_back("runtime",JsonValue::makeObject({{"maxQueuedPacketAgeMs",JsonValue::makeInteger(1234)}}));
+    PHPVPN_REQUIRE_OK(fixture.engine.setConfigJson(Json::serialize(document)));
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::queueAge(fixture.engine),std::uint64_t(5000));
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    PHPVPN_CHECK(eventually([&]{return fixture.engine.status().state==ConnectionState::disconnected;}));
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&]{return fixture.engine.status().state==ConnectionState::connected;}));
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::queueAge(fixture.engine),std::uint64_t(1234));
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::flowHasherIdentity(fixture.engine),hasher);
+    fixture.engine.shutdown();PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::flowHasherIdentity(fixture.engine),hasher);
+}
+PHPVPN_TEST(flow_lifecycle, random_secret_initialization_failure_fails_start_before_http) {
+    EngineFixture fixture;fixture.crypto.failRandom=true;
+    PHPVPN_REQUIRE_ERROR(fixture.engine.start(),ErrorCode::crypto_failed);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(),0);
+    PHPVPN_CHECK_EQ(fixture.driver.starts.load(),0);
+    PHPVPN_CHECK_EQ(fixture.engine.status().state,ConnectionState::error);
+}
+} // namespace phpvpn

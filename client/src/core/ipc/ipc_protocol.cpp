@@ -50,6 +50,9 @@ JsonValue queueValue(const QueueDiagnostics& queue) {
     members.emplace_back("limitBytes", JsonValue::makeInteger(queue.limitBytes));
     members.emplace_back("peerQueueCount",
                          JsonValue::makeInteger(static_cast<std::int64_t>(queue.peerQueueCount)));
+    members.emplace_back("activeSubBucketCount", JsonValue::makeUnsignedInteger(queue.activeSubBucketCount));
+    members.emplace_back("inFlightBytes", JsonValue::makeInteger(queue.inFlightBytes));
+    members.emplace_back("queuedItemCount", JsonValue::makeUnsignedInteger(queue.queuedItemCount));
     return JsonValue::makeObject(std::move(members));
 }
 
@@ -254,6 +257,9 @@ std::string IpcProtocol::buildDiagnosticsResponse(std::string_view requestId,
     counters.emplace_back("peakResponseCiphertextBytes",
                           JsonValue::makeInteger(asCounter(snapshot.peakResponseCiphertextBytes)));
 
+    counters.emplace_back("queueExpiredPackets", JsonValue::makeUnsignedInteger(snapshot.queueExpiredPackets));
+    counters.emplace_back("outboundQueueExpiredPackets", JsonValue::makeUnsignedInteger(snapshot.outboundQueueExpiredPackets));
+    counters.emplace_back("inboundQueueExpiredPackets", JsonValue::makeUnsignedInteger(snapshot.inboundQueueExpiredPackets));
     JsonObject diagnostics;
     diagnostics.emplace_back("state", JsonValue::makeString(connectionStateName(snapshot.state)));
     diagnostics.emplace_back("phase", JsonValue::makeString(connectionPhaseName(snapshot.phase)));

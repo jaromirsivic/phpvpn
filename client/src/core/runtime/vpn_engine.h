@@ -141,8 +141,8 @@ private:
     TrafficCounters counters_;
     TunnelSession tunnelSession_;
 
-    // Queues live for the whole process, they are only cleared between
-    // connections so that a reconnect does not deliver stale payload.
+    // Hash secret survives reconnects, queues belong to a connection epoch.
+    std::unique_ptr<HmacFlowHasher> flowHasher_;
     std::unique_ptr<DirectionQueues> outbound_;
     std::unique_ptr<DirectionQueues> inbound_;
     DropCounters outboundDrops_;

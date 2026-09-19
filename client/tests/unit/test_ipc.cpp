@@ -159,8 +159,14 @@ PHPVPN_TEST(ipc, builds_a_diagnostics_response_with_the_queue_and_counter_groups
     snapshot.configurationWarnings.push_back("the client trusts any TLS certificate");
     snapshot.outbound.itemCount = 3;
     snapshot.outbound.occupiedBytes = 4096;
-    snapshot.outbound.limitBytes = 67108864;
-    snapshot.inbound.limitBytes = 67108864;
+    snapshot.outbound.limitBytes = 134217728;
+    snapshot.outbound.activeSubBucketCount = 2;
+    snapshot.outbound.inFlightBytes = 1024;
+    snapshot.outbound.queuedItemCount = 2;
+    snapshot.inbound.limitBytes = 134217728;
+    snapshot.queueExpiredPackets = 5;
+    snapshot.outboundQueueExpiredPackets = 2;
+    snapshot.inboundQueueExpiredPackets = 3;
     snapshot.packetsDropped = 7;
 
     auto document = Json::parse(IpcProtocol::buildDiagnosticsResponse(kRequestId, snapshot));
@@ -173,6 +179,12 @@ PHPVPN_TEST(ipc, builds_a_diagnostics_response_with_the_queue_and_counter_groups
                     std::size_t(1));
     PHPVPN_CHECK_EQ(diagnostics->find("outboundQueue")->find("occupiedBytes")->integerValue(),
                     std::int64_t(4096));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(diagnostics->find("outboundQueue")->find("activeSubBucketCount")),std::uint64_t(2));
+    PHPVPN_CHECK_EQ(diagnostics->find("outboundQueue")->find("inFlightBytes")->integerValue(),std::int64_t(1024));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(diagnostics->find("outboundQueue")->find("queuedItemCount")),std::uint64_t(2));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(diagnostics->find("counters")->find("queueExpiredPackets")),std::uint64_t(5));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(diagnostics->find("counters")->find("outboundQueueExpiredPackets")),std::uint64_t(2));
+    PHPVPN_CHECK_EQ(jsonUnsignedOrZero(diagnostics->find("counters")->find("inboundQueueExpiredPackets")),std::uint64_t(3));
     PHPVPN_CHECK_EQ(diagnostics->find("counters")->find("packetsDropped")->integerValue(),
                     std::int64_t(7));
 }

@@ -199,8 +199,11 @@ Result<std::string> NetworkWorker::buildDataBody(const RequestPlan& plan,
         PHPVPN_TRY_ASSIGN(iv, crypto_.randomVector(kGcmIvSize));
         const std::string ivText = Base64Url::encode(iv);
 
+        std::vector<std::span<const std::uint8_t>> packetViews;
+        packetViews.reserve(planned.lease.packets().size());
+        for (const auto& packet : planned.lease.packets()) packetViews.emplace_back(packet.bytes);
         std::vector<std::uint8_t> plaintext;
-        PHPVPN_TRY_ASSIGN(plaintext, PayloadBatch::encode(planned.packets));
+        PHPVPN_TRY_ASSIGN(plaintext, PayloadBatch::encodeViews(packetViews));
 
         const std::string aad = dataAad(messageId, src, dst, ivText);
         std::vector<std::uint8_t> ciphertext;
@@ -228,7 +231,7 @@ Result<std::string> NetworkWorker::buildDataBody(const RequestPlan& plan,
     return body;
 }
 
-void NetworkWorker::ingestRecord(const DataResponseRecord& record,
+Status NetworkWorker::ingestRecord(const DataResponseRecord& record,
                                  DirectionQueues& inbound,
                                  DropCounters& inboundDrops,
                                  DataExchangeOutcome& outcome) {
@@ -236,7 +239,7 @@ void NetworkWorker::ingestRecord(const DataResponseRecord& record,
     const auto destinationResult = Ipv4Address::parse(record.dst);
     if (!sourceResult.has_value() || !destinationResult.has_value()) {
         ++outcome.batchesRejected;
-        return;
+        return ok();
     }
     const Ipv4Address source = *sourceResult;
     const Ipv4Address destination = *destinationResult;
@@ -246,14 +249,14 @@ void NetworkWorker::ingestRecord(const DataResponseRecord& record,
     if (destination != config_->virtualIp) {
         inboundDrops.record(source, DropReason::foreign_destination);
         ++outcome.batchesRejected;
-        return;
+        return ok();
     }
 
     const CommunicationContract* contract = config_->findContract(source);
     if (contract == nullptr) {
         inboundDrops.record(source, DropReason::no_contract);
         ++outcome.batchesRejected;
-        return;
+        return ok();
     }
 
     const std::string aad = dataAad(record.messageId, record.src, record.dst, record.ivText);
@@ -262,7 +265,7 @@ void NetworkWorker::ingestRecord(const DataResponseRecord& record,
     if (!opened.ok()) {
         inboundDrops.record(source, DropReason::payload_tag_invalid);
         ++outcome.batchesRejected;
-        return;
+        return ok();
     }
 
     SecureBuffer plaintext = std::move(opened).value();
@@ -271,13 +274,15 @@ void NetworkWorker::ingestRecord(const DataResponseRecord& record,
     if (!packets.ok()) {
         inboundDrops.record(source, DropReason::batch_invalid);
         ++outcome.batchesRejected;
-        return;
+        return ok();
     }
 
     for (PacketBytes& packet : packets.value()) {
         const auto packetBytes = packet.size();
         DropReason reason = DropReason::global_limit;
-        if (inbound.tryEnqueue(source, std::move(packet), reason)) {
+        auto admitted = inbound.tryEnqueue(source, std::move(packet), reason);
+        if (!admitted) return admitted.error();
+        if (*admitted) {
             ++outcome.packetsReceived;
             if (counters_) counters_->recordAcceptedPacket(packetBytes);
         } else {
@@ -285,6 +290,7 @@ void NetworkWorker::ingestRecord(const DataResponseRecord& record,
             ++outcome.packetsDropped;
         }
     }
+    return ok();
 }
 
 Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outbound,
@@ -310,10 +316,8 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
 
     // Returns every planned packet to the head of its queue, in the original
     // order. Used whenever the exchange did not produce a verified acceptance.
-    const auto returnEverything = [&plan, &outbound]() {
-        for (PlannedRecord& planned : plan.records) {
-            outbound.pushFront(planned.peer, std::move(planned.packets));
-        }
+    const auto returnEverything = [&plan]() {
+        for (auto& record : plan.records) record.lease.rollback();
         plan.records.clear();
     };
 
@@ -339,6 +343,8 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
         return bodyResult.error();
     }
 
+    if (bodyResult->size() > static_cast<std::uint64_t>(limits.maxRequestBodyBytes))
+        return Error(ErrorCode::wire_body_too_large, "assembled data request exceeds limit");
     if (requestCancelled_ && requestCancelled_()) {
         returnEverything();
         return Error(ErrorCode::cancelled);
@@ -347,8 +353,8 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
         std::uint64_t packets = 0;
         std::uint64_t packetBytes = 0;
         for (const auto& record : plan.records) {
-            packets += record.packets.size();
-            for (const auto& packet : record.packets) packetBytes += packet.size();
+            packets += record.lease.packets().size();
+            for (const auto& packet : record.lease.packets()) packetBytes += packet.size();
         }
         counters_->recordRequest(!plan.records.empty(), bodyResult.value().size(), packets, packetBytes);
     }
@@ -393,17 +399,18 @@ Result<DataExchangeOutcome> NetworkWorker::exchangeData(DirectionQueues& outboun
             std::find(data.acceptedMessageIds.begin(), data.acceptedMessageIds.end(),
                       messageIds[index]) != data.acceptedMessageIds.end();
         if (accepted) {
-            outcome.packetsSent += plan.records[index].packets.size();
+            outcome.packetsSent += plan.records[index].lease.packets().size();
             ++outcome.recordsSent;
+            plan.records[index].lease.commit();
         } else {
             ++outcome.deferredRecords;
-            outbound.pushFront(plan.records[index].peer, std::move(plan.records[index].packets));
+            plan.records[index].lease.rollback();
         }
     }
 
     for (const DataResponseRecord& record : data.records) {
         const auto previous = outcome.packetsReceived;
-        ingestRecord(record, inbound, inboundDrops, outcome);
+        PHPVPN_TRY(ingestRecord(record, inbound, inboundDrops, outcome));
         if (outcome.packetsReceived > previous) outcome.lastPacketAtMs = clock_.monotonicMs();
     }
 
@@ -498,8 +505,8 @@ Result<InfoResponse> NetworkWorker::performExtendedInfo(const InfoRequestOptions
 Status NetworkWorker::verifyAccessKey(DirectionQueues& inbound, DropCounters& inboundDrops) {
     // An empty authenticated request is enough: a wrong ACCESS_KEY cannot pass
     // the auth-full tag, and a verified `data-mac` proves the server accepted it.
-    DirectionQueues noOutbound(0, 0, 1);
     DropCounters ignoredOutbound;
+    DirectionQueues noOutbound(0, 0, 1, clock_, inbound.hasher(), ignoredOutbound);
 
     auto outcome = exchangeData(noOutbound, inbound, ignoredOutbound, inboundDrops,
                                 /*allowSending=*/false);

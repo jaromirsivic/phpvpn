@@ -21,6 +21,11 @@ add_executable(phpvpn-client-tests
     unit/test_iso8601.cpp
     unit/test_json.cpp
     unit/test_payload_batch.cpp
+    unit/test_flow_key.cpp
+    unit/test_queue_expiry.cpp
+    unit/test_queue_drr.cpp
+    unit/test_queue_concurrency.cpp
+    unit/test_tunnel_queues.cpp
     unit/test_queues.cpp
     unit/test_service_registration.cpp
     unit/test_time_sync.cpp

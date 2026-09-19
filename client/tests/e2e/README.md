@@ -101,3 +101,15 @@ read per action, changes the stored local key and verifies fresh comparison
 hashes with no Connect, data polling, configuration write or tunnel operation.
 Python `tests-integration/test_info_extensions.py` covers A/B/C/D filtering.
 These contract tests do not claim a real four-checkpoint Wintun connection.
+
+## Local flow scheduling regression
+
+The native peer uses the same 16-bucket DirectionQueues with an injected clock,
+HMAC flow hasher and direction-specific drop counters. Terminal packet reads
+use the shared DRR/lease path. Default queue budgets are 128 MiB per direction,
+peer minima are 256 KiB, and local packet age is 5000 ms. No queue metadata is
+sent over the wire. The isolated UDP test remains a real Wintun/PHP regression.
+Deterministic bulk/interactive fairness, expiry, rollback, partial ACK and
+concurrent admission are tested separately in the production-component
+`flow_integration`, `tunnel_queues`, `queue_drr`, `queue_expiry` and
+`queue_concurrency` suites of phpvpn-client-tests.

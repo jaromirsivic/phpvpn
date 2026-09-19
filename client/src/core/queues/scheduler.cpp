@@ -60,125 +60,64 @@ std::size_t RequestScheduler::recordSizeFor(std::size_t peerAddressLength,
 RequestPlan RequestScheduler::planNextRequest(DirectionQueues& queues,
                                               const SchedulerLimits& limits,
                                               DropCounters& drops) {
+    (void)drops; // Queue owns expiry and oversized drop accounting atomically.
     RequestPlan plan;
-
-    const std::size_t reserve = SchedulerLimits::kBodyReserveBytes;
+    const auto reserve = SchedulerLimits::kBodyReserveBytes;
     if (limits.maxRequestBodyBytes <= static_cast<std::int64_t>(reserve) ||
-        limits.maxDataRecordsPerRequest <= 0) {
-        return plan;
-    }
-    const std::size_t budget = static_cast<std::size_t>(limits.maxRequestBodyBytes) - reserve;
-    const std::size_t authBytes = authLineSize();
-    if (authBytes >= budget) {
-        return plan;
-    }
-
-    std::vector<Ipv4Address> peers = queues.nonEmptyPeers();
-    if (peers.empty()) {
-        return plan;
-    }
-
-    // Rotate the circular order so a long queue cannot starve the short ones.
+        limits.maxDataRecordsPerRequest <= 0) return plan;
+    const auto budget = static_cast<std::size_t>(limits.maxRequestBodyBytes) - reserve;
+    const auto authBytes = authLineSize();
+    if (authBytes >= budget) return plan;
+    auto peers = queues.nonEmptyPeers();
     const auto rotation = std::find_if(peers.begin(), peers.end(), [this](Ipv4Address peer) {
         return peer.value() >= rotationCursor_;
     });
-    if (rotation != peers.end()) {
-        std::rotate(peers.begin(), rotation, peers.end());
-    }
-
+    if (rotation != peers.end()) std::rotate(peers.begin(), rotation, peers.end());
     struct Selection {
-        Ipv4Address peer;
-        std::size_t addressLength = 0;
-        std::vector<PacketBytes> packets;
-        std::size_t packetByteSum = 0;
-        std::size_t recordBytes = 0;
+        std::size_t addressLength = 0, packetByteSum = 0, recordBytes = 0;
+        BlockedBuckets blocked;
     };
-
     std::vector<Selection> selections;
     selections.reserve(peers.size());
+    plan.records.reserve(peers.size());
     std::size_t bodyBytes = authBytes;
-
-    // Measures the head packet of `selection` and takes it only when the exact
-    // assembled body still fits. A rejected packet keeps its place at the head.
-    const auto tryTakeOne = [&](Selection& selection) -> bool {
-        const auto frontSize = queues.frontPacketSize(selection.peer);
-        if (!frontSize.has_value()) {
-            return false;
+    const auto tryTakeOne = [&](PlannedRecord& record, Selection& selection) {
+        std::size_t selectedBytes = 0, newRecordBytes = 0, newBodyBytes = 0;
+        const bool took = queues.select(record.lease, selection.blocked, [&](std::size_t size) {
+            const auto aloneBytes = authBytes + recordSizeFor(selection.addressLength, 1, size);
+            if (aloneBytes > budget) return CandidateDecision::permanently_oversized;
+            newRecordBytes = recordSizeFor(selection.addressLength,
+                record.lease.packets().size() + 1, selection.packetByteSum + size);
+            newBodyBytes = bodyBytes - selection.recordBytes + newRecordBytes;
+            if (newBodyBytes > budget) return CandidateDecision::defer_for_current_request;
+            selectedBytes = size;
+            return CandidateDecision::take;
+        });
+        if (took) {
+            selection.packetByteSum += selectedBytes;
+            selection.recordBytes = newRecordBytes;
+            bodyBytes = newBodyBytes;
         }
-
-        const std::size_t newRecordBytes = recordSizeFor(
-            selection.addressLength, selection.packets.size() + 1, selection.packetByteSum + *frontSize);
-        const std::size_t newBodyBytes = bodyBytes - selection.recordBytes + newRecordBytes;
-
-        if (newBodyBytes > budget) {
-            // A packet that does not fit even into an otherwise empty valid
-            // request is removed from the head and permanently dropped; the
-            // relative order of the remaining packets does not change.
-            const std::size_t aloneBytes =
-                authBytes + recordSizeFor(selection.addressLength, 1, *frontSize);
-            if (aloneBytes > budget) {
-                queues.popFront(selection.peer);
-                drops.record(selection.peer, DropReason::oversized_for_request);
-                return true;  // the head changed, so another attempt is useful
-            }
-            return false;
-        }
-
-        // The network worker is the only consumer of the outbound queues, so the
-        // head cannot change between the measurement and this pop.
-        auto packet = queues.popFront(selection.peer);
-        if (!packet.has_value()) {
-            return false;
-        }
-        selection.packetByteSum += packet->size();
-        selection.packets.push_back(std::move(*packet));
-        selection.recordBytes = newRecordBytes;
-        bodyBytes = newBodyBytes;
-        return true;
+        return took;
     };
-
-    // First pass: at least one packet from every non empty queue.
-    for (Ipv4Address peer : peers) {
-        if (static_cast<std::int64_t>(selections.size()) >= limits.maxDataRecordsPerRequest) {
-            break;
-        }
+    for (auto peer : peers) {
+        if (static_cast<std::int64_t>(plan.records.size()) >= limits.maxDataRecordsPerRequest) break;
+        PlannedRecord record{peer, PacketLease(queues, peer)};
         Selection selection;
-        selection.peer = peer;
         selection.addressLength = peer.toString().size();
-
-        // Keep retrying while the head is dropped as permanently oversized.
-        while (selection.packets.empty() && tryTakeOne(selection)) {
-        }
-        if (!selection.packets.empty()) {
+        if (tryTakeOne(record, selection)) {
+            plan.records.push_back(std::move(record));
             selections.push_back(std::move(selection));
         }
     }
-
-    // Following passes: top the records up in the same circular order.
     bool progressed = true;
     while (progressed) {
         progressed = false;
-        for (Selection& selection : selections) {
-            const std::size_t before = selection.packets.size();
-            if (tryTakeOne(selection) && selection.packets.size() != before) {
-                progressed = true;
-            }
-        }
-    }
-
-    for (Selection& selection : selections) {
-        PlannedRecord record;
-        record.peer = selection.peer;
-        record.packets = std::move(selection.packets);
-        plan.records.push_back(std::move(record));
+        for (std::size_t i = 0; i < plan.records.size(); ++i)
+            if (tryTakeOne(plan.records[i], selections[i])) progressed = true;
     }
     plan.bodyBytes = bodyBytes;
-
-    if (!plan.records.empty()) {
-        rotationCursor_ = plan.records.front().peer.value() + 1;
-    }
-
+    if (!plan.empty()) rotationCursor_ = plan.records.front().peer.value() + 1;
     return plan;
 }
-
-}  // namespace phpvpn
+} // namespace phpvpn
