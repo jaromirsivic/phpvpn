@@ -1,13 +1,13 @@
-state: realization complete awaiting manual acceptance
+state: realization paused after block B03
 language: Czech
 project_root: C:\git\phpvpn
-intent_directory: C:\git\phpvpn\Intents\2026-09-19-00-47-57
-started_at: 2026-09-19-00-47-57
-last_completed_intent_version: 3
-latest_intent_path: C:\git\phpvpn\Intents\2026-09-19-00-47-57\intent-v003.md
+intent_directory: C:\git\phpvpn\Intents\2026-09-19-11-17-37
+started_at: 2026-09-19-11-17-37
+last_completed_intent_version: 1
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-19-11-17-37\intent-v001.md
 route: plan
-planning_context_id: 01a0b85e-791c-7072-87e0-93575eae4b33
-plan_directory: C:\git\phpvpn\Plans\2026-09-19-00-47-57
+planning_context_id: 01a0b8fc-d51f-74f3-bdb8-486e0474632e
+plan_directory: C:\git\phpvpn\Plans\2026-09-19-11-17-37
 last_completed_plan_version: 1
-latest_plan_path: C:\git\phpvpn\Plans\2026-09-19-00-47-57\plan-v001.md
-realization_context_id: 01a0b871-2bde-7a41-a907-088f479889bf
+latest_plan_path: C:\git\phpvpn\Plans\2026-09-19-11-17-37\plan-v001.md
+realization_context_id: 01a0b90a-7134-7d42-9b05-a51f19f7e640

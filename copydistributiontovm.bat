@@ -47,5 +47,5 @@ if not "%TRANSFER_EXIT_CODE%"=="0" (
     exit /b %TRANSFER_EXIT_CODE%
 )
 
-echo Distribution archive created and transferred successfully.
+echo Distribution archive and directory created and transferred successfully.
 exit /b 0
