@@ -31,9 +31,11 @@ constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kStatusMessage = WM_APP + 2;
 constexpr UINT kCommandMessage = WM_APP + 3;
 constexpr UINT kConfigMessage = WM_APP + 4, kDisconnectMessage = WM_APP + 5;
+constexpr UINT kSavedStatusMessage = WM_APP + 6, kReconnectMessage = WM_APP + 7;
 constexpr UINT kWizardMenu = 206, kContractsMenu = 207;
 constexpr UINT_PTR kStatusTimer = 1;
 constexpr UINT_PTR kExitTimer = 90;
+constexpr UINT_PTR kReconnectTimer = 91;
 constexpr wchar_t kClass[] = L"PhpVpnTrayWindow";
 
 
@@ -42,16 +44,25 @@ constexpr wchar_t kClass[] = L"PhpVpnTrayWindow";
 TrayApplication::TrayApplication(TrayRuntime runtime)
     : runtime_(std::move(runtime)), shellIcon_(runtime_.shell.get()),
       statusReader_(runtime_.pipeName), commands_(runtime_.pipeName),
-      disconnect_(runtime_.pipeName), config_(runtime_.pipeName),
+      disconnect_(runtime_.pipeName), savedStatus_(runtime_.pipeName), config_(runtime_.pipeName),
       editor_(runtime_.pipeName), infoWindow_(runtime_.pipeName), wizard_(runtime_.pipeName),
       contracts_(runtime_.pipeName), progress_(runtime_.pipeName), disconnectProgress_(runtime_.pipeName) {
     disconnectProgress_.disconnectSnapshot = [this](const TrayStatus& status) {
         if (!endingSession_ && disconnectInProgress_) onSnapshot(status);
     };
-    contracts_.disconnectAfterSave = [this](const TrayStatus& status) {
-        if (endingSession_ || exitRequested_ || disconnectPending_) return;
-        onSnapshot(status);
-        startCommand(IpcCommand::disconnect);
+    contracts_.onSaved = [this](const ContractsLifecycleSnapshot& saved) {
+        if (reconnect_.phase() != ReconnectController::Phase::none) {
+            contracts_.approvedDiscard(saved); return;
+        }
+        savedContracts_ = saved;
+        requestReconnectAfterSave();
+    };
+    editor_.onSaved = [this](const EditorLifecycleSnapshot& saved) {
+        if (reconnect_.phase() != ReconnectController::Phase::none) {
+            editor_.approvedDiscard(saved); return;
+        }
+        savedEditor_ = saved;
+        requestReconnectAfterSave();
     };
 }
 TrayApplication::~TrayApplication() {
@@ -128,6 +139,7 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
                 self->showMenu(LOWORD(lParam) == WM_CONTEXTMENU || LOWORD(lParam) == NIN_KEYSELECT);
             return 0;
         case WM_TIMER:
+            if (wParam == kReconnectTimer) { self->pollReconnect(); return 0; }
             if (wParam == kExitTimer) { self->advanceExit(); return 0; }
             if (wParam == kStatusTimer && self->polling_.onTimer(nowMs())) {
                 self->updateIcon();
@@ -144,6 +156,8 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
         case kCommandMessage: self->finishCommand(); return 0;
         case kConfigMessage: self->finishConfigAction(); return 0;
         case kDisconnectMessage: self->finishDisconnect(); return 0;
+        case kSavedStatusMessage: self->finishSavedStatus(); return 0;
+        case kReconnectMessage: self->runQueuedConnect(static_cast<std::uint64_t>(wParam)); return 0;
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
                 case IDM_EDIT_CONFIG: self->startConfigAction(MenuAction::edit); return 0;
@@ -152,6 +166,7 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
                     return 0;
                 }
                 case kWizardMenu:
+                    self->cancelReconnect();
                     if (!self->wizard_.open(self->instance_)) self->showError(L"Configuration Wizard could not be opened.");
                     return 0;
                 case kContractsMenu: self->startConfigAction(MenuAction::contracts); return 0;
@@ -208,6 +223,7 @@ void TrayApplication::showMenu(bool keyboard) {
     DestroyMenu(menu);
 }
 void TrayApplication::onSnapshot(const TrayStatus& snapshot) {
+    if (reconnect_.phase() == ReconnectController::Phase::connectQueued && !reconnect_.idle(snapshot)) cancelReconnect();
     if (disconnectInProgress_ && !disconnectPending_ &&
         (!snapshot.valid || (snapshot.phase != "stopping" &&
           (snapshot.state == "error" || (snapshot.state == "disconnected" && snapshot.phase == "idle")))))
@@ -224,6 +240,7 @@ void TrayApplication::onSnapshot(const TrayStatus& snapshot) {
 }
 void TrayApplication::updateIcon() {
     if (disconnectInProgress_ && GetTickCount64() >= disconnectDeadline_) {
+        cancelReconnect();
         disconnectInProgress_ = false;
         statusUnavailable_ = true;
         disconnectProgress_.onDisconnectTimeout();
@@ -241,16 +258,23 @@ void TrayApplication::updateIcon() {
     else if (snapshot_.state == "error") tip = ui::errorTip;
     shellIcon_.publish(window_, kTrayMessage, resources_.icon(state), runtime_.tooltipOverride.empty() ? tip : runtime_.tooltipOverride);
 }
-void TrayApplication::startCommand(IpcCommand command, const std::string& payload) {
-    if (endingSession_ || exitRequested_) return;
+bool TrayApplication::startCommand(IpcCommand command, const std::string& payload, bool reconnectDisconnect) {
+    if (!reconnectDisconnect && (command == IpcCommand::connect || command == IpcCommand::disconnect || command == IpcCommand::set_config)) cancelReconnect();
+    if (endingSession_ || exitRequested_) return false;
     if ((command == IpcCommand::connect || command == IpcCommand::disconnect) &&
         disconnectProgress_.disconnectPending()) {
         reactivateWindow(disconnectProgress_.window());
-        return;
+        return false;
     }
     if (command == IpcCommand::disconnect) {
         if (!disconnect_.request(command, {}, window_, kDisconnectMessage)) showError(L"Disconnect is already being processed. Waiting for its result.");
         else {
+            const auto token = reconnectDisconnect ? reconnect_.token() : 0;
+            disconnectProgress_.disconnectSnapshot = [this, token](const TrayStatus& status) {
+                if (endingSession_ || !disconnectInProgress_) return;
+                observeReconnectDisconnect(status, token);
+                onSnapshot(status);
+            };
             disconnectPending_ = true;
             disconnectInProgress_ = true;
             disconnectDeadline_ = GetTickCount64() + 30000;
@@ -259,17 +283,18 @@ void TrayApplication::startCommand(IpcCommand command, const std::string& payloa
             progress_.endSession();
             disconnectProgress_.open(instance_, true);
             updateIcon();
+            return true;
         }
-        return;
+        return false;
     }
     if (command == IpcCommand::connect && disconnectPending_) {
         showError(L"Disconnect is already being processed. Waiting for its result.");
-        return;
+        return false;
     }
-    if (pendingCommand_) { showError(L"A configuration command is already being processed. Wait for its result and choose this action again."); return; }
+    if (pendingCommand_) { showError(L"A configuration command is already being processed. Wait for its result and choose this action again."); return false; }
     if (command == IpcCommand::set_config) {
         const auto operation = editor_.beginSave(GetTickCount64() + 30000);
-        if (!operation) return;
+        if (!operation) return false;
         saveOperation_ = operation;
         commandPlacement_ = menuPlacement_;
         pendingCommand_ = command;
@@ -277,15 +302,109 @@ void TrayApplication::startCommand(IpcCommand command, const std::string& payloa
             pendingCommand_.reset(); saveOperation_.reset();
             editor_.finishSave({*operation, SaveOutcome::notSent, ErrorCode::ipc_unavailable});
         }
-        return;
+        return pendingCommand_.has_value();
     }
     if (commands_.request(command, payload, window_, kCommandMessage)) {
         if (command == IpcCommand::connect) progress_.endSession();
         commandPlacement_ = menuPlacement_;
         pendingCommand_ = command;
         if (command == IpcCommand::connect) { statusReader_.abandon(); updateIcon(); }
+        return true;
     }
     else showError(L"The command could not be started.");
+    return false;
+}
+bool TrayApplication::savedSessionLive() const {
+    if (savedEditor_) return savedEditor_->open && editor_.lifecycleSnapshot() == *savedEditor_;
+    if (savedContracts_) return savedContracts_->open && contracts_.lifecycleSnapshot() == *savedContracts_;
+    return false;
+}
+void TrayApplication::finishSavedSession() {
+    // Detach before destruction. The normal post-save close no longer owns the
+    // intent once Disconnect has accepted it.
+    const auto editor = savedEditor_; const auto contracts = savedContracts_;
+    savedEditor_.reset(); savedContracts_.reset();
+    if (editor) editor_.approvedDiscard(*editor);
+    if (contracts) contracts_.approvedDiscard(*contracts);
+}
+void TrayApplication::cancelReconnect() {
+    reconnect_.cancel();
+    savedStatus_.abandon();
+    if (window_) KillTimer(window_, kReconnectTimer);
+    finishSavedSession();
+}
+void TrayApplication::requestReconnectAfterSave() {
+    if (endingSession_ || exitRequested_ || disconnectPending_ || disconnectInProgress_ || pendingCommand_ ||
+        !savedSessionLive() || !reconnect_.begin()) { finishSavedSession(); return; }
+    savedStatusDeadline_ = GetTickCount64() + 30000;
+    if (!SetTimer(window_, kReconnectTimer, 50, nullptr) ||
+        !savedStatus_.request(IpcCommand::get_status, {}, window_, kSavedStatusMessage)) {
+        cancelReconnect();
+        showError(L"Your changes were saved, but the current connection status could not be verified. Reconnect manually to apply them.");
+    }
+}
+void TrayApplication::finishSavedStatus() {
+    const auto response = savedStatus_.take();
+    if (!response) return;
+    const auto phase = reconnect_.phase();
+    if (phase != ReconnectController::Phase::readingSavedStatus && phase != ReconnectController::Phase::revalidating) return;
+    if (endingSession_ || exitRequested_ || !savedSessionLive()) { cancelReconnect(); return; }
+    const auto status = parseStatusResponse(*response);
+    if (!status.valid) {
+        cancelReconnect();
+        showError(L"Your changes were saved, but the current connection status could not be verified. Reconnect manually to apply them.");
+        return;
+    }
+    if (phase == ReconnectController::Phase::readingSavedStatus) {
+        if (status.state != "connected") { cancelReconnect(); return; }
+        if (!reconnect_.confirm(status)) { cancelReconnect(); return; }
+        const auto token = reconnect_.token();
+        const auto owner = savedEditor_ ? editor_.window() : contracts_.window();
+        const bool yes = confirmSystemAction(owner, kReconnectSavedText, L"Configuration saved", true);
+        if (!reconnect_.current(token)) return;
+        if (!yes || endingSession_ || exitRequested_ || !savedSessionLive()) { cancelReconnect(); return; }
+        reconnect_.consent();
+        savedStatusDeadline_ = GetTickCount64() + 30000;
+        if (!savedStatus_.request(IpcCommand::get_status, {}, window_, kSavedStatusMessage)) cancelReconnect();
+        return;
+    }
+    if (!reconnect_.revalidate(status)) { cancelReconnect(); return; }
+    onSnapshot(status);
+    if (!startCommand(IpcCommand::disconnect, {}, true)) { cancelReconnect(); return; }
+    finishSavedSession();
+}
+void TrayApplication::observeReconnectDisconnect(const TrayStatus& status, std::uint64_t token) {
+    if (!reconnect_.current(token)) return;
+    const auto now = GetTickCount64();
+    if (reconnect_.observeDisconnect(status, now, disconnectDeadline_)) {
+        // This callback can be inside ProgressWindow::onDisconnectReply. Never
+        // open Connect until that stack has finished updating its own window.
+        if (!PostMessageW(window_, kReconnectMessage, static_cast<WPARAM>(token), 0)) cancelReconnect();
+    } else if (!reconnect_.current(token)) {
+        cancelReconnect();
+        if (now >= disconnectDeadline_) updateIcon();
+    }
+}
+void TrayApplication::runQueuedConnect(std::uint64_t token) {
+    if (!reconnect_.current(token)) return;
+    if (endingSession_ || exitRequested_ || statusUnavailable_ || pendingCommand_ || disconnectPending_ ||
+        disconnectInProgress_ || !reconnect_.consume(token, snapshot_)) { cancelReconnect(); return; }
+    KillTimer(window_, kReconnectTimer);
+    startCommand(IpcCommand::connect);
+}
+void TrayApplication::pollReconnect() {
+    const auto phase = reconnect_.phase();
+    if (phase == ReconnectController::Phase::none) return;
+    if (phase == ReconnectController::Phase::disconnecting) {
+        if (!disconnectProgress_.window()) cancelReconnect();
+        else if (GetTickCount64() >= disconnectDeadline_) updateIcon();
+    } else if (phase != ReconnectController::Phase::connectQueued) {
+        if (!savedSessionLive()) { cancelReconnect(); return; }
+        if (phase != ReconnectController::Phase::confirming && GetTickCount64() >= savedStatusDeadline_) {
+            cancelReconnect();
+            showError(L"Your changes were saved, but the current connection status could not be verified. Reconnect manually to apply them.");
+        }
+    }
 }
 void TrayApplication::finishCommand() {
     ScopedWindowPlacement placement(commandPlacement_);
@@ -448,6 +567,7 @@ void TrayApplication::finishDisconnect() {
     const auto status = parseStatusResponse(*response);
     disconnectProgress_.onDisconnectReply(status);
     if (!status.valid) {
+        cancelReconnect();
         disconnectInProgress_ = false;
         onSnapshot(status);
         statusReader_.abandon(); statusReader_.request(window_, kStatusMessage);
@@ -460,6 +580,7 @@ void TrayApplication::finishDisconnect() {
 }
 void TrayApplication::requestExit() {
     if (endingSession_ || exitRequested_) return;
+    cancelReconnect();
     exitRequested_ = true; exitApproval_.reset(); SetTimer(window_, kExitTimer, 50, nullptr); advanceExit();
 }
 void TrayApplication::advanceExit() {
@@ -497,6 +618,7 @@ void TrayApplication::advanceExit() {
 void TrayApplication::endSession() {
     if (endingSession_) return;
     endingSession_ = true; exitRequested_ = false; exitApproval_.reset();
+    cancelReconnect();
     if (window_) { KillTimer(window_, kExitTimer); KillTimer(window_, kStatusTimer); }
     polling_.stop();
     commands_.abandon(); disconnect_.abandon(); config_.abandon(); statusReader_.abandon();

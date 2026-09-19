@@ -51,13 +51,15 @@ int wmain(int argc, wchar_t** argv) {
     try {
         require(argc == 3, "usage: phpvpn-icon-resource-tests <apps-directory> <source-assets>");
         const std::filesystem::path apps(argv[1]), assets(argv[2]);
-        for (const auto* name : {L"phpvpn-service.exe", L"phpvpn-tray.exe", L"phpvpn.exe"}) {
+        for (const auto* name : {L"phpvpn-service.exe", L"phpvpn-tray.exe", L"phpvpn.exe", L"install-phpvpn.exe", L"uninstall-phpvpn.exe"}) {
             const auto path = apps / name;
             HMODULE module = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
             require(module != nullptr, "PE could not be opened read-only");
             try {
                 std::wcout << name << L'\n';
-                verify(module, 100, assets / L"default.ico");
+                const bool install = std::wstring(name) == L"install-phpvpn.exe";
+                const bool uninstall = std::wstring(name) == L"uninstall-phpvpn.exe";
+                verify(module, 100, assets / (install ? L"connected.ico" : uninstall ? L"disconnected.ico" : L"default.ico"));
                 const bool tray = std::wstring(name) == L"phpvpn-tray.exe";
                 if (tray) {
                     verify(module, 101, assets / L"disconnected.ico");
@@ -67,8 +69,23 @@ int wmain(int argc, wchar_t** argv) {
                 unsigned count = 0;
                 require(EnumResourceNamesW(module, RT_GROUP_ICON, countGroups, reinterpret_cast<LONG_PTR>(&count)) != FALSE, "group enumeration failed");
                 require(count == (tray ? 4u : 1u), "unexpected/duplicate icon groups");
-                (void)resource(module, 1, RT_MANIFEST);
+                const auto manifest = resource(module, 1, RT_MANIFEST);
+                const std::string xml(manifest.begin(), manifest.end());
+                const auto level = install || uninstall ? "requireAdministrator" : "asInvoker";
+                require(xml.find(std::string("level=\"") + level + "\"") != std::string::npos, "incorrect execution level");
+                require(xml.find("permonitorv2") != std::string::npos && xml.find("Microsoft.Windows.Common-Controls") != std::string::npos, "missing DPI or visual styles");
+                count = 0;
+                require(EnumResourceNamesW(module, RT_MANIFEST, countGroups, reinterpret_cast<LONG_PTR>(&count)) && count == 1, "duplicate manifests");
                 (void)resource(module, 1, RT_VERSION);
+                const auto versionSize = GetFileVersionInfoSizeW(path.c_str(), nullptr);
+                require(versionSize != 0, "version metadata unavailable");
+                Bytes version(versionSize);
+                require(GetFileVersionInfoW(path.c_str(), 0, versionSize, version.data()) != FALSE, "version metadata could not be read");
+                void* originalName = nullptr;
+                UINT originalLength = 0;
+                require(VerQueryValueW(version.data(), L"\\StringFileInfo\\040904B0\\OriginalFilename", &originalName, &originalLength) != FALSE && originalLength > 1,
+                    "original filename metadata missing");
+                require(std::wstring(static_cast<const wchar_t*>(originalName)) == name, "wrong original filename metadata");
             } catch (...) { FreeLibrary(module); throw; }
             FreeLibrary(module);
         }

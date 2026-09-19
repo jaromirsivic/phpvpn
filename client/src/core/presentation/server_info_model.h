@@ -11,8 +11,10 @@ struct ServerInfoRow {
 struct ServerInfoModel {
     ServerInfoSnapshot snapshot;
     std::vector<ServerInfoRow> rows;
+    std::size_t onlineClients = 0;
     std::size_t validOnlineClients = 0;
 };
+std::string serverInfoCountText(const ServerInfoModel& model);
 const char *serverClientStateText(ServerClientState state);
 Result<ServerInfoModel> buildServerInfoModel(ServerInfoSnapshot snapshot);
 Result<ServerInfoSnapshot> parseServerInfoResult(std::string_view response);

@@ -83,20 +83,25 @@ target_link_options(phpvpn-client-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_D
 
 add_test(NAME phpvpn-client-tests COMMAND phpvpn-client-tests)
 
+add_executable(phpvpn-package-gui-tests unit/harness.cpp unit/test_package_gui.cpp)
+target_link_libraries(phpvpn-package-gui-tests PRIVATE phpvpn-package-runner)
+add_test(NAME phpvpn-package-gui-tests COMMAND phpvpn-package-gui-tests)
+set_tests_properties(phpvpn-package-gui-tests PROPERTIES TIMEOUT 60 LABELS "package;isolated")
+
 add_executable(phpvpn-tray-registry-tests resources/tray_registry.cpp)
 target_link_libraries(phpvpn-tray-registry-tests PRIVATE phpvpn-platform phpvpn-compile-options)
 add_test(NAME phpvpn-tray-registry-tests COMMAND phpvpn-tray-registry-tests)
 set_tests_properties(phpvpn-tray-registry-tests PROPERTIES LABELS "registry;isolated")
 add_executable(phpvpn-icon-resource-tests resources/icon_resources.cpp)
-target_link_libraries(phpvpn-icon-resource-tests PRIVATE phpvpn-compile-options user32)
-add_dependencies(phpvpn-icon-resource-tests phpvpn-service phpvpn-tray phpvpn-cli)
+target_link_libraries(phpvpn-icon-resource-tests PRIVATE phpvpn-compile-options user32 version)
+add_dependencies(phpvpn-icon-resource-tests phpvpn-service phpvpn-tray phpvpn-cli phpvpn-install phpvpn-uninstall)
 add_test(NAME phpvpn-icon-resource-tests COMMAND phpvpn-icon-resource-tests
     "$<TARGET_FILE_DIR:phpvpn-service>" "${CMAKE_SOURCE_DIR}/../assets")
 set_tests_properties(phpvpn-icon-resource-tests PROPERTIES LABELS "icons;resources")
 
 if(WIN32)
     find_program(PHPVPN_POWERSHELL powershell.exe REQUIRED)
-    foreach(package_test IN ITEMS upgrade feedback)
+    foreach(package_test IN ITEMS upgrade feedback gui)
         add_test(NAME phpvpn-package-${package_test}
             COMMAND ${PHPVPN_POWERSHELL} -NoProfile -ExecutionPolicy Bypass
                 -File ${CMAKE_CURRENT_SOURCE_DIR}/test_package_${package_test}.ps1)
@@ -160,6 +165,12 @@ endif()
 
 option(PHPVPN_BUILD_UI_TESTS "Build explicit in-process Win32 tray UI tests" OFF)
 if(PHPVPN_BUILD_UI_TESTS)
+    add_executable(phpvpn-package-gui-ui-tests ui/package_gui_tests.cpp)
+    target_link_libraries(phpvpn-package-gui-ui-tests PRIVATE phpvpn-package-window)
+    phpvpn_add_version_resource(phpvpn-package-gui-ui-tests "phpvpn package GUI test host"
+        "phpvpn-package-gui-ui-tests" "phpvpn-package-gui-ui-tests.exe" TRUE
+        ICON "${CMAKE_SOURCE_DIR}/../assets/connected.ico")
+    # Explicit interactive test only. This host remains asInvoker.
     add_executable(phpvpn-wp03-ui-tests
         unit/harness.cpp
         unit/test_wp03_windows.cpp

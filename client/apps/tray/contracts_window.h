@@ -10,7 +10,7 @@ public:
     using CryptoFactory = std::function<Result<std::unique_ptr<CryptoProvider>>() >;
     explicit ContractsWindow(std::wstring pipeName = {}, CryptoFactory cryptoFactory = createPlatformCryptoProvider,
         decltype(&CreateWindowExW) createWindow = CreateWindowExW)
-        : controller_(pipeName), savedStatus_(std::move(pipeName)), cryptoFactory_(std::move(cryptoFactory)), createWindow_(createWindow) {}
+        : controller_(std::move(pipeName)), cryptoFactory_(std::move(cryptoFactory)), createWindow_(createWindow) {}
     ContractsWindow(const ContractsWindow&) = delete;
     ContractsWindow& operator=(const ContractsWindow&) = delete;
     ~ContractsWindow();
@@ -22,9 +22,11 @@ public:
     void close();
     void endSession();
     bool approvedDiscard(const ContractsLifecycleSnapshot& approved);
-    ContractsLifecycleSnapshot lifecycleSnapshot() const { return controller_.snapshot(); }
+    ContractsLifecycleSnapshot lifecycleSnapshot() const {
+        auto snapshot = controller_.snapshot(); snapshot.open = window_ != nullptr; return snapshot;
+    }
     void setConnectionActive(bool active);
-    std::function<void(const TrayStatus&)> disconnectAfterSave;
+    std::function<void(const ContractsLifecycleSnapshot&)> onSaved;
 private:
     struct Row {
         Ipv4Address remote;
@@ -42,7 +44,6 @@ private:
     void fonts();
     void refresh();
     void poll();
-    void finishSavedStatus();
     void save(bool repeat);
     void closeChildren();
     void reveal(HWND field);
@@ -58,9 +59,7 @@ private:
     int pageCount() const;
     bool acceptKey(Ipv4Address remote, std::wstring_view text);
     ContractsSaveController controller_;
-    CommandReader savedStatus_;
     std::optional<ContractsLifecycleSnapshot> savedSnapshot_;
-    std::optional<TrayStatus> disconnectIdentity_;
     CryptoFactory cryptoFactory_;
     decltype(&CreateWindowExW) createWindow_;
     std::unique_ptr<CryptoProvider> crypto_;

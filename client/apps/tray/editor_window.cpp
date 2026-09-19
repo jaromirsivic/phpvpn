@@ -74,7 +74,7 @@ EditorLifecycleSnapshot EditorWindow::lifecycleSnapshot() const {
         window_ && saving_, window_ && unknown_, generation_, draftGeneration_, operationGeneration_, saveOperation_.deadlineMs};
 }
 std::optional<SaveOperation> EditorWindow::beginSave(std::uint64_t deadlineMs) {
-    if (!window_ || !save_ || saving_ || unknown_ || endingSession_ ||
+    if (!window_ || !save_ || saving_ || savedPending_ || unknown_ || endingSession_ ||
         (resetTask_ && resetTask_->generation == generation_) || deadlineMs <= GetTickCount64()) return {};
     if (!SetTimer(window_, kResetTimer, 50, nullptr)) return {};
     saveOperation_ = {generation_, draftGeneration_, ++operationGeneration_, deadlineMs};
@@ -91,10 +91,11 @@ bool EditorWindow::finishSave(const SaveResult& result) {
     updateEnabled();
     const auto generation = generation_;
     if (result.outcome == SaveOutcome::confirmed) {
-        showSystemMessage(window_, L"The configuration was stored. It takes effect on the next connection attempt.",
-            L"Edit Config", SystemDialogIcon::information);
-        // A modal message pumps session-end and other generation changes.
-        if (window_ && generation == generation_ && !endingSession_) DestroyWindow(window_);
+        savedPending_ = true;
+        SendMessageW(field_, EM_SETMODIFY, FALSE, 0);
+        updateEnabled();
+        if (onSaved) onSaved(lifecycleSnapshot());
+        else if (window_ && generation == generation_ && !endingSession_) DestroyWindow(window_);
     } else {
         std::wstring text = unknown_ ? L"The file may already have changed. The save result is unknown. Close this editor and open Edit Config to inspect the current configuration. The save will not be retried automatically." :
             result.outcome == SaveOutcome::notSent ? L"The save was not sent. Your text has been preserved." :
@@ -120,6 +121,7 @@ void EditorWindow::requestClose() {
     approvedDiscard(approved);
 }
 void EditorWindow::clearDraft() {
+    savedPending_ = false;
     changingContent_ = true;
     if (field_) { SetWindowTextW(field_, L""); SendMessageW(field_, EM_EMPTYUNDOBUFFER, 0, 0); }
     document_.load({});
@@ -132,7 +134,7 @@ void EditorWindow::endSession() {
     const auto abandon = abandonSave_;
     if (abandon) abandon();
     ++generation_; ++draftGeneration_; ++operationGeneration_;
-    saving_ = unknown_ = false;
+    saving_ = unknown_ = savedPending_ = false;
     if (window_) { KillTimer(window_, kResetTimer); DestroyWindow(window_); }
     // Reset owns only task + endpoint values, never this/HWND or an app callback.
     if (resetThread_.joinable()) resetThread_.detach();
@@ -140,10 +142,10 @@ void EditorWindow::endSession() {
 }
 void EditorWindow::updateEnabled() {
     const bool resetting = resetTask_ && resetTask_->generation == generation_;
-    EnableWindow(field_, !saving_ && !resetting);
+    EnableWindow(field_, !saving_ && !savedPending_ && !resetting);
     SendMessageW(field_, EM_SETREADONLY, !save_ || unknown_, 0);
-    EnableWindow(GetDlgItem(window_, IDC_SAVE), !saving_ && !unknown_ && !resetting);
-    EnableWindow(GetDlgItem(window_, kReset), !saving_ && !unknown_ && !resetTask_);
+    EnableWindow(GetDlgItem(window_, IDC_SAVE), !saving_ && !savedPending_ && !unknown_ && !resetting);
+    EnableWindow(GetDlgItem(window_, kReset), !saving_ && !savedPending_ && !unknown_ && !resetTask_);
     EnableWindow(GetDlgItem(window_, IDC_CANCEL), !saving_);
 }
 void EditorWindow::setContent(const std::string& content) {
@@ -168,7 +170,7 @@ void EditorWindow::setContent(const std::string& content) {
     changingContent_ = false;
 }
 void EditorWindow::reset() {
-    if (!save_ || saving_ || unknown_ || endingSession_ || resetTask_) return;
+    if (!save_ || saving_ || savedPending_ || unknown_ || endingSession_ || resetTask_) return;
     const auto expected = lifecycleSnapshot();
     if (!confirmSystemAction(window_,
         L"Restore the default configuration in this editor? The file will change only after you choose Save.",
@@ -449,7 +451,7 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
                 return 0;
             }
             if ((LOWORD(wParam) == IDC_SAVE || LOWORD(wParam) == IDOK) && self->save_) {
-                if (self->saving_ || self->unknown_ || self->endingSession_ || (self->resetTask_ && self->resetTask_->generation == self->generation_)) return 0;
+                if (self->saving_ || self->savedPending_ || self->unknown_ || self->endingSession_ || (self->resetTask_ && self->resetTask_->generation == self->generation_)) return 0;
                 const int length = GetWindowTextLengthW(self->field_);
                 std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
                 GetWindowTextW(self->field_, text.data(), length + 1);
@@ -467,8 +469,6 @@ LRESULT CALLBACK EditorWindow::procedure(HWND window, UINT message, WPARAM wPara
                 const auto save = self->save_;
                 const auto generation = self->generation_;
                 if (save(*document) && self->window_ && generation == self->generation_ && !self->endingSession_) {
-                    showSystemMessage(window, L"The configuration was stored. It takes effect on the next connection attempt.",
-                                      L"Edit Config", SystemDialogIcon::information);
                     DestroyWindow(window);
                 }
                 return 0;

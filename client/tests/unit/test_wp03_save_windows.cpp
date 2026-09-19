@@ -225,7 +225,7 @@ PHPVPN_TEST(WP03SaveWindows, ProductionTrayRoutesConfirmedAndInvalidRepliesOnlyT
         dialogs::dialogTexts.clear();
         dialogs::answer(IDOK, [&] {
             SendMessageW(window, WM_COMMAND, IDC_SAVE, 0);
-            PHPVPN_CHECK(until([&] { return !app->editorLifecycleSnapshot().saving; }));
+            PHPVPN_CHECK(until([&] { return invalid ? !app->editorLifecycleSnapshot().saving : !app->editorLifecycleSnapshot().open; }));
         });
         PHPVPN_CHECK_EQ(backend.saves.load(), 1u);
         PHPVPN_CHECK_EQ(backend.reads.load(), 1u);
@@ -235,7 +235,7 @@ PHPVPN_TEST(WP03SaveWindows, ProductionTrayRoutesConfirmedAndInvalidRepliesOnlyT
             PHPVPN_CHECK(snapshot.open && snapshot.unknown && snapshot.dirty);
             PHPVPN_CHECK(app->approvedDiscardEditor(snapshot));
         } else PHPVPN_CHECK(!app->editorLifecycleSnapshot().open);
-        PHPVPN_CHECK(!dialogs::dialogTexts.empty());
+        PHPVPN_CHECK_EQ(!dialogs::dialogTexts.empty(), invalid);
     }
     pump();
 }

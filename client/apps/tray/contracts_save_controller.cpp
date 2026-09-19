@@ -31,7 +31,7 @@ ContractsStage ContractsSaveController::stage() const {
     return stage_ == ContractsStage::editing && model_ && model_->blockingErrors() ? ContractsStage::invalid : stage_;
 }
 ContractsLifecycleSnapshot ContractsSaveController::snapshot() const {
-    return {model_ != nullptr, model_ && model_->dirty(), stage_ == ContractsStage::saving,
+    return {model_ != nullptr, model_ && model_->dirty() && stage_ != ContractsStage::saved, stage_ == ContractsStage::saving,
         stage_ == ContractsStage::saveUnknown, checker_.busy(), windowGeneration_, draftGeneration_,
         operationGeneration_, checkGeneration_, operation_ ? operation_->deadlineMs : 0};
 }
@@ -69,7 +69,11 @@ ContractsEvent ContractsSaveController::poll() {
     if (stage_ == ContractsStage::saving) {
         if (auto result = writer_.takeSave(); result && operation_ && result->operation == *operation_) {
             operation_.reset();
-            if (result->outcome == SaveOutcome::confirmed) return ContractsEvent::saved;
+            if (result->outcome == SaveOutcome::confirmed) {
+                stage_ = ContractsStage::saved;
+                notice_ = L"Changes saved. Checking connection status...";
+                return ContractsEvent::saved;
+            }
             if (result->outcome == SaveOutcome::unknown) {
                 stage_ = ContractsStage::saveUnknown; notice_ = unknownText;
                 return ContractsEvent::unknown;

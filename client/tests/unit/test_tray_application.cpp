@@ -3,9 +3,23 @@
 #include "../../apps/tray/resource.h"
 #include <atomic>
 #include <thread>
+#include "../../apps/tray/reconnect_controller.h"
 
 namespace {
 using namespace phpvpn::tray;
+TrayStatus reconnectStatus() {
+    TrayStatus status;
+    status.valid = true; status.state = "connected"; status.phase = "running";
+    status.connectionEpoch = 7; status.connectAttemptId = "fixture-attempt";
+    status.connectionStartedAtUtcMs = 123; status.tunnelReady = "yes";
+    return status;
+}
+TrayStatus reconnectIdle() {
+    auto status = reconnectStatus();
+    status.state = "disconnected"; status.phase = "idle";
+    status.connectionStartedAtUtcMs.reset(); status.tunnelReady = "no";
+    return status;
+}
 struct ShellCounts { int adds = 0, modifies = 0, deletes = 0; std::wstring tooltip; bool accept = true; };
 class FixtureShell final : public ShellAdapter {
 public:
@@ -30,6 +44,88 @@ void drain() {
         if (message.message != WM_QUIT) { TranslateMessage(&message); DispatchMessageW(&message); }
     }
 }
+}
+PHPVPN_TEST(Reconnect, exact_identity_idle_and_one_shot_token) {
+    ReconnectController controller;
+    PHPVPN_CHECK(controller.begin());
+    const auto token = controller.token();
+    PHPVPN_CHECK(!controller.begin());
+    PHPVPN_CHECK(controller.confirm(reconnectStatus()));
+    controller.consent();
+    PHPVPN_CHECK(controller.revalidate(reconnectStatus()));
+    PHPVPN_CHECK(!controller.observeDisconnect(reconnectStatus()));
+    auto stopping = reconnectStatus(); stopping.phase = "stopping";
+    PHPVPN_CHECK(!controller.observeDisconnect(stopping));
+    PHPVPN_CHECK(controller.current(token));
+    PHPVPN_CHECK(controller.observeDisconnect(reconnectIdle()));
+    PHPVPN_CHECK(!controller.observeDisconnect(reconnectIdle()));
+    PHPVPN_CHECK(!controller.consume(token + 1, reconnectIdle()));
+    PHPVPN_CHECK(controller.consume(token, reconnectIdle()));
+    PHPVPN_CHECK(!controller.consume(token, reconnectIdle()));
+    PHPVPN_CHECK(!controller.observeDisconnect(reconnectIdle()));
+}
+PHPVPN_TEST(Reconnect, rejects_foreign_or_unsafe_idle_and_never_revives) {
+    for (int scenario = 0; scenario < 10; ++scenario) {
+        ReconnectController controller;
+        controller.begin(); controller.confirm(reconnectStatus()); controller.consent(); controller.revalidate(reconnectStatus());
+        const auto token = controller.token();
+        auto status = reconnectIdle();
+        switch (scenario) {
+            case 0: status.valid = false; break;
+            case 1: ++status.connectionEpoch; break;
+            case 2: status.connectionEpoch = 1; break; // service restart
+            case 3: status.connectAttemptId = "foreign"; break;
+            case 4: status.hasError = true; break;
+            case 5: status.tunnelReady = "yes"; break;
+            case 6: status.tunnelReady = "unknown"; break;
+            case 7: status.connectionStartedAtUtcMs = 123; break;
+            case 8: status.state = "error"; break;
+            case 9: status = reconnectStatus(); status.connectionStartedAtUtcMs = 456; break;
+        }
+        PHPVPN_CHECK(!controller.observeDisconnect(status));
+        PHPVPN_CHECK(!controller.current(token));
+        PHPVPN_CHECK(!controller.observeDisconnect(reconnectIdle()));
+        PHPVPN_CHECK(!controller.consume(token, reconnectIdle()));
+    }
+}
+PHPVPN_TEST(Reconnect, revalidation_and_cancellation_in_every_phase) {
+    for (int scenario = 0; scenario < 5; ++scenario) {
+        ReconnectController controller;
+        controller.begin(); controller.confirm(reconnectStatus()); controller.consent();
+        auto status = reconnectStatus();
+        switch (scenario) {
+            case 0: status.valid = false; break;
+            case 1: ++status.connectionEpoch; break;
+            case 2: status.connectAttemptId = "foreign"; break;
+            case 3: status.connectionStartedAtUtcMs = 456; break;
+            case 4: status.state = "recovering"; break;
+        }
+        PHPVPN_CHECK(!controller.revalidate(status));
+    }
+    for (int phase = 0; phase < 5; ++phase) {
+        ReconnectController controller;
+        controller.begin(); const auto old = controller.token();
+        if (phase > 0) controller.confirm(reconnectStatus());
+        if (phase > 1) controller.consent();
+        if (phase > 2) controller.revalidate(reconnectStatus());
+        if (phase > 3) controller.observeDisconnect(reconnectIdle());
+        controller.cancel();
+        PHPVPN_CHECK(!controller.current(old));
+        PHPVPN_CHECK(!controller.consume(old, reconnectIdle()));
+        PHPVPN_CHECK(controller.begin());
+        PHPVPN_CHECK(controller.token() != old);
+        PHPVPN_CHECK(!controller.consume(old, reconnectIdle()));
+    }
+}
+PHPVPN_TEST(Reconnect, expired_disconnect_reply_cannot_win_race_with_timer) {
+    for (const std::uint64_t now : {29999u, 30000u, 30001u}) {
+        ReconnectController controller;
+        controller.begin(); controller.confirm(reconnectStatus()); controller.consent(); controller.revalidate(reconnectStatus());
+        const auto token = controller.token();
+        PHPVPN_CHECK_EQ(controller.observeDisconnect(reconnectIdle(),now,30000), now < 30000);
+        PHPVPN_CHECK_EQ(controller.consume(token,reconnectIdle()), now < 30000);
+        PHPVPN_CHECK(!controller.observeDisconnect(reconnectIdle(),30002,30000));
+    }
 }
 PHPVPN_TEST(TrayApplicationSeam, OwnMutexShellAndMissingEndpointAreIsolated) {
     ShellCounts first, second, duplicate;

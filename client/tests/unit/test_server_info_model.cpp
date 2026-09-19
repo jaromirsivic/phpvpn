@@ -42,6 +42,7 @@ PHPVPN_TEST(ServerInfo, states_boundaries_count_sort_and_pages) {
         PHPVPN_REQUIRE_OK(model);
         PHPVPN_CHECK_EQ(model->rows.size(), static_cast<std::size_t>(count));
         PHPVPN_CHECK_EQ(model->validOnlineClients, static_cast<std::size_t>((count + 2) / 3));
+        PHPVPN_CHECK_EQ(model->onlineClients, static_cast<std::size_t>(count - count / 3));
         PHPVPN_CHECK_EQ(model->snapshot.infoPlaintext, snapshot.infoPlaintext);
         for (std::size_t i = 1; i < model->rows.size(); ++i) {
             PHPVPN_CHECK(model->rows[i - 1].state <= model->rows[i].state);
@@ -93,10 +94,34 @@ PHPVPN_TEST(ServerInfo, future_time_missing_contract_and_exact_status_text) {
     model = buildServerInfoModel(snapshot);
     PHPVPN_REQUIRE_OK(model);
     PHPVPN_CHECK_EQ(model->rows.front().state, ServerClientState::invalid);
+    PHPVPN_CHECK_EQ(model->onlineClients, std::size_t(1));
+    PHPVPN_CHECK_EQ(model->validOnlineClients, std::size_t(0));
+    PHPVPN_CHECK_EQ(serverInfoCountText(*model), "(1 online client, 0 valid contracts)");
     PHPVPN_CHECK_EQ(std::string(serverClientStateText(ServerClientState::valid)),
                     "Online - valid communication contract");
     PHPVPN_CHECK_EQ(std::string(serverClientStateText(ServerClientState::invalid)),
                     "Online - invalid communication contract");
     PHPVPN_CHECK_EQ(std::string(serverClientStateText(ServerClientState::offline)), "Offline");
+}
+PHPVPN_TEST(ServerInfo, independent_count_pluralization) {
+    const struct { std::size_t online, valid; const char* text; } cases[]{
+        {0,0,"(0 online clients, 0 valid contracts)"},
+        {1,0,"(1 online client, 0 valid contracts)"},
+        {1,1,"(1 online client, 1 valid contract)"},
+        {4,0,"(4 online clients, 0 valid contracts)"},
+        {4,1,"(4 online clients, 1 valid contract)"},
+        {4,4,"(4 online clients, 4 valid contracts)"},
+    };
+    for (const auto& value : cases) {
+        ServerInfoModel model;
+        model.onlineClients = value.online; model.validOnlineClients = value.valid;
+        PHPVPN_CHECK_EQ(serverInfoCountText(model), value.text);
+    }
+    const auto model = buildServerInfoModel(fixture(252));
+    PHPVPN_REQUIRE_OK(model);
+    PHPVPN_CHECK_EQ(serverInfoCountText(*model), "(168 online clients, 84 valid contracts)");
+    const auto empty = buildServerInfoModel(fixture(0));
+    PHPVPN_REQUIRE_OK(empty);
+    PHPVPN_CHECK_EQ(serverInfoCountText(*empty), "(0 online clients, 0 valid contracts)");
 }
 } // namespace phpvpn

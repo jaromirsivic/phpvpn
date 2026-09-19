@@ -800,7 +800,7 @@ void serverInformationIdlePaint() {
         const auto window = info.window(), table = child(window, 7102), header = ListView_GetHeader(table);
         check(ListView_GetItemCount(table) == static_cast<int>(std::min(rows, 20u)), "wrong fixture row count");
         if (rows == 0) {
-            check(text(window) == L"Server information (0 valid online clients)", "empty table title");
+    check(text(window) == L"Server information (0 online clients, 0 valid contracts)", "empty table title");
             const auto parsed = ResponseParser::parseInfoPlaintext(narrow(text(child(window, IDC_TEXT_AREA))),
                 *Ipv4Address::parse("10.99.99.2"));
             check(parsed.ok() && parsed->clients.size() == 1, "empty fixture must retain the local client in raw JSON");
@@ -856,8 +856,8 @@ void serverInformationTabs() {
     { std::lock_guard lock(gui.backend.mutex); check(original == widen(gui.backend.lastInfoPlaintext), "raw plaintext changed in IPC/EDIT"); }
     check(original.find(L'\n') != std::wstring::npos, "pretty fixture not multiline");
     check(original.find(L"\r\n") != std::wstring::npos && SendMessageW(field,EM_GETLINECOUNT,0,0)>2,"CRLF plaintext is not displayed as multiple lines");
-    check(text(window) == L"Server information (1 valid online client)", "singular title");
-    check(text(child(window, 7104)) == L"(1 valid online client)", "whole bracket count");
+    check(text(window) == L"Server information (1 online client, 1 valid contract)", "singular title");
+    check(text(child(window, 7104)) == L"(1 online client, 1 valid contract)", "whole bracket count");
     auto dc = GetDC(window);
     SendMessageW(window, WM_CTLCOLORSTATIC, reinterpret_cast<WPARAM>(dc), reinterpret_cast<LPARAM>(child(window,7104)));
     UiResources palette; palette.update(GetModuleHandleW(nullptr), GetDpiForWindow(window), false);
@@ -894,7 +894,8 @@ void serverInformationRefresh() {
     gui.until([&]{auto h=findTop(L"PHPVPN.ServerInformation");return h && IsWindowVisible(h);},"info snapshot not shown");
     const auto window=findTop(L"PHPVPN.ServerInformation"),table=child(window,7102),raw=child(window,IDC_TEXT_AREA);
     check(ListView_GetItemCount(table)==20,"table must contain one page only");
-    check(text(window)==L"Server information (84 valid online clients)","full model count");
+    check(text(window)==L"Server information (168 online clients, 84 valid contracts)","full model count");
+    check(text(window)==L"Server information "+text(child(window,7104)),"title and summary differ");
     const auto original=text(raw);
     auto parsed=ResponseParser::parseInfoPlaintext(narrow(original),*Ipv4Address::parse("10.99.99.2"));
     check(parsed.ok() && parsed->clients.size()==253,"raw snapshot incomplete");
@@ -915,7 +916,8 @@ void serverInformationRefresh() {
     check(text(raw)==original && ListView_GetItemCount(table)==12,"failed Refresh replaced part of snapshot");
     {std::lock_guard lock(gui.backend.mutex);gui.backend.infoError=false;gui.backend.infoRowCount=1;}
     SendMessageW(child(window,7101),BM_CLICK,0,0);
-    gui.until([&]{return text(window)==L"Server information (1 valid online client)";},"new snapshot not installed");
+    gui.until([&]{return text(window)==L"Server information (1 online client, 1 valid contract)";},"new snapshot not installed");
+    check(text(window)==L"Server information "+text(child(window,7104)),"refreshed title and summary differ");
     check(ListView_GetItemCount(table)==1 && text(raw)!=original,"successful Refresh did not replace both views");
     check(gui.backend.count(&Backend::unexpectedInfoCommands)==0,"extra info commands");
     editorClick(window,IDOK);gui.until([&]{return !IsWindow(window);},"Info close");
@@ -927,7 +929,7 @@ void serverInformationAutoRefresh() {
     info.open(GetModuleHandleW(nullptr));
     gui.until([&] { return info.window() && IsWindowVisible(info.window()); }, "initial info");
     auto root = info.window(), toggle = child(root,7103), refresh = child(root,7101);
-    check(text(root) == L"Server information (0 valid online clients)", "zero grammar");
+    check(text(root) == L"Server information (0 online clients, 0 valid contracts)", "zero grammar");
     check(text(toggle) == L"Auto refresh" && SendMessageW(toggle,BM_GETCHECK,0,0) == BST_UNCHECKED, "initial auto state/name");
     check(GetNextDlgTabItem(root,refresh,FALSE) == toggle && GetNextDlgTabItem(root,toggle,FALSE) == GetDlgItem(root,IDOK), "auto tab order");
     check(GetNextDlgTabItem(root,toggle,TRUE) == refresh, "auto reverse tab order");
@@ -1014,12 +1016,22 @@ void serverInformationClosePending() {
     check(ListView_GetItemCount(child(info.window(),7102))==20,"reopened Info has wrong snapshot");
     check(gui.backend.count(&Backend::infoStarted)==2,"reopen must issue exactly one fresh request");
     // Exercise the longest supported count label in the actual native layout.
-    SetWindowTextW(child(info.window(),7104),L"(252 valid online clients)");
+    SetWindowTextW(child(info.window(),7104),L"(252 online clients, 252 valid contracts)");
     for(const auto size : {Size{320,480},Size{640,480},Size{1080,560}}) {
         resizeClient(info.window(),size.width,size.height);gui.pump();
         const auto refresh=boundsIn(info.window(),child(info.window(),7101));
         const auto ok=boundsIn(info.window(),GetDlgItem(info.window(),IDOK));
         RECT client{};GetClientRect(info.window(),&client);
+        const auto count=child(info.window(),7104);
+        const auto countBounds=boundsIn(info.window(),count);
+        auto dc=GetDC(count);
+        const auto old=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(count,WM_GETFONT,0,0)));
+        RECT measured{0,0,countBounds.right-countBounds.left,0};
+        const auto countText=text(count);
+        DrawTextW(dc,countText.c_str(),-1,&measured,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+        SelectObject(dc,old);ReleaseDC(count,dc);
+        check(countBounds.left>=0 && countBounds.right<=client.right && countBounds.bottom-countBounds.top>=measured.bottom,
+            "online/valid count is clipped");
         const auto automatic=boundsIn(info.window(),child(info.window(),7103));
         check(refresh.left>=0 && refresh.right<automatic.left && refresh.top==automatic.top &&
             (automatic.right<ok.left || automatic.bottom<ok.top) && ok.right<=client.right && ok.bottom<=client.bottom,"small Info footer clipped");

@@ -3,7 +3,7 @@
 #include "wizard_reader.h"
 
 namespace phpvpn::tray {
-enum class ContractsStage { loading, editing, invalid, saving, saveUnknown, closed };
+enum class ContractsStage { loading, editing, invalid, saving, saved, saveUnknown, closed };
 enum class ContractsEvent { none, saved, matched, rejected, unknown, different, checkFailed };
 struct ContractsLifecycleSnapshot {
     bool open = false, dirty = false, saving = false, unknown = false, checking = false;

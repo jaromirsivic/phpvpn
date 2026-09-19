@@ -37,6 +37,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Native GUI capture and redirected Windows PowerShell 5.1 output share UTF-8.
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
+
 $package = Split-Path -Parent $MyInvocation.MyCommand.Path
 $installRoot = Join-Path $env:ProgramFiles "phpvpn"
 $dataRoot = Join-Path $env:ProgramData "phpvpn"

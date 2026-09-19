@@ -1,11 +1,6 @@
-# Every executable carries the same version block, the asInvoker manifest and
-# the product icon, plan_client.md chapter 5. The manifest comes from the
+# Executables carry a version block and per-target manifest/icon. The manifest comes from the
 # resource script, so the linker must not generate a second one.
-string(REPLACE "." "," PHPVPN_RC_VERSION_COMMA "${PHPVPN_CLIENT_VERSION}.0")
-set(PHPVPN_RC_VERSION "${PHPVPN_CLIENT_VERSION}")
-set(PHPVPN_RC_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/app.manifest")
 get_filename_component(PHPVPN_ICON_DIRECTORY "${CMAKE_SOURCE_DIR}/../assets" ABSOLUTE)
-set(PHPVPN_RC_ICON "${PHPVPN_ICON_DIRECTORY}/default.ico")
 foreach(icon IN ITEMS default connected connecting disconnected)
     if(NOT EXISTS "${PHPVPN_ICON_DIRECTORY}/${icon}.ico")
         message(FATAL_ERROR "Missing application icon: ${icon}.ico")
@@ -20,6 +15,17 @@ function(phpvpn_add_tray_resources target)
 endfunction()
 
 function(phpvpn_add_version_resource target description internalName originalName withIcon)
+    string(REPLACE "." "," PHPVPN_RC_VERSION_COMMA "${PHPVPN_CLIENT_VERSION}.0")
+    set(PHPVPN_RC_VERSION "${PHPVPN_CLIENT_VERSION}")
+    set(PHPVPN_RC_MANIFEST "${CMAKE_SOURCE_DIR}/apps/app.manifest")
+    set(PHPVPN_RC_ICON "${CMAKE_SOURCE_DIR}/../assets/default.ico")
+    cmake_parse_arguments(RESOURCE "" "MANIFEST;ICON" "" ${ARGN})
+    if(RESOURCE_MANIFEST)
+        set(PHPVPN_RC_MANIFEST "${RESOURCE_MANIFEST}")
+    endif()
+    if(RESOURCE_ICON)
+        set(PHPVPN_RC_ICON "${RESOURCE_ICON}")
+    endif()
     set(PHPVPN_RC_DESCRIPTION "${description}")
     set(PHPVPN_RC_INTERNAL_NAME "${internalName}")
     set(PHPVPN_RC_ORIGINAL_NAME "${originalName}")
@@ -30,7 +36,7 @@ function(phpvpn_add_version_resource target description internalName originalNam
     endif()
 
     set(generated "${CMAKE_CURRENT_BINARY_DIR}/${target}-version.rc")
-    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/version.rc.in" "${generated}" @ONLY)
+    configure_file("${CMAKE_SOURCE_DIR}/apps/version.rc.in" "${generated}" @ONLY)
     if(withIcon)
         set_property(SOURCE "${generated}" PROPERTY OBJECT_DEPENDS "${PHPVPN_RC_ICON}")
     endif()
@@ -88,6 +94,27 @@ set_target_properties(phpvpn-tray PROPERTIES OUTPUT_NAME "phpvpn-tray")
 # The tray already declares the three state icons, so the shared resource only
 # adds the version block and the manifest that enables the visual styles.
 phpvpn_add_version_resource(phpvpn-tray "phpvpn tray client" "phpvpn-tray" "phpvpn-tray.exe" FALSE)
+
+add_library(phpvpn-package-runner STATIC package_gui/script_runner.cpp)
+target_include_directories(phpvpn-package-runner PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/package_gui")
+target_link_libraries(phpvpn-package-runner PUBLIC phpvpn-compile-options)
+add_library(phpvpn-package-window STATIC package_gui/package_window.cpp tray/window_utils.cpp tray/layout.cpp
+    tray/ui_controls.cpp tray/ui_resources.cpp)
+target_link_libraries(phpvpn-package-window PUBLIC phpvpn-package-runner comctl32 shell32 ole32 oleaut32 oleacc user32 gdi32 uxtheme)
+foreach(mode IN ITEMS install uninstall)
+    add_executable(phpvpn-${mode} WIN32 package_gui/main.cpp)
+    target_link_libraries(phpvpn-${mode} PRIVATE phpvpn-package-window)
+    set_target_properties(phpvpn-${mode} PROPERTIES OUTPUT_NAME "${mode}-phpvpn")
+    if(mode STREQUAL "install")
+        set(package_icon connected)
+    else()
+        set(package_icon disconnected)
+        target_compile_definitions(phpvpn-${mode} PRIVATE PHPVPN_PACKAGE_UNINSTALL)
+    endif()
+    phpvpn_add_version_resource(phpvpn-${mode} "phpvpn ${mode} launcher" "${mode}-phpvpn" "${mode}-phpvpn.exe" TRUE
+        MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/package_gui/admin.manifest"
+        ICON "${PHPVPN_ICON_DIRECTORY}/${package_icon}.ico")
+endforeach()
 
 # Wintun ships as an architecture specific binary that must keep its own name.
 if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64")

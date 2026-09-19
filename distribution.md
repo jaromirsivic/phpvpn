@@ -29,6 +29,8 @@ dist/
         install.ps1
         uninstall.bat
         uninstall.ps1
+        install-phpvpn.exe
+        uninstall-phpvpn.exe
         phpvpn-service.exe
         phpvpn-tray.exe
         phpvpn.exe
@@ -52,6 +54,10 @@ Uvedené Windows soubory tvoří základ aktuální klientské distribuce. Sezna
 Název distribučního souboru `phpvpn.php` odpovídá příkladům `/phpvpn.php` v protokolové dokumentaci. `serverUrl` klienta musí ukazovat na skutečnou URL tohoto souboru. Podpora jiného názvu skriptu a cesty se řídí [client.md](client.md). Distribuce NESMÍ přebírat starší nasazenou kopii nebo lokální provozní konfiguraci namísto aktuálního zdroje určeného k vydání.
 
 ### Windows x64
+
+Grafické vstupy `install-phpvpn.exe` a `uninstall-phpvpn.exe` spouštějí odpovídající PowerShell skript ze stejné složky a vyžadují administrátorská práva přes vlastní UAC manifest. Zobrazují živý výstup, jantarový průběh a zelený nebo červený výsledek podle návratového kódu. Okno po dokončení zůstává otevřené. Během operace je běžné zavření blokované. Odmítnutí UAC nastane před spuštěním GUI, proto nemůže zobrazit červený stav v okně.
+
+Oba launchery spouštěj z rozbalené distribuce mimo `%ProgramFiles%\phpvpn`. Spuštění kopie z instalované generace může při upgrade nebo odinstalaci zamknout vlastní EXE a operace pak může skončit chybou. Launcher neprovádí self-delete ani obcházení tohoto zámku. Standardní grafická odinstalace nepředává `-RemoveData`, konfigurace a logy tedy zůstávají zachované. Původní BAT a PowerShell vstupy včetně `-VerifyOnly` zůstávají dostupné.
 
 `dist/client/Windows/x64` MUSÍ být úplnou samostatně předatelnou klientskou distribucí pro Windows x64. Binární soubory se MUSÍ sestavit z aktuálních klientských zdrojů a všechny architekturně závislé součásti MUSÍ odpovídat x64. `install.bat` je vstupní bod instalace, `install.ps1` a všechny další jím volané součásti MUSÍ být přítomné a dostupné přes správné relativní cesty uvnitř balíčku. Totéž platí pro odinstalační skripty.
 
@@ -78,6 +84,6 @@ V aktuální etapě je implementovaným cílem Windows x64. Pokud pro macOS nebo
 
 Aktuální [client/tools/make-dist.ps1](client/tools/make-dist.ps1) sestavuje plochý Windows balíček a jeho výchozí výstup je `dist`. Při použití pro tuto metodiku se MUSÍ výstup výslovně nasměrovat do `dist/client/Windows/x64` pomocí `-OutputDirectory`, případně do odpovídající složky nově připravovaného stromu. Samotný nástroj nevytváří serverovou část ani platformní složky macOS a Linux, jejich přípravu MUSÍ zajistit celkový postup sestavení. Dokumentace tímto popisuje požadované použití stávajícího nástroje, netvrdí, že jeho výchozí chování již sestavuje celý distribuční strom.
 
-Windows balíček se ověřuje také pomocí `client/tools/verify-package.ps1 -PackageDirectory <cesta>`. Tento read-only krok kontroluje shodu skriptů, manifest, podpisy, VerifyOnly a přesné vložené ICO resources všech tří produkčních EXE. Vyžaduje sestavený `phpvpn-icon-resource-tests`, standardně z presetu `release` s `BUILD_TESTING=ON`. Jiný ověřovací build lze zadat přes `-IconResourceTest`. Čtyři zdrojové ICO se používají pouze při sestavení a ověřování, do provozního balíčku se samostatně nepřidávají.
+Windows balíček se ověřuje také pomocí `client/tools/verify-package.ps1 -PackageDirectory <cesta>`. Tento read-only krok kontroluje shodu skriptů, povinnou přítomnost pěti EXE, manifest, podpisy, VerifyOnly a přesné vložené ICO resources všech pěti produkčních EXE včetně úrovní UAC. Vyžaduje sestavený `phpvpn-icon-resource-tests`, standardně z presetu `release` s `BUILD_TESTING=ON`. Jiný ověřovací build lze zadat přes `-IconResourceTest`. Čtyři zdrojové ICO se používají pouze při sestavení a ověřování, do provozního balíčku se samostatně nepřidávají.
 
 Status stránka je vložená přímo v `phpvpn.php`. Distribuovaný server nepotřebuje `assets/index.html`.

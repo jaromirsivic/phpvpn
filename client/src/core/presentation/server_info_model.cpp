@@ -30,6 +30,7 @@ Result<ServerInfoModel> buildServerInfoModel(ServerInfoSnapshot snapshot) {
             continue;
         ServerClientState state = ServerClientState::offline;
         if (generatedAt - client.lastSeenMs <= 60000) {
+            ++model.onlineClients;
             state = ServerClientState::invalid;
             const auto found =
                 std::find_if(local->begin(), local->end(), [&](const auto &c) { return c.peer == client.address; });
@@ -46,6 +47,12 @@ Result<ServerInfoModel> buildServerInfoModel(ServerInfoSnapshot snapshot) {
               [](const auto &a, const auto &b) { return a.state != b.state ? a.state < b.state : a.peer < b.peer; });
     model.snapshot = std::move(snapshot);
     return model;
+}
+std::string serverInfoCountText(const ServerInfoModel& model) {
+    return "(" + std::to_string(model.onlineClients) +
+        (model.onlineClients == 1 ? " online client, " : " online clients, ") +
+        std::to_string(model.validOnlineClients) +
+        (model.validOnlineClients == 1 ? " valid contract)" : " valid contracts)");
 }
 Result<ServerInfoSnapshot> parseServerInfoResult(std::string_view response) {
     if (response.size() > kIpcMaxMessageBytes)

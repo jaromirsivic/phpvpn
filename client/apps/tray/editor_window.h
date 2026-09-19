@@ -29,6 +29,7 @@ public:
     EditorLifecycleSnapshot lifecycleSnapshot() const;
     std::optional<SaveOperation> beginSave(std::uint64_t deadlineMs);
     bool finishSave(const SaveResult& result);
+    std::function<void(const EditorLifecycleSnapshot&)> onSaved;
     bool approvedDiscard(const EditorLifecycleSnapshot& approved);
     void endSession();
     std::uint64_t generation() const { return generation_; }
@@ -61,7 +62,7 @@ private:
     struct ResetTask;
     std::shared_ptr<ResetTask> resetTask_;
     std::thread resetThread_;
-    bool saving_ = false;
+    bool saving_ = false, savedPending_ = false;
     bool unknown_ = false, endingSession_ = false, changingContent_ = false;
     std::uint64_t draftGeneration_ = 0, operationGeneration_ = 0;
     SaveOperation saveOperation_;

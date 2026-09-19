@@ -236,8 +236,7 @@ void ServerInfoWindow::finish() {
 void ServerInfoWindow::display() {
     if (!model_)
         return;
-    const auto countText = L"(" + std::to_wstring(model_->validOnlineClients) +
-        (model_->validOnlineClients == 1 ? L" valid online client)" : L" valid online clients)");
+    const auto countText = widen(serverInfoCountText(*model_));
     const auto title = L"Server information " + countText;
     SetWindowTextW(count_, countText.c_str());
     SetWindowTextW(window_, title.c_str());

@@ -28,6 +28,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Keep stdout, stderr and native child output compatible with the GUI decoder.
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
+
 $installRoot = Join-Path $env:ProgramFiles "phpvpn"
 $dataRoot = Join-Path $env:ProgramData "phpvpn"
 

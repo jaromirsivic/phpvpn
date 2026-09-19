@@ -13,6 +13,7 @@
 #include "ui_resources.h"
 #include "shell_adapter.h"
 #include "system_dialog.h"
+#include "reconnect_controller.h"
 
 namespace phpvpn::tray {
 // Explicit, owned runtime dependencies. No production default exists here.
@@ -50,11 +51,19 @@ private:
     void showMenu(bool keyboard);
     void updateIcon();
     void onSnapshot(const TrayStatus& snapshot);
-    void startCommand(IpcCommand command, const std::string& payload = {});
+    bool startCommand(IpcCommand command, const std::string& payload = {}, bool reconnectDisconnect = false);
     void finishCommand();
     void startConfigAction(MenuAction action);
     void finishConfigAction();
     void finishDisconnect();
+    void requestReconnectAfterSave();
+    void finishSavedStatus();
+    bool savedSessionLive() const;
+    void finishSavedSession();
+    void cancelReconnect();
+    void observeReconnectDisconnect(const TrayStatus& status, std::uint64_t token);
+    void runQueuedConnect(std::uint64_t token);
+    void pollReconnect();
     void showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason = {});
     void openEditor(const std::string& text, const std::string& path);
     void advanceExit();
@@ -84,6 +93,11 @@ private:
     StatusReader statusReader_;
     CommandReader commands_;
     CommandReader disconnect_;
+    CommandReader savedStatus_;
+    ReconnectController reconnect_;
+    std::optional<EditorLifecycleSnapshot> savedEditor_;
+    std::optional<ContractsLifecycleSnapshot> savedContracts_;
+    std::uint64_t savedStatusDeadline_ = 0;
     WizardReader config_;
     std::optional<MenuAction> configAction_;
     std::optional<IpcCommand> pendingCommand_;

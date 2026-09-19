@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     plan_client.md chapters 3.5, 20.1 and 20.2. The result is a complete,
-    handover ready folder that contains the three executables, the unrenamed
+    handover ready folder that contains the five executables, the unrenamed
     architecture specific wintun.dll, both upstream licences, the install and
     uninstall scripts and a signed release manifest with a SHA-256 for every
     packaged file.
@@ -23,7 +23,7 @@ param(
     # local package can be produced without a release key.
     [string]$CertificateThumbprint = "7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8",
 
-    # Also applies an Authenticode signature to the three executables.
+    # Also applies an Authenticode signature to all five executables.
     [switch]$SignBinaries
 )
 
@@ -263,7 +263,7 @@ function Test-ByteArrayEqual {
 
 # ---------------------------------------------------------------- build inputs
 
-$binaries = @("phpvpn-service.exe", "phpvpn-tray.exe", "phpvpn.exe")
+$binaries = @("phpvpn-service.exe", "phpvpn-tray.exe", "phpvpn.exe", "install-phpvpn.exe", "uninstall-phpvpn.exe")
 foreach ($name in $binaries + @("wintun.dll")) {
     $path = Join-Path $appsDirectory $name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -272,6 +272,11 @@ foreach ($name in $binaries + @("wintun.dll")) {
 }
 
 $architecture = Get-PeMachine (Join-Path $appsDirectory "phpvpn-service.exe")
+foreach ($name in $binaries) {
+    if ((Get-PeMachine (Join-Path $appsDirectory $name)) -ne $architecture) {
+        throw "$name does not match the package architecture $architecture."
+    }
+}
 $driverArchitecture = Get-PeMachine (Join-Path $appsDirectory "wintun.dll")
 if ($architecture -ne $driverArchitecture) {
     throw "The service is $architecture but wintun.dll is $driverArchitecture."
