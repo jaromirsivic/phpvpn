@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "poll_schedule.h"
 #include "progress_details.h"
 #include "progress_layout.h"
@@ -16,8 +17,11 @@ class ProgressWindow {
     ~ProgressWindow();
     void open(HINSTANCE instance, bool disconnect = false);
     void onDisconnectReply(const TrayStatus& snapshot);
+    void onDisconnectTimeout();
+    std::function<void(const TrayStatus&)> disconnectSnapshot;
     bool disconnectPending() const {
-        return window_ && disconnect_ && model_.view().stage == ProgressStage::connecting;
+        return window_ && disconnect_ && model_.view().stage == ProgressStage::connecting &&
+            !model_.view().statusUnavailable && model_.view().errorCode.empty();
     }
     void endSession();
     void onSnapshot(const TrayStatus &snapshot);

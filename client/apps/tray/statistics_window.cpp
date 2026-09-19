@@ -96,7 +96,7 @@ void StatisticsWindow::updateResources() {
         font(h, ui::Font::label);
     for (auto h : values_)
         font(h, ui::Font::counter);
-    SendMessageW(window_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(resources_.icon(2)));
+    resources_.applyApplicationIcons(window_);
 }
 void StatisticsWindow::refresh() {
     bool changed = setText(freshness_, model_.freshness());

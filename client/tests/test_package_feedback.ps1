@@ -81,7 +81,7 @@ if ($Scenario) {
     function Test-Path {
         param($LiteralPath, $PathType)
         if ($LiteralPath -eq '\\.\pipe\phpvpn-control-v1') { return $Scenario -ne 'pipe-failure' }
-        if ($Scenario -in @('fallback', 'sc-failure', 'service-stop-failure') -and $LiteralPath -like '*phpvpn-service.exe') { return $false }
+        if ($Scenario -in @('fallback', 'fallback-autostart-failure', 'sc-failure', 'service-stop-failure') -and $LiteralPath -like '*phpvpn-service.exe') { return $false }
         return Microsoft.PowerShell.Management\Test-Path @PSBoundParameters
     }
     function Get-Item {
@@ -102,6 +102,10 @@ if ($Scenario) {
         param([string]$Action)
         Write-TestEvent "native:$Action"
         $global:LASTEXITCODE = 0
+        if ($Action -in @('--install', '--uninstall')) {
+            Write-TestEvent 'autostart-owned-by-service'
+            if ($Scenario -eq 'autostart-failure') { Write-Output 'WARNING: phpvpn-tray autostart failed (Win32 5).' }
+        }
         if (($Scenario -eq 'disconnect-failure' -and $Action -eq 'disconnect') -or
             ($Scenario -eq 'native-failure' -and $Action -in @('--install', '--uninstall')) -or
             ($Scenario -eq 'sc-failure' -and $Action -eq 'delete')) { $global:LASTEXITCODE = 19 }
@@ -117,6 +121,9 @@ if ($Scenario) {
     foreach ($function in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
         if ($function.Name -eq 'Assert-Administrator') {
             $edits += @{ Start = $function.Extent.StartOffset; End = $function.Extent.EndOffset; Text = 'function Assert-Administrator { return $Scenario -notlike "uac-*" }' }
+        }
+        if ($function.Name -eq 'Remove-TrayAutostartFallback') {
+            $edits += @{ Start = $function.Extent.StartOffset; End = $function.Extent.EndOffset; Text = 'function Remove-TrayAutostartFallback { Write-TestEvent "autostart-fallback"; if ($Scenario -eq "fallback-autostart-failure") { Write-Warning "phpvpn-tray autostart cleanup failed (HRESULT -2147024891)." } }' }
         }
         if ($function.Name -eq 'New-ProtectedDirectory') {
             $edits += @{ Start = $function.Extent.StartOffset; End = $function.Extent.EndOffset; Text = 'function New-ProtectedDirectory { param($Path) New-Item -ItemType Directory -Path $Path -Force | Out-Null }' }
@@ -162,7 +169,7 @@ try {
         $success = if ($operationName -eq 'install') { 'PHPVPN installed successfully' } else { 'PHPVPN uninstalled successfully' }
         $cases = @('success', 'native-failure', 'autostart-failure', 'uac-success', 'uac-failure', 'uac-cancelled')
         if ($operationName -eq 'install') { $cases += @('verify', 'preflight-failure', 'copy-failure', 'service-start-failure', 'pipe-failure', 'tray-failure') }
-        else { $cases += @('remove-data', 'uac-remove-data', 'already-absent', 'fallback', 'disconnect-failure', 'service-stop-failure', 'sc-failure', 'reparse', 'remove-failure') }
+        else { $cases += @('remove-data', 'uac-remove-data', 'already-absent', 'fallback', 'fallback-autostart-failure', 'disconnect-failure', 'service-stop-failure', 'sc-failure', 'reparse', 'remove-failure') }
         foreach ($case in $cases) {
             $fixture = Join-Path $temp "$operationName-$case"
             $ErrorActionPreference = 'Continue' # Capture expected native stderr as diagnostics.
@@ -170,9 +177,12 @@ try {
             $code = $LASTEXITCODE
             $ErrorActionPreference = 'Stop'
             $text = $output -join "`n"
-            $showBox = $case -in @('success', 'remove-data', 'already-absent', 'fallback')
+            $showBox = $case -in @('success', 'remove-data', 'already-absent', 'fallback', 'fallback-autostart-failure', 'autostart-failure')
             $expectedCode = if ($case -eq 'uac-failure') { 37 } elseif ($showBox -or $case -in @('verify', 'uac-success', 'uac-remove-data')) { 0 } else { 1 }
             if ($code -ne $expectedCode) { throw "$operationName/$case returned $code instead of ${expectedCode}: $text" }
+            if ($case -in @('autostart-failure', 'fallback-autostart-failure') -and $text -notmatch 'WARNING: phpvpn-tray') { throw 'Autostart warning was lost' }
+            if ($operationName -eq 'uninstall' -and $case -in @('fallback', 'fallback-autostart-failure', 'sc-failure', 'service-stop-failure') -and
+                $text -notmatch 'TEST:autostart-fallback') { throw 'Fallback cleanup skipped after SCM outcome' }
             $boxCount = [regex]::Matches($text, [regex]::Escape($success)).Count
             $sleepCount = [regex]::Matches($text, 'TEST:sleep:3\b').Count
             if ($boxCount -ne [int]$showBox -or $sleepCount -ne [int]$showBox) { throw "Wrong success/delay path for $operationName/${case}: $text" }

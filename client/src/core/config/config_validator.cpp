@@ -147,10 +147,12 @@ Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings&
                                                           "accessKey",
                                                           "useDefaultServerSecretInWizard",
                                                           "autoDetectIpAddressInWizard",
-                                                          "useDefaultAccessKeyInWizard"};
+                                                          "useDefaultAccessKeyInWizard",
+                                                          "autoConnectOnStartup"};
     PHPVPN_TRY(requireKnownMembers(*master, kMasterMembers, "masterSetup"));
 
     auto config = std::make_shared<ConfigValues>();
+    PHPVPN_TRY_ASSIGN(config->autoConnectOnStartup, readAutoConnectOnStartup(document));
     config->rawJson.assign(json);
     PHPVPN_TRY_ASSIGN(config->httpHeaders, requireString(*master, "httpHeaders", "masterSetup"));
     PHPVPN_TRY(normalizeHttpHeaders(config->httpHeaders));
@@ -336,6 +338,7 @@ Result<ClientConfigPtr> parseAndValidateConfig(std::string_view json, ConfigWarn
     config->serverUrl = std::move(values->serverUrl);
     config->serverSecret = std::move(values->serverSecret);
     config->trustAnyTlsCertificate = values->trustAnyTlsCertificate;
+    config->autoConnectOnStartup = values->autoConnectOnStartup;
     config->vpnCidr = values->vpnCidr;
     config->virtualIp = *values->virtualIp;
     config->accessKey = std::move(*values->accessKey);

@@ -72,10 +72,23 @@ Status validateWizardIdentity(const WizardDocument& document, const WizardFields
     if (fields.accessKey.size() != 64 || !isLowercaseHex(fields.accessKey)) return Error(ErrorCode::config_invalid_key);
     return ok();
 }
+Result<bool> readAutoConnectOnStartup(const JsonValue& document) {
+    const auto* master = document.find("masterSetup");
+    if (!document.isObject() || !master || !master->isObject())
+        return Error(ErrorCode::config_invalid_value, "masterSetup must be an object");
+    const auto* value = master->find("autoConnectOnStartup");
+    if (!value) return false;
+    if (!value->isBool())
+        return Error(ErrorCode::config_invalid_value, "autoConnectOnStartup must be a boolean");
+    return value->boolValue();
+}
+
 Result<std::string> buildWizardDocument(CryptoProvider& crypto, const WizardDocument& original,
     WizardMode mode, const WizardFields& fields, bool createDefaultContracts) {
     PHPVPN_TRY(validateWizardIdentity(original, fields));
     JsonValue dom = original.dom;
+    bool autoConnect = false;
+    PHPVPN_TRY_ASSIGN(autoConnect, readAutoConnectOnStartup(dom));
     auto set = [](JsonValue& object, const std::string& key, JsonValue value) {
         for (auto& member : object.objectValue()) {
             if (member.first == key) { member.second = std::move(value); return; }
@@ -91,6 +104,14 @@ Result<std::string> buildWizardDocument(CryptoProvider& crypto, const WizardDocu
         set(member.second, "useDefaultServerSecretInWizard", JsonValue::makeBool(fields.useDefaultServerSecretInWizard));
         set(member.second, "autoDetectIpAddressInWizard", JsonValue::makeBool(fields.autoDetectIpAddressInWizard));
         set(member.second, "useDefaultAccessKeyInWizard", JsonValue::makeBool(fields.useDefaultAccessKeyInWizard));
+        // Identity fields may have been appended by create/repair. Keep the
+        // documented final pair in order without changing unrelated members.
+        if (mode == WizardMode::create || mode == WizardMode::reset)
+            std::erase_if(member.second.objectValue(), [](const auto& item) {
+                return item.first == "useDefaultAccessKeyInWizard" || item.first == "autoConnectOnStartup";
+            });
+        set(member.second, "useDefaultAccessKeyInWizard", JsonValue::makeBool(fields.useDefaultAccessKeyInWizard));
+        set(member.second, "autoConnectOnStartup", JsonValue::makeBool(autoConnect));
     }
     if (createDefaultContracts && !supportsDefaultContracts(original.context.vpnCidr)) return Error(ErrorCode::invalid_argument);
     const auto own = *Ipv4Address::parse(fields.virtualIp);

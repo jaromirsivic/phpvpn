@@ -69,6 +69,7 @@ add_library(phpvpn-platform STATIC
     platform/windows/ipc_pipe.cpp
     platform/windows/netconfig_iphlpapi.cpp
     platform/windows/paths_win.cpp
+    platform/windows/tray_autostart.cpp
     platform/windows/transport_winhttp.cpp
     platform/windows/tunnel_wintun.cpp
 )

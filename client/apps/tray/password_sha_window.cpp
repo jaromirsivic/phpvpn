@@ -110,6 +110,7 @@ bool PasswordShaWindow::translate(MSG& message) const {
 }
 void PasswordShaWindow::resources() {
     if (!resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)), false)) return;
+    resources_.applyApplicationIcons(window_);
     for (auto h : labels_) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
     SendMessageW(labels_[0], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::card)), TRUE);
     SendMessageW(labels_[3], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::hint)), TRUE);

@@ -9,6 +9,9 @@
 #include "platform/iface/transport.h"
 #include "tray_fixture.h"
 #include "wp03_dialog_test.h"
+#include "icon_test_helpers.h"
+#include "../../apps/tray/system_dialog.h"
+#include "../../apps/tray/tray_application.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -941,4 +944,110 @@ PHPVPN_TEST(WP03Windows, FiveHundredPaintsAndTwentyWindowCyclesKeepObjectsStable
               << GetGuiResources(process, GR_USEROBJECTS) - user << "\n";
     PHPVPN_CHECK(GetGuiResources(process, GR_GDIOBJECTS) <= gdi + 5);
     PHPVPN_CHECK(GetGuiResources(process, GR_USEROBJECTS) <= user + 5);
+}
+
+PHPVPN_TEST(WindowIcons, ProgressStatisticsEditorAndSystemDialogsKeepDefault) {
+    const auto instance = GetModuleHandleW(nullptr);
+    const auto pipe = LR"(\\.\pipe\phpvpn-icons-absent)";
+    phpvpn::tray::ProgressWindow progress(pipe);
+    auto status = phpvpn::tray::parseStatusResponse(phpvpn::tray::test::kStatusFixture);
+    progress.open(instance);
+    PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(progress.window()));
+    for (const auto* state : {"connecting", "connected", "recovering", "error"}) {
+        status.state = state;
+        progress.onSnapshot(status);
+        PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(progress.window()));
+    }
+    progress.endSession(); progress.open(instance, true);
+    PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(progress.window()));
+    PHPVPN_CHECK(progress.disconnectPending());
+    progress.onDisconnectTimeout();
+    PHPVPN_CHECK(!progress.disconnectPending());
+    PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(progress.window()));
+    progress.endSession();
+    phpvpn::tray::StatisticsWindow statistics;
+    statistics.open(instance, status);
+    PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(statistics.window()));
+    phpvpn::tray::EditorWindow editor(pipe);
+    editor.open(instance, L"Icon test", "{}", {});
+    PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(editor.window()));
+    editor.endSession();
+    namespace dialogs = phpvpn::tray::test;
+    unsigned observed = 0;
+    dialogs::dialogObserver = [&](HWND window) { ++observed; PHPVPN_CHECK(dialogs::applicationIconsMatch(window)); };
+    dialogs::answer(IDOK, [&] { phpvpn::tray::showSystemMessage(nullptr, L"Message", L"Icon test", phpvpn::tray::SystemDialogIcon::information); });
+    dialogs::answer(IDNO, [&] { PHPVPN_CHECK(!phpvpn::tray::confirmSystemAction(nullptr, L"Confirm", L"Icon test")); });
+    dialogs::answer(IDOK, [&] { phpvpn::tray::showStartupError(L"Startup", L"Icon test"); });
+    dialogs::dialogObserver = {};
+    PHPVPN_CHECK_EQ(observed, 3u);
+}
+
+PHPVPN_TEST(WindowIcons, TrayDisconnectUsesTransitionUntilAuthoritativeCompletion) {
+    std::cout << std::unitbuf;
+    struct CaptureShell final : ShellAdapter {
+        HICON icon = nullptr;
+        bool notify(DWORD action, NOTIFYICONDATAW& data) override {
+            if (action == NIM_ADD || action == NIM_MODIFY) icon = data.hIcon;
+            return true;
+        }
+    };
+    const auto instance = GetModuleHandleW(nullptr);
+    const auto suffix = widen(createPlatformCryptoProvider().value()->randomUuidV4().value());
+    const auto pipe = LR"(\\.\pipe\phpvpn-icon-lifecycle-)" + suffix;
+    std::atomic<bool> stopped = false, invalidReply = false;
+    std::atomic<unsigned> disconnects = 0;
+    IpcPipeServerOptions options;
+    options.pipeName = pipe;
+    IpcPipeServer server([&](std::string_view bytes) {
+        const auto request = IpcProtocol::parseRequest(bytes);
+        if (request && request->command == IpcCommand::disconnect) {
+            ++disconnects;
+        }
+        if (invalidReply) return std::string{"invalid"};
+        auto document = phpvpn::tray::test::fixture();
+        if (request) phpvpn::tray::test::member(document, "requestId") = JsonValue::makeString(request->requestId);
+        auto& snapshot = phpvpn::tray::test::status(document);
+        phpvpn::tray::test::member(snapshot, "state") = JsonValue::makeString(stopped ? "disconnected" : "connected");
+        phpvpn::tray::test::member(snapshot, "phase") = JsonValue::makeString(stopped ? "idle" : "running");
+        phpvpn::tray::test::member(snapshot, "tunnelReady") = JsonValue::makeString(stopped ? "no" : "yes");
+        phpvpn::tray::test::member(snapshot, "connectionStartedAt") = stopped ? JsonValue::makeNull() : JsonValue::makeString("2026-09-04T18:52:31.412Z");
+        return Json::serialize(document);
+    }, options);
+    PHPVPN_CHECK(server.start().ok());
+    auto shell = std::make_unique<CaptureShell>();
+    auto* capture = shell.get();
+    TrayApplication app({pipe, L"Local\\phpvpn-icon-lifecycle-" + suffix, std::move(shell), {}});
+    PHPVPN_CHECK(app.initialise(instance));
+    const auto matches = [&](int resource) {
+        const auto size = GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem());
+        const auto expected = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(resource), IMAGE_ICON, size, size, 0));
+        const auto actual = phpvpn::tray::test::iconPixels(capture->icon, 32, 32);
+        const auto reference = phpvpn::tray::test::iconPixels(expected, 32, 32);
+        DestroyIcon(expected);
+        return !actual.empty() && actual == reference;
+    };
+    if (!until([&] { return matches(IDI_PHPVPN_CONNECTED); }, 3000)) throw std::runtime_error("initial connected icon missing");
+    PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(app.window()));
+    SendMessageW(app.window(), WM_COMMAND, IDM_TOGGLE, 0);
+    PHPVPN_CHECK(matches(IDI_PHPVPN_CONNECTING));
+    SendMessageW(app.window(), WM_COMMAND, IDM_TOGGLE, 0);
+    pump(600);
+    PHPVPN_CHECK_EQ(disconnects.load(), 1u);
+    PHPVPN_CHECK(matches(IDI_PHPVPN_CONNECTING));
+    // Closing progress must not stop authoritative polling in the tray host.
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
+        if (windowText(window) == L"PHPVPN disconnection") SendMessageW(window, WM_CLOSE, 0, 0);
+        return TRUE;
+    }, 0);
+    stopped = true;
+    PHPVPN_CHECK(until([&] { return matches(IDI_PHPVPN_DISCONNECTED); }, kStatusIntervalMs + 2000));
+    stopped = false;
+    if (!until([&] { return matches(IDI_PHPVPN_CONNECTED); }, kStatusIntervalMs + 2000))
+        throw std::runtime_error("reconnected icon missing after periodic poll");
+    invalidReply = true;
+    SendMessageW(app.window(), WM_COMMAND, IDM_TOGGLE, 0);
+    PHPVPN_CHECK(matches(IDI_PHPVPN_CONNECTING));
+    PHPVPN_CHECK(until([&] { return disconnects == 2 && matches(IDI_PHPVPN_DISCONNECTED); }, 3000));
+    app.endSession();
+    pump(10);
 }

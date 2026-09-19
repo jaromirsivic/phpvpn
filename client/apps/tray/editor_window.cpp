@@ -367,7 +367,7 @@ void EditorWindow::updateFonts() {
     }
     if (heading_) SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);
     if (path_) SendMessageW(path_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::subtitle)), TRUE);
-    SendMessageW(window_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(resources_.icon(2)));
+    resources_.applyApplicationIcons(window_);
 }
 void EditorWindow::layout() {
     if (!field_) return;

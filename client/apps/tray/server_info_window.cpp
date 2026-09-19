@@ -1,3 +1,4 @@
+#include "system_dialog.h"
 #include "server_info_window.h"
 #include "core/presentation/table_pagination.h"
 #include "resource.h"
@@ -156,7 +157,7 @@ void ServerInfoWindow::request() {
         EnableWindow(refresh_, TRUE);
         SetWindowTextW(notice_, L"Server information is busy. Try Refresh again.");
         if (!model_) {
-            MessageBoxW(window_, L"Server information is busy. Try opening it again.", L"PHPVPN", MB_OK | MB_ICONERROR);
+            showSystemMessage(window_, L"Server information is busy. Try opening it again.", L"PHPVPN", SystemDialogIcon::error);
             endSession();
         }
         scheduleAutoRefresh();
@@ -175,10 +176,10 @@ void ServerInfoWindow::finish() {
             SetWindowTextW(notice_, L"Refresh failed. Previous information is retained.");
             layout();
         } else {
-            MessageBoxW(
+            showSystemMessage(
                 window_,
                 L"Server information could not be verified. Check the service, configuration and server compatibility.",
-                L"PHPVPN", MB_OK | MB_ICONERROR);
+                L"PHPVPN", SystemDialogIcon::error);
             endSession();
         }
         return;
@@ -189,7 +190,7 @@ void ServerInfoWindow::finish() {
             SetWindowTextW(notice_, L"Refresh failed. Previous information is retained.");
             layout();
         } else {
-            MessageBoxW(window_, L"Server information could not be verified.", L"PHPVPN", MB_OK | MB_ICONERROR);
+            showSystemMessage(window_, L"Server information could not be verified.", L"PHPVPN", SystemDialogIcon::error);
             endSession();
         }
         return;
@@ -317,6 +318,8 @@ void ServerInfoWindow::selectTab() {
 }
 void ServerInfoWindow::fonts() {
     resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)), false);
+    resources_.applyApplicationIcons(window_);
+    resources_.applyApplicationIcons(window_);
     for (auto h : {tabs_, table_, refresh_, autoRefresh_, ok_, notice_})
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::value)), TRUE);
     SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);

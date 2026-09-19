@@ -88,8 +88,7 @@ Status VpnEngine::start() {
 }
 
 void VpnEngine::shutdown() {
-    controlGeneration_.fetch_add(1);
-    { std::lock_guard lock(stateMutex_); connectHttpDiagnostic_.reset(); }
+    { std::lock_guard lock(stateMutex_); controlGeneration_.fetch_add(1); connectHttpDiagnostic_.reset(); }
     const bool wasRunning = running_.exchange(false);
     cancelDiagnostics();
     if (!wasRunning) {
@@ -222,11 +221,37 @@ Result<ServerInfoSnapshot> VpnEngine::fetchServerInfoOnce() {
 }
 
 Status VpnEngine::connect() {
+    return connectWithGeneration(controlGeneration_.load());
+}
+
+Status VpnEngine::connectAtStartup(std::uint64_t token, std::uint64_t epoch) {
+    auto result = connectWithGeneration(token, epoch);
+    if (!result) publishStartupError(token, epoch, result.error());
+    return result;
+}
+
+void VpnEngine::publishStartupError(std::uint64_t token, std::uint64_t epoch, const Error& error) {
+    std::lock_guard transition(transitionMutex_);
+    std::lock_guard stateLock(stateMutex_);
+    if (token != controlGeneration_.load() || epoch != connectionEpoch_ || startupError_ || !running_.load() ||
+        connectCommandPending_ || state_ == ConnectionState::connecting ||
+        state_ == ConnectionState::connected || state_ == ConnectionState::recovering ||
+        error.code == ErrorCode::cancelled) return;
+    lastError_ = SafeError::from(error);
+    state_ = ConnectionState::error;
+    phase_ = ConnectionPhase::idle;
+    stateChangedAtUtc_ = Iso8601::format(clock_.systemUtcMs());
+    { std::lock_guard configLock(configMutex_); configurationValid_ = false; }
+    PHPVPN_LOG_ERROR(kComponent, std::string("startup configuration: ") + error.name());
+}
+
+Status VpnEngine::connectWithGeneration(std::uint64_t generation, std::optional<std::uint64_t> startupEpoch) {
     if (startupError_) return *startupError_;
     if (!running_.load()) return Error(ErrorCode::service_not_running);
-    const auto generation = controlGeneration_.load();
+    if (generation != controlGeneration_.load()) return Error(ErrorCode::cancelled);
     {
         std::unique_lock lock(stateMutex_);
+        if (startupEpoch && *startupEpoch != connectionEpoch_) return ok();
         if (state_ == ConnectionState::connecting || state_ == ConnectionState::connected ||
             state_ == ConnectionState::recovering) return ok();
         if (connectCommandPending_) {
@@ -237,6 +262,7 @@ Status VpnEngine::connect() {
     std::unique_lock transitionLock(transitionMutex_);
     {
         std::lock_guard lock(stateMutex_);
+        if (startupEpoch && *startupEpoch != connectionEpoch_) return ok();
         if (state_ == ConnectionState::connecting || state_ == ConnectionState::connected ||
             state_ == ConnectionState::recovering) return ok();
     }
@@ -259,6 +285,7 @@ Status VpnEngine::connect() {
         std::unique_lock lock(stateMutex_);
         if (generation != controlGeneration_.load()) return Error(ErrorCode::cancelled);
         if (!running_.load()) return Error(ErrorCode::service_not_running);
+        if (startupEpoch && *startupEpoch != connectionEpoch_) return ok();
         if (state_ == ConnectionState::connecting || state_ == ConnectionState::connected ||
             state_ == ConnectionState::recovering) return ok();
         if (!connectCommandPending_ && connectionEpoch_ == (std::numeric_limits<std::uint64_t>::max)()) return Error(ErrorCode::state_conflict);
@@ -279,8 +306,7 @@ Status VpnEngine::connect() {
 }
 
 Status VpnEngine::disconnect() {
-    controlGeneration_.fetch_add(1);
-    { std::lock_guard lock(stateMutex_); connectHttpDiagnostic_.reset(); }
+    { std::lock_guard lock(stateMutex_); controlGeneration_.fetch_add(1); connectHttpDiagnostic_.reset(); }
     cancelDiagnostics();
     connectRequested_.store(false);
     if (!running_.load()) return ok();

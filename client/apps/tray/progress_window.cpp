@@ -113,6 +113,15 @@ void ProgressWindow::onDisconnectReply(const TrayStatus& snapshot) {
     }
     onSnapshot(snapshot);
 }
+void ProgressWindow::onDisconnectTimeout() {
+    if (!window_ || !disconnect_) return;
+    waitingForReply_ = false;
+    reader_.abandon();
+    readPending_ = false;
+    polling_.stop();
+    model_.onCommandFailure();
+    refresh();
+}
 void ProgressWindow::endSession() {
     // Workers own shared transport state. Revoke delivery before destroying
     // controls. WM_DESTROY's ordinary stop calls now have nothing to wait for.
@@ -152,8 +161,7 @@ void ProgressWindow::updateResources() {
     font(panelAction_, ui::Font::label);
     font(countdown_, ui::Font::value);
     font(errorDetailButton_, ui::Font::label);
-    SendMessageW(window_, WM_SETICON, ICON_SMALL,
-                 reinterpret_cast<LPARAM>(resources_.icon(static_cast<std::size_t>(model_.view().shield))));
+    resources_.applyApplicationIcons(window_);
 }
 void ProgressWindow::refresh() {
     ShowWindow(errorDetailButton_, model_.httpDiagnostic() ? SW_SHOWNA : SW_HIDE);
@@ -174,8 +182,7 @@ void ProgressWindow::refresh() {
         ShowWindow(countdown_, success ? SW_SHOW : SW_HIDE);
         EnableMenuItem(GetSystemMenu(window_, FALSE), SC_CLOSE,
             MF_BYCOMMAND | (success || issue ? MF_ENABLED : MF_GRAYED));
-        SendMessageW(window_, WM_SETICON, ICON_SMALL,
-            reinterpret_cast<LPARAM>(resources_.icon(static_cast<std::size_t>(v.shield))));
+        resources_.applyApplicationIcons(window_);
         layout();
         return;
     }
@@ -200,8 +207,7 @@ void ProgressWindow::refresh() {
     ShowWindow(panelHeading_, success || failure || v.statusUnavailable ? SW_SHOW : SW_HIDE);
     ShowWindow(panelAction_, success || failure || v.statusUnavailable ? SW_SHOW : SW_HIDE);
     ShowWindow(countdown_, success ? SW_SHOW : SW_HIDE);
-    SendMessageW(window_, WM_SETICON, ICON_SMALL,
-                 reinterpret_cast<LPARAM>(resources_.icon(static_cast<std::size_t>(v.shield))));
+    resources_.applyApplicationIcons(window_);
     layout();
 }
 void ProgressWindow::onSnapshot(const TrayStatus &snapshot) {
@@ -209,6 +215,7 @@ void ProgressWindow::onSnapshot(const TrayStatus &snapshot) {
         return;
     const auto before = model_.view();
     model_.onSnapshot(snapshot, nowMs());
+    if (disconnect_ && disconnectSnapshot) disconnectSnapshot(snapshot);
     if (model_.httpDiagnostic()) {
         diagnosticEpoch_ = model_.connectionEpoch();
         diagnosticAttemptId_ = model_.connectAttemptId().value_or("");

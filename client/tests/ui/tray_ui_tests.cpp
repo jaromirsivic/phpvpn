@@ -10,6 +10,7 @@
 #include "window_utils.h"
 #include "resource.h"
 #include "../unit/wp03_dialog_test.h"
+#include "../unit/icon_test_helpers.h"
 #include "../unit/clipboard_snapshot.h"
 #include "platform/windows/ipc_pipe.h"
 #include "core/config/config_defaults.h"
@@ -61,6 +62,7 @@ HWND findTop(const wchar_t* name) {
         if (ownWindow(window) && std::wstring_view(name) == state.name) { state.result = window; return FALSE; }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&search));
+    if (search.result) check(phpvpn::tray::test::applicationIconsMatch(search.result), "top-level application small/big icons differ from default.ico");
     return search.result;
 }
 HWND child(HWND parent, int id) {

@@ -17,9 +17,11 @@ public:
     std::uint64_t identity = 1;
     unsigned reads = 0, writes = 0;
     std::function<void()> beforePublish;
+    std::function<void()> beforeRead;
     const std::filesystem::path& path() const noexcept override { return fixed; }
     Result<ConfigFileRead> readBounded(std::size_t limit) override {
         ++reads;
+        if (beforeRead) beforeRead();
         if (readError) return Error(*readError);
         if (!bytes) return ConfigFileRead{};
         if (bytes->size() > limit) return Error(ErrorCode::config_too_large);

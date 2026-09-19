@@ -31,6 +31,21 @@ $ErrorActionPreference = "Stop"
 $installRoot = Join-Path $env:ProgramFiles "phpvpn"
 $dataRoot = Join-Path $env:ProgramData "phpvpn"
 
+function Remove-TrayAutostartFallback {
+        $base = $null
+        $run = $null
+        try {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+            $run = $base.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $true)
+            if ($null -ne $run) { $run.DeleteValue('phpvpn-tray', $false) }
+        } catch {
+            Write-Warning ('phpvpn-tray autostart cleanup failed (HRESULT {0}). Retry uninstall after fixing registry access.' -f $_.Exception.HResult)
+        } finally {
+            if ($null -ne $run) { $run.Dispose() }
+            if ($null -ne $base) { $base.Dispose() }
+        }
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -68,23 +83,21 @@ if ($null -ne $generation -and (Test-Path -LiteralPath (Join-Path $generation "p
 Get-Process -Name "phpvpn-tray" -ErrorAction SilentlyContinue | Stop-Process -Force
 
 $service = Get-Service -Name "phpvpn" -ErrorAction SilentlyContinue
-if ($null -ne $service) {
-    if ($null -ne $generation -and (Test-Path -LiteralPath (Join-Path $generation "phpvpn-service.exe"))) {
-        & (Join-Path $generation "phpvpn-service.exe") --uninstall | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'The service could not be unregistered.' }
-    } else {
+if ($null -ne $generation -and (Test-Path -LiteralPath (Join-Path $generation "phpvpn-service.exe"))) {
+    & (Join-Path $generation "phpvpn-service.exe") --uninstall
+    if ($LASTEXITCODE -ne 0) { throw 'The service could not be unregistered.' }
+} else {
+    # Emergency path for a missing binary. Always attempt our Run cleanup,
+    # even if the critical SCM operation fails. Never remove the Run key.
+    try {
+      if ($null -ne $service) {
         Stop-Service -Name "phpvpn" -Force -ErrorAction Stop
         & sc.exe delete phpvpn | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'The service could not be unregistered by sc.exe.' }
+      }
+    } finally {
+        Remove-TrayAutostartFallback
     }
-    Write-Host "the phpvpn service was stopped and unregistered"
-}
-
-# ------------------------------------------------------------ 4. the autostart
-
-$runKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
-if ($null -ne (Get-ItemProperty -Path $runKey -Name "phpvpn-tray" -ErrorAction SilentlyContinue)) {
-    Remove-ItemProperty -Path $runKey -Name "phpvpn-tray"
 }
 
 # ------------------------------------------------------- 5. installed files

@@ -69,6 +69,40 @@ PHPVPN_TEST(wizard_document, PatchPreservesUnshownValuesAndOmission) {
     fields.virtualIp = "10.99.99.3";
     PHPVPN_CHECK_EQ(validateWizardIdentity(draft.value(), fields).code(), ErrorCode::wizard_contract_self_conflict);
 }
+
+PHPVPN_TEST(wizard_document, startup_preference_preserved_defaulted_and_ordered) {
+    auto crypto = createPlatformCryptoProvider();
+    PHPVPN_REQUIRE_OK(crypto);
+    for (int preference : {-1, 0, 1}) {
+        auto dom = Json::parse(makeDefaultEditorDocument()).value();
+        for (auto& [name, master] : dom.objectValue()) if (name == "masterSetup") {
+            std::erase_if(master.objectValue(), [](const auto& item) { return item.first == "autoConnectOnStartup"; });
+            if (preference >= 0) master.objectValue().emplace_back("autoConnectOnStartup", JsonValue::makeBool(preference == 1));
+        }
+        auto original = analyzeWizardDocument(Json::serialize(dom));
+        PHPVPN_REQUIRE_OK(original);
+        for (const auto mode : {WizardMode::edit, WizardMode::repair}) {
+            auto output = buildWizardDocument(*crypto.value(), *original, mode, original->fields, false);
+            PHPVPN_REQUIRE_OK(output);
+            auto parsed = Json::parse(*output);
+            const auto& members = parsed->find("masterSetup")->objectValue();
+            PHPVPN_CHECK_EQ(members.back().first, std::string("autoConnectOnStartup"));
+            PHPVPN_CHECK_EQ(members[members.size() - 2].first, std::string("useDefaultAccessKeyInWizard"));
+            PHPVPN_CHECK_EQ(members.back().second.boolValue(), preference == 1);
+        }
+    }
+    auto reset = makeNewWizardDocument();
+    PHPVPN_CHECK(!readAutoConnectOnStartup(reset.dom).value());
+    reset.fields.virtualIp = "10.99.99.2";
+    reset.fields.accessKey = std::string(64, '2');
+    for (const auto mode : {WizardMode::create, WizardMode::reset}) {
+        auto output = buildWizardDocument(*crypto.value(), reset, mode, reset.fields, true);
+        PHPVPN_REQUIRE_OK(output);
+        auto dom = Json::parse(*output);
+        PHPVPN_CHECK_EQ(dom->find("masterSetup")->objectValue().back().first, std::string("autoConnectOnStartup"));
+        PHPVPN_CHECK(!readAutoConnectOnStartup(*dom).value());
+    }
+}
 PHPVPN_TEST(wizard_defaults, AccessKeyAndIndependentPayloadVectors) {
     for (unsigned octet : {2U, 10U, 15U, 17U}) {
         const auto key = defaultAccessKey("10.99.99." + std::to_string(octet));

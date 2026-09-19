@@ -48,7 +48,8 @@ inline constexpr std::string_view kDefaultConfigDocument = R"json({
     "virtualIp": "10.99.99.2",
     "autoDetectIpAddressInWizard": true,
     "accessKey": "0202020202020202020202020202020202020202020202020202020202020202",
-    "useDefaultAccessKeyInWizard": true
+    "useDefaultAccessKeyInWizard": true,
+    "autoConnectOnStartup": false
   },
   "communicationContracts": {
     "10.99.99.3": {
@@ -94,6 +95,7 @@ class ClientConfig {
 public:
     ServerUrl serverUrl;
     bool trustAnyTlsCertificate = kDefaultTrustAnyTlsCertificate;
+    bool autoConnectOnStartup = false;
     std::string serverSecret;  // exact configured bytes, normalised on use
     Ipv4Cidr vpnCidr;
     Ipv4Address virtualIp;

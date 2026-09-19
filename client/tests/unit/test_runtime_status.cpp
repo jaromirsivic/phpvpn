@@ -1,4 +1,5 @@
 #include "fake_config_files.h"
+#include "startup_connect.h"
 #include "core/config/config_defaults.h"
 #include "core/wizard/probe_client.h"
 #include "core/wizard/wizard_service.h"
@@ -449,6 +450,13 @@ struct EngineFixture {
         std::filesystem::remove_all(directory);
     }
 };
+
+void setStartupPreference(EngineFixture& f, bool enabled) {
+    auto dom = Json::parse(*f.files->bytes).value();
+    for (auto& [key, master] : dom.objectValue()) if (key == "masterSetup")
+        master.objectValue().emplace_back("autoConnectOnStartup", JsonValue::makeBool(enabled));
+    f.files->bytes = Json::serialize(dom);
+}
 
 struct WizardServiceFixture {
     EngineFixture runtime;
@@ -2753,3 +2761,153 @@ PHPVPN_TEST(flow_lifecycle, random_secret_initialization_failure_fails_start_bef
     PHPVPN_CHECK_EQ(fixture.engine.status().state,ConnectionState::error);
 }
 } // namespace phpvpn
+
+namespace phpvpn {
+PHPVPN_TEST(startup_connect, false_missing_and_default_never_connect_or_replay) {
+    for (int mode = 0; mode < 3; ++mode) {
+        EngineFixture f;
+        if (mode == 1) setStartupPreference(f, false);
+        if (mode == 2) f.files->bytes = Json::serialize(makeNewWizardDocument().dom);
+        PHPVPN_REQUIRE_OK(f.engine.start());
+        StartupConnect startup(f.store, f.engine);
+        std::function<void()> task;
+        unsigned posted = 0;
+        auto post = [&](std::function<void()> fn) { ++posted; task = std::move(fn); return true; };
+        startup.request(post);
+        PHPVPN_CHECK_EQ(f.files->reads, 0u);
+        task();
+        startup.request(post); startup.tick(post);
+        PHPVPN_CHECK_EQ(posted, 1u);
+        PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(0));
+        PHPVPN_CHECK_EQ(f.engine.status().state, ConnectionState::disconnected);
+        PHPVPN_CHECK_EQ(f.driver.loads.load(), 0);
+    }
+}
+PHPVPN_TEST(startup_connect, true_uses_normal_connect_and_coalesces_manual_request) {
+    EngineFixture f;
+    setStartupPreference(f, true);
+    PHPVPN_REQUIRE_OK(f.engine.start());
+    StartupConnect startup(f.store, f.engine);
+    std::function<void()> task;
+    startup.request([&](auto fn) { task = std::move(fn); return true; });
+    PHPVPN_REQUIRE_OK(f.engine.connect());
+    task();
+    PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::connected; }));
+    PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(f.driver.starts.load(), 1);
+}
+PHPVPN_TEST(startup_connect, invalid_inputs_publish_safe_error_without_http_and_allow_repair) {
+    for (int mode = 0; mode < 6; ++mode) {
+        EngineFixture f;
+        setStartupPreference(f, true);
+        if (mode == 0) f.files->bytes = "{secret-invalid-json";
+        if (mode == 1) f.files->readError = ErrorCode::config_unreadable;
+        if (mode == 2) f.files->bytes = std::string("\xff", 1);
+        if (mode == 3) f.files->bytes = R"({"masterSetup":{"autoConnectOnStartup":true}})";
+        if (mode == 4) f.files->bytes = R"({"masterSetup":{"autoConnectOnStartup":"true"}})";
+        if (mode == 5) f.files->beforeRead = [] { throw std::runtime_error("PRIVATE-SECRET"); };
+        PHPVPN_REQUIRE_OK(f.engine.start());
+        StartupConnect startup(f.store, f.engine);
+        startup.request([](auto fn) { fn(); return true; });
+        const auto status = f.engine.status();
+        PHPVPN_CHECK_EQ(status.state, ConnectionState::error);
+        PHPVPN_CHECK(status.lastError.has_value());
+        PHPVPN_CHECK(status.lastError->description.find("PRIVATE") == std::string::npos);
+        PHPVPN_CHECK_EQ(f.driver.loads.load(), 0);
+        PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(0));
+        f.files->readError.reset(); f.files->beforeRead = {}; f.files->bytes = kConfig;
+        PHPVPN_REQUIRE_OK(f.engine.connect());
+        PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::connected; }));
+    }
+}
+PHPVPN_TEST(startup_connect, full_queue_retries_once_and_disconnect_or_stop_cancel_delayed_work) {
+    for (int mode = 0; mode < 3; ++mode) {
+        EngineFixture f;
+        setStartupPreference(f, true);
+        PHPVPN_REQUIRE_OK(f.engine.start());
+        StartupConnect startup(f.store, f.engine);
+        startup.request([](auto) { return false; });
+        PHPVPN_CHECK_EQ(f.files->reads, 0u);
+        std::function<void()> task;
+        startup.tick([&](auto fn) { task = std::move(fn); return true; });
+        if (mode == 0) PHPVPN_REQUIRE_OK(f.engine.disconnect());
+        if (mode == 1) { startup.cancel(); f.engine.shutdown(); }
+        if (mode == 2) f.files->beforeRead = [&] { (void)f.engine.disconnect(); };
+        task();
+        PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(0));
+        PHPVPN_CHECK_EQ(f.driver.loads.load(), 0);
+        PHPVPN_CHECK(!f.engine.status().lastError);
+    }
+}
+PHPVPN_TEST(startup_connect, automatic_bootstrap_publishes_connecting_success_and_standard_failures) {
+    for (int mode = 0; mode < 3; ++mode) {
+        EngineFixture f;
+        setStartupPreference(f, true);
+        Gate health;
+        f.transport.badHealthTag = mode == 2;
+        f.transport.hook = [&](HttpAction action, std::string_view, int) -> std::optional<HttpExchangeResult> {
+            if (action == HttpAction::health) {
+                health.block();
+                if (mode == 1) return HttpExchangeResult{Error(ErrorCode::transport_timeout), 0};
+            }
+            return {};
+        };
+        f.transport.cancel = [&] { health.release(); };
+        PHPVPN_REQUIRE_OK(f.engine.start());
+        StartupConnect startup(f.store, f.engine);
+        startup.request([](auto fn) { fn(); return true; });
+        PHPVPN_CHECK(health.await());
+        PHPVPN_CHECK_EQ(f.engine.status().state, ConnectionState::connecting);
+        health.release();
+        const auto expected = mode == 0 ? ConnectionState::connected : mode == 1 ? ConnectionState::recovering : ConnectionState::error;
+        PHPVPN_CHECK(eventually([&] { return f.engine.status().state == expected; }));
+        PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(1));
+        PHPVPN_CHECK_EQ(f.engine.status().lastError.has_value(), mode != 0);
+        PHPVPN_CHECK_EQ(f.driver.starts.load(), mode == 0 ? 1 : 0);
+        startup.request([](auto) { throw std::runtime_error("startup replayed"); return false; });
+        PHPVPN_REQUIRE_OK(f.engine.disconnect());
+        PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::disconnected; }));
+    }
+}
+PHPVPN_TEST(startup_connect, stopping_during_blocked_read_revokes_late_connect) {
+    EngineFixture f;
+    setStartupPreference(f, true);
+    Gate read;
+    f.files->beforeRead = [&] { read.block(); };
+    PHPVPN_REQUIRE_OK(f.engine.start());
+    StartupConnect startup(f.store, f.engine);
+    std::function<void()> task;
+    startup.request([&](auto fn) { task = std::move(fn); return true; });
+    std::thread callback([&] { task(); });
+    PHPVPN_CHECK(read.await());
+    startup.cancel();
+    f.engine.shutdown();
+    read.release();
+    callback.join();
+    PHPVPN_CHECK_EQ(f.transport.healthCalls.load(), 0);
+    PHPVPN_CHECK_EQ(f.driver.starts.load(), 0);
+    PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(0));
+}
+PHPVPN_TEST(startup_connect, delayed_startup_cannot_retry_or_replace_a_newer_manual_failure) {
+    EngineFixture f;
+    setStartupPreference(f, true);
+    f.transport.badHealthTag = true;
+    PHPVPN_REQUIRE_OK(f.engine.start());
+    StartupConnect startup(f.store, f.engine);
+    const auto token = f.engine.startupControlToken();
+    const auto epoch = f.engine.connectionIdentity().epoch;
+    std::function<void()> task;
+    startup.request([&](auto fn) { task = std::move(fn); return true; });
+    PHPVPN_REQUIRE_OK(f.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return f.engine.status().state == ConnectionState::error; }));
+    const auto error = f.engine.status().lastError->code;
+    const auto reads = f.files->reads;
+    task();
+    PHPVPN_REQUIRE_OK(f.engine.connectAtStartup(token, epoch));
+    f.engine.publishStartupError(token, epoch, Error(ErrorCode::config_invalid_json));
+    PHPVPN_CHECK_EQ(f.files->reads, reads);
+    PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(f.engine.status().lastError->code, error);
+    PHPVPN_CHECK_EQ(f.transport.healthCalls.load(), 1);
+}
+}

@@ -61,6 +61,8 @@ struct TrayStatus {
 };
 
 TrayStatus parseStatusResponse(std::string_view json);
+enum class TrayIconState : std::size_t { disconnected, connecting, connected };
+TrayIconState selectTrayIcon(const TrayStatus& status, bool unavailable, bool localOperation);
 // Invalid replies never replace the most recent authoritative snapshot.
 bool applyStatusSnapshot(TrayStatus& current, const TrayStatus& next);
 

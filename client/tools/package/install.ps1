@@ -338,7 +338,7 @@ Write-Host "installed to  : $generation"
 $serviceBinary = Join-Path $generation "phpvpn-service.exe"
 $existing = Get-Service -Name "phpvpn" -ErrorAction SilentlyContinue
 if ($null -ne $existing) {
-    & $serviceBinary --uninstall | Out-Null
+    & $serviceBinary --uninstall
     if ($LASTEXITCODE -ne 0) { Fail 'the previous service could not be unregistered' }
 }
 
@@ -365,11 +365,9 @@ if (-not $pipeReady) {
 }
 Write-Host "service       : running, control pipe published"
 
-# ------------------------------------------------------------ 8. tray autostart
+# --------------------- 8. tray autostart is owned by --install above
 
 $trayBinary = Join-Path $generation "phpvpn-tray.exe"
-New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" `
-                 -Name "phpvpn-tray" -Value "`"$trayBinary`"" -PropertyType String -Force | Out-Null
 
 # ------------------------------------------------- 9. the tray in this session
 

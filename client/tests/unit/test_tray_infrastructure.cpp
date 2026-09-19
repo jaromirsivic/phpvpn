@@ -232,3 +232,34 @@ PHPVPN_TEST(TrayReaders, ExplicitMissingOrEmptyEndpointCannotUseProductionDefaul
         reader.stop();
     }
 }
+
+PHPVPN_TEST(TrayResources, ApplicationIconsSurviveDpiFailureAndLoadWithoutStateIcons) {
+    UiResources resources;
+    const auto instance = GetModuleHandleW(nullptr);
+    WindowOwner window{CreateWindowExW(0, L"STATIC", L"icon fixture", WS_OVERLAPPEDWINDOW, 0,0,100,100, nullptr,nullptr,instance,nullptr)};
+    PHPVPN_CHECK(window.value != nullptr);
+    for (int dpi : {96, 120, 144, 192}) {
+        PHPVPN_CHECK(resources.update(instance, dpi, false));
+        resources.applyApplicationIcons(window.value);
+        PHPVPN_CHECK_EQ(resources.icon(0), nullptr);
+        PHPVPN_CHECK_EQ(reinterpret_cast<HICON>(SendMessageW(window.value, WM_GETICON, ICON_SMALL, 0)), resources.appIconSmall());
+        PHPVPN_CHECK_EQ(reinterpret_cast<HICON>(SendMessageW(window.value, WM_GETICON, ICON_BIG, 0)), resources.appIconLarge());
+        ICONINFO info{};
+        PHPVPN_CHECK(GetIconInfo(resources.appIconLarge(), &info));
+        BITMAP bitmap{};
+        PHPVPN_CHECK(GetObjectW(info.hbmColor, sizeof(bitmap), &bitmap) != 0);
+        PHPVPN_CHECK_EQ(bitmap.bmWidth, GetSystemMetricsForDpi(SM_CXICON, dpi));
+        DeleteObject(info.hbmColor); DeleteObject(info.hbmMask);
+    }
+    const auto oldSmall = resources.appIconSmall(), oldLarge = resources.appIconLarge();
+    HMODULE missing = LoadLibraryExW(L"kernel32.dll", nullptr, LOAD_LIBRARY_AS_DATAFILE);
+    PHPVPN_CHECK(missing != nullptr);
+    PHPVPN_CHECK(!resources.update(missing, 96, false));
+    FreeLibrary(missing);
+    PHPVPN_CHECK_EQ(resources.appIconSmall(), oldSmall);
+    PHPVPN_CHECK_EQ(resources.appIconLarge(), oldLarge);
+    PHPVPN_CHECK_EQ(reinterpret_cast<HICON>(SendMessageW(window.value, WM_GETICON, ICON_SMALL, 0)), oldSmall);
+    // The bound HWND receives the replacement before the old icons are freed.
+    PHPVPN_CHECK(resources.update(instance, 96, false));
+    PHPVPN_CHECK_EQ(reinterpret_cast<HICON>(SendMessageW(window.value, WM_GETICON, ICON_BIG, 0)), resources.appIconLarge());
+}

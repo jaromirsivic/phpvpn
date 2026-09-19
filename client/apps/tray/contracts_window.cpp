@@ -445,6 +445,7 @@ bool ContractsWindow::translate(MSG& message) const {
 }
 void ContractsWindow::fonts() {
     if (!resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)), false)) return;
+    resources_.applyApplicationIcons(window_);
     for (auto h : {description_, localLabel_, notice_, error_, cancel_, ok_, check_, repeat_}) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(h == error_ && validationNotice_ ? ui::Font::strongValue : ui::Font::label)), TRUE);
     SendMessageW(local_,WM_SETFONT,reinterpret_cast<WPARAM>(resources_.font(ui::Font::strongValue)),TRUE);
     SendMessageW(heading_, WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::heading)), TRUE);

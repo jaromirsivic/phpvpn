@@ -1,11 +1,13 @@
 #include "service_host.h"
 #include "service_registration.h"
+#include "startup_connect.h"
 
 #include <windows.h>
 
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/base/logger.h"
 #include "core/ipc/ipc_dispatcher.h"
@@ -105,6 +107,7 @@ public:
                                               *netConfig_, std::move(paths), *configStore_);
         auto engineStarted = engine_->start();
         if (!engineStarted) PHPVPN_LOG_ERROR(kComponent, std::string("engine initialization: ") + engineStarted.error().name());
+        startupConnect_ = std::make_unique<StartupConnect>(*configStore_, *engine_);
 
         WizardScheduler scheduler;
         scheduler.file = [this](std::function<void()> task) { return server_ && server_->tryPostFile(std::move(task)); };
@@ -138,8 +141,8 @@ public:
             auto request = IpcProtocol::parseRequest(json);
             return IpcProtocol::buildError(request ? request->requestId : std::string{}, Error(ErrorCode::busy));
         };
-        options.onTick = [this] { wizard_->tick(); };
-        options.cancelHandlers = [this] { wizard_->shutdown(); engine_->shutdown(); };
+        options.onTick = [this] { wizard_->tick(); startupConnect_->tick(filePost()); };
+        options.cancelHandlers = [this] { startupConnect_->cancel(); wizard_->shutdown(); engine_->shutdown(); };
         server_ = std::make_unique<IpcPipeServer>(
             [this](std::string_view request) { return dispatcher_->handle(request); }, std::move(options));
         PHPVPN_TRY(server_->start());
@@ -148,13 +151,20 @@ public:
         return Status::success();
     }
 
+    StartupConnect::Post filePost() {
+        return [this](std::function<void()> task) { return server_ && server_->tryPostFile(std::move(task)); };
+    }
+    void requestStartupConnect() { startupConnect_->request(filePost()); }
+
     void stop() {
         PHPVPN_LOG_INFO(kComponent, "the service is stopping");
+        if (startupConnect_) startupConnect_->cancel();
         if (server_) {
             server_->stop();
             server_.reset();
         }
         dispatcher_.reset();
+        startupConnect_.reset();
         wizard_.reset();
         if (engine_) {
             engine_->shutdown();
@@ -177,6 +187,7 @@ private:
     std::unique_ptr<NetConfig> netConfig_;
     std::unique_ptr<ConfigStore> configStore_;
     std::unique_ptr<VpnEngine> engine_;
+    std::unique_ptr<StartupConnect> startupConnect_;
     std::unique_ptr<WizardService> wizard_;
     std::unique_ptr<IpcDispatcher> dispatcher_;
     std::unique_ptr<IpcPipeServer> server_;
@@ -223,6 +234,7 @@ void WINAPI serviceMain(DWORD, LPWSTR*) {
     }
 
     reportStatus(SERVICE_RUNNING, NO_ERROR, 0);
+    g_runtime.requestStartupConnect();
     WaitForSingleObject(g_stopEvent, INFINITE);
 
     g_runtime.stop();
@@ -274,6 +286,7 @@ int runInConsole() {
     }
 
     std::fputs("phpvpn service is running in the foreground, press Ctrl+C to stop\n", stdout);
+    g_runtime.requestStartupConnect();
     WaitForSingleObject(g_stopEvent, INFINITE);
 
     g_runtime.stop();
@@ -282,7 +295,11 @@ int runInConsole() {
     return 0;
 }
 
-Status installService(const std::wstring& executablePath) {
+static Status installScmService(const std::wstring& executablePath) {
+    const std::filesystem::path path(executablePath);
+    if (!path.is_absolute() || path != path.lexically_normal() ||
+        executablePath.find(L'"') != std::wstring::npos || executablePath.find(L'\0') != std::wstring::npos)
+        return Error(ErrorCode::invalid_argument);
     SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
     if (manager == nullptr) {
         return Error(ErrorCode::internal, "the service manager could not be opened");
@@ -295,10 +312,22 @@ Status installService(const std::wstring& executablePath) {
                                        nullptr, nullptr, kServiceDependencies, nullptr, nullptr);
     if (service == nullptr) {
         const DWORD error = GetLastError();
-        CloseServiceHandle(manager);
         if (error == ERROR_SERVICE_EXISTS) {
-            return Error(ErrorCode::service_already_running, "the service is already registered");
+            service = OpenServiceW(manager, kServiceName, SERVICE_QUERY_CONFIG);
+            DWORD bytes = 0;
+            if (service) QueryServiceConfigW(service, nullptr, 0, &bytes);
+            std::vector<BYTE> buffer(bytes);
+            const auto config = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(buffer.data());
+            const bool matches = service && bytes && QueryServiceConfigW(service, config, bytes, &bytes) &&
+                config->dwServiceType == SERVICE_WIN32_OWN_PROCESS &&
+                command == config->lpBinaryPathName &&
+                _wcsicmp(config->lpServiceStartName, L"LocalSystem") == 0;
+            if (service) CloseServiceHandle(service);
+            CloseServiceHandle(manager);
+            return matches ? ok() : Status(Error(ErrorCode::state_conflict,
+                "the existing service registration differs; use the package upgrade flow"));
         }
+        CloseServiceHandle(manager);
         return Error(ErrorCode::internal, "the service could not be registered");
     }
 
@@ -322,7 +351,7 @@ Status installService(const std::wstring& executablePath) {
     return Status::success();
 }
 
-Status uninstallService() {
+static Status uninstallScmService() {
     SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (manager == nullptr) {
         return Error(ErrorCode::internal, "the service manager could not be opened");
@@ -330,27 +359,53 @@ Status uninstallService() {
 
     SC_HANDLE service = OpenServiceW(manager, kServiceName, SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
+        const auto error = GetLastError();
         CloseServiceHandle(manager);
-        return Error(ErrorCode::service_not_running, "the service is not registered");
+        if (error == ERROR_SERVICE_DOES_NOT_EXIST || error == ERROR_SERVICE_MARKED_FOR_DELETE) return ok();
+        return Error(ErrorCode::internal, "the service could not be opened for removal");
     }
 
     SERVICE_STATUS status{};
-    ControlService(service, SERVICE_CONTROL_STOP, &status);
+    if (!ControlService(service, SERVICE_CONTROL_STOP, &status) && GetLastError() != ERROR_SERVICE_NOT_ACTIVE) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        return Error(ErrorCode::internal, "the service could not be stopped");
+    }
     for (int attempt = 0; attempt < 60; ++attempt) {
-        if (!QueryServiceStatus(service, &status) || status.dwCurrentState == SERVICE_STOPPED) {
+        if (!QueryServiceStatus(service, &status)) {
+            CloseServiceHandle(service);
+            CloseServiceHandle(manager);
+            return Error(ErrorCode::internal, "the service status could not be queried");
+        }
+        if (status.dwCurrentState == SERVICE_STOPPED) {
             break;
         }
         Sleep(500);
     }
 
+    if (status.dwCurrentState != SERVICE_STOPPED) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        return Error(ErrorCode::timeout, "the service did not stop before removal");
+    }
+
     const BOOL deleted = DeleteService(service);
+    const auto deleteError = deleted ? ERROR_SUCCESS : GetLastError();
     CloseServiceHandle(service);
     CloseServiceHandle(manager);
 
-    if (!deleted) {
+    if (!deleted && deleteError != ERROR_SERVICE_MARKED_FOR_DELETE) {
         return Error(ErrorCode::internal, "the service could not be removed");
     }
     return Status::success();
+}
+
+ServiceRegistrationResult installService(const std::wstring& executablePath) {
+    return registerServiceWithTray(executablePath, [&] { return installScmService(executablePath); },
+        windowsTrayAutostartBackend());
+}
+ServiceRegistrationResult uninstallService() {
+    return removeServiceWithTray([] { return uninstallScmService(); }, windowsTrayAutostartBackend());
 }
 
 }  // namespace phpvpn

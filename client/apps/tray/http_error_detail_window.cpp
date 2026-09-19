@@ -83,7 +83,7 @@ void HttpErrorDetailWindow::updateFonts() {
         SendMessageW(editors_[i], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::mono)), TRUE);
         SendMessageW(headings_[i], WM_SETFONT, reinterpret_cast<WPARAM>(resources_.font(ui::Font::label)), TRUE);
     }
-    SendMessageW(window_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(resources_.icon(2)));
+    resources_.applyApplicationIcons(window_);
 }
 void HttpErrorDetailWindow::layout() {
     if (!tabs_ || !editors_[1]) return;

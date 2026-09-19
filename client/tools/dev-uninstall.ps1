@@ -23,6 +23,21 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $scriptRoot "..\..\work\build\debug"
 }
 
+function Remove-TrayAutostartFallback {
+        $base = $null
+        $run = $null
+        try {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
+            $run = $base.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $true)
+            if ($null -ne $run) { $run.DeleteValue('phpvpn-tray', $false) }
+        } catch {
+            Write-Warning ('phpvpn-tray autostart cleanup failed (HRESULT {0}). Retry uninstall after fixing registry access.' -f $_.Exception.HResult)
+        } finally {
+            if ($null -ne $run) { $run.Dispose() }
+            if ($null -ne $base) { $base.Dispose() }
+        }
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -33,7 +48,7 @@ function Assert-Administrator {
 
 Assert-Administrator
 
-$appsDirectory = Join-Path (Resolve-Path $BuildDirectory) "apps"
+$appsDirectory = Join-Path ([IO.Path]::GetFullPath($BuildDirectory)) "apps"
 $service = Join-Path $appsDirectory "phpvpn-service.exe"
 $cli = Join-Path $appsDirectory "phpvpn.exe"
 
@@ -57,17 +72,22 @@ if (Test-Path -LiteralPath $service -PathType Leaf) {
 } else {
     # The build directory may already be gone, so fall back to the service
     # control manager directly.
+    try {
     $existing = Get-Service -Name "phpvpn" -ErrorAction SilentlyContinue
     if ($null -ne $existing) {
-        Stop-Service -Name "phpvpn" -Force -ErrorAction SilentlyContinue
+        Stop-Service -Name "phpvpn" -Force -ErrorAction Stop
         & sc.exe delete phpvpn | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The service could not be removed.' }
     }
+    } finally { Remove-TrayAutostartFallback }
 }
 
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-if ($null -ne (Get-ItemProperty -Path $runKey -Name "phpvpn-tray" -ErrorAction SilentlyContinue)) {
-    Remove-ItemProperty -Path $runKey -Name "phpvpn-tray"
-    Write-Host "The tray autostart entry was removed."
+$legacy = Get-ItemProperty -Path $runKey -Name "phpvpn-tray" -ErrorAction SilentlyContinue
+$knownTray = Join-Path $appsDirectory 'phpvpn-tray.exe'
+if ($null -ne $legacy -and $legacy.'phpvpn-tray' -ceq "`"$knownTray`"") {
+    try { Remove-ItemProperty -Path $runKey -Name "phpvpn-tray" -ErrorAction Stop }
+    catch { Write-Warning 'The matching legacy current-user tray entry could not be removed.' }
 }
 
 Write-Host "The phpvpn service is no longer registered."

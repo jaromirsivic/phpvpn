@@ -16,7 +16,8 @@ WizardDocument makeNewWizardDocument() {
         {"vpnCidr", JsonValue::makeString(kDefaultVpnCidr)},
         {"useDefaultServerSecretInWizard", JsonValue::makeBool(document.fields.useDefaultServerSecretInWizard)},
         {"autoDetectIpAddressInWizard", JsonValue::makeBool(document.fields.autoDetectIpAddressInWizard)},
-        {"useDefaultAccessKeyInWizard", JsonValue::makeBool(document.fields.useDefaultAccessKeyInWizard)}
+        {"useDefaultAccessKeyInWizard", JsonValue::makeBool(document.fields.useDefaultAccessKeyInWizard)},
+        {"autoConnectOnStartup", JsonValue::makeBool(false)}
     })}});
     return document;
 }

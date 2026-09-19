@@ -447,7 +447,7 @@ void run(bool udp) {
     check(readConfig(config) == startupBytes, "second SCM startup changed existing bytes");
     auto legacy = require(Json::parse(startupBytes));
     for (auto& [name, value] : legacy.objectValue()) if (name == "masterSetup")
-        std::erase_if(value.objectValue(), [](const auto& item) { return item.first.ends_with("InWizard"); });
+        std::erase_if(value.objectValue(), [](const auto& item) { return item.first.ends_with("InWizard") || item.first == "autoConnectOnStartup"; });
     for (const auto& existing : {std::string(" \r\n") + Json::serialize(legacy), std::string("{invalid fixture json")}) {
         service.stop();
         {
@@ -456,7 +456,7 @@ void run(bool udp) {
             check(seeded.good(), "isolated existing-file seed failed");
         }
         service.start();
-        client.awaitVpn("disconnected", "idle", 5000);
+        client.awaitVpn(existing.front() == '{' ? "error" : "disconnected", "idle", 5000);
         check(readConfig(config) == existing, "SCM startup replaced an existing legacy or invalid document");
         const auto state = client.wizard(WizardCommand::get_config_state);
         check(state.result.find("availability")->stringValue() == (existing.front() == '{' ? "invalid" : "valid"), "existing fixture misclassified");
@@ -607,6 +607,37 @@ void run(bool udp) {
     check(!std::filesystem::exists(journalPath) && readConfig(config) == published,
           "post-crash Connect/Disconnect did not clean its journal or preserve config");
     pass("post-crash backend remains usable for another real Connect/Disconnect");
+    // Restart policy uses the same real host/IPC/network lifecycle. Only this
+    // newly owned fixture file is seeded, while its service is stopped.
+    service.stop();
+    auto startupDom = require(Json::parse(published));
+    for (auto& [name, value] : startupDom.objectValue()) if (name == "masterSetup") {
+        std::erase_if(value.objectValue(), [](const auto& item) { return item.first == "autoConnectOnStartup"; });
+        value.objectValue().emplace_back("autoConnectOnStartup", JsonValue::makeBool(true));
+    }
+    auto seed = [&](const std::string& bytes) {
+        std::ofstream output(config, std::ios::binary | std::ios::trunc);
+        output << bytes;
+        check(output.good(), "isolated startup fixture seed failed");
+    };
+    seed(Json::serialize(startupDom));
+    service.start();
+    client.awaitVpn("connected", "running", 15000);
+    check(service.status().dwCurrentState == SERVICE_RUNNING, "automatic Connect stopped SCM");
+    auto autoLuid = require(network->interfaceLuidForAlias(adapterName));
+    verifyNetwork(*network, baseline, autoLuid, true);
+    service.stop();
+    verifyNetwork(*network, baseline, autoLuid, false);
+    seed(R"({"masterSetup":{"autoConnectOnStartup":true}})");
+    service.start();
+    client.awaitVpn("error", "idle", 5000);
+    check(service.status().dwCurrentState == SERVICE_RUNNING, "invalid startup config stopped SCM");
+    check(client.wizard(WizardCommand::get_config_state).result.find("availability")->stringValue() == "invalid", "degraded startup IPC unavailable");
+    service.stop();
+    seed(published);
+    service.start();
+    client.awaitVpn("disconnected", "idle", 5000);
+    pass("SCM automatic Connect true, invalid true remains controllable, false restart stays disconnected");
     service.stop(); service.cleanup();
     check(require(network->snapshot()).sameDefaultRouteAndDns(baseline), "final default route/DNS differs from baseline");
     if (!udp) std::cout << "[ NOT RUN ] actual UDP roundtrip, lifecycle-only mode selected\n";

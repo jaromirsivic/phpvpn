@@ -95,3 +95,28 @@ PHPVPN_TEST(TrayStatus, PreservesPublicServiceErrorWithoutCheckpointInference) {
     PHPVPN_CHECK_EQ(parsed.errorDescription, "The server did not respond in time. Verification could not be completed.");
     PHPVPN_CHECK(parsed.errorRecoverable);
 }
+
+PHPVPN_TEST(TrayStatus, IconMappingRequiresHealthyConnectedAndHonorsLocalOperation) {
+    TrayStatus status;
+    status.valid = true; status.state = "connected"; status.phase = "running"; status.tunnelReady = "yes";
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::connected);
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, true), TrayIconState::connecting);
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, true, true), TrayIconState::disconnected);
+    status.valid = false;
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, true), TrayIconState::disconnected);
+    status.valid = true; status.hasError = true;
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::disconnected);
+    status.hasError = false; status.tunnelReady = "no";
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::disconnected);
+    status.phase = "stopping";
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::connecting);
+    status.phase = "idle";
+    for (const auto* state : {"connecting", "recovering"}) {
+        status.state = state;
+        PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::connecting);
+    }
+    for (const auto* state : {"disconnected", "error", "unknown", "connected"}) {
+        status.state = state;
+        PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::disconnected);
+    }
+}

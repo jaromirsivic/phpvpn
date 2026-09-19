@@ -4,7 +4,20 @@
 string(REPLACE "." "," PHPVPN_RC_VERSION_COMMA "${PHPVPN_CLIENT_VERSION}.0")
 set(PHPVPN_RC_VERSION "${PHPVPN_CLIENT_VERSION}")
 set(PHPVPN_RC_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/app.manifest")
-set(PHPVPN_RC_ICON "${CMAKE_SOURCE_DIR}/assets/icons/shield_lock_green.ico")
+get_filename_component(PHPVPN_ICON_DIRECTORY "${CMAKE_SOURCE_DIR}/../assets" ABSOLUTE)
+set(PHPVPN_RC_ICON "${PHPVPN_ICON_DIRECTORY}/default.ico")
+foreach(icon IN ITEMS default connected connecting disconnected)
+    if(NOT EXISTS "${PHPVPN_ICON_DIRECTORY}/${icon}.ico")
+        message(FATAL_ERROR "Missing application icon: ${icon}.ico")
+    endif()
+endforeach()
+# Shared by the production tray and every native UI test host.
+function(phpvpn_add_tray_resources target)
+    set_property(SOURCE "${CMAKE_SOURCE_DIR}/apps/tray/tray.rc" APPEND PROPERTY OBJECT_DEPENDS
+        "${CMAKE_SOURCE_DIR}/../assets/default.ico;${CMAKE_SOURCE_DIR}/../assets/disconnected.ico;${CMAKE_SOURCE_DIR}/../assets/connecting.ico;${CMAKE_SOURCE_DIR}/../assets/connected.ico")
+    target_sources(${target} PRIVATE "${CMAKE_SOURCE_DIR}/apps/tray/tray.rc")
+    target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/../assets")
+endfunction()
 
 function(phpvpn_add_version_resource target description internalName originalName withIcon)
     set(PHPVPN_RC_DESCRIPTION "${description}")
@@ -18,6 +31,9 @@ function(phpvpn_add_version_resource target description internalName originalNam
 
     set(generated "${CMAKE_CURRENT_BINARY_DIR}/${target}-version.rc")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/version.rc.in" "${generated}" @ONLY)
+    if(withIcon)
+        set_property(SOURCE "${generated}" PROPERTY OBJECT_DEPENDS "${PHPVPN_RC_ICON}")
+    endif()
     target_sources(${target} PRIVATE "${generated}")
     if(MSVC)
         target_link_options(${target} PRIVATE /MANIFEST:NO)
@@ -27,6 +43,7 @@ endfunction()
 add_executable(phpvpn-service
     service/main.cpp
     service/service_host.cpp
+    service/startup_connect.cpp
 )
 target_link_libraries(phpvpn-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
 set_target_properties(phpvpn-service PROPERTIES OUTPUT_NAME "phpvpn-service")
@@ -63,8 +80,8 @@ add_executable(phpvpn-tray WIN32
     tray/contracts_save_controller.cpp
     tray/password_sha_window.cpp
     tray/contracts_window.cpp
-    tray/tray.rc
 )
+phpvpn_add_tray_resources(phpvpn-tray)
 target_include_directories(phpvpn-tray PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tray)
 target_link_libraries(phpvpn-tray PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)
 set_target_properties(phpvpn-tray PROPERTIES OUTPUT_NAME "phpvpn-tray")

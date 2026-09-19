@@ -3,7 +3,8 @@
     Verifies a generated Windows package and its supported read-only entry point.
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$PackageDirectory)
+param([Parameter(Mandatory=$true)][string]$PackageDirectory,
+    [string]$IconResourceTest = (Join-Path $PSScriptRoot '../../work/build/release/tests/phpvpn-icon-resource-tests.exe'))
 $ErrorActionPreference = 'Stop'
 $package = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $scriptNames = @('install.bat', 'install.ps1', 'uninstall.bat', 'uninstall.ps1')
@@ -33,4 +34,7 @@ if ($text -match 'PHPVPN (un)?installed successfully' -or $text -notmatch 'nothi
     throw "VerifyOnly reported an incorrect result: $text"
 }
 $output | Write-Output
+if (-not (Test-Path -LiteralPath $IconResourceTest -PathType Leaf)) { throw 'Build phpvpn-icon-resource-tests or supply -IconResourceTest.' }
+& $IconResourceTest $package (Join-Path $PSScriptRoot '../../assets')
+if ($LASTEXITCODE -ne 0) { throw 'Packaged PE icons do not match the source assets.' }
 Write-Output 'PASS: source script parity, manifest files/sizes/hashes and supported BAT VerifyOnly without installation feedback.'

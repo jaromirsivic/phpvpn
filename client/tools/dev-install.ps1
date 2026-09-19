@@ -16,7 +16,7 @@ param(
     # preset output of this repository.
     [string]$BuildDirectory,
 
-    # Registers the tray autostart for the current user as well.
+    # Compatibility switch: --install now always owns machine tray autostart.
     [switch]$WithTrayAutostart
 )
 
@@ -75,12 +75,14 @@ $dataDirectory = Join-Path $env:ProgramData "phpvpn"
 Write-Host "Configuration : $(Join-Path $dataDirectory 'config.json')"
 Write-Host "Logs          : $(Join-Path $dataDirectory 'logs')"
 
-if ($WithTrayAutostart) {
-    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    New-ItemProperty -Path $runKey -Name "phpvpn-tray" -Value "`"$tray`"" `
-                     -PropertyType String -Force | Out-Null
-    Write-Host "The tray application starts with the current user."
+# Migrate only the exact old entry for this known build in this profile.
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$legacy = Get-ItemProperty -Path $runKey -Name "phpvpn-tray" -ErrorAction SilentlyContinue
+if ($null -ne $legacy -and $legacy.'phpvpn-tray' -ceq "`"$tray`"") {
+    try { Remove-ItemProperty -Path $runKey -Name "phpvpn-tray" -ErrorAction Stop }
+    catch { Write-Warning 'The matching legacy current-user tray entry could not be removed.' }
 }
+if ($WithTrayAutostart) { Write-Host 'WithTrayAutostart is redundant: --install registers machine autostart.' }
 
 Write-Host ""
 Write-Host "Next steps:"

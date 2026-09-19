@@ -1,4 +1,5 @@
 #pragma once
+#define IDI_PHPVPN_APP          100
 
 #define IDI_PHPVPN_DISCONNECTED 101
 #define IDI_PHPVPN_CONNECTING   102

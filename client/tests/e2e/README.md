@@ -113,3 +113,15 @@ Deterministic bulk/interactive fairness, expiry, rollback, partial ACK and
 concurrent admission are tested separately in the production-component
 `flow_integration`, `tunnel_queues`, `queue_drr`, `queue_expiry` and
 `queue_concurrency` suites of phpvpn-client-tests.
+
+## Automatic startup Connect (2026-09-19)
+
+The isolated SCM lifecycle now restarts its private service with an explicit
+`autoConnectOnStartup: true` configuration and requires connected status without
+an IPC Connect request. A true but incomplete configuration must leave SCM RUNNING
+and IPC available with error status. Restoring false must restart disconnected.
+The legacy missing-field and malformed-document cases remain in the lifecycle.
+The malformed document now exposes error status without initiating Connect.
+Production service, default routes and DNS are covered by the runner cleanup
+oracle. This does not test the production installer, machine Run/logon, reboot,
+or multiple interactive users.

@@ -74,6 +74,9 @@ public:
     // IPC surface. Connect waits only for the network writer's acceptance
     // publication, never for network I/O or the bootstrap result.
     Status connect();
+    std::uint64_t startupControlToken() const noexcept { return controlGeneration_.load(); }
+    Status connectAtStartup(std::uint64_t token, std::uint64_t epoch);
+    void publishStartupError(std::uint64_t token, std::uint64_t epoch, const Error& error);
     Status disconnect();
     void dismissConnectDiagnostic(std::uint64_t epoch, std::string_view attemptId);
     StatusSnapshot status() const;
@@ -107,6 +110,7 @@ private:
     enum class Command { none, connect, disconnect, stop };
 
     void runNetworkThread();
+    Status connectWithGeneration(std::uint64_t generation, std::optional<std::uint64_t> startupEpoch = {});
     void pushCommand(Command command);
     Command takeCommand(std::int64_t waitMs);
 

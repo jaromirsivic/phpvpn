@@ -28,6 +28,8 @@ add_executable(phpvpn-client-tests
     unit/test_tunnel_queues.cpp
     unit/test_queues.cpp
     unit/test_service_registration.cpp
+    unit/test_tray_autostart.cpp
+    ../apps/service/startup_connect.cpp
     unit/test_time_sync.cpp
     unit/test_wire.cpp
     unit/test_info_extensions.cpp
@@ -68,9 +70,10 @@ add_executable(phpvpn-client-tests
     ../apps/tray/contracts_save_controller.cpp
     ../apps/tray/password_sha_window.cpp
     ../apps/tray/contracts_window.cpp
-    ../apps/tray/tray.rc
+
 )
 
+phpvpn_add_tray_resources(phpvpn-client-tests)
 target_include_directories(phpvpn-client-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/unit
     ${CMAKE_SOURCE_DIR}/apps/service
@@ -79,6 +82,17 @@ target_link_libraries(phpvpn-client-tests PRIVATE phpvpn-platform phpvpn-core ph
 target_link_options(phpvpn-client-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/apps/app.manifest")
 
 add_test(NAME phpvpn-client-tests COMMAND phpvpn-client-tests)
+
+add_executable(phpvpn-tray-registry-tests resources/tray_registry.cpp)
+target_link_libraries(phpvpn-tray-registry-tests PRIVATE phpvpn-platform phpvpn-compile-options)
+add_test(NAME phpvpn-tray-registry-tests COMMAND phpvpn-tray-registry-tests)
+set_tests_properties(phpvpn-tray-registry-tests PROPERTIES LABELS "registry;isolated")
+add_executable(phpvpn-icon-resource-tests resources/icon_resources.cpp)
+target_link_libraries(phpvpn-icon-resource-tests PRIVATE phpvpn-compile-options user32)
+add_dependencies(phpvpn-icon-resource-tests phpvpn-service phpvpn-tray phpvpn-cli)
+add_test(NAME phpvpn-icon-resource-tests COMMAND phpvpn-icon-resource-tests
+    "$<TARGET_FILE_DIR:phpvpn-service>" "${CMAKE_SOURCE_DIR}/../assets")
+set_tests_properties(phpvpn-icon-resource-tests PROPERTIES LABELS "icons;resources")
 
 if(WIN32)
     find_program(PHPVPN_POWERSHELL powershell.exe REQUIRED)
@@ -130,7 +144,7 @@ if(PHPVPN_BUILD_SERVICE_E2E)
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64")
         message(FATAL_ERROR "The isolated service E2E target requires AMD64")
     endif()
-    add_executable(phpvpn-e2e-service e2e/service_main.cpp ../apps/service/service_host.cpp)
+    add_executable(phpvpn-e2e-service e2e/service_main.cpp ../apps/service/service_host.cpp ../apps/service/startup_connect.cpp)
     target_include_directories(phpvpn-e2e-service PRIVATE ${CMAKE_SOURCE_DIR}/apps/service)
     target_link_libraries(phpvpn-e2e-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
     add_custom_command(TARGET phpvpn-e2e-service POST_BUILD
@@ -172,7 +186,8 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/window_utils.cpp
         ../apps/tray/ui_resources.cpp
         ../apps/tray/ui_controls.cpp
-        ../apps/tray/tray.rc)
+    )
+    phpvpn_add_tray_resources(phpvpn-wp03-ui-tests)
     target_include_directories(phpvpn-wp03-ui-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
     target_link_libraries(phpvpn-wp03-ui-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)
     target_link_options(phpvpn-wp03-ui-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/apps/app.manifest")
@@ -189,7 +204,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/progress_details.cpp
         ../apps/tray/progress_window.cpp
         ../apps/tray/statistics_window.cpp
-        ../apps/tray/tray.rc
+
         ../apps/tray/layout.cpp
         ../apps/tray/status_model.cpp
         ../apps/tray/status_reader.cpp
@@ -202,6 +217,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/contracts_save_controller.cpp
         ../apps/tray/password_sha_window.cpp
         ../apps/tray/contracts_window.cpp)
+    phpvpn_add_tray_resources(phpvpn-tray-ui-tests)
     target_include_directories(phpvpn-tray-ui-tests PRIVATE ${CMAKE_SOURCE_DIR}/apps/tray)
     target_link_libraries(phpvpn-tray-ui-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options comctl32)
     target_link_options(phpvpn-tray-ui-tests PRIVATE "/MANIFESTINPUT:${CMAKE_SOURCE_DIR}/apps/app.manifest")

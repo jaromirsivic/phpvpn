@@ -146,3 +146,15 @@ reader checks remain manual and must be recorded separately.
 Raw text checks cover visible LF and CRLF line breaks as well as exact copied LF
 text. Server information has a 320 by 480 DIP minimum client area, preserving
 at least one visible table row when the heading and footer wrap.
+
+## Application icons and local Disconnect (2026-09-19)
+
+`phpvpn-wp03-ui-tests WindowIcons` compares rendered small/big HWND icons with
+resource 100 for progress, statistics, editor and all common system-dialog paths.
+It also drives a real TrayApplication through a private pipe and shell adapter,
+checking the immediate disconnect icon, an unchanged connected RPC reply,
+teardown completion, duplicate action suppression and invalid responses.
+The main UI harness checks the default icon whenever it finds a production
+window, including reopened Wizard windows. Unit resource tests cover
+96/120/144/192 DPI sizes and failed-load handle preservation. These checks do
+not substitute for Explorer/Alt+Tab visual inspection or physical monitor moves.

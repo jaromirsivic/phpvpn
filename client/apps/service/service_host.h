@@ -9,6 +9,7 @@
 #include <filesystem>
 
 #include "core/base/result.h"
+#include "platform/windows/tray_autostart.h"
 
 namespace phpvpn {
 
@@ -32,7 +33,7 @@ int runInConsole();
 
 // Registration helpers used by install.bat through the service executable, so
 // the batch file never has to reproduce the service parameters.
-Status installService(const std::wstring& executablePath);
-Status uninstallService();
+ServiceRegistrationResult installService(const std::wstring& executablePath);
+ServiceRegistrationResult uninstallService();
 
 }  // namespace phpvpn

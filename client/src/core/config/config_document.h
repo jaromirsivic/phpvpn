@@ -36,6 +36,7 @@ struct WizardPreferences {
 };
 struct ConfigValues {
     ServerUrl serverUrl;
+    bool autoConnectOnStartup = false;
     bool trustAnyTlsCertificate = kDefaultTrustAnyTlsCertificate;
     std::string serverSecret;
     Ipv4Cidr vpnCidr;
@@ -57,6 +58,8 @@ struct WizardDocument {
 };
 // Only a single leading UTF-8 BOM is removed. Invalid Unicode is never repaired.
 Result<std::string> normalizeConfigText(std::string_view bytes);
+// Reads only the preference. A true result never substitutes full validation.
+Result<bool> readAutoConnectOnStartup(const JsonValue& document);
 bool isStrictUtf8(std::string_view text) noexcept;
 Result<ConfigValues> validateConfigValues(std::string_view json, ConfigWarnings& warnings, bool allowMissingIdentity);
 Result<WizardDocument> analyzeWizardDocument(std::string_view json);

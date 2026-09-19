@@ -429,6 +429,24 @@ PHPVPN_TEST(config, flow_queue_defaults_are_exact_and_only_materialized_in_memor
         PHPVPN_CHECK_EQ(config.value()->rawJson,text);
     }
 }
+
+PHPVPN_TEST(config, startup_boolean_is_optional_and_strict) {
+    ConfigWarnings warnings;
+    PHPVPN_CHECK(!parseAndValidateConfig(validDocument(), warnings).value()->autoConnectOnStartup);
+    for (const bool enabled : {false, true}) {
+        const auto text = documentWith(std::string("\"autoConnectOnStartup\":") + (enabled ? "true," : "false,"));
+        auto runtime = parseAndValidateConfig(text, warnings);
+        auto values = validateConfigValues(text, warnings, false);
+        PHPVPN_REQUIRE_OK(runtime);
+        PHPVPN_REQUIRE_OK(values);
+        PHPVPN_CHECK_EQ(runtime.value()->autoConnectOnStartup, enabled);
+        PHPVPN_CHECK_EQ(values->autoConnectOnStartup, enabled);
+    }
+    for (const auto* value : {"null", "0", "1.5", "\"true\"", "[]", "{}"}) {
+        auto result = parseAndValidateConfig(documentWith(std::string("\"autoConnectOnStartup\":") + value + ","), warnings);
+        PHPVPN_REQUIRE_ERROR(result, ErrorCode::config_invalid_value);
+    }
+}
 PHPVPN_TEST(config, directional_minima_and_ttl_validate_every_type_without_legacy_alias) {
     ConfigWarnings warnings;
     for(const auto name : {"minOutboundPerPeerQueueBytes","minInboundPerPeerQueueBytes","maxQueuedPacketAgeMs"}) {

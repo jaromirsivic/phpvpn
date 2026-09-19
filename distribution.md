@@ -78,4 +78,6 @@ V aktuální etapě je implementovaným cílem Windows x64. Pokud pro macOS nebo
 
 Aktuální [client/tools/make-dist.ps1](client/tools/make-dist.ps1) sestavuje plochý Windows balíček a jeho výchozí výstup je `dist`. Při použití pro tuto metodiku se MUSÍ výstup výslovně nasměrovat do `dist/client/Windows/x64` pomocí `-OutputDirectory`, případně do odpovídající složky nově připravovaného stromu. Samotný nástroj nevytváří serverovou část ani platformní složky macOS a Linux, jejich přípravu MUSÍ zajistit celkový postup sestavení. Dokumentace tímto popisuje požadované použití stávajícího nástroje, netvrdí, že jeho výchozí chování již sestavuje celý distribuční strom.
 
+Windows balíček se ověřuje také pomocí `client/tools/verify-package.ps1 -PackageDirectory <cesta>`. Tento read-only krok kontroluje shodu skriptů, manifest, podpisy, VerifyOnly a přesné vložené ICO resources všech tří produkčních EXE. Vyžaduje sestavený `phpvpn-icon-resource-tests`, standardně z presetu `release` s `BUILD_TESTING=ON`. Jiný ověřovací build lze zadat přes `-IconResourceTest`. Čtyři zdrojové ICO se používají pouze při sestavení a ověřování, do provozního balíčku se samostatně nepřidávají.
+
 Status stránka je vložená přímo v `phpvpn.php`. Distribuovaný server nepotřebuje `assets/index.html`.

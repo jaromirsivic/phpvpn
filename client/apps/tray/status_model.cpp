@@ -11,6 +11,14 @@
 #include "platform/iface/transport.h"
 
 namespace phpvpn::tray {
+TrayIconState selectTrayIcon(const TrayStatus& status, bool unavailable, bool localOperation) {
+    if (unavailable || !status.valid) return TrayIconState::disconnected;
+    if (localOperation || status.phase == "stopping" || status.state == "connecting" || status.state == "recovering")
+        return TrayIconState::connecting;
+    if (status.state == "connected" && status.phase == "running" && status.tunnelReady == "yes" && !status.hasError)
+        return TrayIconState::connected;
+    return TrayIconState::disconnected;
+}
 namespace {
 bool stringIn(const JsonValue* value, std::initializer_list<std::string_view> allowed) {
     if (!value || !value->isString()) return false;

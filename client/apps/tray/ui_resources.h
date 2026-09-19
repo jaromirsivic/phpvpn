@@ -41,6 +41,9 @@ using UniqueIcon = UniqueUiHandle<HICON, DeleteIcon>;
 class UiResources {
 public:
     bool update(HINSTANCE instance, int dpi, bool loadStateIcons = true);
+    void applyApplicationIcons(HWND window);
+    HICON appIconSmall() const { return appSmall_.get(); }
+    HICON appIconLarge() const { return appLarge_.get(); }
     void clear() noexcept;
     int dpi() const noexcept { return dpi_; }
     HFONT font(ui::Font role) const { return fonts_[static_cast<std::size_t>(role)].get(); }
@@ -54,6 +57,8 @@ private:
     std::array<UniqueBrush, static_cast<std::size_t>(ui::Color::count)> brushes_;
     std::array<UniquePen, static_cast<std::size_t>(ui::Color::count)> pens_;
     std::array<UniqueIcon, 3> icons_;
+    UniqueIcon appSmall_, appLarge_;
+    HWND applicationWindow_ = nullptr;
     std::array<COLORREF, static_cast<std::size_t>(ui::Color::count)> palette_{};
     int dpi_ = 0;
     HINSTANCE instance_ = nullptr;

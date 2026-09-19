@@ -45,6 +45,9 @@ TrayApplication::TrayApplication(TrayRuntime runtime)
       disconnect_(runtime_.pipeName), config_(runtime_.pipeName),
       editor_(runtime_.pipeName), infoWindow_(runtime_.pipeName), wizard_(runtime_.pipeName),
       contracts_(runtime_.pipeName), progress_(runtime_.pipeName), disconnectProgress_(runtime_.pipeName) {
+    disconnectProgress_.disconnectSnapshot = [this](const TrayStatus& status) {
+        if (!endingSession_ && disconnectInProgress_) onSnapshot(status);
+    };
     contracts_.disconnectAfterSave = [this](const TrayStatus& status) {
         if (endingSession_ || exitRequested_ || disconnectPending_) return;
         onSnapshot(status);
@@ -83,6 +86,7 @@ bool TrayApplication::initialise(HINSTANCE instance) {
                               nullptr, instance, this);
     if (!window_) return false;
     if (!resources_.update(instance, static_cast<int>(GetDpiForSystem()))) return false;
+    resources_.applyApplicationIcons(window_);
     if (!shellIcon_.publish(window_, kTrayMessage, resources_.icon(0),
         runtime_.tooltipOverride.empty() ? ui::product : runtime_.tooltipOverride)) return false;
     polling_.start(nowMs());
@@ -125,7 +129,14 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
             return 0;
         case WM_TIMER:
             if (wParam == kExitTimer) { self->advanceExit(); return 0; }
-            if (wParam == kStatusTimer && self->polling_.onTimer(nowMs())) self->statusReader_.request(window, kStatusMessage);
+            if (wParam == kStatusTimer && self->polling_.onTimer(nowMs())) {
+                self->updateIcon();
+                // The live Disconnect window owns fast status reads. A second
+                // reader could deliver an older connected reply after teardown.
+                // Once that window closes, the tray resumes its own polling.
+                if (!self->disconnectPending_ && (!self->disconnectInProgress_ || !self->disconnectProgress_.window()))
+                    self->statusReader_.request(window, kStatusMessage);
+            }
             return 0;
         case kStatusMessage:
             if (auto snapshot = self->statusReader_.take()) self->onSnapshot(*snapshot);
@@ -197,6 +208,10 @@ void TrayApplication::showMenu(bool keyboard) {
     DestroyMenu(menu);
 }
 void TrayApplication::onSnapshot(const TrayStatus& snapshot) {
+    if (disconnectInProgress_ && !disconnectPending_ &&
+        (!snapshot.valid || (snapshot.phase != "stopping" &&
+          (snapshot.state == "error" || (snapshot.state == "disconnected" && snapshot.phase == "idle")))))
+        disconnectInProgress_ = false;
     statusUnavailable_ = !snapshot.valid;
     applyStatusSnapshot(snapshot_, snapshot);
     // Only the live Connect owner retains raw HTTP. Icon/statistics caches do not.
@@ -208,12 +223,21 @@ void TrayApplication::onSnapshot(const TrayStatus& snapshot) {
     updateIcon();
 }
 void TrayApplication::updateIcon() {
-    std::size_t state = 0;
+    if (disconnectInProgress_ && GetTickCount64() >= disconnectDeadline_) {
+        disconnectInProgress_ = false;
+        statusUnavailable_ = true;
+        disconnectProgress_.onDisconnectTimeout();
+        statusReader_.abandon();
+        statusReader_.request(window_, kStatusMessage);
+    }
+    const auto state = static_cast<std::size_t>(selectTrayIcon(snapshot_, statusUnavailable_,
+        disconnectInProgress_ || (pendingCommand_ == IpcCommand::connect && !connectSuperseded_)));
     const wchar_t* tip = ui::disconnectedTip;
     if (statusUnavailable_) tip = ui::unavailableTip;
-    else if (snapshot_.state == "connected") { state = 2; tip = ui::connectedTip; }
-    else if (snapshot_.state == "connecting") { state = 1; tip = ui::connectingTip; }
-    else if (snapshot_.state == "recovering") { state = 1; tip = ui::recoveringTip; }
+    else if (disconnectInProgress_) tip = ui::connectingTip;
+    else if (state == 2) tip = ui::connectedTip;
+    else if (snapshot_.state == "recovering") tip = ui::recoveringTip;
+    else if (state == 1) tip = ui::connectingTip;
     else if (snapshot_.state == "error") tip = ui::errorTip;
     shellIcon_.publish(window_, kTrayMessage, resources_.icon(state), runtime_.tooltipOverride.empty() ? tip : runtime_.tooltipOverride);
 }
@@ -228,9 +252,13 @@ void TrayApplication::startCommand(IpcCommand command, const std::string& payloa
         if (!disconnect_.request(command, {}, window_, kDisconnectMessage)) showError(L"Disconnect is already being processed. Waiting for its result.");
         else {
             disconnectPending_ = true;
+            disconnectInProgress_ = true;
+            disconnectDeadline_ = GetTickCount64() + 30000;
+            statusReader_.abandon();
             connectSuperseded_ = pendingCommand_ == IpcCommand::connect;
             progress_.endSession();
             disconnectProgress_.open(instance_, true);
+            updateIcon();
         }
         return;
     }
@@ -255,6 +283,7 @@ void TrayApplication::startCommand(IpcCommand command, const std::string& payloa
         if (command == IpcCommand::connect) progress_.endSession();
         commandPlacement_ = menuPlacement_;
         pendingCommand_ = command;
+        if (command == IpcCommand::connect) { statusReader_.abandon(); updateIcon(); }
     }
     else showError(L"The command could not be started.");
 }
@@ -273,21 +302,24 @@ void TrayApplication::finishCommand() {
     if (!response || !pendingCommand_) return;
     const auto command = *pendingCommand_;
     pendingCommand_.reset();
+    updateIcon();
     if (command == IpcCommand::connect && connectSuperseded_) {
         connectSuperseded_ = false;
-        statusReader_.stop(); statusReader_.request(window_, kStatusMessage);
+        statusReader_.abandon();
+        if (!disconnectPending_ && (!disconnectInProgress_ || !disconnectProgress_.window()))
+            statusReader_.request(window_, kStatusMessage);
         return;
     }
     // These extra reads do not restart or replace the periodic tray timer.
     if (command == IpcCommand::connect || command == IpcCommand::disconnect) {
         // Discard any read initiated before the command. It may otherwise
         // arrive after the command's newer snapshot and roll the icon back.
-        statusReader_.stop();
+        statusReader_.abandon();
         statusReader_.request(window_, kStatusMessage);
     }
-    if (response->empty()) { showError(L"The PHPVPN service did not complete the command."); return; }
+    if (response->empty()) { onSnapshot({}); showError(L"The PHPVPN service did not complete the command."); return; }
     auto parsed = Json::parse(*response);
-    if (!parsed.ok() || !parsed.value().isObject()) { showError(L"The service returned an invalid response."); return; }
+    if (!parsed.ok() || !parsed.value().isObject()) { onSnapshot({}); showError(L"The service returned an invalid response."); return; }
     if (const auto* error = parsed.value().find("error"); error && error->isObject()) {
         // Never display raw transport/system/configuration text as an error.
         const auto* description = error->find("description");
@@ -416,11 +448,15 @@ void TrayApplication::finishDisconnect() {
     const auto status = parseStatusResponse(*response);
     disconnectProgress_.onDisconnectReply(status);
     if (!status.valid) {
+        disconnectInProgress_ = false;
+        onSnapshot(status);
+        statusReader_.abandon(); statusReader_.request(window_, kStatusMessage);
         if (!disconnectProgress_.window()) showError(L"The service did not confirm Disconnect. Try Disconnect again or check the service status.");
         return;
     }
     onSnapshot(status); progress_.onSnapshot(status);
-    statusReader_.stop(); statusReader_.request(window_, kStatusMessage);
+    statusReader_.abandon();
+    if (!disconnectInProgress_) statusReader_.request(window_, kStatusMessage);
 }
 void TrayApplication::requestExit() {
     if (endingSession_ || exitRequested_) return;

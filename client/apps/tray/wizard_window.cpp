@@ -499,6 +499,7 @@ void WizardWindow::render() {
         resources_.update(instance_, dpi_, false);
         font_ = resources_.font(ui::Font::label); headingFont_ = resources_.font(ui::Font::heading);
     }
+    resources_.applyApplicationIcons(window_);
     layout(); cursorY_ = scaleForDpi(20, dpi_);
     const auto step = model_.step();
     const bool locked = model_.busy() || primary_.busy() || control_.busy() || closing_ || resetting_ || disconnecting_;

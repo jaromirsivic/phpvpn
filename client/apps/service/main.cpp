@@ -86,8 +86,10 @@ int wmain(int argc, wchar_t** argv) {
         }
         const std::wstring executable = (directory.value() / "phpvpn-service.exe").wstring();
         auto installed = phpvpn::installService(executable);
-        if (!installed.ok()) {
-            std::fputs(installed.error().message().c_str(), stderr);
+        if (installed.autostartWarning)
+            std::fprintf(stdout, "WARNING: phpvpn-tray autostart registration failed (Win32 %lu). Retry --install.\n", installed.autostartWarning);
+        if (!installed.critical.ok()) {
+            std::fputs(installed.critical.error().message().c_str(), stderr);
             std::fputc('\n', stderr);
             return 1;
         }
@@ -99,8 +101,10 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (mode == L"--uninstall") {
         auto removed = phpvpn::uninstallService();
-        if (!removed.ok()) {
-            std::fputs(removed.error().message().c_str(), stderr);
+        if (removed.autostartWarning)
+            std::fprintf(stdout, "WARNING: phpvpn-tray autostart removal failed (Win32 %lu). Retry --uninstall.\n", removed.autostartWarning);
+        if (!removed.critical.ok()) {
+            std::fputs(removed.critical.error().message().c_str(), stderr);
             std::fputc('\n', stderr);
             return 1;
         }

@@ -414,3 +414,13 @@ Opt-in phpvpn-tray-ui-tests zůstává mimo CTest a produkční linkage. Všechn
 Scene matrix obsahuje také produkční Disconnect progress ve stavech Disconnecting, Disconnected a Failed a Server Information ve stavech Who a Raw. Disconnect používá skutečnou akci tray nad syntetickým připojeným stavem. Info používá skutečné Show Info, právě jeden syntetický get-server-info a Raw přepne až po vytvoření nativního okna. Filtr `live_resize_repaint` zahrnuje Connect, Disconnect, Info, Editor, Statistics, Wizard, Contracts a Password a zachovává přísné porovnání živého snímku s úplným překreslením. Jde o syntetickou nativní evidenci produkčních oken, nikoli důkaz služby, VPN, instalace, fyzických přechodů mezi monitory nebo úplné DPI matice. Screenshoty z ručního ověření patří pouze do work/logs a nikdy do sledovaných zdrojů.
 
 [Historický audit uložený 8. září 2026](client/tests/implementation-plan3-fix3-wp07.md) zachovává také dřívější výsledky runneru a native testů odděleně od plné vizuální a runtime akceptace. Syntetický backend sdílí proces, případná CPU/paměťová měření jsou proxy a nenahrazují produkční baseline ani fyzické monitor/DPI, high contrast nebo screen-reader ověření. Vývojový výstup zůstává ve work/build bez kopie do dist. Rychlé ověření není vydáním ani důkazem reálné služby, instalace nebo VPN. Plné vydání se nadále řídí distribution.md.
+
+## Aplikační a stavové ikony (2026-09-19)
+
+Aplikační ikona všech top-level oken a systémových dialogů je `assets/default.ico`, nastavená pro ICON_SMALL i ICON_BIG. Stav VPN ji nemění. Načítá se také v oknech, která nepotřebují stavové ikony. Při změně DPI se nejprve načte celá nová sada a přepne HWND, poté se uvolní staré handles. Neúspěšné načtení zachová původní sadu.
+
+Notification area používá přesné embedded resources: disconnected=101, connecting=102 a connected=103. Nedostupný nebo neplatný aktuální status má přednost a ukazuje disconnected. Probíhající lokální Connect/Disconnect, stopping, connecting a recovering používají connecting. Connected je vyhrazeno zdravému connected/running s tunnelReady=yes bez chyby. Disconnected, error a nekonzistentní stav používají disconnected.
+
+Přijatý Disconnect mění ikonu ihned, i nad posledním connected snapshotem. Přijetí RPC samo neukončuje čekání na teardown. Terminální status nebo chyba ukončí lokální průběh. Neplatná odpověď a timeout označí status jako nedostupný a vyžádají nové čtení. Čtení zahájené před příkazem se zahodí.
+
+Sledování stavu pokračuje po odpovědi Disconnect i po zavření jeho okna. Živé okno dodává aktuální stav přímo tray, po jeho zavření jej znovu čte tray. Po 30 sekundách nepotvrzeného průběhu se čekání ukončí, okno umožní další akci a tray vyžádá nový autoritativní stav.

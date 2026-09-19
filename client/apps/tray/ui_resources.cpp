@@ -62,12 +62,27 @@ bool UiResources::update(HINSTANCE instance, int dpi, bool loadStateIcons) {
             if (!next.icons_[i].get()) return false;
         }
     }
+    if (!sameAssets) {
+        next.appSmall_.reset(static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_PHPVPN_APP), IMAGE_ICON,
+            GetSystemMetricsForDpi(SM_CXSMICON, dpi), GetSystemMetricsForDpi(SM_CYSMICON, dpi), 0)));
+        next.appLarge_.reset(static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_PHPVPN_APP), IMAGE_ICON,
+            GetSystemMetricsForDpi(SM_CXICON, dpi), GetSystemMetricsForDpi(SM_CYICON, dpi), 0)));
+        if (!next.appSmall_.get() || !next.appLarge_.get()) return false;
+        // Transfer the live HWND before releasing either old HICON.
+        if (applicationWindow_ && IsWindow(applicationWindow_)) next.applyApplicationIcons(applicationWindow_);
+    }
     if (sameAssets) {
         // Palette changes do not reload icons or invalidate control font handles.
         brushes_ = std::move(next.brushes_); pens_ = std::move(next.pens_);
         palette_ = next.palette_; highContrast_ = highContrast;
     } else *this = std::move(next);
     return true;
+}
+void UiResources::applyApplicationIcons(HWND window) {
+    applicationWindow_ = window;
+    if (!window || !appSmall_.get() || !appLarge_.get()) return;
+    SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appSmall_.get()));
+    SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appLarge_.get()));
 }
 void UiResources::clear() noexcept { *this = UiResources{}; }
 } // namespace phpvpn::tray

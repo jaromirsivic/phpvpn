@@ -96,6 +96,8 @@ private:
     ProgressWindow disconnectProgress_;
     bool connectSuperseded_ = false;
     bool disconnectPending_ = false;
+    bool disconnectInProgress_ = false;
+    std::uint64_t disconnectDeadline_ = 0;
     StatisticsWindow statistics_;
 };
 

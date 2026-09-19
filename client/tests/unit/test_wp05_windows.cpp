@@ -2,6 +2,7 @@
 #include "contracts_fixture.h"
 #include "core/wizard/wizard_defaults.h"
 #include "wp03_dialog_test.h"
+#include "icon_test_helpers.h"
 #include "../../apps/tray/tray_application.h"
 #include "../../apps/tray/resource.h"
 #include "../../apps/tray/http_error_detail_window.h"
@@ -39,7 +40,9 @@ HWND top(const wchar_t* type) {
     EnumThreadWindows(GetCurrentThreadId(), [](HWND h, LPARAM p) -> BOOL {
         auto& s = *reinterpret_cast<Search*>(p); wchar_t name[128]{}; GetClassNameW(h,name,128);
         if (std::wstring_view(name) == s.type) { s.found = h; return FALSE; } return TRUE;
-    }, reinterpret_cast<LPARAM>(&search)); return search.found;
+    }, reinterpret_cast<LPARAM>(&search));
+    if (search.found) PHPVPN_CHECK(phpvpn::tray::test::applicationIconsMatch(search.found));
+    return search.found;
 }
 HWND field(HWND parent, int id) {
     struct Search { int id; HWND found = nullptr; } search{id};
