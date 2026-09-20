@@ -21,6 +21,11 @@ declare(strict_types=1);
 
 namespace PhpVpn;
 
+if (PHP_INT_SIZE < 8) {
+    echo '<h1>This PHP script is supported only on 64-bit PHP.</h1>';
+    exit;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Configuration header. This is the only part an administrator edits.
 // ---------------------------------------------------------------------------
