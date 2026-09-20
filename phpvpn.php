@@ -9,7 +9,7 @@
  *
  * Deployment notes:
  *  - post_max_size and any proxy body limit must be strictly higher than MAX_REQUEST_BODY_BYTES.
- *  - memory_limit should be at least 128M.
+ *  - memory_limit should be at least 64M.
  *  - BUFFER_DIRECTORY must not be reachable over HTTP. The server writes best effort
  *    .htaccess and web.config guards, nginx must be configured manually, for example:
  *        location ^~ /phpvpn_data/ { deny all; return 404; }
