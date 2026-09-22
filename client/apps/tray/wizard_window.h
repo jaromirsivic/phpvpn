@@ -8,6 +8,7 @@
 #include "wizard_layout.h"
 #include "ui_resources.h"
 #include "http_error_detail_window.h"
+#include "http_headers_window.h"
 
 namespace phpvpn::tray {
 // UI-thread value snapshot. No fields, secrets, HWND or mutable model access.
@@ -69,6 +70,7 @@ private:
     WizardLayout geometry_{};
     WizardModel model_;
     HttpErrorDetailWindow detail_;
+    HttpHeadersWindow headers_;
     std::optional<WizardRequest> diagnosticRequest_;
     std::optional<std::pair<std::string, std::uint64_t>> diagnosticCleanup_;
     WizardReader primary_, control_, heartbeat_;

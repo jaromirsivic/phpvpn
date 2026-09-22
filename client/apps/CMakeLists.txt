@@ -77,6 +77,8 @@ add_executable(phpvpn-tray WIN32
     tray/status_reader.cpp
     tray/wizard_reader.cpp
     tray/wizard_window.cpp
+    tray/http_headers_window.cpp
+    tray/http_headers_layout.cpp
     tray/http_error_detail_window.cpp
     tray/wizard_layout.cpp
     tray/progress_window.cpp

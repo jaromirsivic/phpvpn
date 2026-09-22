@@ -7,6 +7,7 @@ WizardDocument makeNewWizardDocument() {
     document.fields.serverUrl = kWizardPlaceholderUrl;
     document.fields.serverSecret = kDefaultServerSecret;
     document.context.httpHeaders = kDefaultHttpHeaders;
+    document.fields.httpHeaders = kDefaultHttpHeaders;
     document.context.vpnCidr = *Ipv4Cidr::parse(kDefaultVpnCidr);
     document.dom = JsonValue::makeObject({{"masterSetup", JsonValue::makeObject({
         {"serverSecret", JsonValue::makeString(document.fields.serverSecret)},

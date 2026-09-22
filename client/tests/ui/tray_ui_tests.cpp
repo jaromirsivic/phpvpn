@@ -275,6 +275,10 @@ struct Backend {
             return result(J::makeObject({{"alive", J::makeBool(true)}, {"leaseDurationMs", J::makeInteger(kWizardLeaseMs)}}));
         case WizardCommand::check_url: case WizardCommand::check_secret: case WizardCommand::check_access:
             ++totalStarts; starts.push_back(r);
+            view.fields->serverUrl = r.fields.serverUrl;
+            view.fields->httpHeaders = r.fields.httpHeaders;
+            if (r.command == WizardCommand::check_secret) view.fields->serverSecret = r.fields.serverSecret;
+            if (r.command == WizardCommand::check_access) view.fields = r.fields;
             if (r.command == WizardCommand::check_secret) observedSecret = r.fields.serverSecret;
             operation = {};
             operation.operationId = uuid();
@@ -591,6 +595,158 @@ void wizardHttpDiagnostic() {
         gui.wizard.endSession();
     }
 }
+void httpHeadersDraft() {
+    std::cout << "[ EVIDENCE ] headers draft: opening wizard\n" << std::flush;
+    Gui gui(true); gui.open();
+    const HWND owner = gui.hwnd();
+    const auto initial = gui.wizard.lifecycleSnapshot();
+    const auto open = [&] {
+        click(owner, 718);
+        auto dialog = findTop(L"PhpVpnHttpHeaders");
+        check(dialog && GetWindow(dialog, GW_OWNER) == owner, "headers owner missing");
+        check(!IsWindowEnabled(owner) && GetFocus() == child(dialog, 790), "headers not modal or initial focus wrong");
+        return dialog;
+    };
+    const auto cancel = [&](HWND dialog) {
+        click(dialog, IDCANCEL);
+        check(!findTop(L"PhpVpnHttpHeaders") && IsWindowEnabled(owner), "Cancel did not restore owner");
+        check(GetFocus() == child(owner, 718), "Cancel focus not returned to current button");
+    };
+    auto dialog = open();
+    std::cout << "[ EVIDENCE ] headers draft: cancel/reset\n" << std::flush;
+    check(text(child(dialog, 790)) == widen(kDefaultHttpHeaders), "defaults not real CRLF lines");
+    edit(dialog, 790, L"Cookie: discarded"); click(dialog, 791);
+    check(text(child(dialog, 790)) == widen(kDefaultHttpHeaders), "Reset wrong defaults");
+    cancel(dialog);
+    check(gui.wizard.lifecycleSnapshot() == initial, "Reset Cancel dirtied wizard");
+    dialog = open(); edit(dialog, 790, L"Cookie: discarded");
+    MSG escape{}; escape.hwnd = child(dialog, 790); escape.message = WM_KEYDOWN; escape.wParam = VK_ESCAPE;
+    check(gui.wizard.translate(escape), "headers Escape not translated");
+    check(!findTop(L"PhpVpnHttpHeaders") && gui.wizard.lifecycleSnapshot() == initial, "Escape committed draft");
+    dialog = open(); edit(dialog, 790, L"Cookie: discarded-X"); SendMessageW(dialog, WM_CLOSE, 0, 0);
+    check(!findTop(L"PhpVpnHttpHeaders") && gui.wizard.lifecycleSnapshot() == initial, "X committed draft");
+    dialog = open();
+    for (const auto bad : {L"", L"bad header", L"X: a\r\n\r\nY: b", L"X: a\r\nx: b", L"hOsT: synthetic-secret",
+            L"content-type: synthetic", L"CONTENT-LENGTH: 2", L"Connection: close", L"transfer-encoding: chunked"}) {
+        edit(dialog, 790, bad);
+        std::cout << "[ EVIDENCE ] headers draft: invalid OK\n" << std::flush;
+        answer(IDOK, [&] { click(dialog, IDOK); });
+        check(findTop(L"PhpVpnHttpHeaders") == dialog && text(child(dialog, 790)) == bad, "invalid OK closed or modified text");
+        check(!IsWindowEnabled(owner) && GetFocus() == child(dialog, 790), "validation broke modality/focus");
+    }
+    const std::wstring value = L"Cookie: synthetic=required\r\nUser-Agent: test\r\nX-Quote: \"a\\b\"";
+    std::cout << "[ EVIDENCE ] headers draft: valid OK\n" << std::flush;
+    edit(dialog, 790, value); click(dialog, IDOK);
+    check(!findTop(L"PhpVpnHttpHeaders") && gui.wizard.lifecycleSnapshot().dirty, "valid OK not committed to draft");
+    check(gui.backend.count(&Backend::finishCalls) == 0 && gui.backend.count(&Backend::totalStarts) == 0, "dialog performed network or save");
+    const auto edited = gui.wizard.lifecycleSnapshot();
+    dialog = open(); check(text(child(dialog, 790)) == value, "reopen lost headers");
+    click(dialog, IDOK); check(gui.wizard.lifecycleSnapshot() == edited, "identical OK dirtied draft again");
+    gui.nextTo(secretId); click(owner, backId);
+    gui.until([&] { return child(owner, 718) != nullptr; }, "Back lost headers button");
+    dialog = open(); check(text(child(dialog, 790)) == value, "Back lost headers draft");
+    click(dialog, 791); cancel(dialog);
+    gui.nextTo(secretId); gui.nextTo(ipId); gui.nextTo(contractsId);
+    check(gui.backend.count(&Backend::finishCalls) == 0, "navigation saved before Finish");
+    {
+        std::lock_guard lock(gui.backend.mutex);
+        for (const auto& request : gui.backend.starts) check(request.fields.httpHeaders == narrow(value), "probe IPC lost confirmed headers");
+    }
+    click(owner, nextId);
+    gui.until([&] { return !gui.wizard.isOpen(); }, "headers Finish did not complete");
+    check(gui.backend.count(&Backend::finishCalls) == 1, "Finish publication not unique");
+    { std::lock_guard lock(gui.backend.mutex); check(gui.backend.finishedRequest->fields.httpHeaders == narrow(value), "Finish lost headers"); }
+}
+std::vector<DWORD> resizePixels(HWND window);
+void httpHeadersGeometryAndLifecycle() {
+    Gui gui(true); gui.open();
+    HWND owner = gui.hwnd();
+    const auto content = allText(owner);
+    check(content.find(wizardText::headersHeading) != std::wstring::npos && content.find(wizardText::headersHint) != std::wstring::npos,
+        "headers section text missing");
+    captureWizard(owner, L"http-headers-section.bmp");
+    click(owner, 718); HWND dialog = findTop(L"PhpVpnHttpHeaders");
+    check(dialog != nullptr, "headers dialog missing");
+    const auto style = GetWindowLongPtrW(dialog, GWL_STYLE);
+    check((style & WS_THICKFRAME) && (style & WS_MAXIMIZEBOX), "resize/maximize unavailable");
+    MINMAXINFO limits{}; limits.ptMaxTrackSize = {12345, 12346};
+    SendMessageW(dialog, WM_GETMINMAXINFO, 0, reinterpret_cast<LPARAM>(&limits));
+    check(limits.ptMaxTrackSize.x == 12345 && limits.ptMaxTrackSize.y == 12346, "application maximum introduced");
+    check(limits.ptMinTrackSize.x >= 480 && limits.ptMinTrackSize.y >= 260, "minimum missing");
+    captureWizard(dialog, L"http-headers-normal.bmp");
+    HideCaret(child(dialog, 790));
+    SendMessageW(dialog, WM_ENTERSIZEMOVE, 0, 0);
+    for (int edge = 0; edge < 8; ++edge) for (int step = 0; step < 14; ++step) {
+        const int offset = step < 7 ? step : 13 - step;
+        resizeClient(dialog, edge == 2 || edge == 3 ? 760 : 760 - offset * 40,
+            edge < 2 ? 420 : 420 - offset * 25);
+        gui.pump();
+        check(!GetUpdateRect(dialog, nullptr, FALSE), "headers resize left unpainted parent");
+        const auto live = resizePixels(dialog);
+        RedrawWindow(dialog, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        check(live == resizePixels(dialog), "headers resize differs from clean full repaint");
+    }
+    SendMessageW(dialog, WM_EXITSIZEMOVE, 0, 0);
+    ShowCaret(child(dialog, 790));
+    std::cout << "[ EVIDENCE ] HTTP headers 112 resize frames match full repaint.\n";
+    for (auto size : {Size{480, 260}, Size{760, 420}, Size{1050, 600}, Size{500, 350}}) {
+        resizeClient(dialog, size.width, size.height); gui.pump();
+        footer(dialog, {791, IDCANCEL, IDOK});
+        const auto editor = boundsIn(dialog, child(dialog, 790));
+        check(editor.bottom < boundsIn(dialog, child(dialog, IDOK)).top && editor.right > editor.left && editor.bottom > editor.top, "editor overlaps footer");
+    }
+    resizeClient(dialog, 480, 260); captureWizard(dialog, L"http-headers-minimum.bmp");
+    ShowWindow(dialog, SW_MAXIMIZE); gui.pump();
+    check(IsZoomed(dialog), "maximize failed"); footer(dialog, {791, IDCANCEL, IDOK});
+    captureWizard(dialog, L"http-headers-maximize.bmp");
+    ShowWindow(dialog, SW_RESTORE); gui.pump();
+    const int nativeDpi = static_cast<int>(GetDpiForWindow(dialog));
+    for (int dpi : {96, 144, 192}) {
+        RECT suggested{30, 30, 30 + scaleForDpi(760, dpi), 30 + scaleForDpi(460, dpi)};
+        SendMessageW(dialog, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&suggested));
+        gui.pump(); footer(dialog, {791, IDCANCEL, IDOK});
+        LOGFONTW font{};
+        GetObjectW(reinterpret_cast<HFONT>(SendMessageW(child(dialog, IDOK), WM_GETFONT, 0, 0)), sizeof(font), &font);
+        check(std::abs(font.lfHeight) == scaleForDpi(ui::fonts[static_cast<std::size_t>(ui::Font::label)].height, dpi), "DPI message did not update native font");
+        captureWizard(dialog, (L"http-headers-dpi-" + std::to_wstring(dpi) + L"-message.bmp").c_str());
+    }
+    RECT restored{}; GetWindowRect(dialog, &restored);
+    SendMessageW(dialog, WM_DPICHANGED, MAKELONG(nativeDpi, nativeDpi), reinterpret_cast<LPARAM>(&restored));
+    SetFocus(child(dialog, 790));
+    for (int id : {791, IDCANCEL, IDOK, 790}) {
+        MSG tab{}; tab.hwnd = GetFocus(); tab.message = WM_KEYDOWN; tab.wParam = VK_TAB;
+        check(gui.wizard.translate(tab) && GetDlgCtrlID(GetFocus()) == id, "headers tab order wrong");
+    }
+    BYTE keyboard[256]{}; GetKeyboardState(keyboard);
+    BYTE shifted[256]{}; std::copy(std::begin(keyboard), std::end(keyboard), std::begin(shifted)); shifted[VK_SHIFT] |= 0x80;
+    SetKeyboardState(shifted);
+    MSG backwards{}; backwards.hwnd = GetFocus(); backwards.message = WM_KEYDOWN; backwards.wParam = VK_TAB;
+    const bool translatedBack = gui.wizard.translate(backwards);
+    SetKeyboardState(keyboard);
+    check(translatedBack && GetDlgCtrlID(GetFocus()) == IDOK, "Shift+Tab order wrong");
+    SetFocus(child(dialog, 790));
+    MSG enter{}; enter.hwnd = child(dialog, 790); enter.message = WM_KEYDOWN; enter.wParam = VK_RETURN;
+    check(!gui.wizard.translate(enter), "multiline Enter treated as OK");
+    TranslateMessage(&enter); DispatchMessageW(&enter); gui.pump();
+    check(IsWindow(dialog), "multiline Enter closed dialog");
+    const auto longLine = L"Cookie: " + std::wstring(5000, L'x'); edit(dialog, 790, longLine);
+    std::cout << "[ EVIDENCE ] long header lines=" << SendMessageW(child(dialog, 790), EM_GETLINECOUNT, 0, 0)
+        << " chars=" << GetWindowTextLengthW(child(dialog, 790)) << " style=" << GetWindowLongPtrW(child(dialog, 790), GWL_STYLE) << '\n';
+    check(SendMessageW(child(dialog, 790), EM_GETLINECOUNT, 0, 0) == 1, "long header soft wrapped");
+    // Owner timers/rendering must not activate the modal owner or steal focus.
+    SetFocus(child(dialog, 790)); resizeClient(owner, 700, 600); gui.wait(700);
+    check(!IsWindowEnabled(owner) && GetFocus() == child(dialog, 790), "owner repaint stole modal focus");
+    click(dialog, IDCANCEL);
+    click(owner, 718); dialog = findTop(L"PhpVpnHttpHeaders");
+    edit(dialog, 790, L"Cookie: confirmed-but-discarded"); click(dialog, IDOK);
+    check(gui.backend.count(&Backend::finishCalls) == 0, "OK saved prematurely");
+    answer(IDYES, [&] { SendMessageW(owner, WM_CLOSE, 0, 0); });
+    gui.until([&] { return !gui.wizard.isOpen(); }, "wizard discard failed");
+    check(gui.backend.count(&Backend::finishCalls) == 0, "wizard Cancel published headers");
+    gui.open(); owner = gui.hwnd(); click(owner, 718); dialog = findTop(L"PhpVpnHttpHeaders");
+    gui.wizard.endSession();
+    check(!IsWindow(dialog) && !gui.wizard.isOpen(), "owner teardown left headers window");
+}
 
 void wizardGateConsentAndIdle() {
     Gui gui(true);
@@ -603,7 +759,7 @@ void wizardGateConsentAndIdle() {
     gui.open(true);
     captureWizard(gui.hwnd(), L"wizard-gate.bmp");
     check(!IsWindowVisible(child(gui.hwnd(), backId)), "gate exposes Back");
-    check(GetFocus() == child(gui.hwnd(), cancelId), "gate focus is not Cancel");
+    check(GetFocus() == gui.hwnd() || IsChild(gui.hwnd(), GetFocus()), "gate focus left its owner");
     check(allText(gui.hwnd()).find(L"The VPN will be disconnected for everyone.") != std::wstring::npos, "global consent text missing");
     // No modal-answer helper: a second consent dialog would fail this bounded run.
     click(gui.hwnd(), nextId);
@@ -626,10 +782,13 @@ void wizardGateConsentAndIdle() {
         std::lock_guard lock(gui.backend.mutex);
         gui.backend.gateState = ConnectionState::disconnected;
     }
-    gui.until([&] { return child(gui.hwnd(), urlId) != nullptr; }, "disconnected/idle did not resume");
+    gui.until([&] { return text(child(gui.hwnd(), nextId)) == L"Continue"; }, "disconnected/idle did not enable Continue");
+    check(gui.backend.count(&Backend::resumes) == 0, "gate resumed without explicit Continue");
+    click(gui.hwnd(), nextId);
+    gui.until([&] { return child(gui.hwnd(), urlId) != nullptr; }, "explicit Continue did not resume");
     check(gui.backend.count(&Backend::resumes) == 1 && gui.backend.count(&Backend::disconnects) == 1, "gate repeated global action");
     check(gui.backend.count(&Backend::totalStarts) == 0, "resume retried checks automatically");
-    check(IsWindowVisible(child(gui.hwnd(), backId)) && !IsWindowEnabled(child(gui.hwnd(), backId)), "URL Back must be visible and disabled");
+    check(!IsWindowVisible(child(gui.hwnd(), backId)) && !IsWindowEnabled(child(gui.hwnd(), backId)), "URL Back must be hidden and disabled");
     gui.escape();
 }
 
@@ -637,7 +796,7 @@ void wizardStableFieldsAndWarning() {
     Gui gui(true); gui.open();
     captureWizard(gui.hwnd(), L"wizard-url.bmp");
     check(text(child(gui.hwnd(), nextId)) == wizardText::verify, "wrong network action text");
-    check(IsWindowVisible(child(gui.hwnd(), backId)) && !IsWindowEnabled(child(gui.hwnd(), backId)), "URL Back state incorrect");
+    check(!IsWindowVisible(child(gui.hwnd(), backId)) && !IsWindowEnabled(child(gui.hwnd(), backId)), "URL Back state incorrect");
     HWND field = child(gui.hwnd(), urlId);
     const auto original = text(field);
     SetFocus(field); SendMessageW(field, EM_SETSEL, 0, 4); SendMessageW(field, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"https"));
@@ -647,7 +806,7 @@ void wizardStableFieldsAndWarning() {
         check(child(gui.hwnd(), urlId) == field && GetFocus() == field, "resize replaced the field or focus");
         DWORD start = 0, end = 0; SendMessageW(field, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
         check(start == 2 && end == 7 && SendMessageW(field, EM_CANUNDO, 0, 0), "resize lost selection or undo");
-        footer(gui.hwnd(), {resetId, backId, cancelId, nextId});
+        footer(gui.hwnd(), {resetId, backId, nextId});
     }
     SendMessageW(field, EM_UNDO, 0, 0);
     check(text(field) == original, "undo no longer restores exact URL");
@@ -1366,7 +1525,7 @@ void fix2PreferencesAndContractPreview() {
         check(allText(gui.hwnd()).find(L"To add on Finish:\n0") != std::wstring::npos, "unchecked contracts still advertised additions");
         check(allText(gui.hwnd()).find(wizardText::contractsHint) == std::wstring::npos,
               "unchecked contracts still show the warning");
-        footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
+        footer(gui.hwnd(), {nextId, backId, resetId});
         gui.escape();
     }
     Gui gui(true);
@@ -1385,7 +1544,7 @@ void fix2PreferencesAndContractPreview() {
     check(text(child(gui.hwnd(), keyId)) == widen(defaultAccessKey("10.99.99.10")), "suggestion did not recalculate key");
     for (auto size : {Size{1000, 680}, Size{480, 320}}) {
         resizeClient(gui.hwnd(), size.width, size.height);
-        footer(gui.hwnd(), {nextId, backId, resetId, cancelId});
+        footer(gui.hwnd(), {nextId, backId, resetId});
     }
     click(gui.hwnd(), automaticIpId);
     check(IsWindowEnabled(child(gui.hwnd(), ipId)), "automatic IP cannot be disabled");
@@ -1467,7 +1626,7 @@ void heartbeatEpoch() {
     gui.until([&] { return child(gui.hwnd(), urlId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "explicit resume did not return to URL");
     check(gui.backend.count(&Backend::resumes) == 1 && gui.backend.count(&Backend::totalStarts) == 0,
           "heartbeat/resume caused an automatic probe");
-    click(gui.hwnd(), cancelId);
+    gui.escape();
     gui.until([&] { return !gui.wizard.isOpen(); }, "Cancel did not close the window");
 }
 
@@ -1500,6 +1659,7 @@ void editorReset() {
     // The editor's existing pretty presentation omits the file's final newline.
     while (!expected.empty() && expected.back() == '\n') expected.pop_back();
     check(normalized == expected, "Editor did not load the common service template");
+    check(Json::parse(normalized)->find("communicationContracts")->objectValue().empty(), "Editor Reset retained sample contract");
     check(SendMessageW(child(editor, IDC_TEXT_AREA), EM_GETMODIFY, 0, 0) != 0 && saves == 0, "Reset saved to disk or did not mark modified text");
     edit(editor, IDC_TEXT_AREA, L"preserved failed reset");
     { std::lock_guard lock(gui.backend.mutex); gui.backend.defaultError = true; }
@@ -2033,6 +2193,7 @@ void modernToggleSwitches() {
 } // namespace
 
 int main(int argc, char** argv) {
+    std::cout << std::unitbuf;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
     InitCommonControlsEx(&controls);
@@ -2050,6 +2211,8 @@ int main(int argc, char** argv) {
     }
     const std::string filter = argc > 1 ? argv[1] : "";
     const std::pair<const char*, void(*)()> tests[]{
+        {"http_headers_draft_ipc_finish", httpHeadersDraft},
+        {"http_headers_live_resize_repaint_keyboard_lifecycle", httpHeadersGeometryAndLifecycle},
         {"http_diagnostic_wizard_owned_window_cleanup", wizardHttpDiagnostic},
         {"plan_v001_server_information_tabs", serverInformationTabs},
         {"server_information_idle_paint", serverInformationIdlePaint},

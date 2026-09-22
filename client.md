@@ -464,25 +464,22 @@ Vytvoření i Reset editoru používají jedinou továrnu `makeDefaultEditorDocu
     "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
     "trustAnyTlsCertificate": true,
     "useDefaultServerSecretInWizard": true,
-    "autoDetectIpAddressInWizard": true,
-    "useDefaultAccessKeyInWizard": true,
     "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
-    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202"
+    "autoDetectIpAddressInWizard": true,
+    "accessKey": "0202020202020202020202020202020202020202020202020202020202020202",
+    "useDefaultAccessKeyInWizard": true,
+    "autoConnectOnStartup": false
   },
-  "communicationContracts": {
-    "10.99.99.3": {
-      "payloadKey": "918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d"
-    }
-  }
+  "communicationContracts": {}
 }
 ```
 
-Sekce runtime je vynechána a používá sdílené defaulty včetně 30s timeoutu. Šablona musí projít syntaktickou i úplnou konfigurační validací bez výjimek. Loopback URL označuje relay na stejném počítači, nikoli ověřenou dostupnost serveru. Úspěšné vytvoření ani Save nenahrazují síťové ověření při Connect. Předvídatelné hodnoty a jeden kontrakt jsou závaznou součástí šablony.
+Sekce runtime je vynechána a používá sdílené defaulty včetně 30s timeoutu. Šablona musí projít syntaktickou i úplnou konfigurační validací bez výjimek. Loopback URL označuje relay na stejném počítači, nikoli ověřenou dostupnost serveru. Úspěšné vytvoření ani Save nenahrazují síťové ověření při Connect. Předvídatelné výchozí hodnoty a prázdný objekt communicationContracts jsou součástí společné šablony.
 
 ## Configuration Wizard
 
-Průvodce má čtyři pojmenované konfigurační kroky a podmíněný nultý krok globálního odpojení. Server URL má viditelný, ale zakázaný Back, také po dokončeném odpojení. Odpojovací gate Back nemá a nelze se na ni vracet. Služba vlastní načtení, uložení a všechny síťové kontroly. Před Finish Wizard nesmí zapisovat konfiguraci, zálohu ani temp JSON. Cancel a Reset původní soubor bajtově zachovají. Úspěšný potvrzený Finish pravdivě oznámí uložení, uzavře Wizard relaci a zavře průvodce. Communication contracts automaticky neotevře a VPN nepřipojí. Pozdější ruční otevření Communication contracts z tray menu je nová samostatná akce nad aktuálně uloženou konfigurací, nikoli pokračování Wizardu nebo handoff konkrétní publikace. Nezavádí se rezervace IP ani nové wire endpointy.
+Průvodce má čtyři pojmenované konfigurační kroky a podmíněný nultý krok globálního odpojení. Server URL má skrytý a zakázaný Back, také po dokončeném odpojení. Odpojovací gate Back nemá a nelze se na ni vracet. Služba vlastní načtení, uložení a všechny síťové kontroly. Před Finish Wizard nesmí zapisovat konfiguraci, zálohu ani temp JSON. Cancel a Reset původní soubor bajtově zachovají. Úspěšný potvrzený Finish pravdivě oznámí uložení, uzavře Wizard relaci a zavře průvodce. Communication contracts automaticky neotevře a VPN nepřipojí. Pozdější ruční otevření Communication contracts z tray menu je nová samostatná akce nad aktuálně uloženou konfigurací, nikoli pokračování Wizardu nebo handoff konkrétní publikace. Nezavádí se rezervace IP ani nové wire endpointy.
 
 ### Stavy průvodce
 
@@ -646,8 +643,8 @@ Každý řádek uvádí další request pole nad povinnou trojicí. Relace je v�
 | `wizard-open` | žádná | `sessionId`, `serviceInstanceId`, `revisionToken` nebo null, `availability`, `mode`, `fields` nebo null, `context` nebo null, `contractCount`, `existingDefaultContractPeers`, `connectionEpoch`, `vpnState`, `vpnPhase` |
 | `wizard-reset` | relace | stejný stav relace jako open, mode reset, nové defaulty, bez revizní podmínky Finish |
 | `wizard-keepalive` | relace | `alive:true`, `leaseDurationMs:60000` |
-| `wizard-check-url` | relace, `clientAttemptId`, `attemptSequence`, `serverUrl` | `operationId`, `operationState:"pending"` |
-| `wizard-check-secret` | relace, `clientAttemptId`, `attemptSequence`, `serverUrl`, `serverSecret` | `operationId`, `operationState:"pending"` |
+| `wizard-check-url` | relace, `clientAttemptId`, `attemptSequence`, `serverUrl`, `httpHeaders` | `operationId`, `operationState:"pending"` |
+| `wizard-check-secret` | relace, `clientAttemptId`, `attemptSequence`, `serverUrl`, `serverSecret`, `httpHeaders` | `operationId`, `operationState:"pending"` |
 | `wizard-check-access` | relace, `clientAttemptId`, `attemptSequence`, `fields` | `operationId`, `operationState:"pending"` |
 | `wizard-get-operation` | relace, `operationId` | aktuální typovaný OperationResult |
 | `wizard-cancel-operation` | relace, `operationId` | `operationId`, stav cancelling/cancelled nebo již terminální stav |
@@ -659,11 +656,11 @@ Každý řádek uvádí další request pole nad povinnou trojicí. Relace je v�
 
 Při otevření create/reset konceptu nebo repair dokumentu jsou dosud chybějící IP či klíč v `fields` reprezentované prázdným stringem, nikoli falešně validní běhovou konfigurací. Odmítnutý původní dokument má fields/context null a neposkytne text přes tato pole. Výběr mode reset při odmítnutí obsahu sám Reset neprovádí, síť a Finish jsou zakázané do výslovného `wizard-reset`.
 
-`fields` obsahuje právě čtyři stringy `serverUrl`, `serverSecret`, `virtualIp`, `accessKey` a tři povinné booleany `useDefaultServerSecretInWizard`, `autoDetectIpAddressInWizard`, `useDefaultAccessKeyInWizard`. `context` obsahuje právě `httpHeaders` a `vpnCidr` jako stringy, `trustAnyTlsCertificate` jako bool a deset kladných celočíselných členů `maxOutboundQueueBytes`, `maxInboundQueueBytes`, `minOutboundPerPeerQueueBytes`, `minInboundPerPeerQueueBytes`, `maxQueuedPacketAgeMs`, `maxResponseBodyBytes`, `maxNdjsonLineBytes`, `maxDataRecordsPerResponse`, `responseTimeoutSeconds` a `timeSyncIntervalSeconds`. Služba je odvodí z vlastního originálu nebo resetovaného konceptu, nesmí věřit klientem podstrčenému TLS nebo CIDR. `contractCount` je nezáporné celé číslo. `availability` je právě jedna hodnota ConfigAvailability, `mode` jedna hodnota WizardMode, `vpnState` a `vpnPhase` používají původní výčty get-status. `connectionEpoch` je nezáporné 64bitové celé číslo. `createDefaultContracts` je bool. `reasonCode` je bezpečný string nebo null, `configPath` je absolutní string pevného úložiště. `revisionToken` je neprůhledný náhodný identifikátor revize v rámci instance služby, nikoli zveřejněný hash secretu ani očekávaná revize commitu.
+`fields` obsahuje právě pět stringů `serverUrl`, `serverSecret`, `virtualIp`, `accessKey`, `httpHeaders` a tři povinné booleany `useDefaultServerSecretInWizard`, `autoDetectIpAddressInWizard`, `useDefaultAccessKeyInWizard`. `context` obsahuje právě `httpHeaders` a `vpnCidr` jako stringy, `trustAnyTlsCertificate` jako bool a deset kladných celočíselných členů `maxOutboundQueueBytes`, `maxInboundQueueBytes`, `minOutboundPerPeerQueueBytes`, `minInboundPerPeerQueueBytes`, `maxQueuedPacketAgeMs`, `maxResponseBodyBytes`, `maxNdjsonLineBytes`, `maxDataRecordsPerResponse`, `responseTimeoutSeconds` a `timeSyncIntervalSeconds`. Služba je odvodí z vlastního originálu nebo resetovaného konceptu, nesmí věřit klientem podstrčenému TLS nebo CIDR. `contractCount` je nezáporné celé číslo. `availability` je právě jedna hodnota ConfigAvailability, `mode` jedna hodnota WizardMode, `vpnState` a `vpnPhase` používají původní výčty get-status. `connectionEpoch` je nezáporné 64bitové celé číslo. `createDefaultContracts` je bool. `reasonCode` je bezpečný string nebo null, `configPath` je absolutní string pevného úložiště. `revisionToken` je neprůhledný náhodný identifikátor revize v rámci instance služby, nikoli zveřejněný hash secretu ani očekávaná revize commitu.
 
-`existingDefaultContractPeers` je povinné pole nejvýše 14 kanonických, unikátních a číselně seřazených kandidátních IPv4 stringů z původního session DOM. Počet nesmí překročit `contractCount`, který zahrnuje všechny původní kontrakty. Mimo podporovaný CIDR je pole prázdné. Při fields/context null musí být pole prázdné a počet nula, stejně jako u create/reset konceptu bez kontraktů. Finish nepřijímá klientem tvrzené počty ani tento seznam. Sedmipoložkové fields tvoří access evidence i commit fingerprint. True default secret/key musí souhlasit s konkrétní hodnotou, true auto IP s návrhem uloženým službou při poslední platné secret kontrole. Změna kteréhokoli příznaku vyžaduje nový access důkaz. Stejný commitId s jinými fields je odmítnut, totožný receipt neopakuje zápis.
+`existingDefaultContractPeers` je povinné pole nejvýše 14 kanonických, unikátních a číselně seřazených kandidátních IPv4 stringů z původního session DOM. Počet nesmí překročit `contractCount`, který zahrnuje všechny původní kontrakty. Mimo podporovaný CIDR je pole prázdné. Při fields/context null musí být pole prázdné a počet nula, stejně jako u create/reset konceptu bez kontraktů. Finish nepřijímá klientem tvrzené počty ani tento seznam. Osmipoložkové fields tvoří access evidence i commit fingerprint. True default secret/key musí souhlasit s konkrétní hodnotou, true auto IP s návrhem uloženým službou při poslední platné secret kontrole. Změna kteréhokoli příznaku vyžaduje nový access důkaz. Stejný commitId s jinými fields je odmítnut, totožný receipt neopakuje zápis.
 
-Služba a tray používají nové uzavřené schéma společně. Přesný historický čtyřstringový tvar je `wizard_unsupported`, ostatní vadná schémata `ipc_malformed`. Žádný downgrade, vynechání metadat ani přímý zápis tray. Staré konfigurace bez metadat jsou nadále přijímány, pouze pokud splňují aktuální úplnou validaci včetně `/24` až `/29`. Automatická migrace neprobíhá a původních sedm IPC příkazů se nemění.
+Služba a tray používají nové uzavřené schéma společně. Přesné historické čtyřpoložkové a sedmipoložkové fields i původní URL/secret požadavky bez httpHeaders jsou `wizard_unsupported`, ostatní vadná schémata `ipc_malformed`. Žádný downgrade, vynechání metadat ani přímý zápis tray. Staré konfigurace bez metadat jsou nadále přijímány, pouze pokud splňují aktuální úplnou validaci včetně `/24` až `/29`. Automatická migrace neprobíhá a původních sedm IPC příkazů se nemění.
 
 `get-config-document` pro missing vrátí document/revisionToken null, pro UTF-8 text v mezích části Omezené čtení, UTF-8 a snímky skutečný text po odstranění případného počátečního BOM a dostupnost. Pro nečitelnost vrátí konkrétní chybu přístupu, pro neplatné či nepodporované kódování `config_encoding_error`, pro překročení velikosti `config_too_large`, vždy bez dokumentu. Textový string v obálce dovoluje syntakticky chybný JSON, pouze pokud je platným UTF-8 textem. IPC ani tray nesmějí bajty opravovat nebo převádět přes base64. `create-default-config` nepřijímá cestu ani obsah. Při souběžném vzniku souboru vrátí `created:false` a jeho skutečný UTF-8 text v limitu, případně konkrétní chybu přístupu, kódování nebo velikosti. Na validitu JSON tohoto cizího textu se neváže jeho otevření. Po úspěchu vytvoření vrací `created:true`. Save dále používá původní set-config s úplným dokumentem a jeho službovou validací včetně kódování a velikosti. Při nepodporovaných nových příkazech tray oznámí nutnost nové služby a nepoužije starou cache ani vytvoření přes fallback.
 
@@ -1205,3 +1202,12 @@ Service, tray i CLI EXE mají skupinu ikon ID 100 z kořenového `assets/default
 `phpvpn-icon-resource-tests <apps-directory> <source-assets>` read-only ověřuje všechny skupiny a byte-for-byte shodu vložených frames, jejich Windows dekódování, manifest i version resource. Je součástí CTest. `verify-package.ps1` jej spouští také nad balíčkem, standardně z Release buildu nebo z cesty `-IconResourceTest`. `uv run --with pillow client/tools/check_icons.py` ověřuje čtyři zdrojová ICO a mapování. Starý shield generátor nové zdrojové ikony nevytváří.
 
 Při rollbacku na starou binárku nejprve bezpečně odpojit a zastavit službu, zálohovat aktuální config a připravit kompatibilní dokument odstraněním pouze `autoConnectOnStartup`, případně použít odpovídající starší zálohu se zachováním nových uživatelských změn. Starý validátor nové pole odmítá. Znovu ověřit SCM a Run cestu pro zvolenou generaci.
+### Hlavičky v konceptu Wizardu a společná šablona
+
+První krok nabízí `HTTP headers`. Vlastněný modální dialog upravuje samostatnou kopii textu. OK používá sdílený validátor a přijme CRLF bez koncového oddělovače do místního konceptu. Cancel, Escape a zavření okna kopii zahodí. Reset dialogu pouze načte výchozí hlavičky do jeho pole. Bez OK se zachová doslovná původní hodnota včetně LF a povoleného koncového oddělovače.
+
+Každý URL, secret a access pokus používá aktuální `fields.httpHeaders`. Hodnota v `context.httpHeaders` popisuje původní kontext a nepřepisuje aktuální pole pokusu. Změna hlaviček zneplatní URL, secret i access důkazy. Služba váže důkazy a commit fingerprint na přesnou hodnotu hlaviček, včetně případů návratu, Resume a opakovaného commitId. TLS, CIDR a limity dál pocházejí ze službou vlastněného kontextu. Nevalidní hlavičky se odmítnou před síťovým požadavkem.
+
+Pouze Finish publikuje celý validovaný dokument jedním existujícím atomickým uložením. Limit 524288 bajtů se vztahuje na finální UTF-8 JSON včetně escapování, ostatních polí a vygenerovaných kontraktů. Otevření dialogu, OK, Reset dialogu a kontroly soubor nevytvoří ani nepřepíší.
+
+Společná výchozí šablona pro chybějící konfiguraci, Edit Config a jeho Reset obsahuje `communicationContracts: {}`. Ukázkový kontrakt se do ní nevkládá. Existující kontrakty se nemění. Samostatná volba Wizardu pro aditivní generování výchozích kontraktů a její deterministické klíče zůstávají zachované.

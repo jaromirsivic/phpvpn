@@ -66,6 +66,8 @@ add_executable(phpvpn-client-tests
     ../apps/tray/server_info_window.cpp
     ../apps/tray/editor_window.cpp
     ../apps/tray/wizard_window.cpp
+    ../apps/tray/http_headers_window.cpp
+    ../apps/tray/http_headers_layout.cpp
     ../apps/tray/http_error_detail_window.cpp
     ../apps/tray/contracts_save_controller.cpp
     ../apps/tray/password_sha_window.cpp
@@ -181,6 +183,8 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/wizard_reader.cpp
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
+        ../apps/tray/http_headers_window.cpp
+        ../apps/tray/http_headers_layout.cpp
         ../apps/tray/http_error_detail_window.cpp
         ../apps/tray/contracts_save_controller.cpp
         ../apps/tray/password_sha_window.cpp
@@ -222,6 +226,8 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/wizard_reader.cpp
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
+        ../apps/tray/http_headers_window.cpp
+        ../apps/tray/http_headers_layout.cpp
         ../apps/tray/http_error_detail_window.cpp
         ../apps/tray/server_info_window.cpp
     ../apps/tray/editor_window.cpp

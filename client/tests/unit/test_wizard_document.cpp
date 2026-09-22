@@ -1,4 +1,5 @@
 #include "harness.h"
+#include "one_contract_fixture.h"
 #include "core/config/config_defaults.h"
 #include "core/wizard/wizard_defaults.h"
 #include <algorithm>
@@ -6,7 +7,7 @@
 namespace phpvpn {
 namespace {
 std::string withoutIdentity(bool ip, bool key) {
-    auto parsed = Json::parse(makeDefaultEditorDocument());
+    auto parsed = Json::parse(test::oneContractDocument());
     auto& dom = parsed.value();
     for (auto& member : dom.objectValue()) if (member.first == "masterSetup") {
         auto& fields = member.second.objectValue();

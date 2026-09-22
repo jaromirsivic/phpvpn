@@ -1,3 +1,4 @@
+#include "one_contract_fixture.h"
 #include "contracts_fixture.h"
 #include <limits>
 #include <type_traits>
@@ -70,7 +71,7 @@ PHPVPN_TEST(ContractsModel, all_enabled_252_rows_publish_and_multiple_errors_are
 }
 PHPVPN_TEST(ContractsModel, exact_existing_key_shared_defaults_and_pair_vectors) {
     Crypto crypto;
-    auto model = ContractsModel::create(crypto, makeDefaultEditorDocument());
+    auto model = ContractsModel::create(crypto, test::oneContractDocument());
     PHPVPN_REQUIRE_OK(model);
     const auto& m = *model.value();
     PHPVPN_CHECK(m.row(ip("10.99.99.3"))->enabled());
@@ -81,7 +82,7 @@ PHPVPN_TEST(ContractsModel, exact_existing_key_shared_defaults_and_pair_vectors)
     auto reverse = ContractsModel::create(crypto, document("10.99.99.3"));
     PHPVPN_REQUIRE_OK(reverse);
     PHPVPN_CHECK(reverse.value()->row(ip("10.99.99.2"))->keyText().empty());
-    auto changed = makeDefaultEditorDocument();
+    auto changed = test::oneContractDocument();
     const auto pos = changed.find("918c4885");
     changed.replace(pos, 64, std::string(64, 'b'));
     auto exact = ContractsModel::create(crypto, changed);

@@ -34,6 +34,45 @@ J documentReply(std::string availability, std::optional<std::string> document, s
         {"revisionToken", revision ? string(*revision) : J::makeNull()}});
 }
 }
+PHPVPN_TEST(wizard_ipc, http_headers_all_requests_strict_roundtrip_and_legacy) {
+    for (const auto command : {WizardCommand::check_url, WizardCommand::check_secret, WizardCommand::check_access, WizardCommand::finish}) {
+        auto request = requestFor(command);
+        request.fields.httpHeaders = "Cookie: synthetic=1\r\nX: \"a\\b\"\r\nX-Utf8: \xc5\xbe";
+        auto encoded = WizardIpc::buildRequest(request);
+        PHPVPN_REQUIRE_OK(encoded);
+        PHPVPN_CHECK_EQ(WizardIpc::parseRequest(*encoded)->fields.httpHeaders, request.fields.httpHeaders);
+        auto dom = Json::parse(*encoded).value();
+        auto* fields = &dom;
+        if (command == WizardCommand::check_access || command == WizardCommand::finish)
+            for (auto& item : dom.objectValue()) if (item.first == "fields") fields = &item.second;
+        for (const auto bad : {J::makeNull(), J::makeInteger(1), string("HOST: synthetic-secret"), string("X: a\nx: b"), string(std::string("X: \xff"))}) {
+            set(*fields, "httpHeaders", bad);
+            PHPVPN_CHECK(!WizardIpc::parseRequest(Json::serialize(dom)));
+        }
+        std::erase_if(fields->objectValue(), [](const auto& item) { return item.first == "httpHeaders"; });
+        PHPVPN_REQUIRE_ERROR(WizardIpc::parseRequest(Json::serialize(dom)), ErrorCode::wizard_unsupported);
+        fields->objectValue().emplace_back("unknown", J::makeBool(true));
+        PHPVPN_REQUIRE_ERROR(WizardIpc::parseRequest(Json::serialize(dom)), ErrorCode::ipc_malformed);
+        request.fields.httpHeaders = "X: " + std::string(kIpcMaxMessageBytes, '\t');
+        PHPVPN_REQUIRE_ERROR(WizardIpc::buildRequest(request), ErrorCode::ipc_message_too_large);
+    }
+    WizardView view;
+    const auto doc = analyzeWizardDocument(makeDefaultEditorDocument()).value();
+    view.sessionId = view.serviceInstanceId = id; view.revisionToken = "revision";
+    view.availability = ConfigAvailability::valid; view.mode = WizardMode::edit;
+    view.fields = doc.fields; view.context = doc.context;
+    view.fields->httpHeaders = "Cookie: changed";
+    auto encoded = WizardIpc::viewValue(view);
+    const auto decoded = WizardIpc::parseView(encoded);
+    PHPVPN_REQUIRE_OK(decoded);
+    PHPVPN_CHECK_EQ(decoded->fields->httpHeaders, "Cookie: changed");
+    PHPVPN_CHECK_EQ(decoded->context->httpHeaders, kDefaultHttpHeaders);
+    for (auto& item : encoded.objectValue()) if (item.first == "fields")
+        std::erase_if(item.second.objectValue(), [](const auto& f) { return f.first == "httpHeaders"; });
+    PHPVPN_REQUIRE_ERROR(WizardIpc::parseView(encoded), ErrorCode::wizard_unsupported);
+    set(encoded, "contractCount", string("wrong"));
+    PHPVPN_REQUIRE_ERROR(WizardIpc::parseView(encoded), ErrorCode::ipc_malformed);
+}
 PHPVPN_TEST(wizard_ipc, all_seventeen_request_schemas_are_closed_and_strict) {
     for (int i = 0; i < 17; ++i) {
         const auto command = static_cast<WizardCommand>(i);

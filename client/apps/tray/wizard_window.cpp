@@ -21,6 +21,7 @@ constexpr UINT disconnectMessage = WM_APP + 54, statusMessage = WM_APP + 55;
 constexpr int nextId = 701, backId = 702, resetId = 703, errorDetailId = 705;
 constexpr int urlId = 710, secretId = 711, defaultSecretId = 712, ipId = 713, keyId = 714, defaultKeyId = 715, contractsId = 716;
 constexpr int automaticIpId = 717;
+constexpr int headersId = 718;
 std::uint64_t nextWindowGeneration() {
     static std::atomic<std::uint64_t> value{0};
     return ++value;
@@ -98,7 +99,7 @@ void WizardWindow::syncHttpDiagnostic() {
 }
 bool WizardWindow::open(HINSTANCE instance, std::function<void()> onConfirmed) {
     if (endingSession_) return false;
-    if (window_) { reactivateWindow(window_); return true; }
+    if (window_) { reactivateWindow(headers_.handle() ? headers_.handle() : window_); return true; }
     instance_ = instance; onConfirmed_ = std::move(onConfirmed);
     ++generation_;
     windowGeneration_ = nextWindowGeneration(); ++draftGeneration_; ++attemptGeneration_; ++operationGeneration_;
@@ -397,6 +398,7 @@ void WizardWindow::tick() {
         (model_.busy() && model_.attempt() && !model_.attempt()->operationId.empty()))) send(WizardCommand::get_operation, primary_);
 }
 void WizardWindow::destroy() {
+    headers_.close(false);
     detail_.close(); diagnosticRequest_.reset(); diagnosticCleanup_.reset();
     ++generation_;
     windowGeneration_ = nextWindowGeneration(); ++draftGeneration_; ++attemptGeneration_; ++operationGeneration_;
@@ -416,7 +418,8 @@ void WizardWindow::destroy() {
 }
 HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD style, int id, int height) {
     const int margin = scaleForDpi(inCard_ ? 48 : 24, dpi_);
-    if (type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
+    if (id == headersId) height = scaleForDpi(36, dpi_);
+    else if (type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
         style |= BS_MULTILINE;
         HDC dc = GetDC(body_); auto old = SelectObject(dc, font_);
         RECT bounds{0, 0, std::max(20, contentWidth_ - 2 * margin - scaleForDpi(54, dpi_)), 0};
@@ -442,7 +445,7 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
         if (current != text) SetWindowTextW(child, text.c_str());
     }
     if (created && type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
-        if (!attachToggleSwitch(child, resources_)) { DestroyWindow(child); return nullptr; }
+        if (!(id == headersId ? attachModernButton(child, resources_) : attachToggleSwitch(child, resources_))) { DestroyWindow(child); return nullptr; }
     }
     if (created && modernText) {
         if (!attachModernTextBox(child, resources_, inCard_ ? cardColor_ : ui::Color::background)) {
@@ -456,7 +459,8 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
     if (type == std::wstring_view(L"EDIT")) SendMessageW(child, EM_SETLIMITTEXT, kMaxConfigFileBytes, 0);
     if (created) if (const auto saved = selections_.find(id); saved != selections_.end())
         SendMessageW(child, EM_SETSEL, saved->second.first, saved->second.second);
-    children_.emplace_back(child, Rect{margin, cursorY_, contentWidth_ - margin, cursorY_ + height});
+    const int right = id == headersId ? std::min(contentWidth_ - margin, margin + scaleForDpi(160, dpi_)) : contentWidth_ - margin;
+    children_.emplace_back(child, Rect{margin, cursorY_, right, cursorY_ + height});
     cursorY_ += height + scaleForDpi(8, dpi_); return child;
 }
 void WizardWindow::label(const std::wstring& text, bool heading) {
@@ -483,6 +487,7 @@ void WizardWindow::separator() {
 }
 void WizardWindow::render() {
     if (!body_) return;
+    if (model_.step() != WizardStep::serverUrl) headers_.close(false);
     syncHttpDiagnostic();
     const bool detailActive = detail_.handle() && GetForegroundWindow() == detail_.handle();
     LayoutFrame frame(window_);
@@ -561,6 +566,10 @@ void WizardWindow::render() {
         label(wizardText::urlLabel); add(L"EDIT", widen(model_.fields().serverUrl), WS_TABSTOP | ES_AUTOHSCROLL, urlId);
         label(wizardText::urlHint);
         label(wizardText::urlExample);
+        separator();
+        label(wizardText::headersHeading);
+        add(L"BUTTON", wizardText::headersButton, WS_TABSTOP | BS_OWNERDRAW, headersId);
+        label(wizardText::headersHint);
         separator();
         label(wizardText::urlRules);
         label(wizardText::urlCheck);
@@ -709,7 +718,7 @@ void WizardWindow::render() {
     layout(); scroll(scroll_); InvalidateRect(body_, nullptr, TRUE); updating_ = false;
     HWND focus = GetDlgItem(body_, focusId);
     if (!focus) focus = GetDlgItem(window_, focusId);
-    if (detailActive) { /* Preserve focus in the owned diagnostic window. */ }
+    if (detailActive || headers_.handle()) { /* Preserve focus in owned windows. */ }
     else if (!stepChanged && focus && IsWindowEnabled(focus) && IsWindowVisible(focus)) {
         SetFocus(focus);
         if (textFocus) SendMessageW(focus, EM_SETSEL, selectionStart, selectionEnd);
@@ -817,19 +826,21 @@ void WizardWindow::drawSteps(const DRAWITEMSTRUCT& original) {
     SelectObject(item.hDC, old);
 }
 bool WizardWindow::translate(MSG& message) {
+    if (headers_.translate(message)) return true;
+    if (headers_.handle()) return false;
     if (detail_.translate(message)) return true;
     if (!window_ || (message.hwnd != window_ && !IsChild(window_, message.hwnd))) return false;
     if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) { cancel(false); return true; }
     if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
         const int id = GetDlgCtrlID(GetFocus());
-        if (id == resetId || id == backId || id == nextId || id == errorDetailId) command(id, BN_CLICKED); else next();
+        if (id == resetId || id == backId || id == nextId || id == errorDetailId || id == headersId) command(id, BN_CLICKED); else next();
         return true;
     }
     if (IsDialogMessageW(window_, &message)) { revealFocus(); return true; }
     return false;
 }
 void WizardWindow::command(int id, int notification) {
-    if (updating_ || endingSession_ || !window_) return;
+    if (updating_ || endingSession_ || !window_ || headers_.handle()) return;
     if (notification == EN_CHANGE && id >= urlId && id <= keyId) {
         if (model_.busy() || model_.committing() || model_.step() == WizardStep::commitUnknown) return;
         // Native text changed even if strict UTF-16 conversion rejects it.
@@ -860,6 +871,16 @@ void WizardWindow::command(int id, int notification) {
     if (!button || !IsWindowEnabled(button) || !IsWindowVisible(button)) return;
     if (id == defaultSecretId || id == defaultKeyId || id == automaticIpId || id == contractsId) draftChanged();
     if (id == nextId) next();
+    else if (id == headersId) {
+        if (!headers_.open(instance_, window_, model_.fields().httpHeaders, [this](std::string text) {
+            const auto before = model_.fields().httpHeaders;
+            auto result = model_.setHttpHeaders(std::move(text));
+            if (result && before != model_.fields().httpHeaders) { draftChanged(); render(); }
+            return result;
+        }, [this] {
+            if (window_) { SetFocus(GetDlgItem(body_, headersId)); revealFocus(); }
+        })) showSystemMessage(window_, L"The HTTP headers editor could not be opened.", L"Configuration Wizard", SystemDialogIcon::error);
+    }
     else if (id == errorDetailId && model_.httpDiagnostic()) detail_.open(instance_, window_, *model_.httpDiagnostic());
     else if (id == backId) { model_.back(); scroll_ = 0; render(); }
     else if (id == resetId) cancel(true);

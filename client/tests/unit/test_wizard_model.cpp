@@ -56,6 +56,36 @@ PHPVPN_TEST(WizardModel, DefaultKeyTransitionsAndExistingValue) {
     model.load(view);
     PHPVPN_CHECK(!model.useDefaultAccessKey());
 }
+PHPVPN_TEST(WizardModel, HttpHeadersCanonicalDraftInvalidatesChecksAndIsolatesSessions) {
+    WizardModel model;
+    auto view = modelView();
+    model.load(view);
+    PHPVPN_CHECK_EQ(model.fields().httpHeaders, kDefaultHttpHeaders);
+    auto result = success(model, 1);
+    PHPVPN_CHECK(model.applyOperation(result, 2));
+    PHPVPN_CHECK_EQ(model.checks()[0], CheckpointResult::success);
+    PHPVPN_REQUIRE_OK(model.setHttpHeaders(kDefaultHttpHeaders));
+    PHPVPN_CHECK_EQ(model.checks()[0], CheckpointResult::success);
+    PHPVPN_REQUIRE_OK(model.setHttpHeaders("Cookie: synthetic=1\nUser-Agent: test\n"));
+    PHPVPN_CHECK_EQ(model.fields().httpHeaders, "Cookie: synthetic=1\r\nUser-Agent: test");
+    PHPVPN_CHECK_EQ(model.checks()[0], CheckpointResult::pending);
+    PHPVPN_CHECK_EQ(model.step(), WizardStep::serverUrl);
+    PHPVPN_CHECK(!model.hasSuggestedIp());
+    PHPVPN_CHECK_EQ(model.view().context->httpHeaders, kDefaultHttpHeaders);
+    for (const auto bad : {"", "Host: secret", "X: a\n\nY: b", "Cookie: a\ncOoKiE: b"}) {
+        PHPVPN_CHECK(!model.setHttpHeaders(bad));
+        PHPVPN_CHECK_EQ(model.fields().httpHeaders, "Cookie: synthetic=1\r\nUser-Agent: test");
+    }
+    model.load(view, true);
+    PHPVPN_CHECK_EQ(model.fields().httpHeaders, "Cookie: synthetic=1\r\nUser-Agent: test");
+    model.setCommitting(true);
+    PHPVPN_REQUIRE_ERROR(model.setHttpHeaders(kDefaultHttpHeaders), ErrorCode::busy);
+    model.commitUnknown();
+    PHPVPN_REQUIRE_ERROR(model.setHttpHeaders(kDefaultHttpHeaders), ErrorCode::busy);
+    view.sessionId = opid;
+    model.load(view, true);
+    PHPVPN_CHECK_EQ(model.fields().httpHeaders, kDefaultHttpHeaders);
+}
 namespace {
 WizardOperationResult failedDiagnostic(WizardModel& model) {
     auto result = success(model, 0);

@@ -471,6 +471,17 @@ void run(bool udp) {
           rejected.find("error")->find("code")->stringValue() == "config_not_found", "Connect without config did not report config_not_found");
     check(!std::filesystem::exists(config) && service.status().dwCurrentState == SERVICE_RUNNING, "missing Connect created config or stopped service");
     pass("SCM startup creates exact default, restart preserves bytes, missing Connect does not create");
+    // A new wizard is only a draft, including headers sent through check_url.
+    client.legacy(IpcCommand::disconnect);
+    client.awaitVpn("disconnected", "idle", 5000);
+    auto absentView = require(WizardIpc::parseView(client.wizard(WizardCommand::open).result));
+    client.session.sessionId = absentView.sessionId; client.session.serviceInstanceId = absentView.serviceInstanceId;
+    client.session.connectionEpoch = absentView.connectionEpoch; client.session.fields = *absentView.fields;
+    client.session.fields.serverUrl = relay;
+    client.session.fields.httpHeaders = "Cookie: e2e-synthetic=discarded\r\nUser-Agent: PHPVPN-E2E";
+    client.checkNext(WizardCommand::check_url, WizardOperationKind::url);
+    client.wizard(WizardCommand::close);
+    check(!std::filesystem::exists(config), "cancelled new wizard published headers or created a file");
     client.wizard(WizardCommand::create_default_config);
     check(readConfig(config) == startupBytes, "explicit create after deletion did not restore shared default");
     check(DeleteFileW(config.c_str()) != FALSE, "second isolated config deletion failed");
@@ -479,8 +490,8 @@ void run(bool udp) {
     client.awaitVpn("disconnected", "idle", 5000);
     check(readConfig(config) == startupBytes, "restart after deletion did not restore shared default");
     auto view = require(WizardIpc::parseView(client.wizard(WizardCommand::open).result));
-    check(view.mode == WizardMode::edit && view.availability == ConfigAvailability::valid && view.fields.has_value() && view.contractCount == 1,
-          "Wizard did not open startup default in edit mode with one contract");
+    check(view.mode == WizardMode::edit && view.availability == ConfigAvailability::valid && view.fields.has_value() && view.contractCount == 0,
+          "Wizard did not open startup default in edit mode with empty contracts");
     check(view.fields->useDefaultServerSecretInWizard && view.fields->autoDetectIpAddressInWizard && view.fields->useDefaultAccessKeyInWizard,
           "startup default preferences were lost");
     client.session.sessionId = view.sessionId; client.session.serviceInstanceId = view.serviceInstanceId;
@@ -490,6 +501,7 @@ void run(bool udp) {
     client.session.fields.virtualIp = "10.99.99.2";
     client.session.fields.autoDetectIpAddressInWizard = false;
     client.session.fields.accessKey = defaultAccessKey("10.99.99.2");
+    client.session.fields.httpHeaders = "Cookie: e2e-synthetic=confirmed\r\nUser-Agent: PHPVPN-E2E";
     client.checkNext(WizardCommand::check_url, WizardOperationKind::url);
     client.checkNext(WizardCommand::check_secret, WizardOperationKind::secret);
     client.checkNext(WizardCommand::check_access, WizardOperationKind::access);
@@ -515,10 +527,11 @@ void run(bool udp) {
     ConfigWarnings warnings;
     const auto stored = require(parseAndValidateConfig(published, warnings));
     check(stored->virtualIp.toString() == "10.99.99.2" && stored->contracts.size() == 13, "Finish default identity/contracts mismatch");
-    const auto originalDom = require(Json::parse(startupBytes));
     const auto publishedDom = require(Json::parse(published));
-    check(Json::serialize(*originalDom.find("communicationContracts")->find("10.99.99.3")) ==
-          Json::serialize(*publishedDom.find("communicationContracts")->find("10.99.99.3")), "Finish replaced an existing payload key");
+    check(stored->httpHeaders == client.session.fields.httpHeaders, "Finish lost confirmed HTTP headers");
+    const auto expectedKey = require(defaultPayloadKey(*client.crypto, *Ipv4Address::parse("10.99.99.2"), *Ipv4Address::parse("10.99.99.3")));
+    check(publishedDom.find("communicationContracts")->find("10.99.99.3")->find("payloadKey")->stringValue() == expectedKey,
+          "Wizard default contract generator changed");
     client.wizard(WizardCommand::finish); // Same UUID and identical complete input.
     const auto repeated = client.wizard(WizardCommand::get_commit);
     check(repeated.result.find("commitState")->stringValue() == "confirmed" &&

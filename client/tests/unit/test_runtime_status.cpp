@@ -2463,7 +2463,7 @@ PHPVPN_TEST(wizard_service, fix2_all_preferences_persist_through_verified_finish
         auto reopened = WizardIpc::parseView(fixture.call(WizardCommand::open).result);
         PHPVPN_REQUIRE_OK(reopened);
         PHPVPN_CHECK_EQ(*reopened->fields, expected);
-        PHPVPN_CHECK_EQ(reopened->contractCount, 1u);
+        PHPVPN_CHECK_EQ(reopened->contractCount, 0u);
     }
 }
 }  // namespace phpvpn
@@ -2516,13 +2516,13 @@ PHPVPN_TEST(runtime_http_headers, worker_three_actions_authenticated_time_refres
     const auto final = transport.observedHeaders();
     PHPVPN_CHECK_EQ(final.back().headers, "X-Test: fixture");
 }
-PHPVPN_TEST(probe_http_headers, all_direct_and_service_checks_use_original_context) {
+PHPVPN_TEST(probe_http_headers, all_direct_and_service_checks_use_operation_fields) {
     for (bool diagnostics : {false, true}) {
         ObservedCrypto crypto;
         ScriptedTransport transport(*crypto.actual);
         TestClock clock;
         auto document = analyzeWizardDocument(kConfig).value();
-        document.context.httpHeaders = "X-Probe: own\nX-Trace: second";
+        document.fields.httpHeaders = "X-Probe: own\nX-Trace: second";
         ProbeClient probe(crypto, transport, clock);
         probe.captureWizardHttpDiagnostics(diagnostics);
         PHPVPN_REQUIRE_OK(probe.checkUrl(document.context, document.fields));
@@ -2530,7 +2530,8 @@ PHPVPN_TEST(probe_http_headers, all_direct_and_service_checks_use_original_conte
         PHPVPN_REQUIRE_OK(probe.checkAccess(document, document.fields));
         const auto observations = transport.observedHeaders();
         PHPVPN_CHECK_EQ(observations.size(), 6u);
-        for (const auto& request : observations) PHPVPN_CHECK_EQ(request.headers, document.context.httpHeaders);
+        for (const auto& request : observations) PHPVPN_CHECK_EQ(request.headers, document.fields.httpHeaders);
+        PHPVPN_CHECK_EQ(document.context.httpHeaders, "X-Test: fixture");
         PHPVPN_CHECK_EQ(observations.back().action, HttpAction::data);
     }
     WizardServiceFixture fixture;
@@ -2752,6 +2753,68 @@ PHPVPN_TEST(flow_lifecycle, ttl_changes_only_on_new_connect_and_hash_secret_surv
     PHPVPN_CHECK_EQ(VpnEngineTestAccess::flowHasherIdentity(fixture.engine),hasher);
     fixture.engine.shutdown();PHPVPN_REQUIRE_OK(fixture.engine.start());
     PHPVPN_CHECK_EQ(VpnEngineTestAccess::flowHasherIdentity(fixture.engine),hasher);
+}
+PHPVPN_TEST(probe_http_headers, changed_headers_revoke_service_evidence_and_commit_identity) {
+    WizardServiceFixture fixture;
+    const auto original = *fixture.runtime.files->bytes;
+    fixture.allChecks();
+    fixture.request.fields.httpHeaders = "Cookie: synthetic=required\r\nUser-Agent: fixture";
+    for (auto command : {WizardCommand::check_secret, WizardCommand::check_access}) {
+        fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+        fixture.request.attemptSequence = ++fixture.sequence;
+        const auto rejected = fixture.call(command);
+        PHPVPN_CHECK(rejected.error && rejected.error->code == "wizard_prerequisite_failed");
+    }
+    PHPVPN_CHECK(fixture.beginFinish().error.has_value());
+    PHPVPN_CHECK_EQ(*fixture.runtime.files->bytes, original);
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+    fixture.probeHeaders.clear();
+    fixture.allChecks();
+    PHPVPN_CHECK_EQ(fixture.probeHeaders.size(), 6u);
+    for (const auto& observation : fixture.probeHeaders) PHPVPN_CHECK_EQ(observation.headers, fixture.request.fields.httpHeaders);
+    const auto view = WizardIpc::parseView(fixture.call(WizardCommand::resume).result);
+    PHPVPN_REQUIRE_OK(view);
+    PHPVPN_CHECK_EQ(view->context->httpHeaders, "X-Test: fixture");
+    PHPVPN_CHECK_EQ(view->fields->httpHeaders, fixture.request.fields.httpHeaders);
+    // Resume deliberately clears evidence. Recheck the same immutable input.
+    fixture.allChecks();
+    const auto begun = fixture.beginFinish();
+    PHPVPN_CHECK(!begun.error);
+    PHPVPN_CHECK(!fixture.call(WizardCommand::finish).error);
+    const auto headers = fixture.request.fields.httpHeaders;
+    fixture.request.fields.httpHeaders = "Cookie: changed-again";
+    const auto rejected = fixture.call(WizardCommand::finish);
+    PHPVPN_CHECK(rejected.error && rejected.error->code == "invalid_argument");
+    fixture.request.fields.httpHeaders = headers;
+    fixture.runFile();
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 1u);
+    PHPVPN_CHECK_EQ(analyzeWizardDocument(*fixture.runtime.files->bytes)->fields.httpHeaders, headers);
+}
+PHPVPN_TEST(probe_http_headers, required_cookie_unlocks_all_checks_but_cancel_never_publishes) {
+    WizardServiceFixture fixture;
+    const auto original = *fixture.runtime.files->bytes;
+    fixture.configureProbe = [&](ScriptedTransport& transport) {
+        auto originalHook = transport.hook;
+        transport.hook = [&, observed = &transport, originalHook](HttpAction action, std::string_view body, int count) -> std::optional<HttpExchangeResult> {
+            if (observed->configuredHeaders.find("Cookie: required=synthetic") == std::string::npos)
+                return HttpExchangeResult(HttpResponse{403, "required cookie missing", "text/plain"}, 23);
+            return originalHook(action, body, count);
+        };
+    };
+    fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+    fixture.request.attemptSequence = ++fixture.sequence;
+    auto started = fixture.call(WizardCommand::check_url);
+    PHPVPN_CHECK(!started.error);
+    fixture.request.operationId = started.result.find("operationId")->stringValue();
+    fixture.runDiagnostic();
+    auto result = WizardIpc::parseOperation(fixture.call(WizardCommand::get_operation).result).value();
+    PHPVPN_CHECK_EQ(result.state, WizardOperationState::failed);
+    fixture.request.fields.httpHeaders = "Cookie: required=synthetic\r\nUser-Agent: fixture";
+    fixture.allChecks();
+    PHPVPN_CHECK_EQ(fixture.probeHeaders.size(), 6u);
+    PHPVPN_CHECK(!fixture.call(WizardCommand::close).error);
+    PHPVPN_CHECK_EQ(fixture.runtime.files->writes, 0u);
+    PHPVPN_CHECK_EQ(*fixture.runtime.files->bytes, original);
 }
 PHPVPN_TEST(flow_lifecycle, random_secret_initialization_failure_fails_start_before_http) {
     EngineFixture fixture;fixture.crypto.failRandom=true;

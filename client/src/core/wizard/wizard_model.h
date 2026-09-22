@@ -37,6 +37,7 @@ public:
     const std::optional<WizardAttempt>& attempt() const { return attempt_; }
     const std::array<CheckpointResult, 3>& checks() const { return checks_; }
     bool setUrl(std::string text);
+    Status setHttpHeaders(std::string text);
     bool setSecretEditor(std::string text);
     bool setDefaultSecret(bool checked);
     bool setIp(std::string text);

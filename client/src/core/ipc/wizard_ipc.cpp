@@ -117,7 +117,9 @@ std::vector<std::string_view> requestFields(WizardCommand command) {
         command == WizardCommand::check_access || command == WizardCommand::cancel_attempt) {
         result.push_back("clientAttemptId"); result.push_back("attemptSequence");
     }
-    if (command == WizardCommand::check_url || command == WizardCommand::check_secret) result.push_back("serverUrl");
+    if (command == WizardCommand::check_url || command == WizardCommand::check_secret) {
+        result.push_back("serverUrl"); result.push_back("httpHeaders");
+    }
     if (command == WizardCommand::check_secret) result.push_back("serverSecret");
     if (command == WizardCommand::check_access || command == WizardCommand::finish) result.push_back("fields");
     if (command == WizardCommand::get_operation || command == WizardCommand::cancel_operation) result.push_back("operationId");
@@ -189,6 +191,13 @@ Result<WizardRequest> WizardIpc::parseRequest(std::string_view json) {
     auto selected = command(root->find("command")->stringValue());
     if (!selected) return Error(ErrorCode::ipc_unknown_command);
     const auto expected = requestFields(*selected);
+    if ((*selected == WizardCommand::check_url || *selected == WizardCommand::check_secret) &&
+        !root->find("httpHeaders") && root->objectValue().size() + 1 == expected.size()) {
+        // Upgrade a copy only to diagnose a complete historical envelope.
+        auto candidate = *root;
+        candidate.objectValue().emplace_back("httpHeaders", str(kDefaultHttpHeaders));
+        return parseRequest(Json::serialize(candidate)) ? Error(ErrorCode::wizard_unsupported) : malformed();
+    }
     if (root->objectValue().size() != expected.size()) return malformed();
     for (auto key : expected) if (!root->find(key)) return malformed();
     WizardRequest request;
@@ -203,13 +212,15 @@ Result<WizardRequest> WizardIpc::parseRequest(std::string_view json) {
         }
     }
     for (const auto& [name, destination] : std::initializer_list<std::pair<const char*, std::string*>>{
-        {"serverUrl", &request.fields.serverUrl}, {"serverSecret", &request.fields.serverSecret}}) {
+        {"serverUrl", &request.fields.serverUrl}, {"serverSecret", &request.fields.serverSecret},
+        {"httpHeaders", &request.fields.httpHeaders}}) {
         if (const auto* value = root->find(name)) {
             if (!text(value)) return malformed();
             *destination = value->stringValue();
         }
     }
     if (const auto* value = root->find("fields")) PHPVPN_TRY_ASSIGN(request.fields, parseFields(*value));
+    if (root->find("httpHeaders") && !normalizeHttpHeaders(request.fields.httpHeaders)) return malformed();
     if (const auto* value = root->find("attemptSequence")) {
         if (!number(value, true)) return malformed();
         request.attemptSequence = jsonUnsignedOrZero(value);
@@ -238,6 +249,7 @@ Result<std::string> WizardIpc::buildRequest(const WizardRequest& request) {
         else if (key == "commitId") value = str(request.commitId);
         else if (key == "serverUrl") value = str(request.fields.serverUrl);
         else if (key == "serverSecret") value = str(request.fields.serverSecret);
+        else if (key == "httpHeaders") value = str(request.fields.httpHeaders);
         else if (key == "fields") value = fieldsValue(request.fields);
         else if (key == "attemptSequence") value = J::makeUnsignedInteger(request.attemptSequence);
         else if (key == "connectionEpoch") value = J::makeUnsignedInteger(request.connectionEpoch);
@@ -250,7 +262,7 @@ Result<std::string> WizardIpc::buildRequest(const WizardRequest& request) {
 }
 J WizardIpc::fieldsValue(const WizardFields& fields) {
     return J::makeObject({{"serverUrl", str(fields.serverUrl)}, {"serverSecret", str(fields.serverSecret)},
-        {"virtualIp", str(fields.virtualIp)}, {"accessKey", str(fields.accessKey)},
+        {"virtualIp", str(fields.virtualIp)}, {"accessKey", str(fields.accessKey)}, {"httpHeaders", str(fields.httpHeaders)},
         {"useDefaultServerSecretInWizard", J::makeBool(fields.useDefaultServerSecretInWizard)},
         {"autoDetectIpAddressInWizard", J::makeBool(fields.autoDetectIpAddressInWizard)},
         {"useDefaultAccessKeyInWizard", J::makeBool(fields.useDefaultAccessKeyInWizard)}});
@@ -260,15 +272,23 @@ Result<WizardFields> WizardIpc::parseFields(const J& value) {
         for (const auto& member : value.objectValue()) if (!member.second.isString()) return malformed();
         return Error(ErrorCode::wizard_unsupported);
     }
-    if (!shape(value, {"serverUrl", "serverSecret", "virtualIp", "accessKey",
+    if (shape(value, {"serverUrl", "serverSecret", "virtualIp", "accessKey",
+        "useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})) {
+        auto candidate = value;
+        candidate.objectValue().emplace_back("httpHeaders", str(kDefaultHttpHeaders));
+        return parseFields(candidate) ? Error(ErrorCode::wizard_unsupported) : malformed();
+    }
+    if (!shape(value, {"serverUrl", "serverSecret", "virtualIp", "accessKey", "httpHeaders",
         "useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})) return malformed();
-    for (auto name : {"serverUrl", "serverSecret", "virtualIp", "accessKey"}) if (!value.find(name)->isString()) return malformed();
+    for (auto name : {"serverUrl", "serverSecret", "virtualIp", "accessKey", "httpHeaders"})
+        if (!text(value.find(name)) || !isStrictUtf8(value.find(name)->stringValue())) return malformed();
+    if (!normalizeHttpHeaders(value.find("httpHeaders")->stringValue())) return malformed();
     for (auto name : {"useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})
         if (!value.find(name)->isBool()) return malformed();
     return WizardFields{value.find("serverUrl")->stringValue(), value.find("serverSecret")->stringValue(),
         value.find("virtualIp")->stringValue(), value.find("accessKey")->stringValue(),
         value.find("useDefaultServerSecretInWizard")->boolValue(), value.find("autoDetectIpAddressInWizard")->boolValue(),
-        value.find("useDefaultAccessKeyInWizard")->boolValue()};
+        value.find("useDefaultAccessKeyInWizard")->boolValue(), value.find("httpHeaders")->stringValue()};
 }
 J WizardIpc::contextValue(const WizardContext& context) {
     const auto& r = context.runtime;
@@ -318,6 +338,13 @@ J WizardIpc::viewValue(const WizardView& view) {
         {"vpnState", str(connectionStateName(view.vpnState))}, {"vpnPhase", str(connectionPhaseName(view.vpnPhase))}});
 }
 Result<WizardView> WizardIpc::parseView(const J& value) {
+    if (const auto* fields = value.find("fields"); fields && shape(*fields, {"serverUrl", "serverSecret", "virtualIp", "accessKey",
+        "useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})) {
+        auto candidate = value;
+        for (auto& [name, member] : candidate.objectValue()) if (name == "fields")
+            member.objectValue().emplace_back("httpHeaders", str(kDefaultHttpHeaders));
+        return parseView(candidate) ? Error(ErrorCode::wizard_unsupported) : malformed();
+    }
     if (shape(value, {"sessionId", "serviceInstanceId", "revisionToken", "availability", "mode", "fields", "context", "contractCount", "connectionEpoch", "vpnState", "vpnPhase"})) {
         // Diagnose only a fully valid historical view. Never downgrade or use it.
         J candidate = value;
@@ -325,6 +352,7 @@ Result<WizardView> WizardIpc::parseView(const J& value) {
             if (parseFields(fields).code() != ErrorCode::wizard_unsupported) return malformed();
             for (auto flag : {"useDefaultServerSecretInWizard", "autoDetectIpAddressInWizard", "useDefaultAccessKeyInWizard"})
                 fields.objectValue().emplace_back(flag, J::makeBool(false));
+            fields.objectValue().emplace_back("httpHeaders", str(kDefaultHttpHeaders));
         }
         candidate.objectValue().emplace_back("existingDefaultContractPeers", J::makeArray({}));
         return parseView(candidate) ? Error(ErrorCode::wizard_unsupported) : malformed();

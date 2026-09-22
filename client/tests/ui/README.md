@@ -158,3 +158,11 @@ The main UI harness checks the default icon whenever it finds a production
 window, including reopened Wizard windows. Unit resource tests cover
 96/120/144/192 DPI sizes and failed-load handle preservation. These checks do
 not substitute for Explorer/Alt+Tab visual inspection or physical monitor moves.
+The `http_headers_` filter covers the owned Wizard headers dialog, draft-only
+Reset/Cancel/OK, validation, probe payloads and Finish publication. Run it in
+Debug and Release with `dev-tray.ps1 -Mode Test -Filter http_headers_`.
+The geometry case compares 112 resize frames with a clean repaint, tests
+minimum/maximized layouts, keyboard traversal, no-wrap long lines, owner
+teardown, and injected WM_DPICHANGED messages for 96/144/192 DPI. Injected
+messages do not replace physical multi-monitor DPI acceptance. Optional
+PHPVPN_WP04_CAPTURE_DIR captures only synthetic test content.

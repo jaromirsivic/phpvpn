@@ -3,6 +3,7 @@
 #include "core/ipc/wizard_ipc.h"
 #include "core/protocol/uuid.h"
 #include "core/base/hex.h"
+#include "core/protocol/http_headers.h"
 #include <algorithm>
 #include <limits>
 
@@ -14,7 +15,7 @@ void WizardModel::load(WizardView view, bool preserveFields) {
     busy_ = committing_ = false; attempt_.reset(); error_.reset();
     invalidate(0);
     if (!view_.fields || !view_.context) { step_ = WizardStep::loadError; return; }
-    if (!preserveFields) {
+    if (!preserveFields || newSession) {
         fields_ = *view_.fields;
         if (useDefaultSecret()) fields_.serverSecret = kDefaultServerSecret;
         updateDefaultKey(); updateSecretText();
@@ -41,6 +42,21 @@ bool WizardModel::setUrl(std::string text) {
     if (busy_ || committing_) return false;
     if (fields_.serverUrl != text) { fields_.serverUrl = std::move(text); invalidate(0); }
     return true;
+}
+Status WizardModel::setHttpHeaders(std::string text) {
+    if (busy_ || committing_ || step_ == WizardStep::commitUnknown || step_ == WizardStep::finished)
+        return Error(ErrorCode::busy);
+    if (!isStrictUtf8(text)) return Error(ErrorCode::config_encoding_error);
+    std::string normalized;
+    PHPVPN_TRY_ASSIGN(normalized, normalizeHttpHeaders(text));
+    if (Json::escapeString(normalized).size() > kMaxConfigFileBytes)
+        return Error(ErrorCode::config_too_large);
+    if (fields_.httpHeaders != normalized) {
+        fields_.httpHeaders = std::move(normalized);
+        invalidate(0); error_.reset();
+        step_ = WizardStep::serverUrl;
+    }
+    return ok();
 }
 bool WizardModel::setSecretEditor(std::string text) {
     if (busy_ || committing_ || useDefaultSecret()) return false;

@@ -51,11 +51,7 @@ inline constexpr std::string_view kDefaultConfigDocument = R"json({
     "useDefaultAccessKeyInWizard": true,
     "autoConnectOnStartup": false
   },
-  "communicationContracts": {
-    "10.99.99.3": {
-      "payloadKey": "918c488528c2bc41a90f000b0a63bab0ba418790058ea7b448a3760aec16349d"
-    }
-  }
+  "communicationContracts": {}
 }
 )json";
 

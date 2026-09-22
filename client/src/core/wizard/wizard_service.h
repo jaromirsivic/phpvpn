@@ -44,7 +44,7 @@ private:
         std::string highestAttemptId;
         bool alive = true, interrupted = false;
         std::shared_ptr<Operation> operation;
-        std::optional<std::string> urlEvidence;
+        std::optional<WizardFields> urlEvidence;
         std::optional<WizardFields> secretEvidence, accessEvidence;
         std::optional<std::string> suggestedIpEvidence;
     };

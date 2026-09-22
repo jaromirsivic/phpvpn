@@ -28,7 +28,7 @@ Status ProbeClient::prepare(const WizardContext& context, const WizardFields& fi
     settings.responseTimeoutSeconds = context.runtime.responseTimeoutSeconds;
     settings.maxResponseBodyBytes = bodyLimit_;
     settings.captureWizardHttpDiagnostics = captureDiagnostics_;
-    settings.httpHeaders = context.httpHeaders;
+    settings.httpHeaders = fields.httpHeaders;
     return transport_.configure(settings);
 }
 Result<HttpResponse> ProbeClient::post(HttpAction action, std::string_view body) {

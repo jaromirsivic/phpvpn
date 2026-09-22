@@ -321,14 +321,18 @@ Result<J> WizardService::startProbe(const WizardRequest& request) {
     PHPVPN_TRY(readyLocked(*session));
     auto fields = session->view.fields.value();
     fields.serverUrl = request.fields.serverUrl;
+    fields.httpHeaders = request.fields.httpHeaders;
     if (request.command == WizardCommand::check_secret) fields.serverSecret = request.fields.serverSecret;
     if (request.command == WizardCommand::check_access) fields = request.fields;
+    PHPVPN_TRY(WizardIpc::parseFields(WizardIpc::fieldsValue(fields)));
     const auto kind = request.command == WizardCommand::check_url ? WizardOperationKind::url :
         request.command == WizardCommand::check_secret ? WizardOperationKind::secret : WizardOperationKind::access;
-    if (kind != WizardOperationKind::url && (!session->urlEvidence || *session->urlEvidence != fields.serverUrl))
+    if (kind != WizardOperationKind::url && (!session->urlEvidence || session->urlEvidence->serverUrl != fields.serverUrl ||
+        session->urlEvidence->httpHeaders != fields.httpHeaders))
         return Error(ErrorCode::wizard_prerequisite_failed);
     if (kind == WizardOperationKind::access) {
-        if (!session->secretEvidence || session->secretEvidence->serverUrl != fields.serverUrl || session->secretEvidence->serverSecret != fields.serverSecret)
+        if (!session->secretEvidence || session->secretEvidence->serverUrl != fields.serverUrl || session->secretEvidence->serverSecret != fields.serverSecret ||
+            session->secretEvidence->httpHeaders != fields.httpHeaders)
             return Error(ErrorCode::wizard_prerequisite_failed);
         PHPVPN_TRY(validateWizardIdentity(*session->original, fields));
         if ((fields.useDefaultServerSecretInWizard && fields.serverSecret != kDefaultServerSecret) ||
@@ -412,7 +416,7 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
         } else {
             operation->result.state = WizardOperationState::succeeded;
             operation->result.suggestedIp = suggestion; operation->result.discardedRecordCount = outcome.value();
-            if (operation->result.kind == WizardOperationKind::url) session->urlEvidence = operation->fields.serverUrl;
+            if (operation->result.kind == WizardOperationKind::url) session->urlEvidence = operation->fields;
             else if (operation->result.kind == WizardOperationKind::secret) {
                 session->secretEvidence = operation->fields;
                 session->suggestedIpEvidence = suggestion;
@@ -423,6 +427,7 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
     changed_.notify_all();
 }
 Result<J> WizardService::finish(const WizardRequest& request) {
+    PHPVPN_TRY(WizardIpc::parseFields(WizardIpc::fieldsValue(request.fields)));
     const auto input = Json::serialize(J::makeObject({{"fields", WizardIpc::fieldsValue(request.fields)},
         {"createDefaultContracts", J::makeBool(request.createDefaultContracts)}}));
     Sha256Digest digest;
@@ -441,7 +446,9 @@ Result<J> WizardService::finish(const WizardRequest& request) {
     }
     if (commits_.size() >= kWizardMaxReceipts || (session->operation && !terminal(*session->operation))) return Error(ErrorCode::busy);
     PHPVPN_TRY(readyLocked(*session));
-    if (!session->urlEvidence || *session->urlEvidence != request.fields.serverUrl || !session->secretEvidence ||
+    if (!session->urlEvidence || session->urlEvidence->serverUrl != request.fields.serverUrl ||
+        session->urlEvidence->httpHeaders != request.fields.httpHeaders || !session->secretEvidence ||
+        session->secretEvidence->httpHeaders != request.fields.httpHeaders ||
         session->secretEvidence->serverUrl != request.fields.serverUrl || session->secretEvidence->serverSecret != request.fields.serverSecret ||
         !session->accessEvidence || *session->accessEvidence != request.fields) return Error(ErrorCode::wizard_prerequisite_failed);
     if (request.createDefaultContracts && !supportsDefaultContracts(session->original->context.vpnCidr)) return Error(ErrorCode::invalid_argument);

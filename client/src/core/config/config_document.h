@@ -20,6 +20,7 @@ struct WizardFields {
     bool useDefaultServerSecretInWizard = true;
     bool autoDetectIpAddressInWizard = true;
     bool useDefaultAccessKeyInWizard = true;
+    std::string httpHeaders = kDefaultHttpHeaders;
     bool operator==(const WizardFields&) const = default;
 };
 struct WizardContext {

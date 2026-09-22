@@ -75,6 +75,7 @@ PHPVPN_TEST(default_config, document_passes_the_current_validator) {
     ConfigWarnings warnings;
     auto parsed = parseAndValidateConfig(kDefaultConfigDocument, warnings);
     PHPVPN_REQUIRE_OK(parsed);
+    PHPVPN_CHECK(parsed.value()->contracts.empty());
 
     PHPVPN_CHECK(parsed.value()->trustAnyTlsCertificate);
     PHPVPN_CHECK_EQ(parsed.value()->vpnCidr.toString(), std::string("10.99.99.0/24"));

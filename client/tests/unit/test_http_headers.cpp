@@ -171,6 +171,7 @@ PHPVPN_TEST(http_headers_wizard, preserves_raw_value_position_repair_contracts_a
         PHPVPN_REQUIRE_OK(doc);
         const auto before = master.objectValue();
         auto fields = analyzeWizardDocument(kDefaultConfigDocument)->fields;
+        fields.httpHeaders = headers;
         fields.serverSecret = "edited secret";
         for (bool contracts : {false, true}) {
             auto patched = buildWizardDocument(*crypto, *doc, repair ? WizardMode::repair : WizardMode::edit, fields, contracts);
@@ -198,6 +199,58 @@ PHPVPN_TEST(http_headers_wizard, preserves_raw_value_position_repair_contracts_a
 }
 
 namespace phpvpn {
+PHPVPN_TEST(http_headers_wizard, edited_fields_roundtrip_and_finish_only_publication) {
+    auto crypto = createPlatformCryptoProvider().value();
+    auto backend = std::make_unique<FakeConfigFiles>(*crypto);
+    auto* files = backend.get();
+    ConfigStore store(*crypto, std::move(backend));
+    PHPVPN_REQUIRE_OK(store.ensureDefaultAtStartup());
+    const auto bytes = *files->bytes;
+    const auto writes = files->writes;
+    auto doc = analyzeWizardDocument(bytes).value();
+    auto fields = doc.fields;
+    fields.httpHeaders = normalizeHttpHeaders("Cookie: synthetic=1\nX-Quote: \"a\\b\"\nX-Utf8: \xc5\xbe").value();
+    auto roundtrip = WizardIpc::parseFields(Json::parse(Json::serialize(WizardIpc::fieldsValue(fields))).value());
+    PHPVPN_REQUIRE_OK(roundtrip);
+    PHPVPN_CHECK_EQ(*roundtrip, fields);
+    auto built = buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false);
+    PHPVPN_REQUIRE_OK(built);
+    PHPVPN_CHECK_EQ(analyzeWizardDocument(*built)->fields.httpHeaders, fields.httpHeaders);
+    PHPVPN_CHECK_EQ(doc.context.httpHeaders, kDefaultHttpHeaders);
+    PHPVPN_CHECK_EQ(*files->bytes, bytes);
+    PHPVPN_CHECK_EQ(files->writes, writes);
+    PHPVPN_REQUIRE_OK(store.save(*built, "00000000-0000-4000-8000-000000000001"));
+    PHPVPN_CHECK_EQ(files->writes, writes + 1);
+    PHPVPN_CHECK_EQ(store.readValid().value()->httpHeaders, fields.httpHeaders);
+    fields.httpHeaders = "hOsT: synthetic-secret";
+    PHPVPN_CHECK(!buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false));
+    PHPVPN_CHECK(!WizardIpc::parseFields(WizardIpc::fieldsValue(fields)));
+}
+PHPVPN_TEST(http_headers_wizard, final_json_limit_counts_escaping_utf8_and_normalization) {
+    auto crypto = createPlatformCryptoProvider().value();
+    const auto doc = analyzeWizardDocument(kDefaultConfigDocument).value();
+    auto fields = doc.fields;
+    fields.httpHeaders = "X: \"\\\xc5\xbe\r\nY: tail";
+    const auto baseline = buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false).value();
+    const auto remaining = kMaxConfigFileBytes - baseline.size();
+    fields.httpHeaders.insert(3, remaining, 'x');
+    const auto exact = buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false);
+    PHPVPN_REQUIRE_OK(exact);
+    PHPVPN_CHECK_EQ(exact->size(), kMaxConfigFileBytes);
+    PHPVPN_CHECK_EQ(analyzeWizardDocument(*exact)->fields.httpHeaders, fields.httpHeaders);
+    fields.httpHeaders.insert(3, 1, 'x');
+    PHPVPN_REQUIRE_ERROR(buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false), ErrorCode::config_too_large);
+    fields.httpHeaders.erase(3, 1);
+    const auto newline = fields.httpHeaders.find("\r\n");
+    fields.httpHeaders.erase(newline, 1);
+    const auto raw = buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false);
+    PHPVPN_REQUIRE_OK(raw);
+    PHPVPN_CHECK_EQ(raw->size(), kMaxConfigFileBytes - 2);
+    fields.httpHeaders = normalizeHttpHeaders(fields.httpHeaders).value();
+    PHPVPN_CHECK_EQ(buildWizardDocument(*crypto, doc, WizardMode::edit, fields, false)->size(), kMaxConfigFileBytes);
+    // Adding generated contracts uses the same final full-document boundary.
+    PHPVPN_REQUIRE_ERROR(buildWizardDocument(*crypto, doc, WizardMode::edit, fields, true), ErrorCode::config_too_large);
+}
 PHPVPN_TEST(http_headers_config, duplicates_case_insensitive_reject_without_partial_publication) {
     auto crypto = createPlatformCryptoProvider().value();
     auto backend = std::make_unique<FakeConfigFiles>(*crypto);

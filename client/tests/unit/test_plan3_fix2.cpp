@@ -1,3 +1,4 @@
+#include "one_contract_fixture.h"
 #include "harness.h"
 #include "fake_config_files.h"
 #include "core/config/config_defaults.h"
@@ -225,7 +226,7 @@ PHPVPN_TEST(fix2, contracts_are_additive_preserve_keys_and_preview_matches_publi
     auto added = buildWizardDocument(*crypto, draft, WizardMode::edit, draft.fields, true);
     PHPVPN_REQUIRE_OK(added);
     PHPVPN_CHECK_EQ(analyzeWizardDocument(added.value())->contractPeers.size(), 14u);
-    auto moved = analyzeWizardDocument(makeDefaultEditorDocument()).value();
+    auto moved = analyzeWizardDocument(test::oneContractDocument()).value();
     const auto existingKey = Json::serialize(*moved.dom.find("communicationContracts")->find("10.99.99.3"));
     moved.fields.virtualIp = "10.99.99.10";
     moved.fields.accessKey = defaultAccessKey(moved.fields.virtualIp);
@@ -287,14 +288,14 @@ PHPVPN_TEST(fix2, contract_checkbox_and_counts_include_edit_repair_and_unsupport
 }
 
 PHPVPN_TEST(fix2, ipc_fields_and_preview_have_closed_typed_schemas) {
-    const auto view = viewFor(makeDefaultEditorDocument());
+    const auto view = viewFor(test::oneContractDocument());
     for (unsigned mask = 0; mask < 8; ++mask) {
         auto fields = *view.fields;
         fields.useDefaultServerSecretInWizard = (mask & 1) != 0;
         fields.autoDetectIpAddressInWizard = (mask & 2) != 0;
         fields.useDefaultAccessKeyInWizard = (mask & 4) != 0;
         auto encoded = WizardIpc::fieldsValue(fields);
-        PHPVPN_CHECK_EQ(encoded.objectValue().size(), 7u);
+        PHPVPN_CHECK_EQ(encoded.objectValue().size(), 8u);
         auto decoded = WizardIpc::parseFields(encoded);
         PHPVPN_REQUIRE_OK(decoded);
         PHPVPN_CHECK_EQ(decoded.value(), fields);
@@ -313,7 +314,7 @@ PHPVPN_TEST(fix2, ipc_fields_and_preview_have_closed_typed_schemas) {
     }
     auto historical = encoded;
     std::erase_if(historical.objectValue(), [](const auto& item) { return item.first == "existingDefaultContractPeers"; });
-    std::erase_if(member(historical, "fields").objectValue(), [](const auto& item) { return item.first.ends_with("InWizard"); });
+    std::erase_if(member(historical, "fields").objectValue(), [](const auto& item) { return item.first.ends_with("InWizard") || item.first == "httpHeaders"; });
     PHPVPN_REQUIRE_ERROR(WizardIpc::parseView(historical), ErrorCode::wizard_unsupported);
     member(historical, "contractCount") = JsonValue::makeString("wrong type");
     PHPVPN_REQUIRE_ERROR(WizardIpc::parseView(historical), ErrorCode::ipc_malformed);
@@ -329,7 +330,7 @@ PHPVPN_TEST(fix2, ipc_fields_and_preview_have_closed_typed_schemas) {
     full = view; full.mode = WizardMode::create; full.availability = ConfigAvailability::missing; full.revisionToken.clear();
     PHPVPN_REQUIRE_ERROR(WizardIpc::parseView(WizardIpc::viewValue(full)), ErrorCode::ipc_malformed);
     auto oldFields = WizardIpc::fieldsValue(*view.fields);
-    std::erase_if(oldFields.objectValue(), [](const auto& item) { return item.first.ends_with("InWizard"); });
+    std::erase_if(oldFields.objectValue(), [](const auto& item) { return item.first.ends_with("InWizard") || item.first == "httpHeaders"; });
     PHPVPN_REQUIRE_ERROR(WizardIpc::parseFields(oldFields), ErrorCode::wizard_unsupported);
     oldFields.objectValue().emplace_back("accessKey", JsonValue::makeString(""));
     PHPVPN_REQUIRE_ERROR(WizardIpc::parseFields(oldFields), ErrorCode::ipc_malformed);

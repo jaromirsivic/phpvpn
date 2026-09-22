@@ -53,6 +53,7 @@ Result<WizardDocument> analyzeWizardDocument(std::string_view json) {
     PHPVPN_TRY_ASSIGN(document.dom, Json::parse(values->rawJson));
     document.fields.serverUrl = values->serverUrl.original;
     document.fields.serverSecret = values->serverSecret;
+    document.fields.httpHeaders = values->httpHeaders;
     document.context = {values->vpnCidr, values->trustAnyTlsCertificate, values->runtime, values->httpHeaders};
     document.hasVirtualIp = values->virtualIp.has_value();
     document.hasAccessKey = values->accessKey.has_value();
@@ -98,6 +99,7 @@ Result<std::string> buildWizardDocument(CryptoProvider& crypto, const WizardDocu
     for (auto& member : dom.objectValue()) {
         if (member.first != "masterSetup") continue;
         set(member.second, "serverUrl", JsonValue::makeString(fields.serverUrl));
+        set(member.second, "httpHeaders", JsonValue::makeString(fields.httpHeaders));
         set(member.second, "serverSecret", JsonValue::makeString(fields.serverSecret));
         set(member.second, "virtualIp", JsonValue::makeString(fields.virtualIp));
         set(member.second, "accessKey", JsonValue::makeString(fields.accessKey));

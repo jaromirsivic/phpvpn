@@ -254,6 +254,14 @@ Nadpis `Server URL configuration`, popis `Set up this computer for your PHPVPN s
 
 Nový/resetovaný koncept stále obsahuje `http://MODIFY-THIS-URL/phpvpn.php`, nikoli loopback opsaný z obrázku. Placeholder se odmítne před DNS s `Replace MODIFY-THIS-URL with your server address.`. Existující `parseServerUrl` nadále dovoluje jiný název skriptu. Kontrola je pouze syntaxe/dostupnost health, nezveřejní ověřený čas ani kryptografickou identitu. TLS politika zachovaného kontextu se nemění za účelem úspěchu kontroly.
 
+### HTTP headers v prvním kroku
+
+Mezi dvěma oddělovači pod příkladem URL jsou přesně `Configure additional HTTP headers for this server.`, tlačítko `HTTP headers` a hint `Some web servers and hosting providers require additional headers, especially Cookie or User-Agent. If you are unsure what to enter, keep the default values.`
+
+Tlačítko otevře jediné vlastněné modální okno `HTTP headers`. Výchozí klientská plocha je 760 × 420 DIP, minimum 480 × 260 DIP, bez vlastního maximálního omezení. Okno podporuje maximalizaci a změny DPI. Hlavní obsah tvoří prostý víceřádkový text se skutečnými konci řádků, bez zalamování, s vodorovným i svislým posunem. Vlevo dole je červený Reset, vpravo Cancel a modré OK. Enter v poli vloží nový řádek, Tab a Shift+Tab procházejí pole a tlačítka. Escape, křížek a Alt+F4 ruší místní editaci. Po zavření se fokus vrátí na HTTP headers.
+
+Reset mění pouze místní text dialogu. OK ověří syntaxi, duplicity a aplikací spravované názvy společným validátorem, přijme kanonické CRLF do konceptu a při změně zneplatní dosavadní kontroly. Chyba ponechá okno i text otevřené. Zrušení ponechá koncept včetně původní raw hodnoty beze změny. Dialog neprovádí síť ani zápis. Následující kontroly používají přijaté hlavičky, jediným uložením zůstává Finish. Zavření nebo konec relace vlastníka zruší i místní dialog.
+
 ### Krok 2, wizzard2.png
 
 Nadpis `Server secret configuration`, popis `Use the secret configured on your PHPVPN server.`. V kartě label `Server secret (exact text, including any spaces)`, pole, `Enter the exact SERVER_SECRET value configured in phpvpn.php.`, switch `Use default server secret`, oddělovač a `The server response will be authenticated before continuing.`. Při defaultu navíc jediná stručná věta `The default secret is publicly known.`.
