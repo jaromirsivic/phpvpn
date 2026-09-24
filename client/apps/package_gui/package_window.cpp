@@ -44,6 +44,7 @@ bool PackageWindow::open(HINSTANCE instance, const std::filesystem::path& direct
     window_ = CreateWindowExW(0, className, title(mode_, state_), WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 760, 520, nullptr, nullptr, instance, this);
     if (!window_) return false;
+    // Keep PowerShell's physical lines intact and scroll long lines horizontally.
     log_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
         0, 0, 1, 1, window_, reinterpret_cast<HMENU>(1001), instance, nullptr);
@@ -89,10 +90,25 @@ void PackageWindow::start() {
 }
 void PackageWindow::append(const std::wstring& text) {
     if (text.empty() || !log_) return;
+    std::wstring display;
+    display.reserve(text.size());
+    // Write-Host emits LF, while EDIT needs CRLF. Hold a trailing CR so a
+    // CRLF pair split between polls is inserted as one line break.
+    for (const auto character : text) {
+        if (pendingCr_) {
+            display.push_back(L'\r');
+            pendingCr_ = false;
+            if (character == L'\n') { display.push_back(L'\n'); continue; }
+        }
+        if (character == L'\r') pendingCr_ = true;
+        else if (character == L'\n') display += L"\r\n";
+        else display.push_back(character);
+    }
+    if (display.empty()) return;
     // Detect failed insertions via notifications and never silently claim
     // success after a display error. The explicit limit exceeds EDIT's default.
     SendMessageW(log_, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
-    SendMessageW(log_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
+    SendMessageW(log_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(display.c_str()));
     SendMessageW(log_, EM_SCROLLCARET, 0, 0);
 }
 void PackageWindow::poll() {

@@ -68,6 +68,8 @@ int main() {
                     std::ofstream script(directory / scriptName(mode), std::ios::binary);
                     script << "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\n"
                               "[Console]::WriteLine('EARLY'); Start-Sleep -Milliseconds 800; [Console]::Error.WriteLine('STDERR');\n"
+                              "Write-Host 'HOST-LF'; [Console]::Write('SPLIT-CR'); [Console]::Write(\"`r\"); [Console]::Out.Flush(); "
+                              "Start-Sleep -Milliseconds 800; [Console]::Write(\"`nSPLIT-LF`n\");\n"
                               "[Console]::Write((('x' * 300 + \"`r`n\") * 1000)); [Console]::WriteLine('FINAL'); exit " << code;
                 }
                 PackageWindow window(mode);
@@ -76,7 +78,9 @@ int main() {
                 const auto root = window.handle(), log = window.logHandle();
                 require(text(root) == title(mode, State::running), "running title");
                 require(SendMessageW(root, WM_GETICON, ICON_BIG, 0) && SendMessageW(root, WM_GETICON, ICON_SMALL, 0), "window icons missing");
-                require((GetWindowLongPtrW(log, GWL_STYLE) & (ES_READONLY | ES_MULTILINE | WS_VSCROLL | WS_HSCROLL)) == (ES_READONLY | ES_MULTILINE | WS_VSCROLL | WS_HSCROLL), "log control styles");
+                const auto logStyle = GetWindowLongPtrW(log, GWL_STYLE);
+                require((logStyle & (ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL)) ==
+                    (ES_READONLY | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL), "log control styles");
                 checkGeometry(root, log); checkColor(root, State::running);
                 RECT minimum{0, 0, MulDiv(520, static_cast<int>(GetDpiForWindow(root)), 96), MulDiv(360, static_cast<int>(GetDpiForWindow(root)), 96)};
                 AdjustWindowRectExForDpi(&minimum, static_cast<DWORD>(GetWindowLongPtrW(root, GWL_STYLE)), FALSE, 0, GetDpiForWindow(root));
@@ -105,6 +109,8 @@ int main() {
                 if (mode == Mode::install && !code) capture(root, L"running.png");
                 SendMessageW(root, WM_CLOSE, 0, 0);
                 require(IsWindow(root), "closed during operation");
+                require(until([&] { return text(log).find(L"SPLIT-CR") != std::wstring::npos; }), "split CR was not displayed live");
+                require(text(log).find(L"SPLIT-LF") == std::wstring::npos, "split LF arrived before the first batch was displayed");
                 SetWindowPos(root, nullptr, 0, 0, 870, 670, SWP_NOMOVE | SWP_NOZORDER);
                 checkGeometry(root, log);
                 ShowWindow(root, SW_MAXIMIZE); pump(); checkGeometry(root, log);
@@ -117,10 +123,33 @@ int main() {
                 if (mode == Mode::install) capture(root, code ? L"failed.png" : L"succeeded.png");
                 const auto output = text(log);
                 require(output.size() > 300000 && output.find(L"STDERR") != output.npos && output.find(L"FINAL") != output.npos, "large output was lost");
+                require(output.find(L"HOST-LF\r\nSPLIT-CR\r\nSPLIT-LF\r\n") != output.npos,
+                    "PowerShell LF or split CRLF did not become physical lines");
                 require(std::count(output.begin(), output.end(), L'x') == 300001, "large log character count");
-                const auto lines = SendMessageW(log, EM_GETLINECOUNT, 0, 0);
-                std::cout << "Log lines=" << lines << " DPI=" << GetDpiForWindow(root) << "\n";
-                require(lines >= 1000 && lines < 1020, "long output was word wrapped");
+                const auto hardBreaks = std::count(output.begin(), output.end(), L'\n');
+                require(hardBreaks >= 1000 && hardBreaks < 1020, "visual wrapping changed hard line breaks");
+                SetWindowPos(root, nullptr, 0, 0, 600, 670, SWP_NOMOVE | SWP_NOZORDER);
+                const auto narrowLines = SendMessageW(log, EM_GETLINECOUNT, 0, 0);
+                SendMessageW(log, EM_SETSEL, 0, 0);
+                SendMessageW(log, EM_SCROLLCARET, 0, 0);
+                SCROLLINFO horizontal{sizeof(horizontal), SIF_RANGE | SIF_PAGE | SIF_POS};
+                require(GetScrollInfo(log, SB_HORZ, &horizontal) && horizontal.nMax > static_cast<int>(horizontal.nPage),
+                    "horizontal log range missing");
+                const auto leftOffset = horizontal.nPos;
+                SendMessageW(log, EM_LINESCROLL, 10, 0);
+                require(GetScrollInfo(log, SB_HORZ, &horizontal) && horizontal.nPos > leftOffset,
+                    "horizontal log scrolling failed");
+                SetWindowPos(root, nullptr, 0, 0, 1100, 670, SWP_NOMOVE | SWP_NOZORDER);
+                const auto wideLines = SendMessageW(log, EM_GETLINECOUNT, 0, 0);
+                require(narrowLines == wideLines && wideLines >= 1000 && wideLines < 1020,
+                    "long physical lines changed on resize");
+                require(text(log) == output, "resizing changed log text");
+                SendMessageW(log, EM_SETSEL, 0, 0);
+                SendMessageW(log, EM_SCROLLCARET, 0, 0);
+                const auto firstLine = SendMessageW(log, EM_GETFIRSTVISIBLELINE, 0, 0);
+                SendMessageW(log, EM_LINESCROLL, 0, 10);
+                require(SendMessageW(log, EM_GETFIRSTVISIBLELINE, 0, 0) > firstLine, "vertical log scrolling failed");
+                std::cout << "Physical log lines narrow=" << narrowLines << " wide=" << wideLines << " DPI=" << GetDpiForWindow(root) << "\n";
                 require(IsWindowVisible(root), "window closed after completion");
                 SendMessageW(root, WM_APP + 41, 0, 0); // stale start is harmless
                 pump(); require(text(log) == output, "late start changed output");

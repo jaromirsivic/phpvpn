@@ -42,5 +42,6 @@ private:
     std::shared_ptr<Shared> shared_ = std::make_shared<Shared>();
     std::thread worker_;
     bool started_ = false, captureFailed_ = false, closeNotice_ = false;
+    bool pendingCr_ = false;
 };
 } // namespace phpvpn::package

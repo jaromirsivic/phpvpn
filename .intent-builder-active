@@ -1,13 +1,9 @@
-state: realization complete
+﻿state: realization complete
 language: Czech
 project_root: C:\git\phpvpn
-intent_directory: C:\git\phpvpn\Intents\2026-09-22-18-38-02
-started_at: 2026-09-22-18-38-02
-last_completed_intent_version: 1
-latest_intent_path: C:\git\phpvpn\Intents\2026-09-22-18-38-02\intent-v001.md
-route: plan
-planning_context_id: 01a0ca0f-eaf3-7a51-8209-23d570b811ad
-plan_directory: C:\git\phpvpn\Plans\2026-09-22-18-38-02
-last_completed_plan_version: 1
-latest_plan_path: C:\git\phpvpn\Plans\2026-09-22-18-38-02\plan-v001.md
-realization_context_id: 01a0ca21-1106-7d30-a84e-ef72d947d5e9
+intent_directory: C:\git\phpvpn\Intents\2026-09-24-08-52-19
+started_at: 2026-09-24-08-52-19
+last_completed_intent_version: 2
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-24-08-52-19\intent-v002.md
+route: realize
+realization_context_id: 01a0d23e-a64b-7ed2-8a75-3893c3ef92b2
