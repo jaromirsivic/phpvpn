@@ -21,7 +21,10 @@ Cesty jsou relativní ke kořeni projektu. Velikost písmen platformních slože
 ```text
 dist/
   server/
-    phpvpn.php
+    PHP/
+      phpvpn.php
+    Node.js/
+    Python/
   client/
     Windows/
       x64/
@@ -49,7 +52,9 @@ Uvedené Windows soubory tvoří základ aktuální klientské distribuce. Sezna
 
 ### Server
 
-`dist/server/phpvpn.php` MUSÍ obsahovat nejaktuálnější distribuovatelnou verzi serveru. Aktuální zdrojový soubor v repozitáři se jmenuje [phpvpn.php](phpvpn.php). Při sestavení se jeho aktuální obsah zkopíruje do serverové složky beze změny názvu jako `phpvpn.php`. Jeho obsah se při kopírování nemění.
+`dist/server/PHP/phpvpn.php` MUSÍ obsahovat nejaktuálnější distribuovatelnou verzi serveru v PHP. Aktuální zdrojový soubor v repozitáři se jmenuje [phpvpn.php](phpvpn.php). Při sestavení se jeho aktuální obsah zkopíruje do složky `dist/server/PHP` beze změny názvu jako `phpvpn.php`. Jeho obsah se při kopírování nemění.
+
+Při každém sestavení MUSÍ vzniknout také složky `dist/server/Node.js` a `dist/server/Python`. Zatím zůstávají prázdné. Serverové implementace protokolu pro Node.js a Python do nich budou přidány až po jejich vytvoření. Přítomnost těchto složek sama o sobě neznamená, že jsou tyto serverové varianty dostupné.
 
 Název distribučního souboru `phpvpn.php` odpovídá příkladům `/phpvpn.php` v protokolové dokumentaci. `serverUrl` klienta musí ukazovat na skutečnou URL tohoto souboru. Podpora jiného názvu skriptu a cesty se řídí [client.md](client.md). Distribuce NESMÍ přebírat starší nasazenou kopii nebo lokální provozní konfiguraci namísto aktuálního zdroje určeného k vydání.
 
@@ -79,10 +84,10 @@ V aktuální etapě je implementovaným cílem Windows x64. Pokud pro macOS nebo
 2. Sestavit klientské programy z těchto zdrojů a připravit aktuální serverový soubor. Pracovní build adresáře zůstávají mimo výslednou distribuci.
 3. Znovu vytvořit obsah `dist` a celou povinnou strukturu. Naplnit serverovou část a platformní klientské složky podle skutečně dostupné implementace.
 4. Připravit úplný Windows x64 balíček, ověřit architekturu a závislosti, zahrnout licence a po dokončení obsahu vytvořit odpovídající podepsaný manifest. Úroveň důvěry podpisu se uvede pravdivě, vývojový podpis se NESMÍ vydávat za veřejně důvěryhodný vydavatelský podpis.
-5. Ověřit shodu `dist/server/phpvpn.php` s aktuálním zdrojem `phpvpn.php`, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu klientského balíčku. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
+5. Ověřit shodu `dist/server/PHP/phpvpn.php` s aktuálním zdrojem `phpvpn.php`, přítomnost složek `dist/server/Node.js` a `dist/server/Python`, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu klientského balíčku. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
 6. Předat přesnou cestu k výsledku a stručný stav ověření. Pokud se vytváří ZIP, jeho obsah MUSÍ odpovídat ověřenému výsledku a zachovat příslušnou adresářovou strukturu. Archiv a pracovní reporty se ukládají mimo `dist`, aby se při dalším sestavení nemísily s jeho obsahem.
 
-Aktuální [client/tools/make-dist.ps1](client/tools/make-dist.ps1) sestavuje plochý Windows balíček a jeho výchozí výstup je `dist`. Při použití pro tuto metodiku se MUSÍ výstup výslovně nasměrovat do `dist/client/Windows/x64` pomocí `-OutputDirectory`, případně do odpovídající složky nově připravovaného stromu. Samotný nástroj nevytváří serverovou část ani platformní složky macOS a Linux, jejich přípravu MUSÍ zajistit celkový postup sestavení. Dokumentace tímto popisuje požadované použití stávajícího nástroje, netvrdí, že jeho výchozí chování již sestavuje celý distribuční strom.
+Aktuální [client/tools/make-dist.ps1](client/tools/make-dist.ps1) sestavuje plochý Windows balíček a jeho výchozí výstup je `dist`. Při použití pro tuto metodiku se MUSÍ výstup výslovně nasměrovat do `dist/client/Windows/x64` pomocí `-OutputDirectory`, případně do odpovídající složky nově připravovaného stromu. Samotný nástroj nevytváří serverovou část včetně složek PHP, Node.js a Python ani platformní složky macOS a Linux, jejich přípravu MUSÍ zajistit celkový postup sestavení. Dokumentace tímto popisuje požadované použití stávajícího nástroje, netvrdí, že jeho výchozí chování již sestavuje celý distribuční strom.
 
 Windows balíček se ověřuje také pomocí `client/tools/verify-package.ps1 -PackageDirectory <cesta>`. Tento read-only krok kontroluje shodu skriptů, povinnou přítomnost pěti EXE, manifest, podpisy, VerifyOnly a přesné vložené ICO resources všech pěti produkčních EXE včetně úrovní UAC. Vyžaduje sestavený `phpvpn-icon-resource-tests`, standardně z presetu `release` s `BUILD_TESTING=ON`. Jiný ověřovací build lze zadat přes `-IconResourceTest`. Čtyři zdrojové ICO se používají pouze při sestavení a ověřování, do provozního balíčku se samostatně nepřidávají.
 
