@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.tools/
+.runtime/
+.bootstrap.lock/
 
 # Default storage root of the disk driver
 /phpvpn/

@@ -8,6 +8,8 @@ cryptography==50.0.1
     # via -r requirements-server.in
 h11==0.16.0
     # via uvicorn
+psutil==7.2.2
+    # via -r requirements-server.in
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
 uvicorn==0.54.0

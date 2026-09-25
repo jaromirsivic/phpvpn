@@ -1,0 +1,3 @@
+tools/server-python/*.sh text eol=lf
+tools/server-python/*.bat text eol=crlf
+tools/server-python/*.py text eol=lf

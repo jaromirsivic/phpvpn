@@ -12,7 +12,7 @@ foreach ($name in $scriptNames) {
     $source = Join-Path $PSScriptRoot "package/$name"
     $copy = Join-Path $package $name
     if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $copy).Hash) {
-        throw "The package contains a stale $name. Regenerate it with make-dist.ps1."
+        throw "The package contains a stale $name. Rebuild the complete distribution with tools/make-distribution.ps1, or only this client package with client/tools/make-dist.ps1 -OutputDirectory <path>."
     }
 }
 $manifest = Get-Content -LiteralPath (Join-Path $package 'release-manifest.json') -Raw | ConvertFrom-Json

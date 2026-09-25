@@ -1132,12 +1132,20 @@ class Application:
         await send({'type': 'http.response.body', 'body': b'' if head else response.body, 'more_body': False})
 
 
-def main():
+def create_server(cfg=None):
     import uvicorn
     # Instance, not import string. WEB_CONCURRENCY cannot override workers=1.
-    uvicorn.run(Application(), host=LISTEN_HOST, port=LISTEN_PORT, workers=1, reload=False,
-                loop='asyncio', http='h11', ws='none', interface='asgi3',
-                proxy_headers=False, access_log=False, server_header=False)
+    app = Application(cfg)
+    return uvicorn.Server(uvicorn.Config(
+        app, host=cfg.LISTEN_HOST if cfg else LISTEN_HOST,
+        port=cfg.LISTEN_PORT if cfg else LISTEN_PORT, workers=1, reload=False,
+        loop='asyncio', http='h11', ws='none', interface='asgi3', lifespan='on',
+        proxy_headers=False, access_log=False, server_header=False,
+        timeout_graceful_shutdown=30))
+
+
+def main():
+    create_server().run()
 
 
 if __name__ == '__main__':

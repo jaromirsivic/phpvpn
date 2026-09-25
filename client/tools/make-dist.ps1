@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds the distribution folder and the signed release manifest.
+    Builds only the Windows client package and its signed release manifest.
 
 .DESCRIPTION
     plan_client.md chapters 3.5, 20.1 and 20.2. The result is a complete,
@@ -17,7 +17,7 @@
 [CmdletBinding()]
 param(
     [string]$BuildDirectory,
-    [string]$OutputDirectory,
+    [Parameter(Mandatory=$true)][string]$OutputDirectory,
 
     # Pinned signing identity. The development certificate is the default so a
     # local package can be produced without a release key.
@@ -40,9 +40,13 @@ $repositoryRoot = (Resolve-Path (Join-Path $clientRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $repositoryRoot "work\build\release"
 }
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $repositoryRoot "dist"
-}
+. (Join-Path $repositoryRoot 'tools/distribution-common.ps1')
+# This partial packager must never erase the full dist or a source directory.
+$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+$allowed = @((Join-Path $repositoryRoot 'work'), (Join-Path $repositoryRoot 'dist'))
+$container = $allowed | Where-Object { $OutputDirectory.StartsWith($_ + '\', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+if (-not $container) { throw 'Client OutputDirectory must be a child of repository work or dist. Use tools/make-distribution.ps1 for the complete distribution.' }
+$OutputDirectory = Assert-DistributionPath $OutputDirectory $container -Tree
 
 $appsDirectory = Join-Path (Resolve-Path $BuildDirectory).Path "apps"
 
@@ -301,7 +305,11 @@ $releaseVersion = (Get-Item (Join-Path $appsDirectory "phpvpn-service.exe")).Ver
 # ------------------------------------------------------------ package assembly
 
 if (Test-Path -LiteralPath $OutputDirectory) {
-    Get-ChildItem -LiteralPath $OutputDirectory -Force | Remove-Item -Recurse -Force
+    $null = Assert-DistributionPath $OutputDirectory $container -Tree
+    Get-ChildItem -LiteralPath $OutputDirectory -Force | ForEach-Object {
+        $null = Assert-DistributionPath $_.FullName $OutputDirectory -Tree
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    }
 } else {
     New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 }

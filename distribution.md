@@ -28,6 +28,14 @@ dist/
       phpvpn.py
       requirements-server.txt
       server-python.md
+      init.bat
+      start.bat
+      stop.bat
+      init.sh
+      start.sh
+      stop.sh
+      bootstrap.ps1
+      server-control.py
   client/
     Windows/
       x64/
@@ -57,7 +65,7 @@ Uvedené Windows soubory tvoří základ aktuální klientské distribuce. Sezna
 
 `dist/server/PHP/phpvpn.php` MUSÍ obsahovat nejaktuálnější distribuovatelnou verzi serveru v PHP. Aktuální zdrojový soubor v repozitáři se jmenuje [phpvpn.php](phpvpn.php). Při sestavení se jeho aktuální obsah zkopíruje do složky `dist/server/PHP` beze změny názvu jako `phpvpn.php`. Jeho obsah se při kopírování nemění.
 
-`dist/server/Python` MUSÍ obsahovat aktuální zdrojový `phpvpn.py`, zamčené runtime závislosti `requirements-server.txt` a provozní návod `server-python.md`, zkopírované beze změny. Python server je samostatně spustitelný podle tohoto návodu a implementuje stejné klientské zprávy jako PHP. Výchozí diskový a volitelný paměťový režim vyžadují jediný aplikační proces a worker. Distribuce NESMÍ obsahovat venv, uv cache, testovací konfiguraci, provozní fronty ani místní tajemství. Zdrojový `requirements-server.in` slouží k obnově locku ve vývojovém repozitáři, při nasazení se používá přibalený `.txt`.
+`dist/server/Python` MUSÍ obsahovat aktuální zdrojový `phpvpn.py`, zamčené runtime závislosti `requirements-server.txt`, provozní návod `server-python.md`, šest vstupů `init.bat`, `start.bat`, `stop.bat`, `init.sh`, `start.sh`, `stop.sh` a jejich helpery `bootstrap.ps1`, `server-control.py`. Vše se kopíruje beze změny. Zdrojem osmi provozních skriptů je `tools/server-python`. Python server je samostatně spustitelný podle tohoto návodu a implementuje stejné klientské zprávy jako PHP. Výchozí diskový a volitelný paměťový režim vyžadují jediný aplikační proces a worker. Distribuce NESMÍ obsahovat `.venv`, `.tools`, `.runtime`, `.bootstrap.lock`, uv cache, bytecode, logy, testovací konfiguraci, provozní fronty ani místní tajemství. Zdrojový `requirements-server.in` slouží k obnově locku ve vývojovém repozitáři, při nasazení se používá přibalený `.txt`.
 
 Při každém sestavení MUSÍ vzniknout také složka `dist/server/Node.js`. Zůstává prázdná, tato serverová implementace zatím není dostupná.
 
@@ -89,10 +97,24 @@ V aktuální etapě je implementovaným cílem Windows x64. Pokud pro macOS nebo
 2. Sestavit klientské programy z těchto zdrojů a připravit aktuální PHP a Python serverové soubory, Python lock a návod. Pracovní build adresáře zůstávají mimo výslednou distribuci.
 3. Znovu vytvořit obsah `dist` a celou povinnou strukturu. Naplnit serverovou část a platformní klientské složky podle skutečně dostupné implementace.
 4. Připravit úplný Windows x64 balíček, ověřit architekturu a závislosti, zahrnout licence a po dokončení obsahu vytvořit odpovídající podepsaný manifest. Úroveň důvěry podpisu se uvede pravdivě, vývojový podpis se NESMÍ vydávat za veřejně důvěryhodný vydavatelský podpis.
-5. Ověřit hashovou shodu PHP souboru a všech tří souborů Python části s aktuálními zdroji, přítomnost prázdné složky `dist/server/Node.js`, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu klientského balíčku. Python část ověřit čistým prostředím mimo `dist`, instalací přes `uv pip sync` z distribuovaného locku a spuštěním distribuovaného skriptu. Ověřit health, info a data v obou režimech pomocí izolovaných konfiguračních kopií. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
+5. Ověřit hashovou shodu PHP souboru a všech jedenácti souborů Python části s aktuálními zdroji, přítomnost prázdné složky `dist/server/Node.js`, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu klientského balíčku. Python část ověřit čistým prostředím mimo `dist`, inicializací distribuovanými skripty a spuštěním distribuovaného serveru. Ověřit health, info a data v obou režimech pomocí izolovaných konfiguračních kopií. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
 6. Předat přesnou cestu k výsledku a stručný stav ověření. Pokud se vytváří ZIP, jeho obsah MUSÍ odpovídat ověřenému výsledku a zachovat příslušnou adresářovou strukturu. Archiv a pracovní reporty se ukládají mimo `dist`, aby se při dalším sestavení nemísily s jeho obsahem.
 
-Aktuální [client/tools/make-dist.ps1](client/tools/make-dist.ps1) sestavuje plochý Windows balíček a jeho výchozí výstup je `dist`. Při použití pro tuto metodiku se MUSÍ výstup výslovně nasměrovat do `dist/client/Windows/x64` pomocí `-OutputDirectory`, případně do odpovídající složky nově připravovaného stromu. Samotný nástroj nevytváří serverovou část včetně složek PHP, Node.js a Python ani platformní složky macOS a Linux, jejich přípravu MUSÍ zajistit celkový postup sestavení. Dokumentace tímto popisuje požadované použití stávajícího nástroje, netvrdí, že jeho výchozí chování již sestavuje celý distribuční strom.
+Kanonický vstup pro **celou distribuci** je [tools/make-distribution.ps1](tools/make-distribution.ps1). Vyžaduje explicitní existující CMake build z tohoto checkoutu. Vždy znovu spustí sestavení klienta, takže nebalí pouze nalezené staré binárky. Příklad z kořene repozitáře:
+
+```powershell
+./client/tools/build-x64.ps1 -Preset release -Configure -ResourceTests
+./tools/make-distribution.ps1 -BuildDirectory ./work/build/release -SignBinaries
+./tools/verify-distribution.ps1 -DistributionDirectory ./dist
+```
+
+Volitelný `-CertificateThumbprint` se předává klientskému packageru. Výchozí certifikát je vývojový, není veřejně důvěryhodným vydavatelským podpisem. Soukromý klíč se neexportuje. Klientský manifest pokrývá pouze obsah `client/Windows/x64`.
+
+Celkový sestavovací vstup vytvoří nový staging v `work/distribution-<id>`, kontroluje přesný seznam souborů včetně skrytých, hashe, architekturu, podpis a ikony. Vytvoří ZIP, zachová i prázdnou Node.js složku a POSIX executable atribut shellových skriptů, rozbalí archiv do nového adresáře a znovu spustí ověření. Teprve potom publikuje `dist` a `dist.zip`. Předchozí strom ponechá v pracovním adresáři pro obnovu. Při chybě ověření stávající distribuci nemění. Rekurzivní přesuny odmítají reparse pointy a cíle mimo vymezené adresáře. Cesta k rozbalené ověřené kopii se vypíše pro následné izolované provozní testy.
+
+Dílčí [client/tools/make-dist.ps1](client/tools/make-dist.ps1) vyžaduje `-OutputDirectory <cesta>` pod `work` nebo `dist`. Kořenový `dist` není povoleným cílem tohoto dílčího nástroje. Serverovou část a ostatní platformní složky vytváří výhradně celkový vstup.
+
+Po sestavení spusť v odděleném vývojovém venv `python -B tools/test-server-scripts.py --distribution <rozbaleny-strom> --report <report.json>`. Runner vytváří vlastní kopie, porty a buffery, kontroluje Windows BAT nebo nativní POSIX SH vstupy, health/info/data, identitu, souběh, chyby, URL a nejméně třísekundové bannery. `tests-python/test_server_control.py` doplňuje deterministické případy recyklovaného PID, nedostupných oprávnění a timeoutu. Bootstrap bez uv a Pythonu se ověřuje zvlášť v čistém prostředí. Windows běh nenahrazuje Linux ani macOS, neprovedené platformy a ruční instalační testy se uvádějí v datovaném reportu.
 
 Windows balíček se ověřuje také pomocí `client/tools/verify-package.ps1 -PackageDirectory <cesta>`. Tento read-only krok kontroluje shodu skriptů, povinnou přítomnost pěti EXE, manifest, podpisy, VerifyOnly a přesné vložené ICO resources všech pěti produkčních EXE včetně úrovní UAC. Vyžaduje sestavený `phpvpn-icon-resource-tests`, standardně z presetu `release` s `BUILD_TESTING=ON`. Jiný ověřovací build lze zadat přes `-IconResourceTest`. Čtyři zdrojové ICO se používají pouze při sestavení a ověřování, do provozního balíčku se samostatně nepřidávají.
 

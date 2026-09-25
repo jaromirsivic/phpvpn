@@ -1,5 +1,13 @@
-﻿state: capturing
+﻿state: realization complete; Linux and macOS validation pending
 language: Czech
 project_root: C:\git\phpvpn
 intent_directory: C:\git\phpvpn\Intents\2026-09-25-13-08-05
 started_at: 2026-09-25-13-08-05
+last_completed_intent_version: 1
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-25-13-08-05\intent-v001.md
+route: plan
+planning_context_id: 01a0d84b-b9d0-7a53-aa10-9e896707b4f3
+plan_directory: C:\git\phpvpn\Plans\2026-09-25-13-08-05
+last_completed_plan_version: 1
+latest_plan_path: C:\git\phpvpn\Plans\2026-09-25-13-08-05\plan-v001.md
+realization_context_id: 01a0d856-3377-7870-b186-1b770aaa4390
