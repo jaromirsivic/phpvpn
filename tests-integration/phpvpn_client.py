@@ -453,6 +453,10 @@ class Response:
     content: bytes
     elapsed_ms: float
 
+    def __post_init__(self) -> None:
+        # HTTP header names are case-insensitive, including ASGI's lowercase wire names.
+        self.headers = requests.structures.CaseInsensitiveDict(self.headers)
+
     @property
     def text(self) -> str:
         return self.content.decode("utf-8", "replace")
@@ -541,6 +545,8 @@ class Configuration:
     access_keys: dict[str, bytes]
     buffer_directory: Path
     large_body_url: str | None = None
+    implementation: str = "php"
+    storage_driver: str = "disk"
 
     @classmethod
     def load(cls, path: Path, large_body_url: str | None = None) -> "Configuration":
@@ -554,6 +560,8 @@ class Configuration:
             },
             buffer_directory=Path(document["bufferDirectory"]),
             large_body_url=large_body_url,
+            implementation=document.get("implementation", "php"),
+            storage_driver=document.get("storageDriver", "disk"),
         )
 
     @property

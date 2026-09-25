@@ -184,6 +184,8 @@ def test_path_traversal_in_the_destination_address(
 
 
 def buffer_root(client: PhpVpnClient) -> Path:
+    if client.configuration.storage_driver == "memory":
+        pytest.skip("disk layout assertion is inapplicable to memory storage; queue behavior uses shared HTTP tests")
     path = client.configuration.buffer_directory
     if not path.is_dir():
         pytest.skip(f"the buffer directory {path} is not visible to the test host")
@@ -233,11 +235,14 @@ def test_batch_file_name_carries_the_expiry(
     """Chapter 16.4.16, the batch name holds exactly one UTC expiry time."""
     root = buffer_root(client)
     sender, receiver = client.configuration.addresses[0], client.configuration.addresses[1]
+    directory = root / receiver.replace(".", "_")
+    previous = set(directory.iterdir()) if directory.exists() else set()
     record = make_record(sender, receiver, b"named batch")
     client.send_data(sender, [record])
 
-    directory = root / receiver.replace(".", "_")
-    batches = [entry for entry in directory.iterdir() if BATCH_NAME.match(entry.name)]
+    # Opportunistic sweep may leave unrelated expired files from earlier tests.
+    # Assert the expiry of the newly published batch, not every historical file.
+    batches = [entry for entry in directory.iterdir() if entry not in previous and BATCH_NAME.match(entry.name)]
     assert batches, "the published batch must be visible in the destination queue"
 
     from phpvpn_client import parse_timestamp

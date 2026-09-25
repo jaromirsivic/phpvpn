@@ -1,5 +1,44 @@
 # phpvpn integration test suite
 
+## Shared PHP and Python fixtures
+
+The same protocol inputs and assertions run against PHP/disk, Python/disk and
+Python/memory. HTTP header names are compared case-insensitively, as required
+by HTTP. The optional fixture fields `implementation` and `storageDriver`
+default to `php` and `disk` for older deployment descriptions.
+
+Prepare a Python 3.13 uv environment with `requirements-server.txt`, then add
+`pytest`, `requests` and `psutil` using `uv pip install`. Run:
+
+```powershell
+uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --php D:/nginx/php8.5.9/php.exe --report-dir reports/python-server -- -q
+uv run --no-project python -B -m pytest tests-python -q
+```
+
+The runner owns isolated copies, ports, processes and buffer directories. It
+does not rewrite the source servers or this directory's `server.json`. Both
+`--server-config` and `--large-body-url` are explicit. PHP's built-in HTTP
+fixture uses a generic 404 router to avoid reflecting paths in its stock error
+page. This is a webserver fixture rule, not a change to the PHP application.
+
+Memory skips only the four physical disk-layout tests. Queue capacity, expiry,
+drain, replay, statistics, contracts and concurrency still use the common
+HTTP expectations. The contention test may skip when a healthy deployment
+never emits 503. Python's separate fault tests deterministically exercise
+queue_busy, queue_unavailable and server_misconfigured, including headers.
+
+`tests-python` additionally covers exact millisecond boundaries, predictable
+and Unicode secrets, whole-group publication, filesystem failures, cancellation,
+Windows marker replacement, single-worker process launch, restart and HTTPS
+through a test TLS proxy. A private CA is passed only to the test HTTP session,
+never installed in the system trust store. These complement the historical
+coverage gaps of the deployed-only suite described below.
+
+The real C++ client contract can run on the same fixtures using
+`--contract-executable work/build/release/tests/phpvpn-contract-tests.exe`.
+Use `--contract-only` to run it without pytest. See [the server guide](../server-python.md)
+for supported deployment and memory limitations.
+
 Python integration tests for the deployed phpvpn v1 relay. The suite talks to a
 running server over real HTTP and verifies the normative requirements of
 `protocol.md`, which is the single source of truth. Every assertion states what

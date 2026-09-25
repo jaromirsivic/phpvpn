@@ -1,0 +1,13 @@
+state: realization complete; release validation pending
+language: Czech
+project_root: C:\git\phpvpn
+intent_directory: C:\git\phpvpn\Intents\2026-09-25-11-38-07
+started_at: 2026-09-25-11-38-07
+last_completed_intent_version: 1
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-25-11-38-07\intent-v001.md
+route: plan
+planning_context_id: 01a0d7fa-d647-7d81-a1c7-7a30f4f6c372
+plan_directory: C:\git\phpvpn\Plans\2026-09-25-11-38-07
+last_completed_plan_version: 2
+latest_plan_path: C:\git\phpvpn\Plans\2026-09-25-11-38-07\plan-v002.md
+realization_context_id: 01a0d805-2056-7ed0-b555-45f732fe9681
