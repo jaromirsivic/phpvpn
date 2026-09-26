@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include "layout.h"
+#include "core/presentation/installation_notice.h"
 
 namespace phpvpn::tray {
 class ShellAdapter {
@@ -25,7 +26,7 @@ public:
 };
 // Only successful publications become the comparison baseline. Failed changes
 // remain retryable. Icon handles are borrowed from the window's resource cache.
-class ShellIcon {
+class ShellIcon : public InformationNoticePresenter {
 public:
     explicit ShellIcon(ShellAdapter* shell) : shell_(shell) {}
     explicit ShellIcon(ShellAdapter& shell) : ShellIcon(&shell) {}
@@ -46,7 +47,26 @@ public:
     void remove() {
         if (published_) { shell_->notify(NIM_DELETE, data_); published_ = false; }
     }
+    bool showInformation(std::string_view title, std::string_view body) override {
+        if (!published_) return false;
+        auto notice = data_;
+        if (!copyUtf8(title, notice.szInfoTitle) || !copyUtf8(body, notice.szInfo)) return false;
+        notice.uFlags = NIF_INFO;
+        notice.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+        // Windows owns visibility, dismissal and duration. Do not cache NIF_INFO
+        // in data_: ordinary status/icon updates must never replay this notice.
+        return shell_->notify(NIM_MODIFY, notice);
+    }
 private:
+    template<std::size_t N>
+    static bool copyUtf8(std::string_view text, wchar_t (&buffer)[N]) {
+        if (text.empty() || text.size() > N * 4 || text.find('\0') != std::string_view::npos) return false;
+        const auto count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+            static_cast<int>(text.size()), buffer, static_cast<int>(N - 1));
+        if (!count) return false;
+        buffer[count] = L'\0';
+        return true;
+    }
     ShellAdapter* shell_;
     NOTIFYICONDATAW data_{};
     std::wstring tooltip_;

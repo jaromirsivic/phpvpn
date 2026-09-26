@@ -23,6 +23,7 @@ struct TrayRuntime {
     std::wstring mutexName;
     std::unique_ptr<ShellAdapter> shell;
     std::wstring tooltipOverride;
+    bool installationComplete = false;
 };
 struct CloseKernelHandle { void operator()(HANDLE handle) const noexcept { CloseHandle(handle); } };
 class TrayApplication {
@@ -47,6 +48,7 @@ public:
     void requestExit();
     void endSession();
 private:
+    static void CALLBACK installationRequested(void* window, BOOLEAN);
     static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     void showMenu(bool keyboard);
     void updateIcon();
@@ -73,6 +75,8 @@ private:
     }
     TrayRuntime runtime_;
     UniqueUiHandle<HANDLE, CloseKernelHandle> mutex_;
+    UniqueUiHandle<HANDLE, CloseKernelHandle> installationEvent_;
+    HANDLE installationWait_ = nullptr;
     UiResources resources_;
     ShellIcon shellIcon_;
     WindowPlacementContext menuPlacement_, commandPlacement_, configPlacement_;

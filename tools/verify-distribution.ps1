@@ -4,7 +4,8 @@ Read-only verification of the complete server and client distribution.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$DistributionDirectory,
-    [string]$IconResourceTest = (Join-Path $PSScriptRoot '../work/build/release/tests/phpvpn-icon-resource-tests.exe')
+    [string]$IconResourceTest = (Join-Path $PSScriptRoot '../work/build/release/tests/phpvpn-icon-resource-tests.exe'),
+    [switch]$AllowLocalRuntime
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -41,14 +42,19 @@ $clientNames = @('phpvpn-service.exe','phpvpn-tray.exe','phpvpn.exe','install-ph
 foreach ($name in $clientNames) { $expected.Add("client/Windows/x64/$name") }
 $actual = @(Get-ChildItem -LiteralPath $tree -File -Recurse -Force | ForEach-Object {
     $_.FullName.Substring($tree.Length + 1).Replace('\','/')
+} | Where-Object {
+    -not ($AllowLocalRuntime -and (Test-DistributionRuntimePath $_))
 })
 if (Compare-Object $expected.ToArray() $actual -CaseSensitive) { throw 'Distribution contains missing or unexpected files (including hidden runtime files).' }
 $directories = @('server','server/PHP','server/Python','server/Node.js','client','client/Windows','client/Windows/x64','client/macOS','client/Linux')
 $actualDirs = @(Get-ChildItem -LiteralPath $tree -Directory -Recurse -Force | ForEach-Object {
     $_.FullName.Substring($tree.Length + 1).Replace('\','/')
+} | Where-Object {
+    -not ($AllowLocalRuntime -and (Test-DistributionRuntimePath $_))
 })
 if (Compare-Object $directories $actualDirs -CaseSensitive) { throw 'Distribution directory set is incorrect.' }
 $manifest = Get-Content -LiteralPath (Join-Path $client 'release-manifest.json') -Raw | ConvertFrom-Json
 if ($manifest.architecture -cne 'x64') { throw 'Complete distribution requires a Windows x64 client.' }
 & (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest
 Write-Output 'PASS: complete distribution allowlist, source hashes, LF shell scripts, empty Node.js, platform READMEs and signed Windows package.'
+if ($AllowLocalRuntime) { Write-Output 'Local Python .runtime and .venv are preserved and excluded from the distribution file set.' }

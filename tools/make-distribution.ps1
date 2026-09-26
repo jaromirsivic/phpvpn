@@ -72,36 +72,15 @@ try {
 [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
 & (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $unpacked -IconResourceTest $iconTest
 
-# All recursive moves have validated absolute targets and link-free trees.
-# Keep the previous release and rollback on publication failure.
-$previous = Join-Path $session 'previous-dist'
-$previousZip = Join-Path $session 'previous-dist.zip'
-$failedPublication = Join-Path $session 'failed-publication'
-$null = Assert-DistributionPath $staging $session -Tree
-$null = Assert-DistributionPath $previous $session
-$null = Assert-DistributionPath $previousZip $session
-$null = Assert-DistributionPath $failedPublication $session
-$null = Assert-DistributionPath $dist $repository -Tree
-$hadDist = Test-Path -LiteralPath $dist
-$hadZip = Test-Path -LiteralPath $zipTarget
-$publishedDist = $false
-try {
-    if ($hadDist) { Move-Item -LiteralPath $dist -Destination $previous }
-    if ($hadZip) { Move-Item -LiteralPath $zipTarget -Destination $previousZip }
-    Move-Item -LiteralPath $staging -Destination $dist
-    $publishedDist = $true
-    Move-Item -LiteralPath $archive -Destination $zipTarget
-} catch {
-    # Move failed new outputs aside before restoring the previous publication.
-    if ($publishedDist -and (Test-Path -LiteralPath $dist)) {
-        $null = Assert-DistributionPath $dist $repository -Tree
-        Move-Item -LiteralPath $dist -Destination $failedPublication
-    }
-    if (Test-Path -LiteralPath $previous) { Move-Item -LiteralPath $previous -Destination $dist }
-    if (Test-Path -LiteralPath $previousZip) { Move-Item -LiteralPath $previousZip -Destination $zipTarget }
-    throw
-}
+Publish-Distribution -Repository $repository -Session $session -Staging $staging -Archive $archive
+& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $dist -IconResourceTest $iconTest -AllowLocalRuntime
+# Rollback files are needed only until the canonical output passes validation.
+# Python operational state was never moved out of dist by the publisher.
+$previous = Assert-DistributionPath (Join-Path $session 'previous-dist') $session -Tree
+$previousZip = Assert-DistributionPath (Join-Path $session 'previous-dist.zip') $session
+if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Recurse -Force }
+if (Test-Path -LiteralPath $previousZip) { Remove-Item -LiteralPath $previousZip -Force }
 Write-Output "Distribution: $dist"
 Write-Output "Archive: $zipTarget"
 Write-Output "Verified archive extraction (for isolated runtime tests): $unpacked"
-Write-Output "Previous distribution and build staging: $session"
+Write-Output "Build staging: $session (temporary rollback removed after verification)"

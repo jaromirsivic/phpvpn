@@ -29,7 +29,7 @@ if ($Scenario) {
         if ($Seconds) { Write-TestEvent "sleep:$Seconds" }
     }
     function Start-Process {
-        param($FilePath, $ArgumentList, $Verb, [switch]$Wait, [switch]$PassThru, $ErrorAction)
+        param($FilePath, $ArgumentList, $Verb, $WindowStyle, [switch]$Wait, [switch]$PassThru, $ErrorAction)
         if ($Verb -eq 'RunAs') {
             if ($Wait -or -not $PassThru) { throw 'Elevation must wait for the installer only, not the tray process tree' }
             Write-TestEvent "elevation:$($ArgumentList -join ' ')"
@@ -40,6 +40,8 @@ if ($Scenario) {
         }
         Write-TestEvent 'tray-start'
         if ($Scenario -eq 'tray-failure') { throw 'Synthetic tray launch failure' }
+        if ($ArgumentList -cne '--installation-complete') { throw 'Tray launch lost the installation notice request' }
+        Write-TestEvent 'installation-notice-request'
     }
     function Get-Process { param($Name, $ErrorAction) return @() }
     function Stop-Process {
@@ -185,6 +187,9 @@ try {
                 $text -notmatch 'TEST:autostart-fallback') { throw 'Fallback cleanup skipped after SCM outcome' }
             $boxCount = [regex]::Matches($text, [regex]::Escape($success)).Count
             $sleepCount = [regex]::Matches($text, 'TEST:sleep:3\b').Count
+            $noticeCount = [regex]::Matches($text, 'TEST:installation-notice-request\b').Count
+            $expectedNoticeCount = [int]($operationName -eq 'install' -and $showBox)
+            if ($noticeCount -ne $expectedNoticeCount) { throw "Wrong installation notice path for $operationName/${case}: $text" }
             if ($boxCount -ne [int]$showBox -or $sleepCount -ne [int]$showBox) { throw "Wrong success/delay path for $operationName/${case}: $text" }
             if ($showBox) {
                 $lines = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match '^[+|]' })
@@ -225,7 +230,7 @@ exit $Result
         if ($LASTEXITCODE -ne 1 -or ($output -join '') -notmatch 'is missing') { throw 'BAT missing-helper failure changed' }
         $passed++
     }
-    Write-Output "PASS: $passed package feedback/BAT cases, ASCII layout, success-only three-second delay, VerifyOnly, UAC exit codes, failures and configuration preservation."
+    Write-Output "PASS: $passed package feedback/BAT cases, success-only installation notice, ASCII layout, success-only three-second delay, VerifyOnly, UAC exit codes, failures and configuration preservation."
 } finally {
     $resolved = [IO.Path]::GetFullPath($temp)
     if ($resolved.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase) -and (Split-Path $resolved -Leaf) -like 'phpvpn-feedback-*') {

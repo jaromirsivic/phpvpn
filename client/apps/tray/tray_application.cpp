@@ -32,6 +32,7 @@ constexpr UINT kStatusMessage = WM_APP + 2;
 constexpr UINT kCommandMessage = WM_APP + 3;
 constexpr UINT kConfigMessage = WM_APP + 4, kDisconnectMessage = WM_APP + 5;
 constexpr UINT kSavedStatusMessage = WM_APP + 6, kReconnectMessage = WM_APP + 7;
+constexpr UINT kInstallationMessage = WM_APP + 8;
 constexpr UINT kWizardMenu = 206, kContractsMenu = 207;
 constexpr UINT_PTR kStatusTimer = 1;
 constexpr UINT_PTR kExitTimer = 90;
@@ -79,11 +80,20 @@ bool TrayApplication::initialise(HINSTANCE instance) {
     if (initialisationAttempted_) return initialised_;
     initialisationAttempted_ = true;
     if (runtime_.pipeName.empty() || runtime_.mutexName.empty() || !runtime_.shell || runtime_.tooltipOverride.size() >= 128) return false;
+    // Create before the mutex so a concurrent launch can signal even while
+    // the primary instance is still creating its window. Auto-reset consumes
+    // each pending request once. No persisted first-run flag survives uninstall.
+    installationEvent_.reset(CreateEventW(nullptr, FALSE, FALSE, (runtime_.mutexName + L"-installation").c_str()));
+    if (!installationEvent_.get()) return false;
     const auto mutex = CreateMutexW(nullptr, FALSE, runtime_.mutexName.c_str());
     const auto mutexError = GetLastError();
     mutex_.reset(mutex);
     if (!mutex_.get()) return false;
-    if (mutexError == ERROR_ALREADY_EXISTS) { alreadyRunning_ = true; initialised_ = true; return true; }
+    if (mutexError == ERROR_ALREADY_EXISTS) {
+        alreadyRunning_ = true;
+        initialised_ = !runtime_.installationComplete || SetEvent(installationEvent_.get()) != FALSE;
+        return initialised_;
+    }
     instance_ = instance;
     WNDCLASSEXW type{};
     type.cbSize = sizeof(type);
@@ -103,6 +113,9 @@ bool TrayApplication::initialise(HINSTANCE instance) {
     polling_.start(nowMs());
     SetTimer(window_, kStatusTimer, kStatusIntervalMs, nullptr);
     statusReader_.request(window_, kStatusMessage);
+    if (!RegisterWaitForSingleObject(&installationWait_, installationEvent_.get(),
+        installationRequested, window_, INFINITE, WT_EXECUTEDEFAULT)) return false;
+    if (runtime_.installationComplete && !SetEvent(installationEvent_.get())) return false;
     initialised_ = true;
     return true;
 }
@@ -122,6 +135,11 @@ int TrayApplication::run() {
     }
     return 0;
 }
+void CALLBACK TrayApplication::installationRequested(void* window, BOOLEAN) {
+    // No UI or object access on the thread-pool thread. Session teardown waits
+    // for this callback before destroying the HWND, so its handle cannot race.
+    PostMessageW(static_cast<HWND>(window), kInstallationMessage, 0, 0);
+}
 LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto* self = reinterpret_cast<TrayApplication*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
@@ -138,6 +156,7 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
             if (LOWORD(lParam) == WM_RBUTTONUP || LOWORD(lParam) == WM_LBUTTONUP || LOWORD(lParam) == WM_CONTEXTMENU || LOWORD(lParam) == NIN_KEYSELECT)
                 self->showMenu(LOWORD(lParam) == WM_CONTEXTMENU || LOWORD(lParam) == NIN_KEYSELECT);
             return 0;
+        case kInstallationMessage: showInstallationNotice(self->shellIcon_); return 0;
         case WM_TIMER:
             if (wParam == kReconnectTimer) { self->pollReconnect(); return 0; }
             if (wParam == kExitTimer) { self->advanceExit(); return 0; }
@@ -618,8 +637,14 @@ void TrayApplication::advanceExit() {
 void TrayApplication::endSession() {
     if (endingSession_) return;
     endingSession_ = true; exitRequested_ = false; exitApproval_.reset();
+    if (installationWait_) {
+        UnregisterWaitEx(installationWait_, INVALID_HANDLE_VALUE);
+        installationWait_ = nullptr;
+    }
     cancelReconnect();
-    if (window_) { KillTimer(window_, kExitTimer); KillTimer(window_, kStatusTimer); }
+    if (window_) {
+        KillTimer(window_, kExitTimer); KillTimer(window_, kStatusTimer);
+    }
     polling_.stop();
     commands_.abandon(); disconnect_.abandon(); config_.abandon(); statusReader_.abandon();
     pendingCommand_.reset(); configAction_.reset(); saveOperation_.reset();

@@ -14,24 +14,63 @@ from phpvpn_client import (build_auth_none, derive_full_auth_key, derive_health_
 
 
 @pytest.mark.parametrize('secret', ['', '0', '0000', '\0', '\0' * 32, 'Příliš žluťoučký 🐍', 'strong-test-value'])
-def test_secret_health_info_and_data(secret, tmp_path, clock):
+@pytest.mark.parametrize('path', ['/', '/phpvpn.php', '/other/nested/path'])
+def test_secret_health_info_and_data(secret, tmp_path, clock, path):
     cfg = s.Config(STORAGE_DRIVER='memory', SERVER_SECRET=secret, BUFFER_DIRECTORY=str(tmp_path))
     app = s.Application(cfg, clock=clock, random_bytes=lambda n: bytes(range(n)))
     from phpvpn_client import Configuration, PhpVpnClient
     client = PhpVpnClient(Configuration('http://unused', cfg.secret, cfg.access_keys, tmp_path))
     rid = new_uuid4()
     try:
-        response = call(app, 'health', build_auth_none(rid))
+        response = call(app, 'health', build_auth_none(rid), path=path)
         assert response.status_code == 200
         assert client.verify_health(response.json(), rid)
         body, _, rid = client.build_auth_semi(timestamp=s.timestamp(clock.ms))
-        response = call(app, 'info', body)
+        response = call(app, 'info', body, path=path)
         assert client.decrypt_info(response.json(), rid)['clients'] == []
         body, rid = client.build_data_body('10.99.99.2', timestamp=s.timestamp(clock.ms))
-        response = call(app, 'data', body)
+        response = call(app, 'data', body, path=path)
         assert verified_data(response, rid, client.full_auth_key('10.99.99.2')).result['acceptedRecords'] == 0
-        page = call(app, method='GET').content
+        page = call(app, method='GET', path=path).content
+        assert page == call(app, method='GET').content
         assert (b'<aside>' in page) == s.insecure_secret(secret)
+    finally:
+        app.executor.shutdown()
+
+
+@pytest.mark.parametrize('path', ['/', '/phpvpn.php', '/other/nested/path'])
+@pytest.mark.parametrize('enabled', [True, False])
+def test_path_independent_routing_and_validation(tmp_path, path, enabled):
+    cfg = s.Config(STORAGE_DRIVER='memory', BUFFER_DIRECTORY=str(tmp_path),
+                   SERVER_PATH='/custom/configured/path', STATUS_PAGE_ENABLED=enabled)
+    app = s.Application(cfg)
+    cases = [
+        (None, 'GET', b'', 'text/plain', 200 if enabled else 404, None),
+        (None, 'HEAD', b'', 'text/plain', 200 if enabled else 404, None),
+        (None, 'POST', b'', 'application/json', 405, 'GET, HEAD'),
+        ('missing', 'POST', b'{}', 'application/json', 404, None),
+        ('missing', 'HEAD', b'', 'application/json', 404, None),
+    ]
+    for action in ('health', 'info', 'data'):
+        content_type = 'application/x-ndjson' if action == 'data' else 'application/json'
+        cases.extend([
+            (action, 'GET', b'', content_type, 405, 'POST'),
+            (action, 'HEAD', b'', content_type, 405, 'POST'),
+            (action, 'PUT', b'', content_type, 405, 'POST'),
+            (action, 'POST', b'{}', 'text/plain', 415, None),
+            (action, 'POST', b'not-json\n', content_type, 400, None),
+        ])
+    try:
+        for action, method, body, content_type, status, allow in cases:
+            kwargs = dict(method=method, headers={'content-type': content_type})
+            expected = call(app, action, body, path=cfg.SERVER_PATH, **kwargs)
+            response = call(app, action, body, path=path, **kwargs)
+            assert response.status_code == expected.status_code == status
+            assert response.headers == expected.headers
+            assert response.content == expected.content
+            assert response.headers.get('allow') == allow
+            if method == 'HEAD':
+                assert response.content == b''
     finally:
         app.executor.shutdown()
 

@@ -103,7 +103,7 @@ set_tests_properties(phpvpn-icon-resource-tests PROPERTIES LABELS "icons;resourc
 
 if(WIN32)
     find_program(PHPVPN_POWERSHELL powershell.exe REQUIRED)
-    foreach(package_test IN ITEMS upgrade feedback gui)
+    foreach(package_test IN ITEMS upgrade feedback gui distribution)
         add_test(NAME phpvpn-package-${package_test}
             COMMAND ${PHPVPN_POWERSHELL} -NoProfile -ExecutionPolicy Bypass
                 -File ${CMAKE_CURRENT_SOURCE_DIR}/test_package_${package_test}.ps1)
@@ -167,6 +167,11 @@ endif()
 
 option(PHPVPN_BUILD_UI_TESTS "Build explicit in-process Win32 tray UI tests" OFF)
 if(PHPVPN_BUILD_UI_TESTS)
+    add_executable(phpvpn-installation-notice-probe ui/installation_notice_probe.cpp)
+    target_include_directories(phpvpn-installation-notice-probe PRIVATE ${CMAKE_SOURCE_DIR}/apps/tray)
+    target_link_libraries(phpvpn-installation-notice-probe PRIVATE phpvpn-core phpvpn-compile-options shell32 user32)
+    phpvpn_add_tray_resources(phpvpn-installation-notice-probe)
+    # Opt-in native Shell display check, excluded from unattended CTest.
     add_executable(phpvpn-package-gui-ui-tests ui/package_gui_tests.cpp)
     target_link_libraries(phpvpn-package-gui-ui-tests PRIVATE phpvpn-package-window)
     phpvpn_add_version_resource(phpvpn-package-gui-ui-tests "phpvpn package GUI test host"

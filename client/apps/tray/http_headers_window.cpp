@@ -48,7 +48,7 @@ bool HttpHeadersWindow::open(HINSTANCE instance, HWND owner, const std::string& 
     type.lpfnWndProc = procedure; type.hInstance = instance; type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     type.lpszClassName = className; RegisterClassExW(&type);
     window_ = CreateWindowExW(WS_EX_COMPOSITED | WS_EX_CONTROLPARENT, className, L"HTTP headers",
-        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 760, 420, owner, nullptr, instance, this);
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 950, 420, owner, nullptr, instance, this);
     if (!window_) { accept_ = {}; closed_ = {}; owner_ = nullptr; return false; }
     resources_.update(instance_, static_cast<int>(GetDpiForWindow(window_)));
     field_ = CreateWindowExW(0, MSFTEDIT_CLASS, nullptr, WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
@@ -68,7 +68,7 @@ bool HttpHeadersWindow::open(HINSTANCE instance, HWND owner, const std::string& 
             close(false); return false;
         }
     }
-    updateFonts(); sizeAndCenter(window_, {760, 420}, {owner}); layout();
+    updateFonts(); sizeAndCenter(window_, {950, 420}, {owner}); layout();
     restoreOwner_ = IsWindowEnabled(owner) != FALSE;
     EnableWindow(owner, FALSE);
     ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_); SetFocus(field_);
