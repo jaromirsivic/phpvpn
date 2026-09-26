@@ -1,0 +1,13 @@
+#!/bin/sh
+# /etc/phpvpn and /var/lib/phpvpn are created by systemd for phpvpn.service
+# and hold the configuration and state written by the service; dpkg does not
+# track them. A plain removal keeps them, purge deletes them.
+set -e
+
+#DEBHELPER#
+
+if [ "$1" = "purge" ]; then
+    rm -rf /etc/phpvpn /var/lib/phpvpn
+fi
+
+exit 0

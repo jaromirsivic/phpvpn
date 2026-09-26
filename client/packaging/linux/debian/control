@@ -1,0 +1,38 @@
+Source: phpvpn
+Section: net
+Priority: optional
+Maintainer: phpvpn maintainers <maintainers@phpvpn.invalid>
+Rules-Requires-Root: no
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.28),
+               g++ (>= 4:13),
+               libcurl4-openssl-dev,
+               libssl-dev (>= 3),
+               libsystemd-dev,
+               ninja-build,
+               pkgconf,
+Standards-Version: 4.6.2
+
+Package: phpvpn
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: VPN client service and command line client
+ phpvpn connects this computer to a phpvpn relay and exchanges IPv4 packets
+ with the other clients of the same virtual network through a TUN interface.
+ .
+ The package contains the system service phpvpn-service, started by systemd
+ as phpvpn.service, and the command line client phpvpn, which controls the
+ service over a local socket and needs neither root nor a graphical session.
+ A NetworkManager snippet keeps NetworkManager away from the phpvpn interface.
+
+# WP11: the phpvpn-tray binary package follows here, with its own
+# debian/phpvpn-tray.install, for example
+#
+# Package: phpvpn-tray
+# Architecture: any
+# Depends: phpvpn (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+# Recommends: gnome-shell-extension-appindicator
+# Description: phpvpn tray application
+#  ...
+#
+# and the GTK 3 and ayatana development packages join Build-Depends.
