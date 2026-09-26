@@ -6,7 +6,7 @@ Tento dokument je normativní návrh nativního klienta pro protokol phpvpn v1, 
 
 Klient MUSÍ být **thread-safe**. Používá tři VPN pracovní role, každou ve vlastním vlákně, která bezpečně sdílejí zdroje bez datových závodů a souběžných kolizí. Engine obsluhuje chyby vrácené bootstrapem a provozní výměnou `data`. U obnovitelných chyb provede teardown a opakuje připojení podle části Stavový automat připojení. Neobnovitelná chyba vede do `error` a vyžaduje zásah uživatele. Obecná obnova po pádu či nezachycené výjimce libovolné pracovní role není poskytována.
 
-Primárním cílem je Windows. Návrh současně odděluje platformně nezávislé jádro od síťového rozhraní a integrace operačního systému, aby jej bylo možné přenést na macOS a Linux. Tato etapa používá C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové knihovny třetí strany. Přenosné modely neobsahují HWND, HANDLE, Win32 zprávy ani závislost na tray procesu.
+Primárním cílem je Windows. Návrh současně odděluje platformně nezávislé jádro od síťového rozhraní a integrace operačního systému, aby jej bylo možné přenést na další platformy. Linuxový port je dodaný podle části [Linux](#linux), macOS zůstává budoucím portem. Windows část používá C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové knihovny třetí strany. Přenosné modely neobsahují HWND, HANDLE, Win32 zprávy ani závislost na tray procesu.
 
 Server nezná payload klíče ani IP obsah. Klient zajišťuje výběr klíče, AES-256-GCM ochranu payloadu, validaci a předání paketů virtuálnímu L3 rozhraní.
 
@@ -27,9 +27,9 @@ Jádro klienta nesmí záviset na API konkrétní platformy. Je rozděleno do t�
 
 `core/config/contracts_document.*` vlastní původní validní DOM, preserving patch a úplnou validaci kandidáta. `core/presentation/contracts_model.*` a `password_key_model.*` tvoří samostatné objekty existující statické knihovny `phpvpn-core`. Nepřidávají knihovnu ani závislost třetí strany. Používají sdílené IPv4 helpery, JSON a `CryptoProvider`, bez Windows hlaviček nebo typů. Service a CLI nepřitahují nepoužité modelové objekty. Nativní pohled, focus, scroll a okna patří do `apps/tray`. `ContractsWindow` a `PasswordShaWindow` používají přenosné modely, `ContractsSaveController` řídí ukládání a jeho transportní lifecycle.
 
-Současná Windows vrstva poskytuje implementaci rozhraní `Tunnel` pomocí Wintun, HTTP/HTTPS transport přes WinHTTP a kryptografický `CryptoProvider` přes Windows CNG. Zajišťuje také lokální IPC, hodiny, souborové operace, cesty a síťovou konfiguraci přes IP Helper. Integrace služby a nativního tray patří do příslušných aplikací. libcurl nebo jiné transportní a kryptografické adaptéry jsou pouze budoucí možností při portování na macOS a Linux, nejsou současnou závislostí klienta. Požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
+Současná Windows vrstva poskytuje implementaci rozhraní `Tunnel` pomocí Wintun, HTTP/HTTPS transport přes WinHTTP a kryptografický `CryptoProvider` přes Windows CNG. Zajišťuje také lokální IPC, hodiny, souborové operace, cesty a síťovou konfiguraci přes IP Helper. Integrace služby a nativního tray patří do příslušných aplikací. Linuxová vrstva v `client/src/platform/linux` používá TUN, rtnetlink, libcurl, OpenSSL 3 a libsystemd podle části [Linux](#linux). Tyto knihovny nejsou závislostí Windows klienta, pro macOS jsou jiné transportní a kryptografické adaptéry budoucí možností. Požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
 
-Zdrojové soubory jsou rozděleny do `client/src/core` pro přenosné jádro ve statické knihovně `phpvpn-core`, `client/src/platform` pro rozhraní a Windows adaptéry ve statické knihovně `phpvpn-platform` a `client/apps` pro samostatné vstupy service, CLI a tray. Služba vlastní VPN provoz, CLI a tray ji ovládají přes lokální IPC. Nativní Win32 okna a jejich obsluha jsou součástí `apps/tray`, nikoli přenosných modelů.
+Zdrojové soubory jsou rozděleny do `client/src/core` pro přenosné jádro ve statické knihovně `phpvpn-core`, `client/src/platform` pro rozhraní a Windows nebo linuxové adaptéry ve statické knihovně `phpvpn-platform` a `client/apps` pro samostatné vstupy service, CLI a tray. Služba vlastní VPN provoz, CLI a tray ji ovládají přes lokální IPC. Nativní Win32 okna a jejich obsluha jsou součástí `apps/tray`, linuxová GTK okna součástí `apps/tray-linux`, nikoli přenosných modelů.
 
 ### Běhový model
 
@@ -851,7 +851,7 @@ Tato část stanoví testovací povinnosti, nikoli výsledky nového běhu. Prov
 
 ## Sestavení klienta
 
-Současný klient se sestavuje pro Windows AMD64 (x64) v C++20 pomocí MSVC (`cl.exe`), CMake nejméně 3.28 a generátoru Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) vyžaduje C++20 bez jazykových rozšíření a statický MSVC CRT, v Debug `/MTd`, v ostatních konfiguracích `/MT`. Konfigurace na jiném operačním systému skončí chybou, hotový macOS ani Linux adaptér zatím neexistuje.
+Současný klient se sestavuje pro Windows AMD64 (x64) v C++20 pomocí MSVC (`cl.exe`), CMake nejméně 3.28 a generátoru Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) vyžaduje C++20 bez jazykových rozšíření a statický MSVC CRT, v Debug `/MTd`, v ostatních konfiguracích `/MT`. Linuxové sestavení popisuje část [Linux](#linux). Konfigurace na jiném operačním systému skončí chybou, macOS adaptér zatím neexistuje.
 
 [Aplikační targety](client/apps/CMakeLists.txt) vytvářejí tři oddělené programy:
 
@@ -881,7 +881,7 @@ Skript [tools/deploy-test.ps1](tools/deploy-test.ps1) odděluje dva testovací p
 
 ### Windows
 
-Cílem této etapy je pouze Windows AMD64 (x64). Windows x86 (32bit) a ARM64 jsou mimo rozsah, stejně jako implementace macOS a Linux. Windows je primární platforma. Klient MUSÍ používat výhradně Wintun jako L3 TUN pro IPv4. NESMÍ používat TAP, vlastní kernelový ovladač ani automaticky přejít na jiný tunelový backend, chybí-li nebo selže-li Wintun. Instalace, vytvoření či konfigurace adaptéru a změny rout vyžadují administrátorská oprávnění; samotný běh těchto operací patří výhradně Windows Service.
+Cílem Windows části je pouze Windows AMD64 (x64). Windows x86 (32bit) a ARM64 jsou mimo rozsah, stejně jako implementace macOS. Linuxovou implementaci popisuje samostatná část [Linux](#linux). Windows je primární platforma. Klient MUSÍ používat výhradně Wintun jako L3 TUN pro IPv4. NESMÍ používat TAP, vlastní kernelový ovladač ani automaticky přejít na jiný tunelový backend, chybí-li nebo selže-li Wintun. Instalace, vytvoření či konfigurace adaptéru a změny rout vyžadují administrátorská oprávnění; samotný běh těchto operací patří výhradně Windows Service.
 
 Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Verze v1 používá výhradně split tunnel. Po úspěšném bootstrapu služba přidá lokální `virtualIp` s prefixem z `vpnCidr` a právě jednu explicitní routu přesného prefixu `vpnCidr` přes vlastní adaptér. Nepřidává výchozí routu, nemění DNS a nezavádí kill switch. Full tunnel, změny DNS a kill switch jsou mimo v1 a vyžadují budoucí samostatnou specifikaci. Relay server na nakonfigurované URL MUSÍ před změnou i po ní zůstat dosažitelný existující síťovou cestou mimo tunel phpvpn.
 
@@ -1151,19 +1151,183 @@ Alternativy založené na `/dev/tun` nejsou na moderním macOS obecně přenosit
 
 ### Linux
 
-Na Linuxu je přirozeným rozhraním TUN zařízení `/dev/net/tun`. Klient vytvoří TUN rozhraní, přiřadí virtuální IP a nastaví potřebné routy přes netlink nebo spolehlivý systémový integrační modul. Operace vyžadují oprávnění `CAP_NET_ADMIN` nebo vhodně omezený privilegovaný pomocný proces.
+Linuxový klient je dodaný pro x86_64 jako druhá platforma nad stejným přenosným jádrem `phpvpn-core`, stejnou smlouvou IPC v1 a stejným rozdělením na službu, CLI a tray jako na Windows. Pravidla jádra, konfigurace, Wizardu, IPC, bezpečnostního modelu a tray UX z ostatních částí tohoto dokumentu a z [tray_UX.md](tray_UX.md#linux-gtk) platí beze změny, pokud tato část výslovně neuvádí linuxový rozdíl. Platí také split tunnel v1 z části [Windows](#windows): služba přidá pouze `virtualIp` s prefixem z `vpnCidr` a jedinou explicitní routu přesného prefixu `vpnCidr` přes vlastní rozhraní, výchozí routu ani DNS NESMÍ měnit a kill switch nezavádí. Platformní vrstva je v `client/src/platform/linux/`, vstupy aplikací v `client/apps/service/service_main_linux.cpp`, `client/apps/cli/main.cpp` a `client/apps/tray-linux/`, instalační soubory v `client/packaging/linux/`. Existence implementace ani jednotlivý běh testů nejsou tvrzením o úplné akceptaci, výsledky ověření patří do datovaných reportů.
 
-Produkční služba může běžet pod systemd s minimálními capability, restartovací politikou a ochranou konfiguračního souboru před přímým přístupem přes souborový systém. Tato ochrana nemění záměrně veřejný přístup ke konfiguraci přes IPC. Implementace nemá předpokládat jeden konkrétní firewall ani síťový manažer; jejich integrace má být volitelná.
+#### Sestavení a instalované součásti
+
+Linux se sestavuje v C++20 bez jazykových rozšíření kompilátorem GCC nebo Clang, CMake nejméně 3.28 a generátorem Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) přijímá pouze Windows a Linux. Pro GCC a Clang zapíná `-Wall -Wextra -Wpedantic`, `-fstack-protector-strong`, PIE, `-fcf-protection` na x86_64, `_FORTIFY_SOURCE=3` v optimalizovaných konfiguracích a `-Wl,-z,relro,-z,now,-z,noexecstack`. Služba a CLI vyžadují OpenSSL 3 (`libcrypto`), libcurl nejméně 8.5 a libsystemd. Tray navíc vyžaduje GTK 3 (`gtk+-3.0`) a `ayatana-appindicator3-0.1`. Volba `PHPVPN_BUILD_TRAY=OFF` sestaví službu a CLI bez grafických hlaviček. Skript `client/tools/linux/build.sh <preset>` provede configure, build a ctest.
+
+| Preset | Konfigurace | Význam |
+|---|---|---|
+| `linux-debug` | `Debug` | GCC s `BUILD_TESTING=ON`. |
+| `linux-release` | `RelWithDebInfo` | Optimalizované GCC sestavení s ladicími informacemi. |
+| `linux-asan` | `Debug` | GCC s AddressSanitizerem a UndefinedBehaviorSanitizerem (`PHPVPN_ENABLE_ASAN=ON`). |
+| `linux-clang` | `RelWithDebInfo` | Druhý průchod kompilátorem Clang. |
+| `linux-headless` | `RelWithDebInfo` | GCC bez tray (`PHPVPN_BUILD_TRAY=OFF`). |
+
+Všechny linuxové presety mají `BUILD_TESTING=ON` a samostatný adresář `work/build/<preset>`. Instalační pravidla předpokládají prefix `/usr` distribučních balíčků:
+
+| Soubor | Úloha |
+|---|---|
+| `/usr/libexec/phpvpn/phpvpn-service` | Služba. Jediný vlastník konfigurace, TUN rozhraní, adresy, routy, tří VPN pracovních rolí, globálních čítačů a stavu VPN. |
+| `/usr/bin/phpvpn` | CLI, čistý IPC klient. Nepotřebuje root ani grafickou relaci. |
+| `/usr/bin/phpvpn-tray` | GTK tray v uživatelské relaci, čistý IPC klient. |
+| `/usr/lib/systemd/system/phpvpn.service` | systemd unit služby. |
+| `/usr/lib/NetworkManager/conf.d/90-phpvpn.conf` | Pasivní NetworkManager snippet. |
+| `/usr/share/applications/phpvpn-tray.desktop` | Spouštěč tray v menu aplikací. |
+| `/etc/xdg/autostart/phpvpn-tray.desktop` | Autostart tray pro všechny uživatele. |
+| `/usr/share/icons/hicolor/<n>x<n>/apps/` | `phpvpn.png`, `phpvpn-disconnected.png`, `phpvpn-connecting.png` a `phpvpn-connected.png` v 16, 22, 24, 32, 48, 64 a 128 px. |
+| `phpvpn(1)`, `phpvpn-service(8)` | Manuálové stránky. |
+
+Tray, CLI ani jiná aplikace NESMĚJÍ otevírat `/dev/net/tun`, měnit adresy, routy nebo rozhraní ani číst a zapisovat konfigurační soubor. Službu ovládají výhradně přes IPC, stejně jako na Windows. Instalace, odinstalace, povolení, spuštění a zastavení služby nejsou operacemi IPC. Služba nemá přepínače `--install` ani `--uninstall`, registraci unitu provádí instalace balíčku a ovládání `systemctl`.
+
+#### Cesty a oprávnění
+
+Produkční cesty jsou pevné konstanty ([paths_linux.h](client/src/platform/linux/paths_linux.h)). Neodvozují se z prostředí, konfigurace ani IPC:
+
+| Cesta | Vlastník a režim | Obsah |
+|---|---|---|
+| `/etc/phpvpn/` | `root`, `0700` | Konfigurační adresář. |
+| `/etc/phpvpn/config.json` | `root`, `0600` | Konfigurace. Publikační soubory `config.publish-journal`, `config.previous` a `config.stage.<uuid>.tmp` leží ve stejném adresáři a mají režim `0600`. |
+| `/var/lib/phpvpn/` | `root`, `0700` | Stav služby. |
+| `/var/lib/phpvpn/ownership.json` | `root`, `0600` | Záznam vlastnictví tunelového rozhraní pro recovery. |
+| `/run/phpvpn/` | `root`, `0755` | Runtime adresář. |
+| `/run/phpvpn/control-v1.sock` | `root`, `0666` | Veřejný řídicí socket IPC v1. |
+| `/run/phpvpn/service.lock` | `root`, `0600` | Singleton zámek služby. |
+
+Konfigurační soubor čte pouze root. To je linuxová zvyklost pro soubor s tajemstvími a splňuje požadavek ochrany konfigurace před přímým přístupem přes souborový systém. Záměrně veřejné `get-config` a `set-config` přes IPC tím nejsou omezeny. Uživatel získá konfiguraci přes `phpvpn get-config`, Edit Config nebo Wizard.
+
+Služba při každém startu normalizuje své adresáře jako obdobu Windows opravy ACL. Chybějící adresář vytvoří, jeho rodič musí existovat. Vyžaduje vlastníka root a nastaví přesný režim z tabulky. Každý předek musí patřit rootovi a nesmí být zapisovatelný skupinou ani ostatními, pokud nemá sticky bit. Symbolický odkaz, cizí vlastník nebo nebezpečný předek znamenají fail closed s `config_directory_security_invalid` bez jakékoli změny. Nepoužitelný konfigurační nebo stavový adresář službu nezastaví: IPC zůstane dostupné a hlásí bezpečnou konfigurační chybu. Nepoužitelný runtime adresář nebo nezískaný singleton zámek start služby ukončí.
+
+Skryté přepínače služby `--config-dir`, `--state-dir`, `--runtime-dir` a `--adapter-name`, přepínač CLI `--socket` a proměnné tray `PHPVPN_TRAY_TEST_SOCKET` a `PHPVPN_TRAY_TEST_SERVER_UID` slouží pouze izolovaným testovacím instancím. Produkční unit, spouštěč ani autostart je NESMĚJÍ používat.
+
+#### Služba a systemd
+
+[service_main_linux.cpp](client/apps/service/service_main_linux.cpp) sdílí s Windows hostitelem přenositelnou kompozici [service_runtime](client/apps/service/service_runtime.h): engine, ConfigStore, automatický startup Connect, Wizard, dispatcher, klasifikaci IPC práce a IPC server se stejným pořadím výstavby i ukončení. Služba MUSÍ běžet s efektivním uid 0, jinak start odmítne. Režimy:
+
+| Přepínač | Chování |
+|---|---|
+| `--systemd` | Výchozí, je-li nastaveno `NOTIFY_SOCKET`. Běh pod `Type=notify`: `READY=1` po startu IPC serveru, `STATUS=VPN <stav> (<fáze>)` při změně stavu a `STOPPING=1` při ukončení. Log jde přes stderr do journald. |
+| `--foreground`, `--console` | Výchozí bez `NOTIFY_SOCKET`. Běh v terminálu s logem na stdout do SIGINT (Ctrl+C) nebo SIGTERM. Chybějící runtime adresář vytvoří. |
+| `--verify-tunnel` | Ověří, že `/dev/net/tun` je znakové zařízení 10:200, lze jej otevřít a `TUNGETFEATURES` nabízí `IFF_TUN` a `IFF_NO_PI`. Vypíše nabízené features a verzi jádra. Nevytváří rozhraní a nemění síť. |
+
+SIGTERM a SIGINT přijímá přes `signalfd`, SIGHUP a SIGPIPE ignoruje. Stop provede sdílený uspořádaný teardown `ServiceRuntime::stop` jako na Windows: zruší startup Connect, zastaví IPC server, ukončí Wizard a engine včetně odstranění routy, adresy a rozhraní a teprve potom proces skončí. Nejvýše jednu instanci zajišťuje výlučný neblokující `flock` na `/run/phpvpn/service.lock`, druhá instance skončí chybou `service_already_running`. Automatický Connect podle `autoConnectOnStartup` používá stejnou logiku jako na Windows a spouští se až po `READY=1`, v režimu foreground po úvodním hlášení. Jde o obdobu oznámení SCM RUNNING.
+
+Unit [phpvpn.service](client/packaging/linux/systemd/phpvpn.service) spouští `/usr/libexec/phpvpn/phpvpn-service --systemd` jako `Type=notify` s `User=root`, `Wants=` a `After=network-online.target` a `WantedBy=multi-user.target`. Restartovací politika `Restart=on-failure`, `RestartSec=5s`, `RestartSteps=2` a `RestartMaxDelaySec=60s` dává zpoždění 5 s, přibližně 17 s a 60 s jako obdobu Windows recovery 5/15/60 s a vyžaduje systemd nejméně 254. `TimeoutStopSec=45s` omezuje ukončení. Adresáře vytváří systemd přes `ConfigurationDirectory=phpvpn` (`0700`), `StateDirectory=phpvpn` (`0700`) a `RuntimeDirectory=phpvpn` (`0755`).
+
+Unit MUSÍ zachovat minimální oprávnění a sandbox: `CapabilityBoundingSet=CAP_NET_ADMIN`, `NoNewPrivileges=yes`, `UMask=0077`, `ProtectSystem=strict` s `ReadWritePaths=/etc/phpvpn`, `ProtectHome=yes`, `PrivateTmp=yes`, `DevicePolicy=closed` s `DeviceAllow=/dev/net/tun rw`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `SystemCallArchitectures=native`, `SystemCallFilter=@system-service` a `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`. Root bez `CAP_DAC_OVERRIDE` pracuje jen se soubory, které vlastní, cizí vlastník znamená fail closed. `ProtectKernelTunables=yes` je možné, protože služba nezapisuje do `/proc/sys` a IPv6 na tunelu vypíná přes netlink. Rozšíření capability nebo oslabení sandboxu vyžaduje změnu této specifikace.
+
+#### Veřejné lokální IPC přes Unix socket
+
+Linuxové IPC je `SOCK_STREAM` Unix socket na pevné cestě `/run/phpvpn/control-v1.sock` (`kIpcSocketPath`), obdoba pevné pipe `\\.\pipe\phpvpn-control-v1`. Cesta obsahuje verzi smlouvy a produkční klient ji NESMÍ převzít z uživatelského vstupu. Schéma zpráv, whitelist příkazů, obálky odpovědí, chyby a verze smlouvy jsou shodné s částí [Veřejné lokální IPC](#veřejné-lokální-ipc) a [Rozšíření IPC v1](#rozšíření-ipc-v1).
+
+Každá zpráva má rámec: délka UTF-8 JSON těla jako `u32` big-endian a za ní tělo. Tělo má nejvýše **4 MiB (4194304 bajtů)** samostatně pro požadavek i odpověď. Jedno spojení nese právě jeden požadavek a jednu odpověď. Explicitní délka odliší úplnou odpověď od uříznuté, na čemž závisí klasifikace uložení jako confirmed nebo unknown. Server spojení s nulovou nebo nadlimitní délkou uzavře bez odpovědi.
+
+[IpcSocketServer](client/src/platform/linux/ipc_unix.h) používá `epoll`, `timerfd` s maintenance tickem **250 ms**, nejvýše **32 slotů spojení**, `accept4` se `SOCK_CLOEXEC|SOCK_NONBLOCK` a deadline čtení i zápisu **5000 ms**. Čtení se počítá od přijetí spojení do úplného požadavku, zápis od zahájení odesílání odpovědi do uzavření klientem. Po zápisu odpovědi server provede `shutdown(SHUT_WR)` a čeká na uzavření klientem v rámci výstupního deadline, stejně jako na Windows. Jsou-li obsazené všechny sloty, další klienti čekají v listen backlogu. Executory, fronty, odpověď `busy` a drain při ukončení jsou sdílené s Windows v [ipc_executors](client/src/platform/iface/ipc_executors.h) se stejnou kapacitou `shortControl` 16, `file` 4 a `diagnostic` 1 podle části [Implementační meze lokálního řízení](#implementační-meze-lokálního-řízení). Klasifikace práce je společná funkce služby pro obě platformy.
+
+Model přístupu se nemění: socket má režim `0666` a každý lokální proces ho smí použít. Server neautorizuje klienta podle uid, gid, PID, cesty programu ani údajů ve zprávě. Riziko neoprávněného lokálního ovládání, změny konfigurace a zpřístupnění jejích tajných hodnot je přijaté stejně jako na Windows podle části [Bezpečnostní model a přijatá rizika](#bezpečnostní-model-a-přijatá-rizika). Náhradou `FILE_FLAG_FIRST_PIPE_INSTANCE` proti podvržení socketu je adresář `/run/phpvpn` patřící rootovi a nezapisovatelný ostatními, singleton zámek služby a pravidlo, že server nahradí existující cestu pouze tehdy, je-li to socket patřící rootovi. Jiný soubor na místě socketu, cizí vlastník nebo zapisovatelný adresář ukončí start IPC chybou `ipc_unavailable`. Při ukončení server odstraní jen socket se svou identitou (`st_dev`, `st_ino`).
+
+Klient ([IpcSocketClient](client/src/platform/linux/ipc_unix.h)) MUSÍ před odesláním jakéhokoli bajtu ověřit přes `SO_PEERCRED`, že protistrana běží s uid 0. Jinak skončí `ipc_unavailable` a nic neodešle, zejména ne `set-config` s tajemstvími. Chybějící socket nebo `ECONNREFUSED` znamená, že služba neběží, `EACCES` nebo `EPERM` odepřený přístup. Obojí vrací `ipc_unavailable`. Plný listen backlog klient opakuje do svého deadline, potom vrací `timeout`. Uzavření před prvním bajtem odpovědi je `ipc_unavailable`, uzavření uvnitř rámce nebo nulová délka `ipc_malformed` a ohlášená délka nad limit `ipc_message_too_large`. Klient eviduje, zda byl celý požadavek odeslán, pro klasifikaci uložení v tray.
+
+CLI zachovává příkazy, výstupy, formát `code: description` na stderr, exit kódy 0/1/2 a timeout 10 s z Windows. Linux jen po nedosažitelné službě přidá druhý řádek `hint:` s pravděpodobnou příčinou (služba neběží, chybí socket, odepřený přístup, protistrana není root). Kódy chyb se nemění. Wizard IPC na Linuxu přijímá jako `configPath` pouze absolutní normalizovanou POSIX cestu bez řídicích znaků, prázdných segmentů, `.` a `..`.
+
+#### Konfigurační soubor na disku
+
+[config_files_linux.cpp](client/src/platform/linux/config_files_linux.cpp) implementuje rozhraní `ConfigFiles` se stejnou sémantikou, názvy souborů a formátem journalu `PHPVPN-CONFIG-1` jako Windows. Stavy recovery `clean`, `confirmed`, `notPublished` a `unknown` jsou shodné. Adresář drží otevřený s `O_DIRECTORY|O_NOFOLLOW` a všechny operace dělá relativně k němu přes `*at` volání. Před operací znovu ověří, že pevná cesta přes bezpečné předky stále vede ke stejnému adresáři.
+
+Publikace probíhá v tomto pořadí:
+
+1. Stage soubor `config.stage.<uuid>.tmp` vznikne přes `openat(O_CREAT|O_EXCL|O_NOFOLLOW, 0600)`. Režim a vlastník se ověří ještě před zápisem prvního tajného bajtu.
+2. Výlučně vytvořený journal `config.publish-journal` se zapíše a synchronizuje `fsync` souboru i adresáře.
+3. Obsah se zapíše do stage, provede se `fsync`, stage se znovu otevře jen pro čtení a ověří se jeho identita a SHA-256.
+4. Existující `config.json` se zazálohuje hard linkem `config.previous` (`linkat`).
+5. Nahrazení používá `renameat`, vytvoření chybějícího souboru `renameat2(RENAME_NOREPLACE)`. Následuje `fsync` adresáře a ověření publikované identity (`st_dev`, `st_ino`).
+6. Do journalu se připíše `CONFIRMED` a provede se `fsync`.
+
+Při otevření musí být konfigurační soubor regulární soubor vlastněný rootem, nezapisovatelný skupinou ani ostatními, s `nlink == 1`. Jedinou výjimkou je přechodná dvojice `config.json` a `config.previous` téhož inode vytvořená samotnou publikací. Adresář musí patřit rootovi a nesmí být zapisovatelný skupinou ani ostatními. Síťové a FUSE souborové systémy (NFS, SMB, CIFS, SMB2, FUSE, 9P, Ceph, AFS, kAFS a Coda podle `statfs`) se odmítnou chybou `not_supported`. Jde o obdobu požadavku na lokální NTFS.
+
+Záznam vlastnictví `ownership.json` se zapisuje trvanlivě přes `durableReplaceFile`: dočasný soubor vznikne výlučně s `O_NOFOLLOW` a režimem `0600`, následuje `fsync`, `renameat` přes cíl a `fsync` adresáře. Po výpadku napájení tedy cíl obsahuje buď předchozí, nebo úplný nový obsah.
+
+#### TUN rozhraní a vlastnictví
+
+Tunel používá výhradně TUN zařízení jádra Linuxu `/dev/net/tun` jako L3 rozhraní pro IPv4 ([tunnel_tun.cpp](client/src/platform/linux/tunnel_tun.cpp)). Klient NESMÍ používat TAP, vlastní kernelový modul ani jiný tunelový backend. `loadAndVerify` ověří znakové zařízení 10:200 a nabídku `IFF_TUN|IFF_NO_PI` a nic nevytváří. Rozhraní vzniká stejně jako na Windows až po úspěšném bootstrapu a preflightu.
+
+`createAdapter` otevře `/dev/net/tun` s `O_RDWR|O_CLOEXEC|O_NONBLOCK` a přes `TUNSETIFF` vytvoří rozhraní s přesným jménem `phpvpn` a příznaky `IFF_TUN|IFF_NO_PI|IFF_TUN_EXCL`, bez `IFF_MULTI_QUEUE` a bez `TUNSETPERSIST`. Rozhraní je nepersistentní a žije jen po dobu, kdy služba drží deskriptor. Existující rozhraní stejného jména je díky `IFF_TUN_EXCL` kolizí, nikoli připojením. Končí chybou `netconfig_preflight_conflict` bez zásahu do cizího rozhraní. `openAdapter` vrací `not_supported`, společné jádro jej na Linuxu nevolá. Hned po vytvoření služba přes netlink nastaví:
+
+- `IFLA_IFALIAS = phpvpn-owner:<GUID>` jako značku vlastnictví. GUID je pevná linuxová identita instalace v kanonickém tvaru s malými písmeny.
+- MTU **1500**, výchozí hodnotu jádra Linuxu pro TUN. MTU Wintun adaptéru nebylo změřeno, jiná hodnota vyžaduje měření a změnu specifikace.
+- `IFLA_INET6_ADDR_GEN_MODE = none` ještě před `IFF_UP`, takže rozhraní nedostane žádnou IPv6 adresu včetně link-local. Bez podpory IPv6 v jádře Linuxu se krok přeskočí.
+- `IFF_UP`.
+
+Služba potom ověří jméno, značku, `IFF_UP` a MTU. Nesoulad je chyba bez session. Vstupní pracovník čte přes `readv` do bufferu volajícího s jednobajtovým přetokovým polem. Paket delší než buffer se započítá do `oversizedReceiveCount` a nedoručí se. Výstupní pracovník zapisuje jeden paket jedním `write`. Plná fronta vede k omezenému přerušitelnému čekání 200 × 5 ms přes `poll` a potom k `busy`, stejně jako u Wintun. Obě čekání zahrnují `eventfd` zastavení, žádné nepolluje v busy-loopu. Kapacita ringu nemá na Linuxu obdobu a ignoruje se.
+
+`endSession` zastaví session, ale deskriptor ponechá, aby společné jádro odstranilo vlastní routu a adresu ze živého rozhraní ve stejném pořadí jako na Windows. `closeAdapter` deskriptor uzavře, jádro Linuxu rozhraní odstraní i se zbylými adresami a routami a služba jeho zmizení ověří přes netlink s čekáním nejvýše 2 s. Při pádu nebo zabití služby odstraní jádro Linuxu rozhraní samo. To je hlavní bezpečnostní vlastnost linuxové recovery. Záznam vlastnictví a startup recovery používají společné jádro `tunnel_session` beze změny, včetně read-only čekání nejvýše 5 s na zmizení rozhraní. `removeOwnedPhantomInterface` smí odstranit jen persistentní jednofrontové TUN rozhraní bez připojeného deskriptoru, bez vlastníka jiného než root a se shodným jménem, značkou i identitou. Každý jiný stav je `journal_ambiguous`, fail closed. Protože klient `TUNSETPERSIST` nepoužívá, tato cesta v běžném provozu nenastává. `runningDriverVersion` vrací 0.
 
 Základní implementace používá jeden TUN file descriptor a tři společné pracovní role. Linuxový multiqueue TUN je volitelná optimalizace; nesmí změnit společná pravidla flow klasifikace, DRR, FIFO sub-bucketů, limitů front ani vlastnictví paketů.
 
+#### Síťová konfigurace přes netlink
+
+[netconfig_netlink.cpp](client/src/platform/linux/netconfig_netlink.cpp) je vlastní malý rtnetlink klient bez další knihovny: socket `NETLINK_ROUTE` s `SOCK_CLOEXEC`, sekvenční čísla, `NLM_F_ACK`, kontrola `nlmsgerr`, timeout odesílání a příjmu 2 s a opakování dumpu označeného `NLM_F_DUMP_INTR` nejvýše třikrát. Kódování a dekódování zpráv je v čistém [netlink_codec](client/src/platform/linux/netlink_codec.h) testovatelném bez privilegií. Chybové texty obsahují jen číslo `errno`, nikoli lokalizovaný systémový text.
+
+Pole `interfaceLuid` nese na Linuxu platformní identitu rozhraní `(uint64(ownerTag) << 32) | ifindex` ([interface_identity.h](client/src/platform/linux/interface_identity.h)). `ownerTag` jsou první čtyři bajty (big-endian) SHA-256 z kanonického GUID instalace, nikdy 0. Nenulový tag dostane jen rozhraní, jehož `IFLA_IFALIAS` přesně odpovídá značce `phpvpn-owner:<GUID>`, cizí rozhraní mají tag 0. Po zániku vlastního rozhraní a recyklaci jeho ifindexu cizím rozhraním proto stará identita neexistuje a nemůže vzniknout falešná shoda. Před každou změnou adresy nebo routy služba ověří, že rozhraní s daným ifindexem stále nese značku. Změnu cizího rozhraní odmítne.
+
+Adresa se přidává zprávou `RTM_NEWADDR` s `IFA_LOCAL`, `IFA_ADDRESS`, prefixem z `vpnCidr`, `NLM_F_CREATE|NLM_F_EXCL` a příznakem `IFA_F_NOPREFIXROUTE`. Bez něj by jádro Linuxu přidalo vlastní prefixovou routu a explicitní routa služby by skončila `EEXIST`. Routa se přidává zprávou `RTM_NEWROUTE` v tabulce `main` s `RTPROT_STATIC`, `RTA_OIF`, `RTA_PRIORITY` rovnou metrice **5** ze společného jádra a `NLM_F_CREATE|NLM_F_EXCL`. Next hop 0.0.0.0 používá `RT_SCOPE_LINK`, jiný next hop `RT_SCOPE_UNIVERSE` s `RTA_GATEWAY`. Již existující adresa nebo routa je úspěch pouze při přesné shodě ifindexu, adresy, prefixu, cíle, next hopu a metriky. Odstranění z již neexistujícího vlastního rozhraní je úspěch, protože prostředek odstranilo jádro Linuxu.
+
+`snapshot()` pro fail-closed preflight a kontrolu nezměněné výchozí routy a DNS obsahuje IPv4 adresy všech rozhraní a IPv4 unicast routy všech tabulek kromě `local`, bez klonovaných záznamů, s identitou rozhraní, metrikou a next hopem. Výchozí routa je `0.0.0.0/0` s nejnižší metrikou v tabulce `main`. DNS servery jsou seřazené deduplikované IPv4 adresy ze dvou zdrojů ([dns_snapshot.h](client/src/platform/linux/dns_snapshot.h)):
+
+- `nameserver` řádky `/etc/resolv.conf`. Soubor musí být po obvyklém rozlišení symbolického odkazu regulární soubor nejvýše 64 KiB. Chybějící soubor znamená žádný server. Nečitelný, jiný typ nebo příliš velký soubor je chyba snapshotu a fail closed.
+- Vlastnost `DNS` rozhraní `org.freedesktop.resolve1.Manager` přes sd-bus, a to jen tehdy, má-li jméno `org.freedesktop.resolve1` na systémové sběrnici vlastníka. Služba systemd-resolved tak nikdy neaktivuje. Čekání na sběrnici je omezené na 2 s. Nedostupnost resolved ani sběrnice není chyba, protože klient nepředpokládá konkrétní síťový manažer.
+
+`isHostReachableOutsideInterface` je implementovaná se sémantikou Windows (`getaddrinfo` pro IPv4 a `RTM_GETROUTE` pro každou adresu). Společné jádro ji na žádné platformě zatím nevolá.
+
+#### HTTP transport, kryptografie a hodiny
+
+[transport_curl.cpp](client/src/platform/linux/transport_curl.cpp) implementuje rozhraní `Transport` přes libcurl se stejným chováním jako WinHTTP adaptér: jeden absolutní monotónní deadline pro DNS, spojení, TLS, odeslání, hlavičky i celé tělo, limit těla odpovědi, účtování přečtených bajtů přes každé selhání, volitelné zachycení hlaviček pro Wizard diagnostiku a okamžité rušení. Každý transport vlastní jeden persistentní easy handle a vlastní multi handle, který drží pool spojení. Znovupoužití keep-alive spojení mezi requesty tak odpovídá WinHTTP session. `configure` pool zahodí stejně jako zavření WinHTTP session. Requesty běží sériově přes `curl_multi_poll`. `cancelCurrentRequest` jen označí request a probudí čekání přes `curl_multi_wakeup`. Vlastník potom odebere easy handle, čímž přeruší DNS, spojení, TLS handshake i pomalé čtení. Každý request začíná `curl_easy_reset`, takže zrušený nebo prošlý přenos nezanechá stav a transport zůstává použitelný. Pozdní úspěch po deadline nebo po zrušení se nikdy nevrací.
+
+Volby transportu jsou pevné: pouze `http` a `https`, bez přesměrování, prázdná proxy s `NOPROXY "*"`, takže se ignorují i proměnné `http_proxy`, bez `.netrc`, bez HTTP autentizace, bez cookie enginu, `CURLOPT_NOSIGNAL`, TLS nejméně 1.2 a vynucené **HTTP/1.1**. `trustAnyTlsCertificate=true` vypne ověření certifikátu i jména hostitele, jinak se používají systémové CA. Hlavičky pocházejí z bloku `httpHeaders`. Transport k nim přidá `Content-Type` podle akce, `Connection: Keep-Alive` jako WinHTTP a potlačí implicitní `Accept:` a `Expect:` (bez 100-continue). `Host` a `Content-Length` doplní libcurl. User-Agent pochází jen z bloku. Hodnoty hlaviček jdou na drát jako konfigurované UTF-8. Nesoulad `Content-Length` nebo předčasně ukončené tělo je `transport_receive_failed`, překročení `maxResponseBodyBytes` `transport_response_too_large`. Mapování chyb na kódy DNS, connect, TLS, timeout a cancelled odpovídá WinHTTP.
+
+Wire hodnota `"winhttp"` v poli `requestHeadersSource` a `responseHeadersSource` Wizard diagnostiky IPC v1 zůstává beze změny, protože IPC v1 je pevná smlouva. Na každé platformě znamená „hlavičky zachytil platformní transport“, na Linuxu tedy libcurl přes `CURLOPT_DEBUGFUNCTION` a `CURLOPT_HEADERFUNCTION`. Limity zachycení a náhradní verze `HTTP/?` jsou stejné jako na Windows.
+
+Kryptografický `CryptoProvider` používá OpenSSL 3 EVP ([crypto_openssl.cpp](client/src/platform/linux/crypto_openssl.cpp)): SHA-256, HMAC-SHA256 přes `EVP_MAC`, AES-256-GCM a `RAND_bytes`. Mezibuffery maže `OPENSSL_cleanse`, `SecureBuffer` na Linuxu `explicit_bzero`. Hodiny ([clock_linux.cpp](client/src/platform/linux/clock_linux.cpp)) mapují `monotonicMs` na `CLOCK_MONOTONIC`, `leaseMonotonicMs` na `CLOCK_BOOTTIME`, který zahrnuje suspend jako `GetTickCount64`, a `systemUtcMs` na `CLOCK_REALTIME`.
+
+#### Logování do journald
+
+Linux nepoužívá souborový log ani rotaci 8 MiB a pět historických souborů z části [Logování a diagnostika](#logování-a-diagnostika). V režimu `--systemd` zapisuje služba každý záznam jedním voláním na stderr s prefixem priority sd-daemon: `<7>` pro trace a debug, `<6>` info, `<4>` warning, `<3>` error a `<2>` critical. CR a LF uvnitř zprávy nahradí mezerou, aby journald nerozdělil záznam a neztratil prioritu. ISO časové razítko formátovaného řádku vynechá, protože čas přiděluje journald. Úroveň, komponenta a zpráva zůstávají. Retenci a rotaci řídí konfigurace journald. V režimu `--foreground` jdou úplné formátované řádky na stdout. Obsahová pravidla logu platí beze změny: žádné klíče, tagy, ciphertexty, obsah paketů, celá těla ani interní cesty. Log čte `journalctl -u phpvpn`, rozšířenou diagnostiku `phpvpn diagnostics`.
+
+#### NetworkManager, firewall a SELinux
+
+Implementace nepředpokládá konkrétní firewall ani síťový manažer a jejich integrace zůstává volitelná. Služba nemá závislost na NetworkManageru, systemd-networkd ani firewalld. Balíček instaluje pasivní snippet `/usr/lib/NetworkManager/conf.d/90-phpvpn.conf` se sekcí `[device-phpvpn]`, `match-device=interface-name:phpvpn` a `managed=0`, aby NetworkManager rozhraní nespravoval ani do něj nepřidával adresy, routy nebo DNS. Snippet nenahrazuje seznam `unmanaged-devices` administrátora. Bez NetworkManageru nemá účinek. Klient nekonfiguruje firewall a nepřidává pravidla. Zařazení rozhraní `phpvpn` do zón nebo pravidel je věcí správce systému.
+
+Na Fedoře se SELinux v režimu enforcing běží služba bez vlastní SELinux politiky v doméně `unconfined_service_t`. Projekt nedodává SELinux politiku ani AppArmor profil.
+
+#### Tray v GTK
+
+Linuxový tray je nativní GTK 3 aplikace s indikátorem přes libayatana-appindicator3 (StatusNotifierItem). Obojí jsou systémové komponenty cílových desktopů, nikoli přibalený framework. Qt, Electron ani WebView se nepoužívají. Tray používá přenositelné modely, texty, barvy a IPC timeouty sdílené s Windows tray a je čistým IPC klientem. Stejně jako na Windows nevlastní službu ani VPN. Exit, odhlášení, ukončení ani pád tray NESMĚJÍ odpojit VPN.
+
+V každé desktopové relaci běží nejvýše jedna instance `GtkApplication` s ID `org.phpvpn.Tray`. Druhé spuštění předá argumenty primární instanci a skončí. Autostart `/etc/xdg/autostart/phpvpn-tray.desktop` spouští tray bez argumentů pro všechny uživatele, jako obdoba Windows hodnoty HKLM Run. Spouštěč v menu aplikací spouští `phpvpn-tray --show-window`, které zobrazí ovládací okno běžící instance. `--installation-complete` zobrazí installation notice přes `org.freedesktop.Notifications`. Když desktop nemá `org.kde.StatusNotifierWatcher`, například Fedora Workstation s GNOME bez rozšíření AppIndicator, tray otevře záložní ovládací okno a jednou zobrazí notifikaci s návodem k zapnutí rozšíření. Nastavení desktopu tray nemění. Mapování UX, menu, ikon a oken stanoví [tray_UX.md, Linux (GTK)](tray_UX.md#linux-gtk). Chybové texty konfigurace uvádějí cestu `/etc/phpvpn/config.json`.
+
+#### Rozdíly oproti Windows
+
+| Oblast | Windows | Linux | Důvod |
+|---|---|---|---|
+| Správa služby | SCM, `phpvpn-service --install` | systemd unit `phpvpn.service` z balíčku, bez `--install` | Linuxová zvyklost. |
+| Tunel | Wintun, adaptér s GUID | `/dev/net/tun`, nepersistentní `phpvpn`, značka vlastnictví v `ifalias` | Nativní mechanismus, recovery jádrem. |
+| Identita rozhraní | LUID | `(ownerTag << 32) \| ifindex` | Ochrana proti recyklaci ifindexu. |
+| Čtení konfigurace z disku | Users čtení | Jen root (`0600`) | Ochrana konfigurace, zvyklost pro tajemství. |
+| IPC | Named pipe, Everyone | Unix socket `0666`, klient ověří, že server je root | Zachování veřejného IPC. |
+| Logy | Soubor s rotací 8 MiB/5 | journald, bez souborového logu | Linuxová zvyklost. |
+| Tooltip tray | Ano | Stavová položka v menu a title indikátoru | AppIndicator nemá tooltip. |
+| Tray na Fedora GNOME | Vždy | Vyžaduje rozšíření AppIndicator, jinak ovládací okno | Omezení GNOME. |
+| Pozice oken | Určuje aplikace | Určuje kompozitor (Wayland) nebo správce oken | Omezení Wayland. |
+| Zdroj hlaviček Wizard diagnostiky | WinHTTP, wire `"winhttp"` | libcurl, stejná wire hodnota `"winhttp"` | Pevná smlouva IPC v1. |
+
 ## Doporučené pořadí další práce
 
-Současné Windows jádro, WinHTTP/CNG adaptéry, tři VPN role, fronty, agregovaný payload, Wintun integrace a nativní tray jsou již součástí implementace. Jejich opětovná implementace není dalším krokem. Existence těchto částí neznamená splnění všech integračních, vizuálních nebo výkonových testovacích povinností.
+Současné Windows jádro, WinHTTP/CNG adaptéry, tři VPN role, fronty, agregovaný payload, Wintun integrace a nativní tray jsou již součástí implementace. Totéž platí pro linuxovou platformní vrstvu, systemd službu, CLI a GTK tray podle části [Linux](#linux). Jejich opětovná implementace není dalším krokem. Existence těchto částí neznamená splnění všech integračních, vizuálních nebo výkonových testovacích povinností.
 
-1. Při změně dodaných částí ověřit příslušný kontrakt existujícími cílenými testy. Skutečné Windows I/O, služba, VPN, instalace a vizuální/runtime akceptace mají samostatné prostředí a datovanou evidenci RUN/NOT RUN podle výše uvedených testovacích oddílů a [UX14](tray_UX.md#ux14-ověření-a-velikost).
+1. Při změně dodaných částí ověřit příslušný kontrakt existujícími cílenými testy. Skutečné Windows a linuxové I/O, služba, VPN, instalace a vizuální/runtime akceptace mají samostatné prostředí a datovanou evidenci RUN/NOT RUN podle výše uvedených testovacích oddílů a [UX14](tray_UX.md#ux14-ověření-a-velikost).
 2. Budoucí pre-poll admission backpressure zůstává nedodané. Jeho požadavek v části Příjem dat se smí označit za dodaný až po implementaci a odpovídajícím ověření. Odložené rozhodnutí R04 o integritě a síťovém vlastnictví Wintun zůstává otevřené, nyní bez realizace a nových testů, viz [T08](Plans/2026-09-12-02-29-09/T08.md).
-3. Budoucí porty mohou doplnit Linux TUN a macOS Network Extension a potřebné transportní, kryptografické a systémové adaptéry. Jejich návrh v platformních částech není tvrzením o dodaném portu ani ověřené distribuci.
+3. Budoucí port může doplnit macOS Network Extension a potřebné transportní, kryptografické a systémové adaptéry. Jeho návrh v části [macOS](#macos) není tvrzením o dodaném portu ani ověřené distribuci. Linux už budoucím portem není, jeho další změny se řídí částí [Linux](#linux) a ověřují se datovanými reporty.
 
 Agregovaný payload není kompatibilní se starším pravidlem jednoho IPv4 paketu v ciphertextu. Kompatibilní klienti a server musí používat shodný formát podle [protocol.md](protocol.md).
 
