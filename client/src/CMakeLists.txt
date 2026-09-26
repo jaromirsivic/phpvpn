@@ -95,5 +95,31 @@ if(WIN32)
         PRIVATE bcrypt winhttp iphlpapi ws2_32 advapi32 shell32 ole32
     )
 endif()
-# The Linux platform layer (phpvpn-platform) arrives in later work packages. Until
-# then a Linux build produces the core and its portable tests only.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
+    find_package(CURL 8.5 REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PHPVPN_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+    find_package(Threads REQUIRED)
+
+    add_library(phpvpn-platform STATIC
+        platform/linux/clock_linux.cpp
+        platform/linux/config_files_linux.cpp
+        platform/linux/crypto_openssl.cpp
+        platform/linux/dns_snapshot.cpp
+        platform/linux/durable_file_linux.cpp
+        platform/linux/ipc_unix.cpp
+        platform/linux/netconfig_netlink.cpp
+        platform/linux/netlink_codec.cpp
+        platform/linux/paths_linux.cpp
+        platform/linux/transport_curl.cpp
+        platform/linux/tunnel_tun.cpp
+    )
+
+    target_include_directories(phpvpn-platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+    target_link_libraries(phpvpn-platform
+        PUBLIC phpvpn-core phpvpn-compile-options Threads::Threads
+        PRIVATE OpenSSL::Crypto CURL::libcurl PkgConfig::PHPVPN_SYSTEMD
+    )
+endif()

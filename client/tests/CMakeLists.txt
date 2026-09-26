@@ -52,7 +52,9 @@ set(PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES
 add_executable(phpvpn-core-tests unit/harness.cpp ${PHPVPN_PORTABLE_TEST_SOURCES})
 target_include_directories(phpvpn-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
 target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-core phpvpn-compile-options)
-if(TARGET phpvpn-platform)
+# PHPVPN_LINUX_CRYPTO_READY is switched on by WP02 once the OpenSSL provider replaces
+# its placeholder; until then the crypto dependent tests stay out of the Linux suite.
+if(TARGET phpvpn-platform AND (WIN32 OR PHPVPN_LINUX_CRYPTO_READY))
     target_sources(phpvpn-core-tests PRIVATE ${PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES})
     target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-platform)
 endif()
@@ -65,6 +67,37 @@ target_include_directories(phpvpn-logger-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(phpvpn-logger-tests PRIVATE phpvpn-core phpvpn-compile-options)
 add_test(NAME phpvpn-logger-tests COMMAND phpvpn-logger-tests)
 set_tests_properties(phpvpn-logger-tests PROPERTIES TIMEOUT 30)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux platform layer tests that need no privileges. Each work package owns
+    # its own test file (plan-v001 section 9.4).
+    add_executable(phpvpn-linux-tests
+        unit/harness.cpp
+        linux/unit/test_clock_linux.cpp
+        linux/unit/test_config_files_linux.cpp
+        linux/unit/test_transport_curl.cpp
+        linux/unit/test_netlink_codec.cpp
+        linux/unit/test_ipc_unix.cpp
+    )
+    target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    target_link_libraries(phpvpn-linux-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    add_test(NAME phpvpn-linux-tests COMMAND phpvpn-linux-tests)
+    set_tests_properties(phpvpn-linux-tests PROPERTIES LABELS "linux" TIMEOUT 300)
+
+    # Tests that create TUN interfaces, addresses and routes. They need root and
+    # run inside a private network namespace, see tests/linux/netns/README.md.
+    option(PHPVPN_BUILD_PRIVILEGED_TESTS "Build Linux network namespace tests (root required)" ON)
+    if(PHPVPN_BUILD_PRIVILEGED_TESTS)
+        add_executable(phpvpn-netns-tests
+            unit/harness.cpp
+            linux/netns/test_tunnel_netns.cpp
+        )
+        target_include_directories(phpvpn-netns-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+        target_link_libraries(phpvpn-netns-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+        # Not registered with ctest: the runner script provides root and the namespace.
+    endif()
+    return()
+endif()
 
 if(NOT WIN32)
     return()
