@@ -7,6 +7,15 @@ Files: *
 Copyright: 2026 phpvpn contributors
 License: Expat
 
+Files: assets/icons/* assets/linux/hicolor/*
+Copyright: Google LLC
+           2026 phpvpn contributors
+License: Apache-2.0
+Comment: The state icons of phpvpn-tray are the Material Symbols glyph
+ shield_lock (https://github.com/google/material-design-icons), rasterised in
+ three state colours within a white square with a black border; see
+ /usr/share/doc/phpvpn-tray/NOTICE-material-symbols.txt.
+
 License: Expat
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal
@@ -25,3 +34,19 @@ License: Expat
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
+
+License: Apache-2.0
+ Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ use this file except in compliance with the License. You may obtain a copy of
+ the License at
+ .
+ http://www.apache.org/licenses/LICENSE-2.0
+ .
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ License for the specific language governing permissions and limitations under
+ the License.
+ .
+ On Debian systems, the complete text of the Apache License, Version 2.0 can be
+ found in "/usr/share/common-licenses/Apache-2.0".

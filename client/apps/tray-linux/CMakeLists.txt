@@ -57,6 +57,12 @@ install(FILES "${PHPVPN_LINUX_DESKTOP_DIR}/phpvpn-tray.desktop" DESTINATION "${C
 # XDG autostart for every user, the counterpart of the Windows HKLM Run value.
 install(FILES "${PHPVPN_LINUX_DESKTOP_DIR}/phpvpn-tray-autostart.desktop"
     DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/xdg/autostart" RENAME "phpvpn-tray.desktop")
+install(FILES "${CMAKE_SOURCE_DIR}/packaging/linux/man/phpvpn-tray.1" DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+# The state icons derive from Material Symbols (Apache-2.0): licence and notice
+# travel with them (RPM %license; the Debian package uses debian/copyright).
+install(FILES "${CMAKE_SOURCE_DIR}/assets/icons/LICENSE-material-symbols.txt"
+              "${CMAKE_SOURCE_DIR}/assets/icons/NOTICE-material-symbols.txt"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/phpvpn-tray")
 
 # Development harness only: scripted phpvpn service on a private socket for the
 # tray (tests/linux/tray/README.md). Never installed or packaged.

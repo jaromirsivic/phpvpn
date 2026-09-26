@@ -2,6 +2,7 @@
 // application launcher with --show-window and the installer with
 // --installation-complete; every later launch forwards to the running instance.
 #include <glib.h>
+#include <gtk/gtk.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,14 @@ int main(int argc, char** argv) {
     if (!options) {
         std::fputs("phpvpn-tray: invalid PHPVPN_TRAY_* development setting\n", stderr);
         return 2;
+    }
+    // Same initialisation as GtkApplication startup (no argv parsing), checked up
+    // front: without a display gtk_init would only warn and exit. The tray belongs
+    // to a desktop session; the service and the phpvpn command need none.
+    if (!gtk_init_check(nullptr, nullptr)) {
+        std::fputs("phpvpn-tray: cannot open a graphical display (neither WAYLAND_DISPLAY nor DISPLAY works).\n"
+                   "The tray runs in a desktop session; use the phpvpn command on a system without one.\n", stderr);
+        return 1;
     }
     TrayApp application(std::move(*options));
     return application.run(argc, argv);

@@ -2,7 +2,7 @@
 # Installs the phpvpn client for Linux from this folder (plan-v001 section
 # 4.13).
 #
-#   sudo sh install.sh [--headless] [--no-weak-deps] [--verify-only]
+#   sudo sh install.sh [--headless | --with-tray] [--no-weak-deps] [--verify-only]
 #
 # The order is fail closed: nothing is installed or changed until every
 # verification passed.
@@ -16,8 +16,11 @@
 #      private root owned copy that is also the installation source,
 #   5. the packages with dnf or apt-get, their dependencies from the
 #      distribution repositories,
-#   6. phpvpn-tray only on a graphical system and when the folder holds it;
-#      --headless always skips it,
+#   6. phpvpn-tray when the folder holds it and the system has a graphical
+#      login (default target graphical.target and a display manager);
+#      --with-tray installs it anyway, --headless skips it. An installed
+#      phpvpn-tray is always upgraded together with phpvpn, whose exact
+#      release it requires,
 #   7. systemctl enable --now phpvpn.service,
 #   8. the control socket /run/phpvpn/control-v1.sock within 30 seconds,
 #   9. phpvpn status.
@@ -36,7 +39,7 @@ SOCKET=/run/phpvpn/control-v1.sock
 SOCKET_TIMEOUT=30
 
 usage() {
-    echo "usage: sudo sh install.sh [--headless] [--no-weak-deps] [--verify-only]"
+    echo "usage: sudo sh install.sh [--headless | --with-tray] [--no-weak-deps] [--verify-only]"
 }
 refuse() {
     printf 'installation refused: %s\n' "$*" >&2
@@ -52,7 +55,8 @@ verify_only=false
 weak_deps=true
 for argument in "$@"; do
     case $argument in
-        --headless) headless=yes ;;
+        --headless) [ "$headless" != no ] || { usage >&2; exit 2; }; headless=yes ;;
+        --with-tray) [ "$headless" != yes ] || { usage >&2; exit 2; }; headless=no ;;
         --verify-only) verify_only=true ;;
         --no-weak-deps) weak_deps=false ;;
         -h|--help) usage; exit 0 ;;
@@ -228,18 +232,38 @@ fi
 
 # ----------------------------------------------------------- 5. packages
 [ -d /run/systemd/system ] || refuse "systemd is not running, phpvpn.service cannot be managed"
-if [ -n "$tray" ]; then
-    if [ "$headless" = auto ]; then
-        if [ "$(systemctl get-default 2> /dev/null)" = graphical.target ]; then headless=no; else headless=yes; fi
-    fi
+if [ "$kind" = rpm ]; then
+    tray_installed() { rpm -q phpvpn-tray > /dev/null 2>&1; }
 else
+    tray_installed() { [ "$(dpkg-query -W -f='${Status}' phpvpn-tray 2> /dev/null)" = "install ok installed" ]; }
+fi
+tray_upgrade=false
+if [ -z "$tray" ]; then
+    [ "$headless" != no ] || refuse "--with-tray was given, but the folder holds no phpvpn-tray package"
     headless=yes
+elif tray_installed; then
+    # phpvpn-tray requires the exact phpvpn release: upgrading phpvpn alone
+    # would fail, so an installed tray always follows.
+    [ "$headless" != yes ] || tray_upgrade=true
+    headless=no
+elif [ "$headless" = auto ]; then
+    # A graphical login needs the graphical default target and a display
+    # manager; a container or server image often has the first without the other.
+    if [ "$(systemctl get-default 2> /dev/null)" = graphical.target ] &&
+       systemctl cat display-manager.service > /dev/null 2>&1; then
+        headless=no
+    else
+        headless=yes
+    fi
 fi
 
 cd "$work/files"
 set -- "./$main"
 if [ "$headless" = no ]; then set -- "$@" "./$tray"; fi
 echo "installing    : $*"
+if [ "$tray_upgrade" = true ]; then
+    echo "note          : phpvpn-tray is installed and is upgraded together with phpvpn despite --headless"
+fi
 if [ "$kind" = rpm ]; then
     if [ "$weak_deps" = false ]; then
         dnf install -y --setopt=install_weak_deps=False "$@" || failed "dnf could not install the packages"
@@ -277,6 +301,6 @@ echo "phpvpn $release_version installed successfully, phpvpn.service is enabled 
 if [ "$headless" = no ]; then
     echo "The tray starts at the next graphical login; a tray that is already running keeps its version until then."
 elif [ -n "$tray" ]; then
-    echo "Headless installation: phpvpn-tray was not installed."
+    echo "Headless installation: phpvpn-tray was not installed (sudo sh install.sh --with-tray adds it)."
 fi
 echo "Configure the connection with 'phpvpn set-config <file>' (or the tray Wizard) and connect with 'phpvpn connect'."

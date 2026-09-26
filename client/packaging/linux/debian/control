@@ -6,7 +6,10 @@ Rules-Requires-Root: no
 Build-Depends: debhelper-compat (= 13),
                cmake (>= 3.28),
                g++ (>= 4:13),
+               desktop-file-utils,
+               libayatana-appindicator3-dev,
                libcurl4-openssl-dev,
+               libgtk-3-dev,
                libssl-dev (>= 3),
                libsystemd-dev,
                ninja-build,
@@ -25,14 +28,16 @@ Description: VPN client service and command line client
  service over a local socket and needs neither root nor a graphical session.
  A NetworkManager snippet keeps NetworkManager away from the phpvpn interface.
 
-# WP11: the phpvpn-tray binary package follows here, with its own
-# debian/phpvpn-tray.install, for example
-#
-# Package: phpvpn-tray
-# Architecture: any
-# Depends: phpvpn (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
-# Recommends: gnome-shell-extension-appindicator
-# Description: phpvpn tray application
-#  ...
-#
-# and the GTK 3 and ayatana development packages join Build-Depends.
+Package: phpvpn-tray
+Architecture: any
+Depends: phpvpn (= ${binary:Version}), ${misc:Depends}, ${shlibs:Depends}
+Recommends: gnome-shell-extension-appindicator
+Description: tray application of the phpvpn VPN client
+ phpvpn-tray shows the connection state of the phpvpn service in the desktop
+ notification area and offers Connect, Disconnect, the configuration Wizard,
+ the configuration editor, communication contracts, server information and
+ statistics.
+ .
+ The tray starts at every graphical login and never owns the VPN connection:
+ closing it or logging out leaves the connection as it is. Without a
+ notification area host it shows a control window instead.

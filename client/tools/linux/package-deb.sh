@@ -10,7 +10,7 @@
 # staging copy of client/ with packaging/linux/debian copied to debian/.
 # PHPVPN_PACKAGE_RELEASE sets the Debian revision (default 1); another value
 # adds a rebuild entry to the staged changelog. Only the binary packages
-# (phpvpn_<version>-<revision>_amd64.deb, later also phpvpn-tray) are copied to
+# (phpvpn_<version>-<revision>_amd64.deb and phpvpn-tray_<version>-<revision>_amd64.deb) are copied to
 # <output-directory>; dbgsym packages stay in the removed staging directory.
 set -eu
 output=${1:?usage: package-deb.sh <output-directory>}

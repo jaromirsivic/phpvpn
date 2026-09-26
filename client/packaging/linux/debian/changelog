@@ -1,6 +1,7 @@
 phpvpn (1.0.0-1) unstable; urgency=medium
 
   * First Linux package: headless service, command line client, systemd
-    unit, NetworkManager snippet and manual pages.
+    unit, NetworkManager snippet and manual pages; the tray application in
+    the phpvpn-tray package.
 
  -- phpvpn maintainers <maintainers@phpvpn.invalid>  Sat, 26 Sep 2026 12:00:00 +0000

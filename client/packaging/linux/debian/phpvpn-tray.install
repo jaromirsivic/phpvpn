@@ -1,0 +1,5 @@
+usr/bin/phpvpn-tray
+usr/share/applications/phpvpn-tray.desktop
+etc/xdg/autostart/phpvpn-tray.desktop
+usr/share/icons/hicolor/*/apps/phpvpn*.png
+usr/share/man/man1/phpvpn-tray.1
