@@ -63,8 +63,6 @@ function Get-LinuxClientSources {
         'install.sh' = 'client/packaging/linux/dist/install.sh'
         'uninstall.sh' = 'client/packaging/linux/dist/uninstall.sh'
         'README.md' = 'client/packaging/linux/dist/README.md'
-        'LICENSE-material-symbols.txt' = 'client/assets/icons/LICENSE-material-symbols.txt'
-        'NOTICE-material-symbols.txt' = 'client/assets/icons/NOTICE-material-symbols.txt'
     }
 }
 

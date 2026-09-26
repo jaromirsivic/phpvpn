@@ -21,7 +21,6 @@ route and DNS are never changed (split tunnel).
 | `release-manifest.sig` | Detached RSA PKCS#1 v1.5 SHA-256 signature of the manifest |
 | `release-signing.cer` | Public certificate of the signing key |
 | `README.md` | This document |
-| `LICENSE-material-symbols.txt`, `NOTICE-material-symbols.txt` | Licence (Apache-2.0) and notice of the Material Symbols glyph of the tray icons |
 
 The graphical tray is the separate package `phpvpn-tray`. The package `phpvpn`
 has no graphical dependency, so a server needs no GUI library; only

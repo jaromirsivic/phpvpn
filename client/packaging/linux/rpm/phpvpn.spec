@@ -52,8 +52,6 @@ NetworkManager snippet keeps NetworkManager away from the phpvpn interface.
 # triggers refresh the icon cache, so no scriptlet is needed.
 %package tray
 Summary:        Tray application of the VPN client
-# The state icons are modified Material Symbols.
-License:        MIT AND Apache-2.0
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 Requires:       hicolor-icon-theme
 # Vanilla GNOME shows tray icons only with this extension. It is recommended,
@@ -131,11 +129,8 @@ desktop-file-validate %{buildroot}%{_sysconfdir}/xdg/autostart/phpvpn-tray.deskt
 
 %if %{with tray}
 %files tray
-# The state icons derive from Material Symbols (Apache-2.0); CMake installs the
-# licence and the notice next to them.
-%dir %{_datadir}/licenses/phpvpn-tray
-%license %{_datadir}/licenses/phpvpn-tray/LICENSE-material-symbols.txt
-%license %{_datadir}/licenses/phpvpn-tray/NOTICE-material-symbols.txt
+# MIT like the main package (its licence file comes with phpvpn, which the tray
+# requires at the exact release); the icons are the project's own PHPVPN icons.
 %{_bindir}/phpvpn-tray
 %{_datadir}/applications/phpvpn-tray.desktop
 # XDG autostart for every user (the Windows HKLM Run value). A user disables it
@@ -145,6 +140,10 @@ desktop-file-validate %{buildroot}%{_sysconfdir}/xdg/autostart/phpvpn-tray.deskt
 %{_datadir}/icons/hicolor/*/apps/phpvpn-connected.png
 %{_datadir}/icons/hicolor/*/apps/phpvpn-connecting.png
 %{_datadir}/icons/hicolor/*/apps/phpvpn-disconnected.png
+%{_datadir}/icons/hicolor/scalable/apps/phpvpn.svg
+%{_datadir}/icons/hicolor/scalable/apps/phpvpn-connected.svg
+%{_datadir}/icons/hicolor/scalable/apps/phpvpn-connecting.svg
+%{_datadir}/icons/hicolor/scalable/apps/phpvpn-disconnected.svg
 %{_mandir}/man1/phpvpn-tray.1*
 %endif
 

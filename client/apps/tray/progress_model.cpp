@@ -63,7 +63,6 @@ void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/)
         if (status.state == "disconnected" && status.phase == "idle" &&
             status.tunnelReady == "no" && !status.hasError) {
             view_.stage = ProgressStage::succeeded;
-            view_.shield = Shield::green;
         }
         return;
     }
@@ -73,11 +72,9 @@ void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/)
     view_.communicationContracts = status.communicationContracts;
     if (status.state == "connected" && status.phase == "running" && status.tunnelReady == "yes" && !status.hasError) {
         view_.stage = ProgressStage::succeeded;
-        view_.shield = Shield::green;
         // Checkpoints remain the exact four checkpoints from this same status snapshot.
     } else if (status.hasError || status.state == "error") {
         view_.stage = ProgressStage::failed;
-        view_.shield = Shield::grey;
         const auto &error = progressErrorText(status.errorCode);
         view_.errorCode = error.code;
         view_.errorDescription = error.description;
@@ -88,7 +85,6 @@ void ProgressModel::onSnapshot(const TrayStatus &status, std::int64_t /*nowMs*/)
 void ProgressModel::onCommandFailure() {
     if (!disconnect_ || view_.stage != ProgressStage::connecting || view_.closeRequested) return;
     view_.stage = ProgressStage::failed;
-    view_.shield = Shield::grey;
     view_.errorCode = "disconnect_unconfirmed";
 }
 void ProgressModel::onSuccessPresented(std::int64_t nowMs) {

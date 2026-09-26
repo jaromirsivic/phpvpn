@@ -1,19 +1,21 @@
 // GTK styling of the Linux tray: one GtkCssProvider generated from the portable
-// palette and font roles of ui_style.h (tray_UX.md UX01), and cairo drawing of the
-// state shields. Pixel parity with the Win32 layout is not required; content,
-// order, texts, colors and behaviour are (plan 4.12 "Linuxove rozdily").
+// palette and font roles of ui_style.h (tray_UX.md UX01). Pixel parity with the
+// Win32 layout is not required; content, order, texts, colors and behaviour are
+// (plan 4.12 "Linuxove rozdily").
 #pragma once
 #include <gtk/gtk.h>
 
 #include <string>
 
-#include "progress_model.h"
+#include "layout.h"
 #include "ui_style.h"
 
 namespace phpvpn::tray::style {
 // CSS classes shared by all tray windows (WP10 windows use the same names).
 inline constexpr const char kWindow[] = "phpvpn-window";
 inline constexpr const char kCard[] = "phpvpn-card";
+// Together with kCard: the same card with the smaller padding of compact windows.
+inline constexpr const char kCompactCard[] = "phpvpn-card-compact";
 inline constexpr const char kEyebrow[] = "phpvpn-eyebrow";
 inline constexpr const char kHeading[] = "phpvpn-heading";
 inline constexpr const char kCardTitle[] = "phpvpn-card-title";
@@ -49,12 +51,4 @@ void setClass(GtkWidget* widget, const char* name, bool enabled);
 
 // Common window setup: application icon, background class and default size in DIP.
 void prepareWindow(GtkWindow* window, const char* title, Size clientDip);
-
-// The Material Symbols shield_lock glyph (Apache License 2.0, see
-// client/assets/icons/LICENSE-material-symbols.txt), the same shape as the tray
-// icons: grey, orange and green from the palette.
-ui::Color shieldColor(Shield shield);
-void drawShield(cairo_t* cr, double x, double y, double size, Shield shield);
-// A GtkDrawingArea of size x size DIP that paints the shield returned by current.
-GtkWidget* newShieldArea(int size, Shield* current);
 }  // namespace phpvpn::tray::style

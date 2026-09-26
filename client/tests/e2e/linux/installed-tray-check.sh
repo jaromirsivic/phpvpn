@@ -44,11 +44,12 @@ check "desktop-file-validate of both entries" \
     'desktop-file-validate /etc/xdg/autostart/phpvpn-tray.desktop && desktop-file-validate /usr/share/applications/phpvpn-tray.desktop'
 check "28 hicolor icons" \
     'test "$(ls /usr/share/icons/hicolor/*/apps/phpvpn.png /usr/share/icons/hicolor/*/apps/phpvpn-*.png | wc -l)" = 28'
+check "4 scalable hicolor icons" 'test "$(ls /usr/share/icons/hicolor/scalable/apps/phpvpn*.svg | wc -l)" = 4'
 check "the hicolor icon cache lists the tray icons (hicolor-icon-theme file trigger)" \
     'grep -qa phpvpn-connected /usr/share/icons/hicolor/icon-theme.cache'
 check "phpvpn-tray(1)" 'man -w phpvpn-tray > /dev/null'
-check "Material Symbols licence and notice" \
-    'test -f /usr/share/licenses/phpvpn-tray/LICENSE-material-symbols.txt && test -f /usr/share/licenses/phpvpn-tray/NOTICE-material-symbols.txt'
+check "phpvpn-tray is MIT only, no third-party icon licence" \
+    'test "$(rpm -q --qf "%{LICENSE}" phpvpn-tray)" = MIT && test ! -e /usr/share/licenses/phpvpn-tray'
 check "ldd resolves every library of phpvpn-tray" '! ldd /usr/bin/phpvpn-tray | grep -q "not found"'
 check "the phpvpn package has no graphical dependency" '! rpm -q --requires phpvpn | grep -Eiq "gtk|gdk|ayatana|libX|wayland"'
 
@@ -56,7 +57,7 @@ check "the phpvpn package has no graphical dependency" '! rpm -q --requires phpv
 if command -v getenforce > /dev/null 2>&1; then
     check "SELinux enforcing" 'test "$(getenforce)" = Enforcing'
     check "restorecon -n finds nothing to relabel in the tray files" \
-        'test -z "$(sudo restorecon -nvR /usr/bin/phpvpn-tray /etc/xdg/autostart/phpvpn-tray.desktop /usr/share/applications/phpvpn-tray.desktop /usr/share/licenses/phpvpn-tray $(ls /usr/share/icons/hicolor/*/apps/phpvpn*.png) 2>&1)"'
+        'test -z "$(sudo restorecon -nvR /usr/bin/phpvpn-tray /etc/xdg/autostart/phpvpn-tray.desktop /usr/share/applications/phpvpn-tray.desktop $(ls /usr/share/icons/hicolor/*/apps/phpvpn*.png /usr/share/icons/hicolor/scalable/apps/phpvpn*.svg) 2>&1)"'
     ls -Z /usr/bin/phpvpn-tray /etc/xdg/autostart/phpvpn-tray.desktop /usr/share/applications/phpvpn-tray.desktop
 fi
 

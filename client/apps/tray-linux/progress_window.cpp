@@ -95,12 +95,10 @@ void ProgressWindow::build() {
     gtk_widget_set_margin_end(content, ui::compactMargin);
     gtk_container_add(GTK_CONTAINER(scroller), content);
 
-    GtkWidget* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, ui::relatedGap);
-    shieldArea_ = style::newShieldArea(32, &shield_);
-    gtk_box_pack_start(GTK_BOX(header), shieldArea_, FALSE, FALSE, 0);
+    // Text only, like the Win32 window: the eyebrow, the check glyphs and the coloured
+    // result panel carry the state, no decorative state symbol.
     eyebrow_ = label("", style::kEyebrow, true);
-    gtk_box_pack_start(GTK_BOX(header), eyebrow_, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(content), header, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), eyebrow_, FALSE, FALSE, 0);
 
     card_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     style::addClass(card_, style::kCard);
@@ -325,10 +323,6 @@ void ProgressWindow::refresh() {
     style::setClass(panel_, style::kPanelSuccess, success);
     style::setClass(panel_, style::kPanelWarning, !success && waiting);
     style::setClass(panel_, style::kPanelError, !success && !waiting);
-    if (shield_ != v.shield) {
-        shield_ = v.shield;
-        gtk_widget_queue_draw(shieldArea_);
-    }
 }
 
 void ProgressWindow::onSnapshot(const TrayStatus& snapshot) {
@@ -377,7 +371,7 @@ void ProgressWindow::onDestroyed() {
     reader_.abandon();
     detailsReader_.abandon();
     readPending_ = false;
-    window_ = shieldArea_ = eyebrow_ = card_ = panel_ = panelGrid_ = panelHeading_ = panelAction_ = countdown_ =
+    window_ = eyebrow_ = card_ = panel_ = panelGrid_ = panelHeading_ = panelAction_ = countdown_ =
         errorDetail_ = nullptr;
     fields_ = {};
     checks_ = {};

@@ -53,8 +53,6 @@ dist/
         release-manifest.sig
         release-signing.cer
         LICENSE-wintun.txt
-        LICENSE-material-symbols.txt
-        NOTICE-material-symbols.txt
     macOS/
       README.md
     Linux/
@@ -69,8 +67,6 @@ dist/
         release-manifest.json
         release-manifest.sig
         release-signing.cer
-        LICENSE-material-symbols.txt
-        NOTICE-material-symbols.txt
 ```
 
 `<verze>` je verze klienta z `client/CMakeLists.txt`, `<release>` je společné číslo release všech čtyř linuxových balíčků.
@@ -103,7 +99,7 @@ Požadavky na originální nepřejmenovaný `wintun.dll`, podpisy, architekturu,
 
 ### Linux x64
 
-`dist/client/Linux/x64` MUSÍ být úplnou samostatně předatelnou klientskou distribucí pro Fedoru a Ubuntu na x86_64. Obsahuje balíčky `phpvpn` (služba a CLI, bez grafických závislostí) a `phpvpn-tray` (tray aplikace) ve formátu RPM, sestavené na Fedoře 44, a DEB, sestavené na Ubuntu 24.04. Dále instalační vstupy `install.sh` a `uninstall.sh`, návod `README.md`, licenci a upozornění Material Symbols pro ikony tray a podepsaný manifest. Chování balíčků, instalace, služby a tray stanoví [client.md](client.md) a přibalený `README.md`.
+`dist/client/Linux/x64` MUSÍ být úplnou samostatně předatelnou klientskou distribucí pro Fedoru a Ubuntu na x86_64. Obsahuje balíčky `phpvpn` (služba a CLI, bez grafických závislostí) a `phpvpn-tray` (tray aplikace) ve formátu RPM, sestavené na Fedoře 44, a DEB, sestavené na Ubuntu 24.04. Dále instalační vstupy `install.sh` a `uninstall.sh`, návod `README.md` a podepsaný manifest. Ikony tray jsou vlastní grafika PHPVPN pod licencí projektu, žádná licence ikon třetí strany se nepřibaluje. Chování balíčků, instalace, služby a tray stanoví [client.md](client.md) a přibalený `README.md`.
 
 Linuxové balíčky se NESMĚJÍ sestavovat na Windows hostiteli ani z jiného zdrojového stavu než Windows klient. Sestavují se na linuxovém build hostiteli (podman nebo docker) nástrojem `client/tools/linux/build-packages-in-container.sh` v čistém kontejneru `fedora:44` a `ubuntu:24.04` ze stejného commitu, ze kterého se sestavuje Windows klient. Oba běhy zapisují do jedné výstupní složky `work/linux-packages/<id>` s balíčky, `SHA256SUMS` a `build-provenance.json` (commit, příznak `sourceDirty`, distribuce, image, kompilátor a verze knihoven). Tato složka se beze změny přenese do `work/linux-packages/<id>` checkoutu na Windows hostiteli a předá se celkovému vstupu parametrem `-LinuxPackagesDirectory`.
 

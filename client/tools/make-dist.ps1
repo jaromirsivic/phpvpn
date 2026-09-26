@@ -5,7 +5,7 @@
 .DESCRIPTION
     plan_client.md chapters 3.5, 20.1 and 20.2. The result is a complete,
     handover ready folder that contains the five executables, the unrenamed
-    architecture specific wintun.dll, both upstream licences, the install and
+    architecture specific wintun.dll, the Wintun licence, the install and
     uninstall scripts and a signed release manifest with a SHA-256 for every
     packaged file.
 
@@ -130,10 +130,6 @@ foreach ($name in $binaries + @("wintun.dll")) {
 
 Copy-Item -LiteralPath (Join-Path $clientRoot "third_party\wintun\LICENSE.txt") `
           -Destination (Join-Path $OutputDirectory "LICENSE-wintun.txt")
-Copy-Item -LiteralPath (Join-Path $clientRoot "assets\icons\LICENSE-material-symbols.txt") `
-          -Destination $OutputDirectory
-Copy-Item -LiteralPath (Join-Path $clientRoot "assets\icons\NOTICE-material-symbols.txt") `
-          -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\install.bat") -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\uninstall.bat") -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\install.ps1") -Destination $OutputDirectory

@@ -7,9 +7,9 @@ Record OS version, display scaling, build identifier, actual result and tester
 for each scenario before release. Never add screenshots or secret configuration
 values to the repository.
 
-- [ ] **19, NOT RUN**: inspect all three shield icons at 100%, 125%, 150% and 200%
-  on light and dark taskbars. Confirm opaque white background, continuous black
-  border, equal geometry and sharp rendering. Verify license notices in dist.
+- [ ] **19, NOT RUN**: inspect all three PHPVPN state icons at 100%, 125%, 150% and 200%
+  on light and dark taskbars. Confirm the field, bars and centre of assets/*.ico,
+  equal geometry and sharp rendering, and no shield or lock motif anywhere.
 - [ ] **20, 35, NOT RUN**: at 100% DPI measure the default Edit Config client area
   as 1080 x 560. Drag every edge and corner repeatedly, especially widening the
   window beside Cancel where the old vertical strip appeared. Check no strips,
@@ -21,7 +21,7 @@ values to the repository.
   and confirm fonts, both scrollbars and layout follow the new scale.
 - [ ] **21, NOT RUN**: choose Connect with the pointer on a secondary monitor at
   a different DPI. Progress opens centered inside that monitor's work area.
-  Confirm orange shield and Connecting, checkpoints in the prescribed order,
+  Confirm the Connecting text (no state symbol), checkpoints in the prescribed order,
   green outcomes reconstructed despite skipped phases, success only after
   connected and automatic close about three seconds later with no countdown.
 - [ ] **22, 30, 31, NOT RUN**: independently trigger unavailable/invalid endpoint,

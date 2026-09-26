@@ -59,13 +59,11 @@ private:
     ProgressDetails details_;
     std::uint64_t diagnosticEpoch_ = 0;
     std::string diagnosticAttemptId_;
-    Shield shield_ = Shield::orange;
     guint timer_ = 0;
     guint placement_ = 0;
     bool countdownBeside_ = true;
     bool readPending_ = false, disconnect_ = false, waitingForReply_ = false;
     GtkWidget* window_ = nullptr;
-    GtkWidget* shieldArea_ = nullptr;
     GtkWidget* eyebrow_ = nullptr;
     GtkWidget* card_ = nullptr;
     std::array<GtkWidget*, 2> fields_{};

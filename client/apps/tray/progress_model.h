@@ -5,7 +5,6 @@
 
 namespace phpvpn::tray {
 enum class ProgressStage { connecting, succeeded, failed };
-enum class Shield { grey, orange, green };
 inline constexpr std::int64_t kSuccessDisplayMs = 3000;
 
 struct ProgressErrorText {
@@ -16,7 +15,6 @@ const ProgressErrorText &progressErrorText(std::string_view code);
 
 struct ProgressView {
     ProgressStage stage = ProgressStage::connecting;
-    Shield shield = Shield::orange;
     CheckpointResult serverUrl = CheckpointResult::pending;
     CheckpointResult serverSecret = CheckpointResult::pending;
     CheckpointResult accessKey = CheckpointResult::pending;

@@ -15,8 +15,7 @@
     The manifest adds the Linux fields platform, packageRelease, distributions
     (with the minimum version, the distribution release the package was built
     on), sourceCommit and sourceDirty. When the build directory holds
-    phpvpn-tray packages, they are staged too, together with the Material
-    Symbols licence and notice of the tray icons.
+    phpvpn-tray packages, they are staged too.
 #>
 [CmdletBinding()]
 param(
@@ -161,10 +160,6 @@ foreach ($name in $selected.Values) {
 }
 foreach ($name in @('install.sh', 'uninstall.sh', 'README.md')) {
     Copy-Item -LiteralPath (Join-Path $distSource $name) -Destination $OutputDirectory
-}
-if ($withTray) {
-    Copy-Item -LiteralPath (Join-Path $clientRoot "assets\icons\LICENSE-material-symbols.txt") -Destination $OutputDirectory
-    Copy-Item -LiteralPath (Join-Path $clientRoot "assets\icons\NOTICE-material-symbols.txt") -Destination $OutputDirectory
 }
 
 # --------------------------------------------------------------- the manifest

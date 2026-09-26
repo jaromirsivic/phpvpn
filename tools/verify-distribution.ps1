@@ -36,7 +36,7 @@ if ([IO.File]::ReadAllText((Join-Path $tree $name)) -cne (Get-UnsupportedClientR
 $expected.Add($name)
 $client = Join-Path $tree 'client/Windows/x64'
 $clientNames = @('phpvpn-service.exe','phpvpn-tray.exe','phpvpn.exe','install-phpvpn.exe','uninstall-phpvpn.exe',
-    'wintun.dll','LICENSE-wintun.txt','LICENSE-material-symbols.txt','NOTICE-material-symbols.txt',
+    'wintun.dll','LICENSE-wintun.txt',
     'install.bat','install.ps1','uninstall.bat','uninstall.ps1','release-manifest.json','release-manifest.sig','release-signing.cer')
 foreach ($name in $clientNames) { $expected.Add("client/Windows/x64/$name") }
 

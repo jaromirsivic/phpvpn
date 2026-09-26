@@ -6,15 +6,10 @@
 
 namespace phpvpn::tray {
 namespace {
-constexpr Size kControlClient{420, 520};
-Shield shieldFor(TrayIconState state) {
-    switch (state) {
-        case TrayIconState::connected: return Shield::green;
-        case TrayIconState::connecting: return Shield::orange;
-        case TrayIconState::disconnected: break;
-    }
-    return Shield::grey;
-}
+// The height follows the content (natural height), so every button including Exit is
+// visible without scrolling; the scroller only helps on screens lower than the window.
+constexpr Size kControlClient{420, -1};
+constexpr int kApplicationIconDip = 48;
 }  // namespace
 
 void ControlWindow::build() {
@@ -33,23 +28,29 @@ void ControlWindow::build() {
     }), nullptr);
     g_signal_connect(window_, "destroy", gtkCallback([](GtkWidget*, gpointer data) {
         auto* self = static_cast<ControlWindow*>(data);
-        self->window_ = self->status_ = self->shieldArea_ = self->toggle_ = nullptr;
+        self->window_ = self->status_ = self->toggle_ = nullptr;
     }), this);
 
     GtkWidget* scroller = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller), TRUE);
     gtk_container_add(GTK_CONTAINER(window_), scroller);
-    GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, ui::relatedGap);
-    gtk_widget_set_margin_top(content, ui::contentMargin);
-    gtk_widget_set_margin_bottom(content, ui::contentMargin);
+    GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, ui::fieldGap);
+    gtk_widget_set_margin_top(content, ui::compactMargin);
+    gtk_widget_set_margin_bottom(content, ui::compactMargin);
     gtk_widget_set_margin_start(content, ui::compactMargin);
     gtk_widget_set_margin_end(content, ui::compactMargin);
     gtk_container_add(GTK_CONTAINER(scroller), content);
 
+    // The PHPVPN application icon (default blue) from the icon theme, not a state symbol:
+    // the state is the status text next to it.
     GtkWidget* card = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, ui::relatedGap);
     style::addClass(card, style::kCard);
-    shieldArea_ = style::newShieldArea(48, &shield_);
-    gtk_box_pack_start(GTK_BOX(card), shieldArea_, FALSE, FALSE, 0);
+    style::addClass(card, style::kCompactCard);
+    GtkWidget* icon = gtk_image_new_from_icon_name(std::string(kApplicationIconName).c_str(), GTK_ICON_SIZE_DIALOG);
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), kApplicationIconDip);
+    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(card), icon, FALSE, FALSE, 0);
     status_ = gtk_label_new("");
     style::addClass(status_, style::kCardTitle);
     gtk_label_set_xalign(GTK_LABEL(status_), 0.0f);
@@ -61,8 +62,8 @@ void ControlWindow::build() {
     for (const auto& entry : controlWindowActions(view_)) {
         if (entry.kind == IndicatorMenuEntry::Kind::separator) {
             GtkWidget* separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-            gtk_widget_set_margin_top(separator, ui::spacing);
-            gtk_widget_set_margin_bottom(separator, ui::spacing);
+            gtk_widget_set_margin_top(separator, ui::spacing / 2);
+            gtk_widget_set_margin_bottom(separator, ui::spacing / 2);
             gtk_box_pack_start(GTK_BOX(content), separator, FALSE, FALSE, 0);
             continue;
         }
@@ -93,11 +94,6 @@ void ControlWindow::update(const IndicatorView& view) {
     if (!window_) return;
     gtk_label_set_text(GTK_LABEL(status_), view.statusText.c_str());
     gtk_button_set_label(GTK_BUTTON(toggle_), menuLabel(MenuAction::toggle, view.toggleDisconnects).c_str());
-    const auto shield = shieldFor(view.icon);
-    if (shield != shield_) {
-        shield_ = shield;
-        gtk_widget_queue_draw(shieldArea_);
-    }
 }
 
 void ControlWindow::destroy() {

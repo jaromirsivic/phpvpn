@@ -10,7 +10,7 @@ TrayStatus connecting() { TrayStatus status; status.valid = true; status.state =
 
 PHPVPN_TEST(TrayProgress, ReconstructsSkippedPhasesButSucceedsOnlyWhenConnected) {
     ProgressModel model;
-    PHPVPN_CHECK_EQ(model.view().shield, Shield::orange);
+    PHPVPN_CHECK_EQ(model.view().stage, ProgressStage::connecting);
     auto status = connecting();
     status.serverUrl = status.serverSecret = CheckpointResult::success;
     model.onSnapshot(status, 500);
@@ -25,7 +25,6 @@ PHPVPN_TEST(TrayProgress, ReconstructsSkippedPhasesButSucceedsOnlyWhenConnected)
     status.tunnelReady = "yes";
     model.onSnapshot(status, 1500);
     PHPVPN_CHECK_EQ(model.view().stage, ProgressStage::succeeded);
-    PHPVPN_CHECK_EQ(model.view().shield, Shield::green);
     model.onTick(9000);
     PHPVPN_CHECK(!model.view().closeRequested);
     model.onSuccessPresented(1500);

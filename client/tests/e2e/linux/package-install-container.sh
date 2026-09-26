@@ -37,7 +37,7 @@ case $image in
         tray_files='rpm -ql phpvpn-tray'
         tray_requires='rpm -q --requires phpvpn-tray'
         base_requires='rpm -q --requires phpvpn'
-        tray_licence='grep -q "Apache License" /usr/share/licenses/phpvpn-tray/LICENSE-material-symbols.txt && test -f /usr/share/licenses/phpvpn-tray/NOTICE-material-symbols.txt'
+        tray_licence='test "$(rpm -q --qf %{LICENSE} phpvpn-tray)" = MIT && test ! -e /usr/share/licenses/phpvpn-tray'
         tray_gui_dependencies='libgtk-3.so.0 libayatana-appindicator3.so.1'
         ;;
     ubuntu:24.04)
@@ -52,7 +52,7 @@ case $image in
         tray_files='dpkg -L phpvpn-tray'
         tray_requires="dpkg-query -W -f='\${Depends}\n' phpvpn-tray | tr ',' '\n'"
         base_requires="dpkg-query -W -f='\${Depends}\n' phpvpn | tr ',' '\n'"
-        tray_licence='grep -q "^License: Apache-2.0" /usr/share/doc/phpvpn-tray/copyright'
+        tray_licence='grep -q "^License: Expat" /usr/share/doc/phpvpn-tray/copyright && ! grep -Eqi "apache|material" /usr/share/doc/phpvpn-tray/copyright && test ! -e /usr/share/doc/phpvpn-tray/NOTICE-material-symbols.txt'
         tray_gui_dependencies='libgtk-3-0 libayatana-appindicator3-1'
         ;;
     *) echo "image must be fedora:<N> or ubuntu:24.04" >&2; exit 2 ;;
@@ -203,8 +203,9 @@ if ls "$first"/phpvpn-tray[-_]* > /dev/null 2>&1 && ls "$second"/phpvpn-tray[-_]
         'grep -qx "Exec=phpvpn-tray --show-window" /usr/share/applications/phpvpn-tray.desktop'
     check "28 hicolor icons (4 names x 7 sizes)" \
         'test "$(ls /usr/share/icons/hicolor/*/apps/phpvpn.png /usr/share/icons/hicolor/*/apps/phpvpn-*.png | wc -l)" = 28'
+    check "4 scalable hicolor icons" 'test "$(ls /usr/share/icons/hicolor/scalable/apps/phpvpn*.svg | wc -l)" = 4'
     check "phpvpn-tray(1) is part of the package" "$tray_files | grep -q '/man1/phpvpn-tray\.1'"
-    check "Material Symbols licence and notice" "$tray_licence"
+    check "phpvpn-tray is MIT only, no third-party icon licence" "$tray_licence"
     check "ldd resolves every library of phpvpn-tray" \
         'ldd /usr/bin/phpvpn-tray > /tmp/ldd.txt && ! grep -q "not found" /tmp/ldd.txt && grep -q libgtk-3 /tmp/ldd.txt && grep -q libayatana-appindicator3 /tmp/ldd.txt'
     for dependency in $tray_gui_dependencies; do
@@ -233,7 +234,7 @@ if ls "$first"/phpvpn-tray[-_]* > /dev/null 2>&1 && ls "$second"/phpvpn-tray[-_]
     check "uninstall.sh --remove-data removes phpvpn and phpvpn-tray" 'sh /root/release-2/uninstall.sh --remove-data'
     check "phpvpn-tray and phpvpn are removed" "! { $tray_installed; } && ! { $package_installed; }"
     check "tray files are removed" \
-        'test ! -e /usr/bin/phpvpn-tray && test ! -e /etc/xdg/autostart/phpvpn-tray.desktop && test ! -e /usr/share/applications/phpvpn-tray.desktop && ! ls /usr/share/icons/hicolor/*/apps/phpvpn*.png > /dev/null 2>&1'
+        'test ! -e /usr/bin/phpvpn-tray && test ! -e /etc/xdg/autostart/phpvpn-tray.desktop && test ! -e /usr/share/applications/phpvpn-tray.desktop && ! ls /usr/share/icons/hicolor/*/apps/phpvpn*.png /usr/share/icons/hicolor/scalable/apps/phpvpn*.svg > /dev/null 2>&1'
 else
     echo "NOT RUN: tray phase (the folders hold no phpvpn-tray package)"
 fi

@@ -1,4 +1,4 @@
-// Fallback control window (plan 4.12): status text, state shield and one button per
+// Fallback control window (plan 4.12): PHPVPN icon, status text and one button per
 // menu action in the UX04 order. It replaces the indicator when the desktop has no
 // StatusNotifierWatcher and is also shown by the application launcher
 // (phpvpn-tray --show-window). Closing it only hides it; the tray keeps running.
@@ -13,7 +13,6 @@
 
 #include "gtk_util.h"
 #include "indicator_model.h"
-#include "progress_model.h"
 
 namespace phpvpn::tray {
 class ControlWindow {
@@ -34,10 +33,8 @@ private:
     std::function<void(MenuAction)> onAction_;
     GtkWidget* window_ = nullptr;
     GtkWidget* status_ = nullptr;
-    GtkWidget* shieldArea_ = nullptr;
     GtkWidget* toggle_ = nullptr;
     std::vector<Binding*> bindings_;
-    Shield shield_ = Shield::grey;
     IndicatorView view_;
     DeferredCalls deferred_;
 };
