@@ -12,7 +12,9 @@
 
 #include "core/base/secure_buffer.h"
 #include "core/protocol/json.h"
+#include "contracts_window.h"
 #include "dialogs.h"
+#include "editor_window.h"
 #include "server_info_window.h"
 #include "statistics_window.h"
 #include "style.h"
@@ -81,6 +83,9 @@ TrayApp::TrayApp(TrayOptions options)
     // Read-only windows without drafts; their participants only receive endSession.
     installServerInfoWindow(*this);
     installStatisticsWindow(*this);
+    // Editing windows (WP10b), after the Wizard in the Windows lifecycle order.
+    installEditorWindow(*this);
+    installContractsWindow(*this);
 }
 
 TrayApp::~TrayApp() {

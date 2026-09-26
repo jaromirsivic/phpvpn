@@ -26,10 +26,16 @@ add_executable(phpvpn-tray
     server_info_window.cpp
     server_info_presenter.cpp
     statistics_window.cpp
+    editor_model.cpp
+    editor_window.cpp
+    contracts_view.cpp
+    contracts_window.cpp
+    password_sha_window.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/status_model.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/progress_model.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/progress_details.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/save_response.cpp
+    ${PHPVPN_TRAY_SHARED_DIR}/contracts_save_machine.cpp
 )
 target_include_directories(phpvpn-tray PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -62,6 +68,7 @@ install(FILES "${PHPVPN_LINUX_DESKTOP_DIR}/phpvpn-tray-autostart.desktop"
 # tray (tests/linux/tray/README.md). Never installed or packaged.
 if(BUILD_TESTING)
     add_executable(phpvpn-tray-mock-service "${CMAKE_SOURCE_DIR}/tests/linux/tray/mock_service.cpp"
-        "${CMAKE_SOURCE_DIR}/tests/linux/tray/mock_server_info.cpp")
+        "${CMAKE_SOURCE_DIR}/tests/linux/tray/mock_server_info.cpp"
+        "${CMAKE_SOURCE_DIR}/tests/linux/tray/mock_config.cpp")
     target_link_libraries(phpvpn-tray-mock-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
 endif()
