@@ -868,6 +868,8 @@ class Application:
 
     def preflight(self, method, action, content_type, path):
         cfg = self.cfg
+        if path != (cfg.SERVER_PATH if cfg else SERVER_PATH):
+            raise ProtocolError(404)
         if action in (None, ''):
             if method not in ('GET', 'HEAD'):
                 raise ProtocolError(405, Allow='GET, HEAD')

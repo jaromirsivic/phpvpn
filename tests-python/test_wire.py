@@ -14,8 +14,8 @@ from phpvpn_client import (build_auth_none, derive_full_auth_key, derive_health_
 
 
 @pytest.mark.parametrize('secret', ['', '0', '0000', '\0', '\0' * 32, 'Příliš žluťoučký 🐍', 'strong-test-value'])
-@pytest.mark.parametrize('path', ['/', '/phpvpn.php', '/other/nested/path'])
-def test_secret_health_info_and_data(secret, tmp_path, clock, path):
+def test_secret_health_info_and_data(secret, tmp_path, clock):
+    path = '/phpvpn.php'
     cfg = s.Config(STORAGE_DRIVER='memory', SERVER_SECRET=secret, BUFFER_DIRECTORY=str(tmp_path))
     app = s.Application(cfg, clock=clock, random_bytes=lambda n: bytes(range(n)))
     from phpvpn_client import Configuration, PhpVpnClient
@@ -38,9 +38,10 @@ def test_secret_health_info_and_data(secret, tmp_path, clock, path):
         app.executor.shutdown()
 
 
-@pytest.mark.parametrize('path', ['/', '/phpvpn.php', '/other/nested/path'])
+@pytest.mark.parametrize('path', ['/', '/phpvpn.php', '/other/nested/path',
+                                  '/phpvpn-buffer/10_99_99_2/info.json', '/phpvpn_data/'])
 @pytest.mark.parametrize('enabled', [True, False])
-def test_path_independent_routing_and_validation(tmp_path, path, enabled):
+def test_only_configured_path_is_routed(tmp_path, path, enabled):
     cfg = s.Config(STORAGE_DRIVER='memory', BUFFER_DIRECTORY=str(tmp_path),
                    SERVER_PATH='/custom/configured/path', STATUS_PAGE_ENABLED=enabled)
     app = s.Application(cfg)
@@ -65,12 +66,13 @@ def test_path_independent_routing_and_validation(tmp_path, path, enabled):
             kwargs = dict(method=method, headers={'content-type': content_type})
             expected = call(app, action, body, path=cfg.SERVER_PATH, **kwargs)
             response = call(app, action, body, path=path, **kwargs)
-            assert response.status_code == expected.status_code == status
-            assert response.headers == expected.headers
-            assert response.content == expected.content
-            assert response.headers.get('allow') == allow
+            assert expected.status_code == status
+            assert expected.headers.get('allow') == allow
+            assert response.status_code == 404
             if method == 'HEAD':
                 assert response.content == b''
+            else:
+                assert response.json() == {'type': 'error', 'code': 'not_found'}
     finally:
         app.executor.shutdown()
 
