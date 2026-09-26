@@ -72,6 +72,27 @@ target_link_libraries(phpvpn-logger-tests PRIVATE phpvpn-core phpvpn-compile-opt
 add_test(NAME phpvpn-logger-tests COMMAND phpvpn-logger-tests)
 set_tests_properties(phpvpn-logger-tests PROPERTIES TIMEOUT 30)
 
+# Real relay contract tests on every platform (Windows: WinHTTP/CNG, Linux:
+# libcurl/OpenSSL), see tools/run-server-contract.ps1 and
+# tools/linux/run-server-contract.sh.
+option(PHPVPN_BUILD_CONTRACT_TESTS "Build real local relay contract tests (server required)" OFF)
+if(PHPVPN_BUILD_CONTRACT_TESTS)
+    add_executable(phpvpn-contract-tests
+        unit/harness.cpp
+        contract/test_server_contract.cpp
+    )
+    target_include_directories(phpvpn-contract-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    target_link_libraries(phpvpn-contract-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    add_test(NAME phpvpn-contract-tests COMMAND phpvpn-contract-tests)
+    # Explicit opt-in only. An unavailable/misconfigured relay fails the test.
+    # Serialize consumers of the destructive local fixture's .2-.15 queues.
+    set_tests_properties(phpvpn-contract-tests PROPERTIES
+        LABELS "contract;real-php"
+        RUN_SERIAL TRUE
+        RESOURCE_LOCK phpvpn_default_relay
+        TIMEOUT 180)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux platform layer tests that need no privileges. Each work package owns
     # its own test file (plan-v001 section 9.4).
@@ -103,6 +124,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_include_directories(phpvpn-netns-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
         target_link_libraries(phpvpn-netns-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
         # Not registered with ctest: the runner script provides root and the namespace.
+    endif()
+
+    # Helpers of the root-only service end-to-end scripts in tests/e2e/linux.
+    # Built by default, never registered with ctest.
+    option(PHPVPN_BUILD_LINUX_E2E "Build the Linux service end-to-end test helpers" ON)
+    if(PHPVPN_BUILD_LINUX_E2E)
+        add_executable(phpvpn-wizard-ipc-probe e2e/linux/wizard_ipc_probe.cpp)
+        target_link_libraries(phpvpn-wizard-ipc-probe PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
     endif()
     return()
 endif()
@@ -238,30 +267,13 @@ if(PHPVPN_BUILD_RESOURCE_TESTS)
     # Explicit isolated process, never runs in the production service or normal CTest.
 endif()
 
-option(PHPVPN_BUILD_CONTRACT_TESTS "Build real local PHP relay contract tests (server required)" OFF)
-if(PHPVPN_BUILD_CONTRACT_TESTS)
-    add_executable(phpvpn-contract-tests
-        unit/harness.cpp
-        contract/test_server_contract.cpp
-    )
-    target_include_directories(phpvpn-contract-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
-    target_link_libraries(phpvpn-contract-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
-    add_test(NAME phpvpn-contract-tests COMMAND phpvpn-contract-tests)
-    # Explicit opt-in only. An unavailable/misconfigured relay fails the test.
-    # Serialize consumers of the destructive local fixture's .2-.15 queues.
-    set_tests_properties(phpvpn-contract-tests PROPERTIES
-        LABELS "contract;real-php"
-        RUN_SERIAL TRUE
-        RESOURCE_LOCK phpvpn_default_relay
-        TIMEOUT 180)
-endif()
-
 option(PHPVPN_BUILD_SERVICE_E2E "Build isolated real SCM/Wintun integration targets (admin required)" OFF)
 if(PHPVPN_BUILD_SERVICE_E2E)
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64")
         message(FATAL_ERROR "The isolated service E2E target requires AMD64")
     endif()
-    add_executable(phpvpn-e2e-service e2e/service_main.cpp ../apps/service/service_host.cpp ../apps/service/startup_connect.cpp)
+    add_executable(phpvpn-e2e-service e2e/service_main.cpp ../apps/service/service_host_win.cpp
+        ../apps/service/service_runtime.cpp ../apps/service/startup_connect.cpp)
     target_include_directories(phpvpn-e2e-service PRIVATE ${CMAKE_SOURCE_DIR}/apps/service)
     target_link_libraries(phpvpn-e2e-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
     add_custom_command(TARGET phpvpn-e2e-service POST_BUILD

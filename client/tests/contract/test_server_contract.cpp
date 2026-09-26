@@ -1,5 +1,6 @@
 // Explicit integration target. Requires an isolated PHP wizard-default relay.
-// Every HTTP exchange uses WinHTTP and every crypto operation delegates to CNG.
+// Every HTTP exchange uses the platform transport (WinHTTP, Linux libcurl) and
+// every crypto operation delegates to the platform provider (CNG, OpenSSL).
 // No service, tunnel, ProgramData, filesystem queue manipulation or mock server.
 #include "harness.h"
 #include "core/config/config_defaults.h"
@@ -15,7 +16,11 @@
 #include "fake_config_files.h"
 #include "core/wizard/probe_client.h"
 #include "core/wizard/wizard_defaults.h"
+#if defined(_WIN32)
 #include <windows.h>
+#else
+#include <cstdlib>
+#endif
 #include <algorithm>
 #include <array>
 #include <set>
@@ -31,11 +36,18 @@ void require(Status result) {
     if (!result) throw std::runtime_error(std::string("real relay operation failed: ") + result.error().name());
 }
 std::string relayUrl() {
+#if defined(_WIN32)
     std::array<char, 2048> buffer{};
     const DWORD length = GetEnvironmentVariableA("PHPVPN_CONTRACT_URL", buffer.data(),
                                                 static_cast<DWORD>(buffer.size()));
     if (length >= buffer.size()) throw std::runtime_error("PHPVPN_CONTRACT_URL is too long");
     const std::string value = length ? std::string(buffer.data(), length) : "http://127.0.0.1:18093/phpvpn.php";
+#else
+    const char* configured = std::getenv("PHPVPN_CONTRACT_URL");
+    const std::size_t length = configured != nullptr ? std::string_view(configured).size() : 0;
+    if (length >= 2048) throw std::runtime_error("PHPVPN_CONTRACT_URL is too long");
+    const std::string value = length ? std::string(configured, length) : "http://127.0.0.1:18093/phpvpn.php";
+#endif
     const auto parsed = parseServerUrl(value);
     if (!parsed || parsed->secure || parsed->host != "127.0.0.1" || parsed->path != "/phpvpn.php")
         throw std::runtime_error("contract target requires an explicit local http://127.0.0.1:<port>/phpvpn.php fixture");

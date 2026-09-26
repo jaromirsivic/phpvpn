@@ -1,6 +1,51 @@
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux: the systemd service and the CLI (plan-v001 sections 4.10 and 4.11).
+    # The Linux tray (PHPVPN_BUILD_TRAY) is added by its own work package.
+    include(GNUInstallDirs)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PHPVPN_APP_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+
+    add_executable(phpvpn-service
+        service/service_main_linux.cpp
+        service/service_runtime.cpp
+        service/startup_connect.cpp
+    )
+    target_link_libraries(phpvpn-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options
+        PkgConfig::PHPVPN_APP_SYSTEMD)
+    set_target_properties(phpvpn-service PROPERTIES OUTPUT_NAME "phpvpn-service")
+
+    add_executable(phpvpn-cli
+        cli/main.cpp
+    )
+    target_link_libraries(phpvpn-cli PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    set_target_properties(phpvpn-cli PROPERTIES OUTPUT_NAME "phpvpn")
+
+    if(PHPVPN_BUILD_TRAY)
+        # Placeholder: apps/tray-linux joins the build with the tray work package.
+    endif()
+
+    # The unit starts /usr/libexec/phpvpn/phpvpn-service, the location of the
+    # distribution packages (prefix /usr).
+    set(PHPVPN_SYSTEMD_UNIT_DIR "lib/systemd/system" CACHE STRING
+        "systemd system unit directory, relative to CMAKE_INSTALL_PREFIX or absolute")
+    set(PHPVPN_NM_CONF_DIR "lib/NetworkManager/conf.d" CACHE STRING
+        "NetworkManager vendor configuration directory, relative to CMAKE_INSTALL_PREFIX or absolute")
+    if(NOT CMAKE_INSTALL_FULL_LIBEXECDIR STREQUAL "/usr/libexec")
+        message(WARNING "phpvpn.service expects /usr/libexec/phpvpn/phpvpn-service, "
+                        "but the service installs to ${CMAKE_INSTALL_FULL_LIBEXECDIR}/phpvpn")
+    endif()
+    set(PHPVPN_LINUX_PACKAGING "${CMAKE_SOURCE_DIR}/packaging/linux")
+    install(TARGETS phpvpn-service RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/phpvpn")
+    install(TARGETS phpvpn-cli RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES "${PHPVPN_LINUX_PACKAGING}/systemd/phpvpn.service" DESTINATION "${PHPVPN_SYSTEMD_UNIT_DIR}")
+    install(FILES "${PHPVPN_LINUX_PACKAGING}/NetworkManager/90-phpvpn.conf" DESTINATION "${PHPVPN_NM_CONF_DIR}")
+    install(FILES "${PHPVPN_LINUX_PACKAGING}/man/phpvpn.1" DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+    install(FILES "${PHPVPN_LINUX_PACKAGING}/man/phpvpn-service.8" DESTINATION "${CMAKE_INSTALL_MANDIR}/man8")
+    return()
+endif()
+
 # Everything below is the Windows application set: Win32 resources, manifests, the tray,
-# the package GUI and the Wintun copy. The Linux service, CLI and tray are added by later
-# work packages; until then a Linux build produces the core and its tests only.
+# the package GUI and the Wintun copy.
 if(NOT WIN32)
     return()
 endif()
@@ -55,7 +100,8 @@ endfunction()
 
 add_executable(phpvpn-service
     service/main.cpp
-    service/service_host.cpp
+    service/service_host_win.cpp
+    service/service_runtime.cpp
     service/startup_connect.cpp
 )
 target_link_libraries(phpvpn-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)

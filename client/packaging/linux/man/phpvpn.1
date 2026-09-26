@@ -1,0 +1,77 @@
+.TH PHPVPN 1 "2026-09-26" "phpvpn 1.0.0" "User Commands"
+.SH NAME
+phpvpn \- command line client of the phpvpn service
+.SH SYNOPSIS
+.B phpvpn
+.I command
+.RI [ argument ]
+.SH DESCRIPTION
+.B phpvpn
+controls the local
+.BR phpvpn-service (8)
+over its public control socket
+.IR /run/phpvpn/control-v1.sock .
+It is a pure IPC client: it never creates the tunnel interface and never reads
+or writes the configuration file itself, so it needs neither root nor a
+graphical session. Installing, starting and stopping the service are not IPC
+operations; use
+.BR systemctl (1)
+for them.
+.SH COMMANDS
+.TP
+.B status
+Print the current service and connection state as JSON.
+.TP
+.B connect
+Ask the service to establish the connection.
+.TP
+.B disconnect
+Ask the service to stop the connection.
+.TP
+.B info
+Print the verified server information exactly as the service returns it.
+.TP
+.B get-config
+Print the stored configuration document exactly as stored.
+.TP
+.BI set-config " file"
+Store the configuration document read from
+.IR file .
+The service validates it and publishes it atomically. Documents larger than
+512 KiB are rejected with
+.BR config_too_large .
+.TP
+.B diagnostics
+Print the extended local diagnostics snapshot as JSON.
+.SH OUTPUT
+Enveloped answers are printed as indented JSON on standard output.
+A failure is printed on standard error as one line
+.RI \(dq code : " description" \(dq,
+or as the description of the local IPC error. When the service cannot be
+reached, a second line starting with
+.B hint:
+names the likely cause (service not running, socket missing, permission).
+.SH EXIT STATUS
+.TP
+.B 0
+The command succeeded.
+.TP
+.B 1
+The service rejected the command, could not be reached within 10 seconds,
+or the configuration file could not be read.
+.TP
+.B 2
+Invalid usage.
+.SH FILES
+.TP
+.I /run/phpvpn/control-v1.sock
+Control socket, mode 0666. The client only talks to a peer running as root.
+.TP
+.I /etc/phpvpn/config.json
+Configuration, readable by root only; use
+.B get-config
+instead.
+.SH SEE ALSO
+.BR phpvpn-service (8),
+.BR systemctl (1),
+.BR journalctl (1)

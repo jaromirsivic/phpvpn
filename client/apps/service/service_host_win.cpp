@@ -1,6 +1,6 @@
 #include "service_host.h"
 #include "service_registration.h"
-#include "startup_connect.h"
+#include "service_runtime.h"
 
 #include <windows.h>
 
@@ -10,9 +10,6 @@
 #include <vector>
 
 #include "core/base/logger.h"
-#include "core/ipc/ipc_dispatcher.h"
-#include "core/runtime/vpn_engine.h"
-#include "core/wizard/wizard_service.h"
 #include "platform/windows/ipc_pipe.h"
 #include "platform/windows/paths_win.h"
 #include "platform/windows/config_files_win.h"
@@ -50,11 +47,12 @@ void reportStatus(DWORD currentState, DWORD exitCode, DWORD waitHintMs) {
     }
 }
 
-// Everything the running service owns, so both the service and the console mode
-// share one construction and one shutdown path.
-class ServiceRuntime {
-public:
-    Status start() {
+// Windows platform parts of the shared runtime: %ProgramData% with the ACL
+// repair, the Windows ConfigFiles backend, the rotating log file, Wintun from
+// the installation directory and the named-pipe IPC server.
+ServicePlatformHost windowsPlatformHost() {
+    ServicePlatformHost host;
+    host.prepareStorage = []() -> Result<ServiceStorage> {
         std::filesystem::path data;
         if (g_environment.dataDirectory.empty()) {
             PHPVPN_TRY_ASSIGN(data, dataDirectory(false));
@@ -64,134 +62,37 @@ public:
 
         // Local users deliberately read the complete data tree, including historical
         // keys. Filesystem writes remain privileged and IPC publication validated.
-        std::optional<Error> storageError;
-        if (!storageError) {
+        ServiceStorage storage;
+        storage.configFile = configFilePath(data);
+        storage.journalFile = journalFilePath(data);
+        if (!storage.storageError) {
             auto secured = restrictDirectoryToAdministrators(data);
-            if (!secured) storageError = secured.error();
+            if (!secured) storage.storageError = secured.error();
         }
-        std::unique_ptr<ConfigFiles> files;
-        if (!storageError) {
+        if (!storage.storageError) {
             auto backend = createWindowsConfigFiles(configFilePath(data));
-            if (backend) files = std::move(backend).value();
-            else storageError = backend.error();
+            if (backend) storage.files = std::move(backend).value();
+            else storage.storageError = backend.error();
         }
 
-        if (!storageError) Logger::instance().configureFile(logDirectory(data), "phpvpn-service");
-        PHPVPN_LOG_INFO(kComponent, "the service is starting");
-
+        if (!storage.storageError) Logger::instance().configureFile(logDirectory(data), "phpvpn-service");
+        return storage;
+    };
+    host.installDirectory = []() -> Result<std::wstring> {
         std::filesystem::path installDirectory;
         PHPVPN_TRY_ASSIGN(installDirectory, executableDirectory());
-
-        PHPVPN_TRY_ASSIGN(crypto_, createPlatformCryptoProvider());
-        PHPVPN_TRY_ASSIGN(transport_, createPlatformTransport());
-        clock_ = createPlatformClock();
-        tunnelDriver_ = createPlatformTunnelDriver();
-        netConfig_ = createPlatformNetConfig();
-
-        EnginePaths paths;
-        paths.configFile = configFilePath(data);
-        paths.journalFile = journalFilePath(data);
-        paths.installDirectory = installDirectory.wstring();
-        paths.adapterName = g_environment.adapterName;
-        paths.adapterGuid = g_environment.adapterGuid;
-
-        configStore_ = storageError ? std::make_unique<ConfigStore>(*crypto_, configFilePath(data), *storageError) :
-            std::make_unique<ConfigStore>(*crypto_, std::move(files));
-        auto recoveredConfig = configStore_->recover();
-        if (!recoveredConfig) PHPVPN_LOG_ERROR(kComponent, std::string("config recovery: ") + recoveredConfig.error().name());
-        auto initialConfig = configStore_->ensureDefaultAtStartup();
-        if (!initialConfig) PHPVPN_LOG_ERROR(kComponent, std::string("config startup: ") + initialConfig.error().name());
-        else PHPVPN_LOG_INFO(kComponent, initialConfig.value() == StartupConfigState::created ? "config startup: default created" :
-            initialConfig.value() == StartupConfigState::alreadyExists ? "config startup: concurrent file preserved" : "config startup: existing file preserved");
-        engine_ = std::make_unique<VpnEngine>(*crypto_, *transport_, *clock_, *tunnelDriver_,
-                                              *netConfig_, std::move(paths), *configStore_);
-        auto engineStarted = engine_->start();
-        if (!engineStarted) PHPVPN_LOG_ERROR(kComponent, std::string("engine initialization: ") + engineStarted.error().name());
-        startupConnect_ = std::make_unique<StartupConnect>(*configStore_, *engine_);
-
-        WizardScheduler scheduler;
-        scheduler.file = [this](std::function<void()> task) { return server_ && server_->tryPostFile(std::move(task)); };
-        scheduler.diagnostic = [this](std::function<void()> task) { return server_ && server_->tryPostDiagnostic(std::move(task)); };
-        std::string instanceId;
-        PHPVPN_TRY_ASSIGN(instanceId, crypto_->randomUuidV4());
-        wizard_ = std::make_unique<WizardService>(*crypto_, *clock_, *configStore_, *engine_, std::move(scheduler), std::move(instanceId));
-        dispatcher_ = std::make_unique<IpcDispatcher>(*engine_, wizard_.get());
+        return installDirectory.wstring();
+    };
+    host.adapterName = g_environment.adapterName;
+    host.adapterGuid = g_environment.adapterGuid;
+    host.createIpcServer = [](IpcHandler handler, IpcServerOptions shared) -> std::unique_ptr<IpcServer> {
         IpcPipeServerOptions options;
+        static_cast<IpcServerOptions&>(options) = std::move(shared);
         if (!g_environment.pipeName.empty()) options.pipeName = g_environment.pipeName;
-        options.classify = [](std::string_view json) {
-            auto wizard = WizardIpc::parseRequest(json);
-            if (wizard) {
-                switch (wizard->command) {
-                    case WizardCommand::open: case WizardCommand::get_config_state:
-                    case WizardCommand::get_config_document: case WizardCommand::create_default_config:
-                        return IpcWorkClass::file;
-                    default: return IpcWorkClass::shortControl;
-                }
-            }
-            auto request = IpcProtocol::parseRequest(json);
-            if (!request) return IpcWorkClass::shortControl;
-            if (request->command == IpcCommand::get_info || request->command == IpcCommand::get_server_info) return IpcWorkClass::diagnostic;
-            if (request->command == IpcCommand::connect || request->command == IpcCommand::get_config || request->command == IpcCommand::set_config)
-                return IpcWorkClass::file;
-            return IpcWorkClass::shortControl;
-        };
-        options.busyResponse = [](std::string_view json) {
-            auto wizard = WizardIpc::parseRequest(json);
-            if (wizard) return WizardIpc::buildError(wizard->requestId, WizardIpc::safeError(Error(ErrorCode::busy)));
-            auto request = IpcProtocol::parseRequest(json);
-            return IpcProtocol::buildError(request ? request->requestId : std::string{}, Error(ErrorCode::busy));
-        };
-        options.onTick = [this] { wizard_->tick(); startupConnect_->tick(filePost()); };
-        options.cancelHandlers = [this] { startupConnect_->cancel(); wizard_->shutdown(); engine_->shutdown(); };
-        server_ = std::make_unique<IpcPipeServer>(
-            [this](std::string_view request) { return dispatcher_->handle(request); }, std::move(options));
-        PHPVPN_TRY(server_->start());
-
-        PHPVPN_LOG_INFO(kComponent, "the service control IPC is ready");
-        return Status::success();
-    }
-
-    StartupConnect::Post filePost() {
-        return [this](std::function<void()> task) { return server_ && server_->tryPostFile(std::move(task)); };
-    }
-    void requestStartupConnect() { startupConnect_->request(filePost()); }
-
-    void stop() {
-        PHPVPN_LOG_INFO(kComponent, "the service is stopping");
-        if (startupConnect_) startupConnect_->cancel();
-        if (server_) {
-            server_->stop();
-            server_.reset();
-        }
-        dispatcher_.reset();
-        startupConnect_.reset();
-        wizard_.reset();
-        if (engine_) {
-            engine_->shutdown();
-            engine_.reset();
-        }
-        netConfig_.reset();
-        tunnelDriver_.reset();
-        transport_.reset();
-        clock_.reset();
-        configStore_.reset();
-        crypto_.reset();
-        Logger::instance().flush();
-    }
-
-private:
-    std::unique_ptr<CryptoProvider> crypto_;
-    std::unique_ptr<Transport> transport_;
-    std::unique_ptr<Clock> clock_;
-    std::unique_ptr<TunnelDriver> tunnelDriver_;
-    std::unique_ptr<NetConfig> netConfig_;
-    std::unique_ptr<ConfigStore> configStore_;
-    std::unique_ptr<VpnEngine> engine_;
-    std::unique_ptr<StartupConnect> startupConnect_;
-    std::unique_ptr<WizardService> wizard_;
-    std::unique_ptr<IpcDispatcher> dispatcher_;
-    std::unique_ptr<IpcPipeServer> server_;
-};
+        return std::make_unique<IpcPipeServer>(std::move(handler), std::move(options));
+    };
+    return host;
+}
 
 ServiceRuntime g_runtime;
 
@@ -226,7 +127,7 @@ void WINAPI serviceMain(DWORD, LPWSTR*) {
         return;
     }
 
-    auto started = g_runtime.start();
+    auto started = g_runtime.start(windowsPlatformHost());
     if (!started.ok()) {
         PHPVPN_LOG_CRITICAL(kComponent, started.error().message());
         reportStatus(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR, 0);
@@ -278,7 +179,7 @@ int runInConsole() {
         std::fputc('\n', stdout);
     });
 
-    auto started = g_runtime.start();
+    auto started = g_runtime.start(windowsPlatformHost());
     if (!started.ok()) {
         std::fputs(started.error().message().c_str(), stderr);
         std::fputc('\n', stderr);

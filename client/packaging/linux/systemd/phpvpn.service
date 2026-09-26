@@ -1,0 +1,47 @@
+[Unit]
+Description=phpvpn client service
+Documentation=man:phpvpn-service(8)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/libexec/phpvpn/phpvpn-service --systemd
+Restart=on-failure
+RestartSec=5s
+RestartSteps=2
+RestartMaxDelaySec=60s
+TimeoutStopSec=45s
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+UMask=0077
+ConfigurationDirectory=phpvpn
+ConfigurationDirectoryMode=0700
+StateDirectory=phpvpn
+StateDirectoryMode=0700
+RuntimeDirectory=phpvpn
+RuntimeDirectoryMode=0755
+ProtectSystem=strict
+ReadWritePaths=/etc/phpvpn
+ProtectHome=yes
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,74 @@
+.TH PHPVPN-SERVICE 8 "2026-09-26" "phpvpn 1.0.0" "System Administration"
+.SH NAME
+phpvpn-service \- phpvpn client service
+.SH SYNOPSIS
+.B /usr/libexec/phpvpn/phpvpn-service
+.RB [ \-\-systemd " | " \-\-foreground " | " \-\-console " | " \-\-verify\-tunnel ]
+.SH DESCRIPTION
+.B phpvpn-service
+owns the phpvpn configuration, the TUN interface
+.BR phpvpn ,
+its VPN address and single on-link route, the authenticated relay session and
+the VPN state. The default route and DNS are never changed (split tunnel).
+Clients such as
+.BR phpvpn (1)
+and the tray talk to it over the public control socket.
+.PP
+It normally runs as the systemd unit
+.BR phpvpn.service .
+The unit runs it as root with only
+.B CAP_NET_ADMIN
+and a sandbox; it restarts after a failure (5 s, about 17 s, then 60 s).
+When
+.B autoConnectOnStartup
+is true in the configuration, the service connects after it reported readiness.
+.SH OPTIONS
+.TP
+.B \-\-systemd
+Run under systemd with
+.BR Type=notify :
+READY=1 once the control socket listens, a STATUS= line with the connection
+state and STOPPING=1 on shutdown. Log records go to the journal through
+standard error. This is the default when
+.B NOTIFY_SOCKET
+is set.
+.TP
+.BR \-\-foreground ", " \-\-console
+Run in the foreground with log lines on standard output until SIGINT
+(Ctrl+C) or SIGTERM. Creates the runtime directory when it is missing. The
+default without
+.BR NOTIFY_SOCKET .
+Requires root.
+.TP
+.B \-\-verify\-tunnel
+Check that
+.I /dev/net/tun
+is the kernel TUN device offering IFF_TUN and IFF_NO_PI and print its
+features and the kernel release. Creates no interface.
+.PP
+SIGTERM and SIGINT stop the service: the connection is torn down, the route,
+address and interface are removed, then the process exits. SIGHUP is ignored.
+Only one instance runs at a time.
+.SH FILES
+.TP
+.I /etc/phpvpn/config.json
+Configuration, directory 0700 and file 0600, owned by root.
+.TP
+.I /var/lib/phpvpn/ownership.json
+Ownership journal of the tunnel interface, used for recovery after a crash.
+.TP
+.I /run/phpvpn/control-v1.sock
+Public control socket, mode 0666.
+.TP
+.I /run/phpvpn/service.lock
+Singleton lock.
+.SH DIAGNOSTICS
+.B journalctl \-u phpvpn
+shows the service log,
+.B phpvpn diagnostics
+the extended local diagnostics.
+.SH SEE ALSO
+.BR phpvpn (1),
+.BR systemctl (1),
+.BR journalctl (1),
+.BR systemd.exec (5)
