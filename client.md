@@ -1177,9 +1177,36 @@ Všechny linuxové presety mají `BUILD_TESTING=ON` a samostatný adresář `wor
 | `/usr/share/applications/phpvpn-tray.desktop` | Spouštěč tray v menu aplikací. |
 | `/etc/xdg/autostart/phpvpn-tray.desktop` | Autostart tray pro všechny uživatele. |
 | `/usr/share/icons/hicolor/<n>x<n>/apps/` | `phpvpn.png`, `phpvpn-disconnected.png`, `phpvpn-connecting.png` a `phpvpn-connected.png` v 16, 22, 24, 32, 48, 64 a 128 px. |
-| `phpvpn(1)`, `phpvpn-service(8)` | Manuálové stránky. |
+| `/usr/share/man/` | Manuálové stránky `phpvpn(1)` a `phpvpn-service(8)` v balíčku `phpvpn`, `phpvpn-tray(1)` v balíčku `phpvpn-tray`. |
 
 Tray, CLI ani jiná aplikace NESMĚJÍ otevírat `/dev/net/tun`, měnit adresy, routy nebo rozhraní ani číst a zapisovat konfigurační soubor. Službu ovládají výhradně přes IPC, stejně jako na Windows. Instalace, odinstalace, povolení, spuštění a zastavení služby nejsou operacemi IPC. Služba nemá přepínače `--install` ani `--uninstall`, registraci unitu provádí instalace balíčku a ovládání `systemctl`.
+
+#### Balíčky, instalace a odinstalace
+
+Linuxový klient se dodává jako dva binární balíčky ve formátu RPM pro Fedoru ([phpvpn.spec](client/packaging/linux/rpm/phpvpn.spec)) a DEB pro Ubuntu ([debian/control](client/packaging/linux/debian/control)). Složení distribuční složky `client/Linux/x64` stanoví [distribution.md](distribution.md#linux-x64), návod pro uživatele je přibalený [README.md](client/packaging/linux/dist/README.md).
+
+| Balíček | Obsah | Závislosti a licence |
+|---|---|---|
+| `phpvpn` | Služba, CLI, systemd unit, NetworkManager snippet, `phpvpn(1)`, `phpvpn-service(8)`. | Jen knihovny služby a CLI z automatických soname závislostí, žádná grafická závislost. Licence `MIT`. |
+| `phpvpn-tray` | Tray, spouštěč, autostart, ikony hicolor, `phpvpn-tray(1)`, licence a upozornění Material Symbols. | Přesně stejné vydání `phpvpn` (RPM `= %{version}-%{release}`, DEB `= ${binary:Version}`), GTK 3 a libayatana-appindicator3 ze soname závislostí, RPM navíc `hicolor-icon-theme`. Slabá závislost Recommends `gnome-shell-extension-appindicator`, rozšíření se však nezapíná. Licence `MIT AND Apache-2.0`, protože stavové ikony jsou upravené Material Symbols. |
+
+RPM se sestavením `--without tray` vytvoří jen `phpvpn`. Balíčky nevlastní `/etc/phpvpn` ani `/var/lib/phpvpn`, adresáře vytváří systemd a `config.json` zapisuje služba. Upgrade i odebrání balíčku proto konfiguraci zachovají. `apt purge phpvpn` oba adresáře odstraní, RPM je nevlastní nikdy. Po upgradu balíček službu restartuje (RPM `%systemd_postun_with_restart`, DEB `dh_installsystemd --restart-after-upgrade`). Samotný balíček se řídí zvyklostí distribuce: RPM provede `%systemd_post`, takže služba se povolí jen podle presetů Fedory a bez presetu zůstane zakázaná. DEB službu výchozím `dh_installsystemd` povolí a spustí.
+
+Instalační vstup je [install.sh](client/packaging/linux/dist/install.sh) (`sudo sh install.sh [--headless | --with-tray] [--no-weak-deps] [--verify-only]`). Je fail closed a nic nezmění, dokud neprojdou všechna ověření v tomto pořadí:
+
+1. Oprávnění root. Bez něj se skript jednou znovu spustí přes `sudo`, a není-li `sudo` dostupné, instalaci odmítne.
+2. Distribuce z `/etc/os-release`: Fedora nebo Ubuntu na x86_64 v minimální verzi z podepsaného manifestu.
+3. Podpis manifestu. SHA-256 veřejného klíče (DER SubjectPublicKeyInfo) z `release-signing.cer` MUSÍ odpovídat pinu v `install.sh` a oddělený podpis RSA PKCS#1 v1.5 SHA-256 v `release-manifest.sig` MUSÍ ověřit kanonický `release-manifest.json`.
+4. Velikost a SHA-256 každého souboru z manifestu, ověřené na soukromé kopii vlastněné rootem, která je potom jediným zdrojem instalace. Nevypsaný balíček nebo skript ve složce instalaci odmítne.
+5. Instalace místních balíčků přes `dnf install` nebo `apt-get install`. Jejich závislosti pocházejí z repozitářů distribuce.
+6. `phpvpn-tray` se přidá, pokud ho složka obsahuje a systém má grafické přihlášení, tedy výchozí cíl `graphical.target` a existující `display-manager.service`. `--with-tray` ho nainstaluje vždy, `--headless` nikdy. Již nainstalovaný `phpvpn-tray` se kvůli závislosti na přesném vydání vždy aktualizuje spolu s `phpvpn`, i s `--headless`.
+7. `systemctl enable --now phpvpn.service`.
+8. Čekání nejvýše 30 s na socket `/run/phpvpn/control-v1.sock`.
+9. `phpvpn status`.
+
+Po dokončení je služba vždy povolená a spuštěná, jako po instalaci na Windows. `--verify-only` skončí po kroku 4, nic neinstaluje a nepotřebuje root. `--no-weak-deps` neinstaluje slabé závislosti, na Fedoře přes `install_weak_deps=False` a na Ubuntu přes `--no-install-recommends`. Opakované spuštění s novější složkou balíčky aktualizuje. Běžící tray se nezastavuje, nová verze se uplatní při dalším přihlášení.
+
+[uninstall.sh](client/packaging/linux/dist/uninstall.sh) (`sudo sh uninstall.sh [--remove-data]`) nejprve best effort požádá službu o `phpvpn disconnect`, potom provede `systemctl disable --now phpvpn.service` a odebere `phpvpn-tray` a `phpvpn`. Konfigurace `/etc/phpvpn` a stav `/var/lib/phpvpn` zůstanou zachované. Odstraní je jen `--remove-data`, obdoba Windows `-RemoveData`.
 
 #### Cesty a oprávnění
 
@@ -1304,7 +1331,11 @@ Na Fedoře se SELinux v režimu enforcing běží služba bez vlastní SELinux p
 
 Linuxový tray je nativní GTK 3 aplikace s indikátorem přes libayatana-appindicator3 (StatusNotifierItem). Obojí jsou systémové komponenty cílových desktopů, nikoli přibalený framework. Qt, Electron ani WebView se nepoužívají. Tray používá přenositelné modely, texty, barvy a IPC timeouty sdílené s Windows tray a je čistým IPC klientem. Stejně jako na Windows nevlastní službu ani VPN. Exit, odhlášení, ukončení ani pád tray NESMĚJÍ odpojit VPN.
 
+Tray bez použitelného grafického displeje (nefunguje `WAYLAND_DISPLAY` ani `DISPLAY`) skončí s kódem 1 a srozumitelnou zprávou na stderr, že patří do desktopové relace a bez ní se používá příkaz `phpvpn`. Chování popisuje manuálová stránka `phpvpn-tray(1)`.
+
 V každé desktopové relaci běží nejvýše jedna instance `GtkApplication` s ID `org.phpvpn.Tray`. Druhé spuštění předá argumenty primární instanci a skončí. Autostart `/etc/xdg/autostart/phpvpn-tray.desktop` spouští tray bez argumentů pro všechny uživatele, jako obdoba Windows hodnoty HKLM Run. Spouštěč v menu aplikací spouští `phpvpn-tray --show-window`, které zobrazí ovládací okno běžící instance. `--installation-complete` zobrazí installation notice přes `org.freedesktop.Notifications`. Když desktop nemá `org.kde.StatusNotifierWatcher`, například Fedora Workstation s GNOME bez rozšíření AppIndicator, tray otevře záložní ovládací okno a jednou zobrazí notifikaci s návodem k zapnutí rozšíření. Nastavení desktopu tray nemění. Mapování UX, menu, ikon a oken stanoví [tray_UX.md, Linux (GTK)](tray_UX.md#linux-gtk). Chybové texty konfigurace uvádějí cestu `/etc/phpvpn/config.json`.
+
+Linuxový tray implementuje všechna okna Windows tray: Configuration Wizard s dialogem HTTP headers a HTTP error detail, Connect a Disconnect progress, Edit Config, Communication contracts, Password SHA, Server Information a Statistics. Registruje je v produkčním sestavení přes otevírací hooky a lifecycle registraci `TrayApp` ([tray_app.h](client/apps/tray-linux/tray_app.h)). Jejich linuxové odchylky uvádí [tray_UX.md, Okna](tray_UX.md#okna).
 
 #### Rozdíly oproti Windows
 
@@ -1320,6 +1351,14 @@ V každé desktopové relaci běží nejvýše jedna instance `GtkApplication` s
 | Tray na Fedora GNOME | Vždy | Vyžaduje rozšíření AppIndicator, jinak ovládací okno | Omezení GNOME. |
 | Pozice oken | Určuje aplikace | Určuje kompozitor (Wayland) nebo správce oken | Omezení Wayland. |
 | Zdroj hlaviček Wizard diagnostiky | WinHTTP, wire `"winhttp"` | libcurl, stejná wire hodnota `"winhttp"` | Pevná smlouva IPC v1. |
+| Instalační balíček | Podepsaný manifest, `install.ps1` se spouštěči | Podepsaný manifest, balíčky RPM nebo DEB, `install.sh` přes `dnf` nebo `apt-get` | Zvyklost distribucí, závislosti z repozitářů. |
+| Rozdělení součástí | Jeden balíček se službou, CLI a tray | `phpvpn` bez grafických závislostí a `phpvpn-tray` vázaný na přesné vydání | Server nepotřebuje grafické knihovny. |
+| Instalace tray | Vždy | Automaticky jen s `graphical.target` a display managerem, jinak `--with-tray` | Headless systémy. |
+| Aktivace služby po instalaci | Instalátor | `install.sh` vždy `enable --now`, samotné RPM podle presetů Fedory, DEB povolí a spustí | Zvyklost distribucí. |
+| Autostart tray | Hodnota HKLM Run | `/etc/xdg/autostart/phpvpn-tray.desktop` | Zvyklost XDG. |
+| Odstranění dat při odinstalaci | `-RemoveData` | `uninstall.sh --remove-data`, na Ubuntu také `apt purge phpvpn` | Zvyklost distribucí. |
+| Tray bez grafické relace | Nenastává | Skončí s kódem 1 a zprávou na stderr | Tray patří do desktopové relace. |
+| Manuálové stránky | Nejsou | `phpvpn(1)`, `phpvpn-service(8)`, `phpvpn-tray(1)` | Zvyklost Linuxu. |
 
 ## Doporučené pořadí další práce
 

@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "control_window.h"
+#include "gtk_util.h"
 #include "indicator.h"
 #include "ipc_async.h"
 #include "lifecycle.h"
@@ -84,8 +85,12 @@ public:
     void addStatusListener(std::function<void(const TrayStatus& snapshot, bool unavailable)> listener);
     // Called by a participant after a confirmed save of the exact snapshot.
     void requestReconnectAfterSave(LifecycleParticipant* participant, const LifecycleSnapshot& saved);
-    // Edit Config save over the shared command channel. False: not started (a
-    // command is already being processed); the caller reports notSent itself.
+    // Edit Config save over the shared command channel (Windows startCommand
+    // set_config). True: done is called exactly once, also with notSent when the
+    // request could not be started; the caller reports that result. False: refused
+    // before any request. Either the tray has already shown its own message (another
+    // command is being processed) or Exit/session end is in progress; the caller
+    // silently ends its save state and shows no second message.
     bool requestConfigSave(const SaveOperation& operation, std::string payload,
                            std::function<void(const SaveResult&)> done);
     void abandonConfigSave();
@@ -164,5 +169,6 @@ private:
     std::unique_ptr<WatcherPresence> watcher_;
     guint watcherWatch_ = 0;
     std::vector<guint> signalSources_;
+    DeferredCalls deferred_;
 };
 }  // namespace phpvpn::tray

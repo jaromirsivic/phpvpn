@@ -171,12 +171,15 @@ void ProgressWindow::build() {
     gtk_widget_set_valign(errorDetail_, GTK_ALIGN_CENTER);
     gtk_widget_set_no_show_all(errorDetail_, TRUE);
     gtk_widget_set_no_show_all(countdown_, TRUE);
+    // The fallback message is modal; it never runs inside the click action.
     g_signal_connect(errorDetail_, "clicked", gtkCallback([](GtkButton*, gpointer data) {
         auto* self = static_cast<ProgressWindow*>(data);
-        const auto& diagnostic = self->model_.httpDiagnostic();
-        if (!diagnostic) return;
-        if (self->openErrorDetail) self->openErrorDetail(GTK_WINDOW(self->window_), *diagnostic);
-        else showMessage(GTK_WINDOW(self->window_), kErrorDetailUnavailableText, "PHPVPN", DialogIcon::information);
+        self->deferred_.post([self] {
+            const auto& diagnostic = self->model_.httpDiagnostic();
+            if (!self->window_ || !diagnostic) return;
+            if (self->openErrorDetail) self->openErrorDetail(GTK_WINDOW(self->window_), *diagnostic);
+            else showMessage(GTK_WINDOW(self->window_), kErrorDetailUnavailableText, "PHPVPN", DialogIcon::information);
+        });
     }), this);
     // The success countdown starts at the first real paint of the visible heading.
     g_signal_connect_after(panelHeading_, "draw", gtkCallback([](GtkWidget* widget, cairo_t*, gpointer data) -> gboolean {

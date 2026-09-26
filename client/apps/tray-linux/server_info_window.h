@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "gtk_util.h"
 #include "ipc_async.h"
 #include "lifecycle.h"
 #include "server_info_presenter.h"
@@ -64,6 +65,7 @@ private:
     guint autoTimer_ = 0, placement_ = 0;
     bool headerWrapped_ = false, footerWrapped_ = false;
     bool updatingSwitch_ = false;
+    DeferredCalls deferred_;
 };
 
 // Creates the window and connects TrayWindowHooks::openServerInfo and the session end.

@@ -308,8 +308,10 @@ void ServerInfoWindow::build() {
         gtk_viewport_set_shadow_type(GTK_VIEWPORT(viewport), GTK_SHADOW_NONE);
     gtk_box_pack_end(GTK_BOX(content_), holder, FALSE, FALSE, 0);
 
+    // A request that cannot be sent may show an error; never inside the click action.
     g_signal_connect(refresh_, "clicked", gtkCallback([](GtkButton*, gpointer data) {
-        static_cast<ServerInfoWindow*>(data)->request();
+        auto* self = static_cast<ServerInfoWindow*>(data);
+        self->deferred_.post([self] { self->request(); });
     }), this);
     g_signal_connect(ok_, "clicked", gtkCallback([](GtkButton*, gpointer data) {
         static_cast<ServerInfoWindow*>(data)->endSession();

@@ -226,9 +226,12 @@ fi
 kill "$tray" 2>/dev/null || true
 sleep 1
 keep
-if grep -E "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:" "$work/tray.log" "$work/mock.log"; then
+if grep -E "ERROR: AddressSanitizer|runtime error:" "$work/tray.log" "$work/mock.log"; then
     fail "sanitizer report (see above)"
 fi
+# LeakSanitizer (ASan builds): lsan_check.py ignores only the system library caches
+# of lsan.supp; any leak through PHPVPN code fails.
+python3 "$here/lsan_check.py" "$work/tray.log" "$work/mock.log" || fail "LeakSanitizer report (see above)"
 if grep -q -E "CRITICAL|WARNING" "$work/tray.log"; then
     grep -E "CRITICAL|WARNING" "$work/tray.log" | sort | uniq -c
     echo "NOTE: GLib criticals/warnings in the tray log (see above)"

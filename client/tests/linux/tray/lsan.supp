@@ -1,0 +1,14 @@
+# LeakSanitizer patterns of the GTK tray checks (all run-*-checks.sh, ASan builds).
+#
+# Only exit-time caches owned by system libraries. lsan_check.py ignores a leak only
+# when a frame matching a pattern lies nearer to the allocation than every PHPVPN
+# frame, so memory that PHPVPN code allocated itself always fails. The syntax is
+# LeakSanitizer's (leak:<pattern>, * wildcard); it is deliberately not passed through
+# LSAN_OPTIONS, whose suppressions match any frame of the stack.
+#
+# fontconfig pattern and font caches, filled by pango while GTK measures labels.
+leak:libfontconfig.so
+# GTK's screensaver portal signal: its GVariant, and the parsed message body of the
+# same signal (the stack ends in GIO's D-Bus reader without a GTK frame).
+leak:screensaver_signal_portal
+leak:g_dbus_message_new_from_blob

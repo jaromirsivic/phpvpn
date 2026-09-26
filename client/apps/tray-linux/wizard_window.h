@@ -14,7 +14,7 @@
 #include <functional>
 #include <memory>
 
-#include "editor_window.h"  // DeferredCalls
+#include "gtk_util.h"  // DeferredCalls
 #include "http_error_detail_window.h"
 #include "http_headers_window.h"
 #include "ipc_async.h"

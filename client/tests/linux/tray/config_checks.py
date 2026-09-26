@@ -19,7 +19,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import time
 
@@ -264,14 +263,6 @@ def has_focus(frame, node) -> bool:
         return "focused" in states(node)
     print(f"NOTE: '{frame.name}' is not the active window; focus of '{node.name}' not verifiable", flush=True)
     return node.getState().contains(pyatspi.STATE_FOCUSABLE)
-
-
-def exit_from_menu() -> None:
-    """Exit of the control window asks its question inside the button's AT-SPI
-    action (a nested dialog loop in TrayApp::advanceExit), so the click runs in a
-    separate process that may wait for that call; this process stays responsive."""
-    subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tray_atspi.py"),
-                      "click", "PHPVPN", "Exit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def control_window():
@@ -541,6 +532,35 @@ def editor_checks() -> None:
     passed("reconnect question Yes: Disconnect progress, then a new Connect")
     absent("PHPVPN connection", "frame", 10)
 
+    # Save while another tray command is running: only the tray's message (Windows
+    # startCommand), no second "The save was not sent" from the editor, nothing sent.
+    mock("disconnect")
+    wait_status("PHPVPN: disconnected", 20)
+    open_editor()
+    document["masterSetup"]["autoConnectOnStartup"] = True
+    set_text(editor(), "Configuration JSON", json.dumps(document, indent=2))
+    saves = requests("set-config")
+    mock("connect delay 4000")
+    menu("Connect")
+    wait_until(lambda: requests("connect") == connects + 2, "Connect was not sent", 5)
+    press(editor(), "Save")
+    alert("PHPVPN", "A configuration command is already being processed. Wait for its result and choose this action "
+          "again.", "OK", 3)
+    no_alert(1.5)
+    frame = editor()
+    if requests("set-config") != saves:
+        fail("a refused save sent set-config")
+    if "sensitive" not in states(button(frame, "Save")) or "editable" not in states(
+            find(frame, "Configuration JSON", ("text",))):
+        fail("the editor did not return to editing after the refused save")
+    mock("connect delay 0")
+    wait_status("PHPVPN: connected", 20)
+    absent("PHPVPN connection", "frame", 15)
+    press(editor(), "Cancel")
+    alert("Edit Config", "Discard unsaved changes?", "Yes")
+    absent(EDITOR, "frame")
+    passed("save during a running command: only the tray message, editor keeps the draft")
+
 
 def deadline_checks() -> None:
     # One original 30 s deadline: a stalled set-config becomes unknown, the editor
@@ -791,13 +811,15 @@ def contracts_checks() -> None:
     menu("Communication contracts")
     frame = window(CONTRACTS, "frame")
     toggle(frame, row_name(7, "Enabled"))
-    exit_from_menu()
+    # The control window runs Exit from an idle callback, so the question never
+    # blocks the AT-SPI click action and this process drives it directly.
+    menu("Exit")
     alert("Exit PHPVPN", "Discard unsaved changes?", "No")
     time.sleep(0.5)
     if TRAYPID:
         os.kill(TRAYPID, 0)
     window(CONTRACTS, "frame")
-    exit_from_menu()
+    menu("Exit")
     alert("Exit PHPVPN", "Discard unsaved changes?", "Yes")
     if TRAYPID:
         wait_until(lambda: not os.path.exists(f"/proc/{TRAYPID}"), "Exit did not end the tray", 10)

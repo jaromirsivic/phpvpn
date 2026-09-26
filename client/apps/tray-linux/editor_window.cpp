@@ -288,8 +288,14 @@ void EditorWindow::save() {
     // The shared command channel owns the request (Windows set-config path); a
     // result of any other operation or window generation is ignored.
     if (!app_.requestConfigSave(*operation, std::move(*prepared.document),
-                                [this](const SaveResult& result) { finishSave(result); }))
-        finishSave({*operation, SaveOutcome::notSent, ErrorCode::ipc_unavailable, {}});
+                                [this](const SaveResult& result) { finishSave(result); })) {
+        // Refused before any request: the tray has shown the only message (or the
+        // session is ending). End the save state without a second message.
+        state_.finishSave({*operation, SaveOutcome::notSent, ErrorCode::ipc_unavailable, {}});
+        if (!window_) return;
+        updateEnabled();
+        if (!state_.ending()) gtk_widget_grab_focus(view_);
+    }
 }
 
 void EditorWindow::finishSave(const SaveResult& result) {

@@ -73,7 +73,9 @@ void ControlWindow::build() {
         bindings_.push_back(binding);
         g_signal_connect(button, "clicked", gtkCallback([](GtkButton*, gpointer data) {
             auto* bound = static_cast<Binding*>(data);
-            if (bound->owner->onAction_) bound->owner->onAction_(bound->action);
+            auto* owner = bound->owner;
+            const auto action = bound->action;
+            owner->deferred_.post([owner, action] { if (owner->onAction_) owner->onAction_(action); });
         }), binding);
         gtk_box_pack_start(GTK_BOX(content), button, FALSE, FALSE, 0);
     }

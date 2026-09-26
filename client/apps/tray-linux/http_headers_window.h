@@ -11,7 +11,7 @@
 #include <string>
 
 #include "core/base/result.h"
-#include "editor_window.h"  // DeferredCalls
+#include "gtk_util.h"  // DeferredCalls
 
 namespace phpvpn::tray {
 class HttpHeadersWindow {

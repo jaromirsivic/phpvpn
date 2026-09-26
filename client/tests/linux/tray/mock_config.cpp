@@ -21,6 +21,8 @@
 //   setconfig busy        answer busy without writing (proven rejection)
 //   setconfig foreign     publish, then answer with a foreign requestId (unknown)
 //   setconfig delay <ms>  wait before handling set-config (saving state, deadline)
+//   connect delay <ms>    wait before answering connect (a command still running in
+//                         the tray; 0 restores the immediate reply)
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -56,6 +58,7 @@ struct Store {
     std::string path, instanceId;
     SaveMode mode = SaveMode::normal;
     int delayMs = 0;
+    int connectDelayMs = 0;
 };
 Store& instance() {
     static Store store;
@@ -136,6 +139,15 @@ bool configure(const std::string& directory) {
 std::optional<std::string> handleIpc(const IpcRequest& request) {
     auto& s = instance();
     if (!s.store) return std::nullopt;
+    if (request.command == IpcCommand::connect) {
+        int delay;
+        {
+            std::lock_guard lock(s.mutex);
+            delay = s.connectDelayMs;
+        }
+        if (delay > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        return std::nullopt;  // the base scenario answers
+    }
     if (request.command == IpcCommand::get_config) {
         std::lock_guard lock(s.mutex);
         auto snapshot = s.store->read();
@@ -174,6 +186,11 @@ std::optional<IpcWorkClass> classify(std::string_view request) {
     if (!instance().store) return std::nullopt;
     if (auto ipc = IpcProtocol::parseRequest(request)) {
         if (ipc->command == IpcCommand::set_config || ipc->command == IpcCommand::get_config) return IpcWorkClass::file;
+        // A delayed connect must not hold up get-status either.
+        if (ipc->command == IpcCommand::connect) {
+            std::lock_guard lock(instance().mutex);
+            if (instance().connectDelayMs > 0) return IpcWorkClass::file;
+        }
         return std::nullopt;
     }
     if (auto wizard = WizardIpc::parseRequest(request); wizard && storeCommand(wizard->command)) return IpcWorkClass::file;
@@ -200,6 +217,10 @@ bool control(const std::string& line) {
     if (line == "setconfig normal") { s.mode = SaveMode::normal; return true; }
     if (line == "setconfig busy") { s.mode = SaveMode::busy; return true; }
     if (line == "setconfig foreign") { s.mode = SaveMode::foreign; return true; }
+    if (line.rfind("connect delay ", 0) == 0) {
+        s.connectDelayMs = std::max(0, std::atoi(line.c_str() + 14));
+        return true;
+    }
     if (line.rfind("setconfig delay ", 0) == 0) {
         s.mode = SaveMode::delay;
         s.delayMs = std::max(0, std::atoi(line.c_str() + 16));

@@ -151,8 +151,6 @@ if [ "$mode" = detail ]; then
     [ -S "$socket" ] || fail "mock service did not start"
 fi
 
-# ASan builds: third-party exit-time caches only (wizard-lsan.supp); tray leaks still fail.
-LSAN_OPTIONS="suppressions=$here/wizard-lsan.supp${LSAN_OPTIONS:+:$LSAN_OPTIONS}" \
 PHPVPN_TRAY_TEST_SOCKET="$socket" PHPVPN_TRAY_TEST_SERVER_UID="$server_uid" \
     "$build/apps/tray-linux/phpvpn-tray" >"$work/tray.log" 2>&1 &
 tray=$!
@@ -405,9 +403,12 @@ fi
 
 kill "$tray" 2>/dev/null || true
 sleep 1
-if grep -E "ERROR: AddressSanitizer|ERROR: LeakSanitizer|runtime error:" "$work/tray.log"; then
+if grep -E "ERROR: AddressSanitizer|runtime error:" "$work/tray.log"; then
     fail "sanitizer report (see above)"
 fi
+# LeakSanitizer (ASan builds): lsan_check.py ignores only the system library caches
+# of lsan.supp; any leak through PHPVPN code fails.
+python3 "$here/lsan_check.py" "$work/tray.log" "$work/mock.log" || fail "LeakSanitizer report (see above)"
 if grep -q "CRITICAL\|WARNING" "$work/tray.log"; then
     grep "CRITICAL\|WARNING" "$work/tray.log" | sort | uniq -c
     echo "NOTE: GLib criticals/warnings in the tray log (see above)"

@@ -15,9 +15,9 @@
 
 #include <functional>
 #include <string>
-#include <vector>
 
 #include "editor_model.h"
+#include "gtk_util.h"  // DeferredCalls
 #include "ipc_async.h"
 #include "lifecycle.h"
 
@@ -38,40 +38,6 @@ inline constexpr const char kTableRow[] = "phpvpn-table-row";
 inline constexpr const char kValidation[] = "phpvpn-validation";
 void install();
 }  // namespace config_style
-
-// Runs UI actions that may open a modal question from an idle callback. GTK runs a
-// button's accessibility "click" action inside the AT-SPI D-Bus call; a nested
-// dialog loop there would stall the assistive technology's call and every further
-// accessibility request of the tray. Pending calls are removed with the owner.
-class DeferredCalls {
-public:
-    DeferredCalls() = default;
-    DeferredCalls(const DeferredCalls&) = delete;
-    DeferredCalls& operator=(const DeferredCalls&) = delete;
-    ~DeferredCalls() {
-        for (auto* entry : pending_) g_source_remove(entry->source);
-    }
-    void post(std::function<void()> call) {
-        auto* entry = new Entry{this, std::move(call), 0};
-        entry->source = g_idle_add_full(G_PRIORITY_DEFAULT, [](gpointer raw) -> gboolean {
-            auto* current = static_cast<Entry*>(raw);
-            std::erase(current->owner->pending_, current);
-            auto call = std::move(current->call);
-            current->source = 0;
-            if (call) call();
-            return G_SOURCE_REMOVE;
-        }, entry, [](gpointer raw) { delete static_cast<Entry*>(raw); });
-        pending_.push_back(entry);
-    }
-
-private:
-    struct Entry {
-        DeferredCalls* owner;
-        std::function<void()> call;
-        guint source;
-    };
-    std::vector<Entry*> pending_;
-};
 
 class EditorWindow final : public LifecycleParticipant {
 public:

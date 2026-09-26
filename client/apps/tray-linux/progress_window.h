@@ -10,6 +10,7 @@
 #include <functional>
 #include <string>
 
+#include "gtk_util.h"
 #include "ipc_async.h"
 #include "poll_schedule.h"
 #include "progress_details.h"
@@ -75,5 +76,6 @@ private:
     GtkWidget* panelAction_ = nullptr;
     GtkWidget* countdown_ = nullptr;
     GtkWidget* errorDetail_ = nullptr;
+    DeferredCalls deferred_;
 };
 }  // namespace phpvpn::tray

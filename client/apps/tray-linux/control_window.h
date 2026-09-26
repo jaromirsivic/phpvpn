@@ -2,12 +2,16 @@
 // menu action in the UX04 order. It replaces the indicator when the desktop has no
 // StatusNotifierWatcher and is also shown by the application launcher
 // (phpvpn-tray --show-window). Closing it only hides it; the tray keeps running.
+// Button actions run from an idle callback (DeferredCalls), like the indicator menu:
+// Exit and other actions may open a modal question, which must not run inside the
+// button's "clicked" signal or its AT-SPI click action.
 #pragma once
 #include <gtk/gtk.h>
 
 #include <functional>
 #include <vector>
 
+#include "gtk_util.h"
 #include "indicator_model.h"
 #include "progress_model.h"
 
@@ -35,5 +39,6 @@ private:
     std::vector<Binding*> bindings_;
     Shield shield_ = Shield::grey;
     IndicatorView view_;
+    DeferredCalls deferred_;
 };
 }  // namespace phpvpn::tray

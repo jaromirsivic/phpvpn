@@ -475,6 +475,8 @@ void TrayApp::showConfigWarning(std::string_view availability, std::string_view 
 bool TrayApp::requestConfigSave(const SaveOperation& operation, std::string payload,
                                 std::function<void(const SaveResult&)> done) {
     cancelReconnect();
+    // Windows startCommand(set_config): Exit/session end refuse silently, a running
+    // command shows only the tray's message; the editor adds none of its own.
     if (endingSession_ || exit_.active()) { secureWipe(payload.data(), payload.size()); return false; }
     if (pendingCommand_) {
         secureWipe(payload.data(), payload.size());
@@ -482,12 +484,15 @@ bool TrayApp::requestConfigSave(const SaveOperation& operation, std::string payl
         return false;
     }
     pendingCommand_ = IpcCommand::set_config;
-    if (!commands_.requestSave(operation, std::move(payload), [this, done = std::move(done)](const SaveResult& result) {
+    auto callback = std::make_shared<std::function<void(const SaveResult&)>>(std::move(done));
+    if (!commands_.requestSave(operation, std::move(payload), [this, callback](const SaveResult& result) {
             if (pendingCommand_ == IpcCommand::set_config) pendingCommand_.reset();
-            if (done) done(result);
+            if (*callback) (*callback)(result);
         })) {
+        // The request never left the tray: the editor reports notSent (Windows
+        // editor_.finishSave(notSent) after a failed requestSave).
         pendingCommand_.reset();
-        return false;
+        if (*callback) (*callback)({operation, SaveOutcome::notSent, ErrorCode::ipc_unavailable, {}});
     }
     return true;
 }
@@ -615,7 +620,9 @@ void TrayApp::requestExit() {
     cancelReconnect();
     exit_.begin();
     exitTimer_ = timeout(50, this, &TrayApp::advanceExit);
-    advanceExit();
+    // The first step may ask the discard question; it never runs inside the caller's
+    // menu/button handler (AT-SPI click action), only from an idle callback.
+    deferred_.post([this] { advanceExit(); });
 }
 
 void TrayApp::advanceExit() {

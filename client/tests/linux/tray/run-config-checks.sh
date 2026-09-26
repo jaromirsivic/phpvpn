@@ -79,32 +79,9 @@ if grep -qE "ERROR: AddressSanitizer|runtime error:" "$work/tray.log" "$work/moc
     echo "FAIL: sanitizer report (see above)"
     result=1
 fi
-# LeakSanitizer: a leak whose allocation stack passes through the tray or mock
-# binaries fails; leaks allocated purely inside system libraries (fontconfig and
-# pango caches of GTK) are only reported.
-for log in "$work/tray.log" "$work/mock.log"; do
-    grep -q "ERROR: LeakSanitizer" "$log" || continue
-    python3 - "$log" "$build" <<"PYEOF" || result=1
-import re, sys
-text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-blocks = re.split(r"\n(?=(?:Direct|Indirect) leak of )", text.split("ERROR: LeakSanitizer", 1)[1])[1:]
-own, foreign = [], 0
-for block in blocks:
-    frames = [line for line in block.splitlines() if re.match(r"\s+#\d+ ", line)]
-    # main() and TrayApp::run only enter the GLib main loop; they do not make an
-    # allocation made by GTK itself (portal, fontconfig) a PHPVPN allocation.
-    frames = [line for line in frames[1:] if not re.search(r" in (main|_start|phpvpn::tray::TrayApp::run\(int, char\*\*\)) ", line)]
-    if any(sys.argv[2] in line or "phpvpn" in line for line in frames):
-        own.append(block[:3000])
-    else:
-        foreign += 1
-for block in own:
-    print(block)
-name = sys.argv[1].rsplit("/", 1)[-1]
-print(f"LeakSanitizer {name}: {len(own)} leak(s) from PHPVPN code, {foreign} inside system libraries only")
-sys.exit(1 if own else 0)
-PYEOF
-done
+# LeakSanitizer (ASan builds): lsan_check.py ignores only the system library caches
+# of lsan.supp; any leak through PHPVPN code fails.
+python3 "$here/lsan_check.py" "$work/tray.log" "$work/mock.log" || result=1
 if grep -qE "CRITICAL|WARNING" "$work/tray.log"; then
     grep -E "CRITICAL|WARNING" "$work/tray.log" | sort | uniq -c
     echo "NOTE: GLib criticals/warnings in the tray log (see above)"
