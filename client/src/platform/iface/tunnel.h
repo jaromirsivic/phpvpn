@@ -3,6 +3,14 @@
 // One sequential packet source for the input worker and one sequential packet
 // sink for the output worker, client.md "Sekvencni I/O a vlastnictvi paketu".
 // The pointer into the driver ring never leaves the platform layer.
+//
+// Platform meaning (the names follow the Windows origin): Windows uses Wintun
+// with a ring, an adapter GUID and a LUID. Linux uses one non-persistent
+// /dev/net/tun descriptor: the "adapter" is the TUN interface with the exact
+// configured name, the GUID becomes the ownership mark "phpvpn-owner:<GUID>" in
+// its ifalias, `interfaceLuid` is the identity described in netconfig.h, the
+// ring capacity and the tunnel type are ignored, and the kernel removes the
+// interface with its addresses and routes when the descriptor closes.
 #pragma once
 
 #include <cstdint>
@@ -60,21 +68,29 @@ public:
     virtual ~TunnelDriver() = default;
 
     // Loads the library from the installation directory and resolves the whole
-    // allowlist without creating an adapter.
+    // allowlist without creating an adapter. Linux: verifies that /dev/net/tun
+    // is the character device 10:200 offering IFF_TUN|IFF_NO_PI; the directory
+    // is unused.
     virtual Status loadAndVerify(const std::wstring& installDirectory) = 0;
 
     virtual Result<TunnelAdapterInfo> createAdapter(const std::wstring& name,
                                                     const std::wstring& tunnelType,
                                                     const std::wstring& requestedGuid) = 0;
 
+    // Linux: always not_supported, an existing interface of that name is a
+    // collision.
     virtual Result<TunnelAdapterInfo> openAdapter(const std::wstring& name) = 0;
 
     // Starts the single session with the 4 MiB ring required by client.md.
     virtual Result<std::shared_ptr<Tunnel>> startSession(std::uint32_t ringCapacity) = 0;
 
+    // Linux: endSession stops and detaches the session but keeps the
+    // descriptor, so the interface stays until closeAdapter closes it and
+    // waits (bounded) until the kernel removed the interface.
     virtual void endSession() = 0;
     virtual void closeAdapter() = 0;
 
+    // Linux: always 0, a TUN device has no driver version.
     virtual std::uint32_t runningDriverVersion() const = 0;
 };
 

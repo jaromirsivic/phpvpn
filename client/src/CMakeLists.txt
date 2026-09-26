@@ -116,9 +116,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         platform/linux/config_files_linux.cpp
         platform/linux/crypto_openssl.cpp
         platform/linux/dns_snapshot.cpp
+        platform/linux/interface_identity.cpp
         platform/linux/ipc_unix.cpp
         platform/linux/netconfig_netlink.cpp
         platform/linux/netlink_codec.cpp
+        platform/linux/netlink_socket.cpp
         platform/linux/paths_linux.cpp
         platform/linux/transport_curl.cpp
         platform/linux/tunnel_tun.cpp
