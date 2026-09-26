@@ -1,7 +1,7 @@
 state: awaiting_route
 language: Czech
 project_root: C:\git\phpvpn
-intent_directory: C:\git\phpvpn\Intents\2026-09-26-08-41-17
-started_at: 2026-09-26-08-41-17
+intent_directory: C:\git\phpvpn\Intents\2026-09-26-15-09-24
+started_at: 2026-09-26-15-09-24
 last_completed_intent_version: 1
-latest_intent_path: C:\git\phpvpn\Intents\2026-09-26-08-41-17\intent-v001.md
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-26-15-09-24\intent-v001.md
