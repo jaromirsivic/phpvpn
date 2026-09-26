@@ -1,6 +1,7 @@
 #!/bin/sh
-# Headless installation check of the signed Linux client folder in a clean
-# systemd container (plan-v001 5/WP08). Runs on a Linux host with podman.
+# Installation check of the signed Linux client folder in a clean systemd
+# container without a desktop (plan-v001 5/WP08 and 5/WP11). Runs on a Linux
+# host with podman.
 #
 #   sh tests/e2e/linux/package-install-container.sh fedora:<N>|ubuntu:24.04 <folder-release-1> <folder-release-2>
 #
@@ -12,7 +13,13 @@
 # recommended dependencies off, the active service, phpvpn status as root and
 # as an unprivileged user, the upgrade to release 2 with a service restart and
 # the configuration kept, uninstall.sh keeping the data and
-# uninstall.sh --remove-data removing it. The container is removed afterwards.
+# uninstall.sh --remove-data removing it. When the folders hold phpvpn-tray, a
+# second phase checks the tray package on the same desktop-less container: the
+# automatic mode skips it, --with-tray installs it with its files, resolvable
+# libraries and GUI dependencies (the base package keeps none), the tray exits
+# with a clear message without a display, --headless still upgrades an
+# installed tray to the exact release, and uninstall.sh removes both packages.
+# The container is removed afterwards.
 set -eu
 image=${1:?usage: package-install-container.sh fedora:<N>|ubuntu:24.04 <folder-release-1> <folder-release-2>}
 first=$(cd "${2:?folder of release 1}" && pwd)
@@ -25,6 +32,13 @@ case $image in
         prepare='dnf -y install systemd openssl util-linux && dnf clean all'
         package_query='rpm -q --qf %{VERSION}-%{RELEASE} phpvpn'
         package_installed='rpm -q phpvpn > /dev/null 2>&1'
+        tray_query='rpm -q --qf %{VERSION}-%{RELEASE} phpvpn-tray'
+        tray_installed='rpm -q phpvpn-tray > /dev/null 2>&1'
+        tray_files='rpm -ql phpvpn-tray'
+        tray_requires='rpm -q --requires phpvpn-tray'
+        base_requires='rpm -q --requires phpvpn'
+        tray_licence='grep -q "Apache License" /usr/share/licenses/phpvpn-tray/LICENSE-material-symbols.txt && test -f /usr/share/licenses/phpvpn-tray/NOTICE-material-symbols.txt'
+        tray_gui_dependencies='libgtk-3.so.0 libayatana-appindicator3.so.1'
         ;;
     ubuntu:24.04)
         # The container image carries a policy-rc.d that forbids service
@@ -33,6 +47,13 @@ case $image in
         prepare='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv openssl ca-certificates && rm -rf /var/lib/apt/lists/* /usr/sbin/policy-rc.d'
         package_query="dpkg-query -W -f='\${Version}' phpvpn"
         package_installed="dpkg-query -W -f='\${Status}' phpvpn 2> /dev/null | grep -q 'install ok installed'"
+        tray_query="dpkg-query -W -f='\${Version}' phpvpn-tray"
+        tray_installed="dpkg-query -W -f='\${Status}' phpvpn-tray 2> /dev/null | grep -q 'install ok installed'"
+        tray_files='dpkg -L phpvpn-tray'
+        tray_requires="dpkg-query -W -f='\${Depends}\n' phpvpn-tray | tr ',' '\n'"
+        base_requires="dpkg-query -W -f='\${Depends}\n' phpvpn | tr ',' '\n'"
+        tray_licence='grep -q "^License: Apache-2.0" /usr/share/doc/phpvpn-tray/copyright'
+        tray_gui_dependencies='libgtk-3-0 libayatana-appindicator3-1'
         ;;
     *) echo "image must be fedora:<N> or ubuntu:24.04" >&2; exit 2 ;;
 esac
@@ -116,6 +137,7 @@ check "installed release 1" "$package_query | grep -q -- '-1\$'"
 check "phpvpn-service --verify-tunnel finds the kernel TUN device" '/usr/libexec/phpvpn/phpvpn-service --verify-tunnel'
 run 'systemd-analyze security phpvpn.service --no-pager | tail -n 1' || true
 check "no graphical library in the installed binaries" '! ldd /usr/bin/phpvpn /usr/libexec/phpvpn/phpvpn-service | grep -Eiq "gtk|gdk|libX|wayland|ayatana"'
+check "--headless did not install phpvpn-tray" "! { $tray_installed; }"
 
 run_input 'cat > /tmp/config.json' <<'EOF'
 {
@@ -165,6 +187,56 @@ check "the reinstalled service keeps the configuration" 'phpvpn get-config | gre
 check "uninstall.sh --remove-data" 'sh /root/release-2/uninstall.sh --remove-data'
 check "uninstall.sh --remove-data removes /etc/phpvpn and /var/lib/phpvpn" 'test ! -e /etc/phpvpn && test ! -e /var/lib/phpvpn'
 check "no phpvpn interface is left" '! ip link show phpvpn > /dev/null 2>&1 || ! command -v ip > /dev/null'
+
+# --------------------------------------------------------------------- tray
+if ls "$first"/phpvpn-tray[-_]* > /dev/null 2>&1 && ls "$second"/phpvpn-tray[-_]* > /dev/null 2>&1; then
+    refused "--headless together with --with-tray is refused" \
+        'sh /root/release-1/install.sh --headless --with-tray' 'usage:'
+    check "install.sh without options skips phpvpn-tray without a graphical login" \
+        "sh /root/release-1/install.sh --no-weak-deps > /tmp/auto.log 2>&1; status=\$?; cat /tmp/auto.log; test \$status = 0 && grep -q 'phpvpn-tray was not installed' /tmp/auto.log && ! { $tray_installed; }"
+    check "install.sh --with-tray --no-weak-deps (release 1)" 'sh /root/release-1/install.sh --with-tray --no-weak-deps'
+    check "installed phpvpn-tray release 1" "$tray_query | grep -q -- '-1\$'"
+    check "phpvpn-tray binary" 'test -x /usr/bin/phpvpn-tray'
+    check "autostart entry /etc/xdg/autostart/phpvpn-tray.desktop" \
+        'grep -qx "Exec=phpvpn-tray" /etc/xdg/autostart/phpvpn-tray.desktop'
+    check "application launcher runs phpvpn-tray --show-window" \
+        'grep -qx "Exec=phpvpn-tray --show-window" /usr/share/applications/phpvpn-tray.desktop'
+    check "28 hicolor icons (4 names x 7 sizes)" \
+        'test "$(ls /usr/share/icons/hicolor/*/apps/phpvpn.png /usr/share/icons/hicolor/*/apps/phpvpn-*.png | wc -l)" = 28'
+    check "phpvpn-tray(1) is part of the package" "$tray_files | grep -q '/man1/phpvpn-tray\.1'"
+    check "Material Symbols licence and notice" "$tray_licence"
+    check "ldd resolves every library of phpvpn-tray" \
+        'ldd /usr/bin/phpvpn-tray > /tmp/ldd.txt && ! grep -q "not found" /tmp/ldd.txt && grep -q libgtk-3 /tmp/ldd.txt && grep -q libayatana-appindicator3 /tmp/ldd.txt'
+    for dependency in $tray_gui_dependencies; do
+        check "phpvpn-tray depends on $dependency" "$tray_requires | grep -qF '$dependency'"
+    done
+    check "phpvpn-tray requires the exact phpvpn release" "$tray_requires | grep -Eq '^ *phpvpn(\(x86-64\))? *[(]?= *1\.0\.0-1\)?$'"
+    check "the phpvpn package still has no graphical dependency" "! $base_requires | grep -Eiq 'gtk|gdk|ayatana|libX|wayland'"
+    check "phpvpn and phpvpn-service still load no graphical library" '! ldd /usr/bin/phpvpn /usr/libexec/phpvpn/phpvpn-service | grep -Eiq "gtk|gdk|libX|wayland|ayatana"'
+    for arguments in "--help" "" "--show-window"; do
+        if output=$(run "runuser -u phpvpn-check -- env -u DISPLAY -u WAYLAND_DISPLAY phpvpn-tray $arguments 2>&1"); then
+            fail "phpvpn-tray $arguments without a display succeeded: $output"
+        else
+            status=$?
+            if [ "$status" = 1 ] && printf '%s' "$output" | grep -q 'cannot open a graphical display'; then
+                pass "phpvpn-tray $arguments without a display exits 1: $(printf '%s' "$output" | head -n 1)"
+            else
+                fail "phpvpn-tray $arguments without a display: status $status, output: $output"
+            fi
+        fi
+    done
+    check "install.sh --headless --no-weak-deps upgrades the installed tray too (release 2)" \
+        "sh /root/release-2/install.sh --headless --no-weak-deps > /tmp/upgrade.log 2>&1; status=\$?; cat /tmp/upgrade.log; test \$status = 0 && grep -q 'upgraded together with phpvpn' /tmp/upgrade.log"
+    check "installed phpvpn release 2" "$package_query | grep -q -- '-2\$'"
+    check "installed phpvpn-tray release 2" "$tray_query | grep -q -- '-2\$'"
+    check "phpvpn.service is active with the tray installed" 'systemctl is-active --quiet phpvpn.service && phpvpn status > /dev/null'
+    check "uninstall.sh --remove-data removes phpvpn and phpvpn-tray" 'sh /root/release-2/uninstall.sh --remove-data'
+    check "phpvpn-tray and phpvpn are removed" "! { $tray_installed; } && ! { $package_installed; }"
+    check "tray files are removed" \
+        'test ! -e /usr/bin/phpvpn-tray && test ! -e /etc/xdg/autostart/phpvpn-tray.desktop && test ! -e /usr/share/applications/phpvpn-tray.desktop && ! ls /usr/share/icons/hicolor/*/apps/phpvpn*.png > /dev/null 2>&1'
+else
+    echo "NOT RUN: tray phase (the folders hold no phpvpn-tray package)"
+fi
 
 echo "passes=$passes failures=$failures"
 [ "$failures" = 0 ]

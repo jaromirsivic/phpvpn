@@ -1,0 +1,76 @@
+.TH PHPVPN-TRAY 1 "2026-09-26" "phpvpn 1.0.0" "User Commands"
+.SH NAME
+phpvpn-tray \- tray application of the phpvpn service
+.SH SYNOPSIS
+.B phpvpn-tray
+.RB [ \-\-show\-window ]
+.RB [ \-\-installation\-complete ]
+.SH DESCRIPTION
+.B phpvpn-tray
+shows the connection state of the local
+.BR phpvpn-service (8)
+as an icon in the desktop notification area (StatusNotifierItem through
+AppIndicator) and offers the same actions as the Windows tray: Connect or
+Disconnect, the Configuration Wizard, Communication contracts, Edit Config,
+Show Server Info, Statistics and Exit. It talks to the service over the control
+socket
+.I /run/phpvpn/control-v1.sock
+and needs no root.
+.PP
+The tray does not own the VPN connection. Exit, logging out and the end of the
+desktop session close only the tray; the connection stays as it is. At startup
+the tray reads the state and never connects on its own.
+.PP
+One instance runs per desktop session (application ID
+.BR org.phpvpn.Tray ).
+A second start passes its arguments to the running instance and exits.
+.PP
+When the desktop offers no StatusNotifierItem host, for example GNOME on Fedora
+Workstation without the AppIndicator extension, the tray opens a control window
+with the state and the same actions instead, and shows a notification once that
+explains how to enable the extension. The icon appears by itself once a host is
+available.
+.SH OPTIONS
+Without an option the tray only shows its icon; the autostart entry starts it
+this way.
+.TP
+.B \-\-show\-window
+Show the control window of the running instance. The application launcher
+.I phpvpn-tray.desktop
+uses this option.
+.TP
+.B \-\-installation\-complete
+Show the installation notice through the desktop notification service.
+.PP
+Other arguments are ignored.
+.SH EXIT STATUS
+.TP
+.B 0
+The tray ended normally, or a second start passed its arguments to the running
+instance.
+.TP
+.B 1
+No graphical display could be opened (neither
+.B WAYLAND_DISPLAY
+nor
+.B DISPLAY
+works), or the tray could not initialise.
+.SH FILES
+.TP
+.I /etc/xdg/autostart/phpvpn-tray.desktop
+Starts the tray at every graphical login of every user. A user disables it for
+the own account with an entry
+.I ~/.config/autostart/phpvpn-tray.desktop
+that contains
+.BR Hidden=true .
+.TP
+.I /usr/share/applications/phpvpn-tray.desktop
+Application launcher, runs
+.BR "phpvpn-tray \-\-show\-window" .
+.TP
+.I /run/phpvpn/control-v1.sock
+Control socket of the service. The tray only talks to a peer running as root.
+.SH SEE ALSO
+.BR phpvpn (1),
+.BR phpvpn-service (8),
+.BR gnome-extensions (1)

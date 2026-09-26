@@ -6,9 +6,10 @@
 # The release can be raised for rebuilds without a source change:
 #   rpmbuild --define 'phpvpn_release 2' ...
 #
-# The graphical tray is the separate subpackage phpvpn-tray (WP11). It is
-# off until that work package enables it; see the marked sections below.
-%bcond tray 0
+# The graphical tray is the separate subpackage phpvpn-tray (WP11). The base
+# package stays free of graphical dependencies; rpmbuild --without tray builds
+# only the headless package.
+%bcond tray 1
 
 %global phpvpn_rel %{?phpvpn_release}%{!?phpvpn_release:1}
 
@@ -27,10 +28,9 @@ BuildRequires:  pkgconfig(libsystemd)
 BuildRequires:  pkgconfig(openssl) >= 3
 BuildRequires:  systemd-rpm-macros
 %if %{with tray}
-# WP11: the tray build dependencies go here, for example
-# BuildRequires:  pkgconfig(gtk+-3.0)
-# BuildRequires:  pkgconfig(ayatana-appindicator3-0.1)
-# BuildRequires:  desktop-file-utils
+BuildRequires:  pkgconfig(gtk+-3.0)
+BuildRequires:  pkgconfig(ayatana-appindicator3-0.1)
+BuildRequires:  desktop-file-utils
 %endif
 
 # Runtime libraries (libcrypto, libcurl, libsystemd, libstdc++) come from the
@@ -46,16 +46,28 @@ over a local socket and needs neither root nor a graphical session. A
 NetworkManager snippet keeps NetworkManager away from the phpvpn interface.
 
 %if %{with tray}
-# WP11: phpvpn-tray subpackage. Keep the exact version dependency so the tray
-# always talks to the service of the same release.
+# The exact version dependency keeps the tray talking to the service of the
+# same release. GTK 3 and libayatana-appindicator3 come from the automatic
+# soname dependencies. hicolor-icon-theme owns the icon directories; its file
+# triggers refresh the icon cache, so no scriptlet is needed.
 %package tray
 Summary:        Tray application of the VPN client
+# The state icons are modified Material Symbols.
+License:        MIT AND Apache-2.0
 Requires:       %{name}%{?_isa} = %{version}-%{release}
+Requires:       hicolor-icon-theme
+# Vanilla GNOME shows tray icons only with this extension. It is recommended,
+# not enabled: desktop settings belong to the user.
 Recommends:     gnome-shell-extension-appindicator
 
 %description tray
-The phpvpn tray shows the connection state in the desktop notification area
-and controls the phpvpn service.
+The phpvpn tray shows the connection state of the phpvpn service in the
+desktop notification area and offers Connect, Disconnect, the configuration
+Wizard, the configuration editor, communication contracts, server information
+and statistics. It starts at every graphical login and never owns the VPN
+connection: closing it or logging out leaves the connection as it is. Without
+a notification area host (GNOME without the AppIndicator extension) it shows a
+control window instead.
 %endif
 
 %prep
@@ -83,6 +95,10 @@ and controls the phpvpn service.
 %check
 # Unprivileged unit tests only (portable core, logger, Linux platform layer).
 %ctest
+%if %{with tray}
+desktop-file-validate %{buildroot}%{_datadir}/applications/phpvpn-tray.desktop
+desktop-file-validate %{buildroot}%{_sysconfdir}/xdg/autostart/phpvpn-tray.desktop
+%endif
 
 %post
 %systemd_post phpvpn.service
@@ -115,11 +131,25 @@ and controls the phpvpn service.
 
 %if %{with tray}
 %files tray
-# WP11: the tray binary, phpvpn-tray.desktop, the autostart entry, the hicolor
-# icons, phpvpn-tray(1) and the Material Symbols licence and notice.
+# The state icons derive from Material Symbols (Apache-2.0); CMake installs the
+# licence and the notice next to them.
+%dir %{_datadir}/licenses/phpvpn-tray
+%license %{_datadir}/licenses/phpvpn-tray/LICENSE-material-symbols.txt
+%license %{_datadir}/licenses/phpvpn-tray/NOTICE-material-symbols.txt
+%{_bindir}/phpvpn-tray
+%{_datadir}/applications/phpvpn-tray.desktop
+# XDG autostart for every user (the Windows HKLM Run value). A user disables it
+# with Hidden=true in ~/.config/autostart; an administrator's edit is kept.
+%config(noreplace) %{_sysconfdir}/xdg/autostart/phpvpn-tray.desktop
+%{_datadir}/icons/hicolor/*/apps/phpvpn.png
+%{_datadir}/icons/hicolor/*/apps/phpvpn-connected.png
+%{_datadir}/icons/hicolor/*/apps/phpvpn-connecting.png
+%{_datadir}/icons/hicolor/*/apps/phpvpn-disconnected.png
+%{_mandir}/man1/phpvpn-tray.1*
 %endif
 
 %changelog
 * Sat Sep 26 2026 phpvpn maintainers <maintainers@phpvpn.invalid> - 1.0.0-1
 - First Linux package: headless service, command line client, systemd unit,
-  NetworkManager snippet and manual pages.
+  NetworkManager snippet and manual pages; the tray application in the
+  phpvpn-tray subpackage.

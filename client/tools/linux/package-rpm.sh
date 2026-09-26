@@ -7,8 +7,8 @@
 #   sh tools/linux/package-rpm.sh <output-directory>
 #
 # PHPVPN_PACKAGE_RELEASE sets the RPM release (default 1). Only the binary
-# packages are copied to <output-directory> (phpvpn-<version>-<release>.x86_64.rpm,
-# later also phpvpn-tray); debuginfo and debugsource stay in the temporary
+# packages are copied to <output-directory> (phpvpn-<version>-<release>.x86_64.rpm
+# and phpvpn-tray-<version>-<release>.x86_64.rpm); debuginfo and debugsource stay in the temporary
 # rpmbuild tree, which is removed.
 set -eu
 output=${1:?usage: package-rpm.sh <output-directory>}

@@ -12,7 +12,8 @@
 # convention work/linux-packages/<id>) collects the builds of one source
 # snapshot, typically one Fedora and one Ubuntu build:
 #
-#   <package files>           phpvpn-<v>-<r>.x86_64.rpm, phpvpn_<v>-<r>_amd64.deb
+#   <package files>           phpvpn-<v>-<r>.x86_64.rpm, phpvpn-tray-<v>-<r>.x86_64.rpm,
+#                             phpvpn_<v>-<r>_amd64.deb, phpvpn-tray_<v>-<r>_amd64.deb
 #   SHA256SUMS                sha256sum format over all packages
 #   build-provenance.json     source commit and dirty flag, and per build the
 #                             distribution, image, compiler and library versions
@@ -78,15 +79,17 @@ if [ "${1:-}" = "--inside" ]; then
         fi
     fi
 
+    # The tray libraries are absent from a build without the tray.
+    optional() { if q "$1" > /dev/null 2>&1; then q "$1"; else printf none; fi; }
     if [ "$ID" = fedora ]; then
         q() { rpm -q --qf '%{VERSION}-%{RELEASE}' "$1"; }
         compiler=$(g++ --version | head -n 1)
-        libraries="\"openssl\":$(json_string "$(q openssl-libs)"),\"libcurl\":$(json_string "$(q libcurl)"),\"libsystemd\":$(json_string "$(q systemd-libs)"),\"glibc\":$(json_string "$(q glibc)"),\"libstdc++\":$(json_string "$(q libstdc++)")"
+        libraries="\"openssl\":$(json_string "$(q openssl-libs)"),\"libcurl\":$(json_string "$(q libcurl)"),\"libsystemd\":$(json_string "$(q systemd-libs)"),\"glibc\":$(json_string "$(q glibc)"),\"libstdc++\":$(json_string "$(q libstdc++)"),\"gtk3\":$(json_string "$(optional gtk3)"),\"ayatana-appindicator3\":$(json_string "$(optional libayatana-appindicator-gtk3)")"
         packager="rpm-build $(q rpm-build)"
     else
         q() { dpkg-query -W -f='${Version}' "$1"; }
         compiler=$(g++ --version | head -n 1)
-        libraries="\"openssl\":$(json_string "$(q libssl-dev)"),\"libcurl\":$(json_string "$(q libcurl4-openssl-dev)"),\"libsystemd\":$(json_string "$(q libsystemd-dev)"),\"glibc\":$(json_string "$(q libc6-dev)"),\"libstdc++\":$(json_string "$(q libstdc++-13-dev 2> /dev/null || q libstdc++6)")"
+        libraries="\"openssl\":$(json_string "$(q libssl-dev)"),\"libcurl\":$(json_string "$(q libcurl4-openssl-dev)"),\"libsystemd\":$(json_string "$(q libsystemd-dev)"),\"glibc\":$(json_string "$(q libc6-dev)"),\"libstdc++\":$(json_string "$(q libstdc++-13-dev 2> /dev/null || q libstdc++6)"),\"gtk3\":$(json_string "$(optional libgtk-3-dev)"),\"ayatana-appindicator3\":$(json_string "$(optional libayatana-appindicator3-dev)")"
         packager="debhelper $(q debhelper)"
     fi
 
