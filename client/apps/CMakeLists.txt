@@ -45,7 +45,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # Everything below is the Windows application set: Win32 resources, manifests, the tray,
-# the package GUI and the Wintun copy.
+# the package GUI and the Wintun copy. The Linux tray is a separate GTK application.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PHPVPN_BUILD_TRAY)
+    add_subdirectory(tray-linux)
+endif()
 if(NOT WIN32)
     return()
 endif()

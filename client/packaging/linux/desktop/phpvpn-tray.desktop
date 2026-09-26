@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=PHPVPN
+GenericName=VPN Client
+Comment=Show the PHPVPN connection status and controls
+Exec=phpvpn-tray --show-window
+TryExec=phpvpn-tray
+Icon=phpvpn
+Terminal=false
+Categories=Network;
+Keywords=VPN;PHPVPN;
+StartupNotify=false

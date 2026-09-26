@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=PHPVPN tray
+Comment=PHPVPN connection status in the notification area
+Exec=phpvpn-tray
+TryExec=phpvpn-tray
+Icon=phpvpn
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

@@ -104,8 +104,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         linux/unit/test_transport_curl.cpp
         linux/unit/test_netlink_codec.cpp
         linux/unit/test_ipc_unix.cpp
+        # GTK-free models of the Linux tray (WP09); no GUI library is linked.
+        linux/unit/test_tray_linux_models.cpp
+        ../apps/tray-linux/indicator_model.cpp
+        ../apps/tray-linux/ipc_async.cpp
+        ../apps/tray/status_model.cpp
+        ../apps/tray/save_response.cpp
     )
-    target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit
+        ${CMAKE_SOURCE_DIR}/apps/tray ${CMAKE_SOURCE_DIR}/apps/tray-linux)
     # The transport tests run an in-process HTTPS server with a generated certificate.
     find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
     target_link_libraries(phpvpn-linux-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options
