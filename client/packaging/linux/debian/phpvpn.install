@@ -1,0 +1,6 @@
+usr/bin/phpvpn
+usr/libexec/phpvpn/phpvpn-service
+usr/lib/systemd/system/phpvpn.service
+usr/lib/NetworkManager/conf.d/90-phpvpn.conf
+usr/share/man/man1/phpvpn.1
+usr/share/man/man8/phpvpn-service.8

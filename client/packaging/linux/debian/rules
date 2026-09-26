@@ -1,0 +1,33 @@
+#!/usr/bin/make -f
+# phpvpn Debian packaging (plan-v001 section 4.13). The client/ tree is the
+# source root: client/tools/linux/package-deb.sh copies this directory to
+# debian/ of a staging copy and runs dpkg-buildpackage -us -uc -b.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake+ninja
+
+# Tests are built for dh_auto_test; the privileged network namespace tests and
+# the end-to-end helpers need root and are not part of the package build.
+# Warnings stay warnings with the distribution compiler flags.
+# WP11: switch PHPVPN_BUILD_TRAY on together with the phpvpn-tray package.
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_INSTALL_LIBEXECDIR=libexec \
+		-DPHPVPN_SYSTEMD_UNIT_DIR=/usr/lib/systemd/system \
+		-DPHPVPN_NM_CONF_DIR=/usr/lib/NetworkManager/conf.d \
+		-DPHPVPN_BUILD_TRAY=OFF \
+		-DPHPVPN_WARNINGS_AS_ERRORS=OFF \
+		-DBUILD_TESTING=ON \
+		-DPHPVPN_BUILD_PRIVILEGED_TESTS=OFF \
+		-DPHPVPN_BUILD_LINUX_E2E=OFF
+
+# Install into debian/tmp and split with <package>.install, so the tray package
+# only adds its own list. dh_missing (compat 13) fails on unlisted files.
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp
+
+override_dh_installsystemd:
+	dh_installsystemd --restart-after-upgrade
