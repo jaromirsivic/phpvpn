@@ -1,6 +1,9 @@
 # Everything below is the Windows application set: Win32 resources, manifests, the tray,
 # the package GUI and the Wintun copy. The Linux service, CLI and tray are added by later
 # work packages; until then a Linux build produces the core and its tests only.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PHPVPN_BUILD_TRAY)
+    add_subdirectory(tray-linux)
+endif()
 if(NOT WIN32)
     return()
 endif()
