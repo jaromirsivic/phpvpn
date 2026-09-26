@@ -7,49 +7,30 @@
 #include <string>
 #include <string_view>
 #include "core/base/result.h"
+#include "platform/iface/ipc_server.h"
 
 namespace phpvpn {
-using IpcHandler = std::function<std::string(std::string_view)>;
-enum class IpcWorkClass { shortControl, file, diagnostic };
-struct IpcPipeServerOptions {
+struct IpcPipeServerOptions : IpcServerOptions {
     // Empty selects the fixed production pipe. Private names are for isolated tests.
     std::wstring pipeName;
-    // Pure, bounded classification after the complete message has arrived.
-    // The service classifier/handler must validate the complete IPC schema before effects.
-    std::function<IpcWorkClass(std::string_view)> classify;
-    // Produces the standard correlated busy response. Empty means reject by closing.
-    std::function<std::string(std::string_view)> busyResponse;
-    // Called once before joining workers. Must cancel/wake long handlers/tasks.
-    // Accepted tasks are drained, never silently dropped. They must return promptly
-    // after this callback, including tasks that start during shutdown draining.
-    std::function<void()> cancelHandlers;
-    // Event-loop maintenance every 250 ms or sooner. Must not block or perform I/O.
-    std::function<void()> onTick;
 };
-struct IpcPipeServerStats {
-    std::size_t connectionSlots = 0; // Includes listeners, hard maximum 32.
-    std::size_t shortQueued = 0;
-    std::size_t fileQueued = 0;
-    std::size_t diagnosticOutstanding = 0;
-    std::uint64_t rejected = 0;
-    std::uint64_t ioTimeouts = 0;
-};
-class IpcPipeServer {
+using IpcPipeServerStats = IpcServerStats;
+class IpcPipeServer final : public IpcServer {
 public:
     explicit IpcPipeServer(IpcHandler handler);
     IpcPipeServer(IpcHandler handler, IpcPipeServerOptions options);
-    ~IpcPipeServer();
+    ~IpcPipeServer() override;
     IpcPipeServer(const IpcPipeServer&) = delete;
     IpcPipeServer& operator=(const IpcPipeServer&) = delete;
-    Status start();
-    void stop();
+    Status start() override;
+    void stop() override;
     // Queue limits are four waiting file tasks and one diagnostic total.
     // False means the task was not accepted and will never be run.
     // Call after start succeeds. A task must catch its own failures and publish
     // its operation's terminal result, including during shutdown draining.
-    bool tryPostFile(std::function<void()> task);
-    bool tryPostDiagnostic(std::function<void()> task);
-    IpcPipeServerStats stats() const;
+    bool tryPostFile(std::function<void()> task) override;
+    bool tryPostDiagnostic(std::function<void()> task) override;
+    IpcPipeServerStats stats() const override;
 
 private:
     struct Impl;

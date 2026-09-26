@@ -1,7 +1,9 @@
-# Platform independent helpers of the platform boundary. The core calls them
-# itself (action names, snapshot comparison), so they live in the core library and
-# the core links without any platform implementation.
+# Platform independent helpers of the platform boundary. The core calls some of
+# them itself (action names, snapshot comparison) and both platform IPC servers
+# share the IPC executors, so they live in the core library and the core links
+# without any platform implementation.
 set(PHPVPN_PLATFORM_SHARED_SOURCES
+    platform/iface/ipc_executors.cpp
     platform/iface/netconfig.cpp
     platform/iface/transport.cpp
 )

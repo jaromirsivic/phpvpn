@@ -4,14 +4,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <condition_variable>
-#include <deque>
 #include <limits>
 #include <mutex>
 #include <thread>
 #include <utility>
 #include <vector>
 #include "core/ipc/ipc_protocol.h"
+#include "platform/iface/ipc_executors.h"
 
 namespace phpvpn {
 namespace {
@@ -69,24 +68,7 @@ void cancelAndDrain(HANDLE pipe, OVERLAPPED& operation) {
 }
 
 struct IpcPipeServer::Impl {
-    struct Job {
-        std::string request;
-        std::string response;
-        std::atomic<bool> done{false};
-        bool closeOnly = false;
-    };
-    struct Work {
-        std::shared_ptr<Job> job;
-        std::function<void()> task;
-    };
-    struct Executor {
-        std::mutex mutex;
-        std::condition_variable ready;
-        std::deque<Work> queue;
-        bool active = false;
-        bool stopping = false;
-        std::thread thread;
-    };
+    using Job = IpcJob;
     enum class Phase { listening, reading, executing, writing, awaitingClose };
     struct Slot {
         Handle pipe;
@@ -101,7 +83,6 @@ struct IpcPipeServer::Impl {
         DWORD error = ERROR_SUCCESS;
         ULONGLONG deadline = 0;
     };
-    IpcHandler handler;
     IpcPipeServerOptions options;
     std::wstring name;
     std::mutex lifecycle;
@@ -110,65 +91,17 @@ struct IpcPipeServer::Impl {
     Handle completedEvent;
     Security security;
     std::array<std::unique_ptr<Slot>, kSlots> slots;
-    std::array<Executor, 3> executors;
+    IpcExecutors executors;
     std::thread loop;
     std::atomic<std::size_t> allocatedSlots{0};
-    std::atomic<std::uint64_t> rejected{0}, ioTimeouts{0};
+    std::atomic<std::uint64_t> ioTimeouts{0};
 
     Impl(IpcHandler h, IpcPipeServerOptions o)
-        : handler(std::move(h)), options(std::move(o)),
-          name(options.pipeName.empty() ? kIpcPipeNameW : options.pipeName) {}
+        : options(std::move(o)),
+          name(options.pipeName.empty() ? kIpcPipeNameW : options.pipeName),
+          executors(std::move(h), options, kMaxStringCapacity,
+                    [this] { SetEvent(completedEvent.value); }) {}
 
-    bool submit(std::size_t index, Work work) {
-        if (!running.load(std::memory_order_acquire)) return false;
-        auto& executor = executors[index];
-        std::lock_guard lock(executor.mutex);
-        if (executor.stopping || !running.load(std::memory_order_acquire)) return false;
-        const std::size_t limit = index == 0 ? 16 : index == 1 ? 4 : 1;
-        const std::size_t used = executor.queue.size() + (index == 2 && executor.active ? 1 : 0);
-        if (used >= limit) { rejected.fetch_add(1); return false; }
-        executor.queue.push_back(std::move(work));
-        executor.ready.notify_one();
-        return true;
-    }
-    void runExecutor(std::size_t index) {
-        auto& executor = executors[index];
-        for (;;) {
-            Work work;
-            {
-                std::unique_lock lock(executor.mutex);
-                executor.ready.wait(lock, [&] { return executor.stopping || !executor.queue.empty(); });
-                if (executor.queue.empty() && executor.stopping) return;
-                work = std::move(executor.queue.front());
-                executor.queue.pop_front();
-                executor.active = true;
-            }
-            try {
-                if (work.task) work.task();
-                else if (work.job) {
-                    work.job->response = handler(work.job->request);
-                    // Capacity is checked too: a shrunk oversized allocation must
-                    // not exceed the connection's 4 MiB response reservation.
-                    if (work.job->response.size() > kIpcMaxMessageBytes ||
-                        work.job->response.capacity() > kMaxStringCapacity) {
-                        std::string{}.swap(work.job->response);
-                        work.job->closeOnly = true;
-                    }
-                }
-            } catch (...) {
-                // Handler exceptions never unwind the event loop or another job.
-                if (work.job) work.job->closeOnly = true;
-            }
-            {
-                std::lock_guard lock(executor.mutex);
-                executor.active = false;
-            }
-            if (work.job) {
-                work.job->done.store(true, std::memory_order_release);
-                SetEvent(completedEvent.value);
-            }
-        }
-    }
     void prepare(Slot& slot) {
         ResetEvent(slot.event.value);
         slot.operation = {};
@@ -255,27 +188,18 @@ struct IpcPipeServer::Impl {
     void dispatch(Slot& slot) {
         slot.job = std::make_shared<Job>();
         slot.job->request = std::move(slot.request);
-        std::size_t index = 0;
         try {
-            if (options.classify) {
-                switch (options.classify(slot.job->request)) {
-                case IpcWorkClass::shortControl: index = 0; break;
-                case IpcWorkClass::file: index = 1; break;
-                case IpcWorkClass::diagnostic: index = 2; break;
-                default: recycle(slot); return;
-                }
-            }
-            if (submit(index, Work{slot.job, {}})) {
+            // Classification, bounded queueing and the busy response are shared.
+            switch (executors.admit(slot.job)) {
+            case IpcAdmission::queued:
                 slot.phase = Phase::executing;
                 slot.deadline = 0;
                 ResetEvent(slot.event.value);
                 return;
+            case IpcAdmission::respond: write(slot); return;
+            case IpcAdmission::close: break;
             }
-            if (options.busyResponse) slot.job->response = options.busyResponse(slot.job->request);
-            else { recycle(slot); return; }
-            if (slot.job->response.empty() || slot.job->response.size() > kIpcMaxMessageBytes ||
-                slot.job->response.capacity() > kMaxStringCapacity) { recycle(slot); return; }
-            write(slot);
+            recycle(slot);
         } catch (...) { recycle(slot); }
     }
     void advance(Slot& slot) {
@@ -297,7 +221,7 @@ struct IpcPipeServer::Impl {
         case Phase::reading:
             if (slot.error != ERROR_SUCCESS && slot.error != ERROR_MORE_DATA) { recycle(slot); break; }
             if (slot.transferred > kIpcMaxMessageBytes - slot.request.size()) {
-                rejected.fetch_add(1);
+                executors.countRejected();
                 recycle(slot);
                 break;
             }
@@ -367,7 +291,7 @@ struct IpcPipeServer::Impl {
     Status start() {
         std::lock_guard lock(lifecycle);
         if (running.load()) return Error(ErrorCode::service_already_running);
-        if (!handler || !validPipeName(name)) return Error(ErrorCode::invalid_argument);
+        if (!executors.hasHandler() || !validPipeName(name)) return Error(ErrorCode::invalid_argument);
         if (!security.descriptor && !security.build()) return Error(ErrorCode::ipc_unavailable);
         stopEvent.value = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         completedEvent.value = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -382,11 +306,8 @@ struct IpcPipeServer::Impl {
                 }
             }
             allocatedSlots.store(kSlots);
-            for (auto& executor : executors) executor.stopping = false;
             running.store(true, std::memory_order_release);
-            for (std::size_t i = 0; i < executors.size(); ++i) {
-                executors[i].thread = std::thread([this, i] { runExecutor(i); });
-            }
+            executors.start();
             loop = std::thread([this] { runLoop(); });
             return Status::success();
         } catch (...) {
@@ -406,19 +327,13 @@ struct IpcPipeServer::Impl {
     }
     void stopLocked() {
         const bool wasRunning = running.exchange(false, std::memory_order_acq_rel);
+        executors.closeAdmission();
         if (stopEvent) SetEvent(stopEvent.value);
-        if (wasRunning && options.cancelHandlers) { try { options.cancelHandlers(); } catch (...) {} }
-        for (auto& executor : executors) {
-            {
-                std::lock_guard lock(executor.mutex);
-                executor.stopping = true;
-            }
-            executor.ready.notify_all();
-        }
+        // cancelHandlers once, then the executors finish their queues.
+        executors.shutdown(wasRunning);
         if (loop.joinable()) loop.join();
-        // Drain all accepted callbacks after cancellation. In particular, an
-        // admitted Finish task must publish its terminal result instead of vanishing.
-        for (auto& executor : executors) if (executor.thread.joinable()) executor.thread.join();
+        // Accepted jobs and tasks are drained after cancellation, never dropped.
+        executors.join();
         cleanup();
     }
     void stop() { std::lock_guard lock(lifecycle); stopLocked(); }
@@ -432,19 +347,15 @@ IpcPipeServer::~IpcPipeServer() { stop(); }
 Status IpcPipeServer::start() { return impl_->start(); }
 void IpcPipeServer::stop() { impl_->stop(); }
 bool IpcPipeServer::tryPostFile(std::function<void()> task) {
-    return task && impl_->submit(1, Impl::Work{{}, std::move(task)});
+    return impl_->executors.tryPost(IpcWorkClass::file, std::move(task));
 }
 bool IpcPipeServer::tryPostDiagnostic(std::function<void()> task) {
-    return task && impl_->submit(2, Impl::Work{{}, std::move(task)});
+    return impl_->executors.tryPost(IpcWorkClass::diagnostic, std::move(task));
 }
 IpcPipeServerStats IpcPipeServer::stats() const {
     IpcPipeServerStats result;
     result.connectionSlots = impl_->allocatedSlots.load();
-    { std::lock_guard lock(impl_->executors[0].mutex); result.shortQueued = impl_->executors[0].queue.size(); }
-    { std::lock_guard lock(impl_->executors[1].mutex); result.fileQueued = impl_->executors[1].queue.size(); }
-    { std::lock_guard lock(impl_->executors[2].mutex);
-      result.diagnosticOutstanding = impl_->executors[2].queue.size() + (impl_->executors[2].active ? 1 : 0); }
-    result.rejected = impl_->rejected.load();
+    impl_->executors.fillStats(result);
     result.ioTimeouts = impl_->ioTimeouts.load();
     return result;
 }
