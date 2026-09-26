@@ -1,4 +1,5 @@
 #include "editor_window.h"
+#include "ipc_timeouts.h"
 #include "system_dialog.h"
 #include "core/ipc/ipc_protocol.h"
 #include "core/ipc/wizard_ipc.h"
@@ -199,7 +200,7 @@ void EditorWindow::reset() {
                 request.requestId = id.value();
                 auto encoded = WizardIpc::buildRequest(request);
                 if (!encoded) return encoded.error();
-                auto bytes = sendIpcRequestTo(pipeName, encoded.value(), 5000);
+                auto bytes = sendIpcRequestTo(pipeName, encoded.value(), kEditorResetTimeoutMs);
                 if (!bytes) return bytes.error();
                 auto reply = WizardIpc::parseReply(request.command, request.requestId, bytes.value());
                 if (!reply) return reply.error();

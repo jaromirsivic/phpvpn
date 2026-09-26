@@ -9,6 +9,7 @@
 #include "core/ipc/ipc_protocol.h"
 #include "status_model.h"
 #include "poll_schedule.h"
+#include "save_response.h"
 
 namespace phpvpn::tray {
 // Read-only IPC capability. No connect/disconnect operation is available to a
@@ -28,23 +29,6 @@ private:
     std::shared_ptr<State> state_;
     const std::wstring pipeName_;
 };
-
-// Local identity, never part of the IPC schema. Deadline uses GetTickCount64.
-struct SaveOperation {
-    std::uint64_t windowGeneration = 0, draftGeneration = 0, operationGeneration = 0;
-    std::uint64_t deadlineMs = 0;
-    bool operator==(const SaveOperation&) const = default;
-};
-enum class SaveOutcome { confirmed, notSent, rejected, unknown };
-struct SaveResult {
-    SaveOperation operation;
-    SaveOutcome outcome = SaveOutcome::unknown;
-    ErrorCode error = ErrorCode::response_invalid;
-    std::string validationDescription;
-};
-// Strict local consumer of the existing acknowledgement/error envelope.
-SaveResult classifySaveResponse(const SaveOperation& operation, std::string_view requestId,
-    std::string_view response, bool writeAttempted, std::uint64_t completedAtMs);
 
 class CommandReader {
 public:

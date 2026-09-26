@@ -1,12 +1,11 @@
 #pragma once
+#include "ipc_timeouts.h"
 #include "status_model.h"
 #include <optional>
 
 namespace phpvpn::tray {
 enum class ProgressStage { connecting, succeeded, failed };
 enum class Shield { grey, orange, green };
-inline constexpr unsigned kStatusIntervalMs = 5000;
-inline constexpr unsigned kProgressIntervalMs = 500;
 inline constexpr std::int64_t kSuccessDisplayMs = 3000;
 
 struct ProgressErrorText {

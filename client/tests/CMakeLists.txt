@@ -4,6 +4,7 @@
 set(PHPVPN_PORTABLE_TEST_SOURCES
     unit/test_base64url.cpp
     unit/test_config.cpp
+    unit/test_contracts_save_machine.cpp
     unit/test_http_diagnostic.cpp
     unit/test_ipc.cpp
     unit/test_iso8601.cpp
@@ -20,6 +21,7 @@ set(PHPVPN_PORTABLE_TEST_SOURCES
     unit/test_tunnel_queues.cpp
     unit/test_tray_geometry.cpp
     unit/test_tray_layout.cpp
+    unit/test_tray_arguments.cpp
     unit/test_tray_progress.cpp
     unit/test_tray_status.cpp
     unit/test_utf8.cpp
@@ -31,6 +33,8 @@ set(PHPVPN_PORTABLE_TEST_SOURCES
     ../apps/tray/progress_details.cpp
     ../apps/tray/layout.cpp
     ../apps/tray/wizard_layout.cpp
+    ../apps/tray/save_response.cpp
+    ../apps/tray/contracts_save_machine.cpp
 )
 
 # Portable tests that need createPlatformCryptoProvider. They join the portable
@@ -169,6 +173,7 @@ add_executable(phpvpn-client-tests
     ../apps/tray/ui_resources.cpp
     ../apps/tray/ui_controls.cpp
     ../apps/tray/status_reader.cpp
+    ../apps/tray/save_response.cpp
     ../apps/tray/wizard_reader.cpp
     ../apps/tray/tray_application.cpp
     ../apps/tray/system_dialog.cpp
@@ -181,6 +186,7 @@ add_executable(phpvpn-client-tests
     ../apps/tray/http_headers_layout.cpp
     ../apps/tray/http_error_detail_window.cpp
     ../apps/tray/contracts_save_controller.cpp
+    ../apps/tray/contracts_save_machine.cpp
     ../apps/tray/password_sha_window.cpp
     ../apps/tray/contracts_window.cpp
 
@@ -296,6 +302,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/http_headers_layout.cpp
         ../apps/tray/http_error_detail_window.cpp
         ../apps/tray/contracts_save_controller.cpp
+        ../apps/tray/contracts_save_machine.cpp
         ../apps/tray/password_sha_window.cpp
         ../apps/tray/contracts_window.cpp
         ../apps/tray/progress_model.cpp
@@ -306,6 +313,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/editor_window.cpp
         ../apps/tray/status_model.cpp
         ../apps/tray/status_reader.cpp
+        ../apps/tray/save_response.cpp
         ../apps/tray/layout.cpp
         ../apps/tray/window_utils.cpp
         ../apps/tray/ui_resources.cpp
@@ -332,6 +340,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/layout.cpp
         ../apps/tray/status_model.cpp
         ../apps/tray/status_reader.cpp
+        ../apps/tray/save_response.cpp
         ../apps/tray/wizard_reader.cpp
         ../apps/tray/wizard_layout.cpp
         ../apps/tray/wizard_window.cpp
@@ -341,6 +350,7 @@ if(PHPVPN_BUILD_UI_TESTS)
         ../apps/tray/server_info_window.cpp
     ../apps/tray/editor_window.cpp
         ../apps/tray/contracts_save_controller.cpp
+        ../apps/tray/contracts_save_machine.cpp
         ../apps/tray/password_sha_window.cpp
         ../apps/tray/contracts_window.cpp)
     phpvpn_add_tray_resources(phpvpn-tray-ui-tests)
