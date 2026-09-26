@@ -5,6 +5,14 @@ set(PHPVPN_PLATFORM_SHARED_SOURCES
     platform/iface/netconfig.cpp
     platform/iface/transport.cpp
 )
+# durableReplaceFile is called by core/runtime/tunnel_session.cpp. It has no
+# library dependency, so it lives in the core and GNU ld needs no cyclic
+# core <-> platform link order.
+if(WIN32)
+    list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/windows/durable_file_win.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/linux/durable_file_linux.cpp)
+endif()
 
 add_library(phpvpn-core STATIC
     core/base/error.cpp
@@ -76,7 +84,6 @@ if(WIN32)
         platform/windows/clock_win.cpp
         platform/windows/config_files_win.cpp
         platform/windows/crypto_cng.cpp
-        platform/windows/durable_file_win.cpp
         platform/windows/ipc_pipe.cpp
         platform/windows/netconfig_iphlpapi.cpp
         platform/windows/paths_win.cpp
@@ -107,7 +114,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         platform/linux/config_files_linux.cpp
         platform/linux/crypto_openssl.cpp
         platform/linux/dns_snapshot.cpp
-        platform/linux/durable_file_linux.cpp
         platform/linux/ipc_unix.cpp
         platform/linux/netconfig_netlink.cpp
         platform/linux/netlink_codec.cpp

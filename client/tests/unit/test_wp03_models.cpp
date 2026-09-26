@@ -28,7 +28,7 @@ PHPVPN_TEST(WP03Models, DeadlineStartsAtPresentationAndUsesCeilingWithoutRestart
     PHPVPN_CHECK(!model.view().closeRequested);
     model.onSuccessPresented(90000);
     PHPVPN_CHECK_EQ(*model.successDeadlineMs(), 93000);
-    for (const auto [time, seconds] :
+    for (const auto& [time, seconds] :
          {std::pair{90000, 3u}, {90999, 3u}, {91000, 2u}, {91999, 2u}, {92000, 1u}, {92999, 1u}}) {
         model.onTick(time);
         PHPVPN_CHECK_EQ(model.view().closingSeconds, seconds);
