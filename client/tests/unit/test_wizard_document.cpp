@@ -17,7 +17,7 @@ std::string withoutIdentity(bool ip, bool key) {
 }
 }
 PHPVPN_TEST(wizard_document, OnlyMissingIdentityIsRepairable) {
-    for (const auto missing : {std::pair{true, false}, std::pair{false, true}, std::pair{true, true}}) {
+    for (const auto& missing : {std::pair{true, false}, std::pair{false, true}, std::pair{true, true}}) {
         const auto text = withoutIdentity(missing.first, missing.second);
         auto draft = analyzeWizardDocument(text);
         PHPVPN_REQUIRE_OK(draft);

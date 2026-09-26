@@ -140,6 +140,96 @@ PHPVPN_TEST(crypto, aes_gcm_supports_the_empty_plaintext_gmac) {
     PHPVPN_REQUIRE_OK(sealed);
     PHPVPN_CHECK(ciphertext.empty());
     PHPVPN_CHECK_EQ(toHex(tag), std::string("530f8afbc74536b9a963b4f1c4cb738b"));
+
+    // GCM test case 13 in the opening direction: only the tag authenticates.
+    auto opened = provider().aesGcmOpen(key, iv, std::span<const std::uint8_t>(),
+                                        std::span<const std::uint8_t>(), tag);
+    PHPVPN_REQUIRE_OK(opened);
+    PHPVPN_CHECK(opened.value().empty());
+}
+
+// Protocol vectors of tests-integration/test_crypto_vectors.py, taken over as data.
+PHPVPN_TEST(crypto, aes_gcm_single_block_vector) {
+    // GCM test case 14, one block of zeros under a zero key.
+    const std::vector<std::uint8_t> key(32, 0);
+    const std::vector<std::uint8_t> iv(12, 0);
+    const std::vector<std::uint8_t> plaintext(16, 0);
+    std::vector<std::uint8_t> ciphertext;
+    GcmTag tag{};
+    PHPVPN_REQUIRE_OK(provider().aesGcmSeal(key, iv, std::span<const std::uint8_t>(), plaintext,
+                                            ciphertext, tag));
+    PHPVPN_CHECK_EQ(toHex(ciphertext), std::string("cea7403d4d606b6e074ec5d3baf39d18"));
+    PHPVPN_CHECK_EQ(toHex(tag), std::string("d0d1c8a799996bf0265b98b5d48ab919"));
+}
+
+PHPVPN_TEST(crypto, aes_gcm_rejects_a_single_bit_change_anywhere) {
+    // Chapter 16.3.17, one changed bit in any input invalidates the decryption.
+    const auto key = fromHex(std::string(64, '1'));
+    const auto iv = fromHex("222222222222222222222222");
+    const auto aad = std::vector<std::uint8_t>{'P', 'H', 'P', 'V', 'P', 'N', '-', 'D', 'A', 'T', 'A'};
+    std::vector<std::uint8_t> ciphertext;
+    GcmTag tag{};
+    PHPVPN_REQUIRE_OK(provider().aesGcmSeal(key, iv, aad, asBytes("payload"), ciphertext, tag));
+    for (int position = 0; position < 5; ++position) {
+        auto k = key;
+        auto n = iv;
+        auto a = aad;
+        auto c = ciphertext;
+        std::vector<std::uint8_t> t(tag.begin(), tag.end());
+        std::vector<std::uint8_t>* target[] = {&k, &n, &a, &c, &t};
+        auto& bytes = *target[position];
+        const std::size_t index = position == 4 ? bytes.size() - 1 : 0;
+        bytes[index] = static_cast<std::uint8_t>(bytes[index] ^ 0x01);
+        auto opened = provider().aesGcmOpen(k, n, a, c, t);
+        PHPVPN_REQUIRE_ERROR(opened, ErrorCode::crypto_tag_mismatch);
+    }
+    auto intact = provider().aesGcmOpen(key, iv, aad, ciphertext, tag);
+    PHPVPN_REQUIRE_OK(intact);
+    PHPVPN_CHECK_EQ(toString(intact.value().span()), std::string("payload"));
+}
+
+PHPVPN_TEST(crypto, protocol_key_derivation_vectors) {
+    // Chapters 7.1 to 7.3 and 8.3 with the inputs of test_crypto_vectors.py.
+    KeyDerivation keys(provider());
+    auto semi = keys.semiKey("integration secret");
+    PHPVPN_REQUIRE_OK(semi);
+    PHPVPN_CHECK_EQ(toHex(semi.value().span()),
+                    std::string("3cfb86564bf21cb6b3ae31ba4722cb7e9727dad5bab45823da615d6f83c2aa28"));
+
+    const auto accessKey = fromHex(
+        "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1");
+    auto fullAuth = keys.fullAuthKey("integration secret", accessKey, "10.99.99.2");
+    PHPVPN_REQUIRE_OK(fullAuth);
+    PHPVPN_CHECK_EQ(toHex(fullAuth.value().span()),
+                    std::string("c7a1a8dffdd99030f99cb9e99ec874edbc97bd3499df79bb2259d505eb35bcc8"));
+
+    auto health = keys.healthKey("integration secret", "c22cd6e8-14a9-4d83-97b7-54c26a72d1f0");
+    PHPVPN_REQUIRE_OK(health);
+    PHPVPN_CHECK_EQ(toHex(health.value().span()),
+                    std::string("ffd2df7435063418edae4d09411f9516d022fe0b753f8e6bdb763906d19ab6b8"));
+
+    const auto infoSalt = fromHex(
+        "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a");
+    auto infoKey = keys.infoKey("integration secret", infoSalt, "4e94de3a-b9ad-4bc3-9297-82b98a19a143");
+    PHPVPN_REQUIRE_OK(infoKey);
+    PHPVPN_CHECK_EQ(toHex(infoKey.value().span()),
+                    std::string("ddb0d9b5feed2bd769ba322df28db9f2098904f62542f0b0c283f222df85169d"));
+
+    // Chapter 16.3.15, only an exactly empty secret is normalized.
+    auto semiEmpty = keys.semiKey("");
+    auto semiDefault = keys.semiKey("CHANGE_THIS_SERVER_SECRET");
+    auto semiZero = keys.semiKey("0");
+    PHPVPN_REQUIRE_OK(semiEmpty);
+    PHPVPN_REQUIRE_OK(semiDefault);
+    PHPVPN_REQUIRE_OK(semiZero);
+    PHPVPN_CHECK_EQ(toHex(semiEmpty.value().span()),
+                    std::string("b4eacc4bdd452fbe309ecf9ca9597c0343ac71d12db83fd304383869c03b4128"));
+    PHPVPN_CHECK_EQ(toHex(semiDefault.value().span()), toHex(semiEmpty.value().span()));
+    PHPVPN_CHECK_NE(toHex(semiZero.value().span()), toHex(semiEmpty.value().span()));
+    auto fullEmpty = keys.fullAuthKey("", std::vector<std::uint8_t>(32, 0), "10.99.99.2");
+    PHPVPN_REQUIRE_OK(fullEmpty);
+    PHPVPN_CHECK_EQ(toHex(fullEmpty.value().span()),
+                    std::string("e048dd66f434176cd86aa82360723a1c609908e6930303c9b961592fe581353c"));
 }
 
 PHPVPN_TEST(crypto, server_secret_normalisation_is_length_based) {

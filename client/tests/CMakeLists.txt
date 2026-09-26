@@ -52,8 +52,8 @@ set(PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES
 add_executable(phpvpn-core-tests unit/harness.cpp ${PHPVPN_PORTABLE_TEST_SOURCES})
 target_include_directories(phpvpn-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
 target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-core phpvpn-compile-options)
-# PHPVPN_LINUX_CRYPTO_READY is switched on by WP02 once the OpenSSL provider replaces
-# its placeholder; until then the crypto dependent tests stay out of the Linux suite.
+# PHPVPN_LINUX_CRYPTO_READY was switched on by WP02 with the OpenSSL provider.
+set(PHPVPN_LINUX_CRYPTO_READY ON)
 if(TARGET phpvpn-platform AND (WIN32 OR PHPVPN_LINUX_CRYPTO_READY))
     target_sources(phpvpn-core-tests PRIVATE ${PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES})
     target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-platform)
@@ -75,6 +75,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         unit/harness.cpp
         linux/unit/test_clock_linux.cpp
         linux/unit/test_config_files_linux.cpp
+        linux/unit/test_crypto_openssl.cpp
         linux/unit/test_transport_curl.cpp
         linux/unit/test_netlink_codec.cpp
         linux/unit/test_ipc_unix.cpp

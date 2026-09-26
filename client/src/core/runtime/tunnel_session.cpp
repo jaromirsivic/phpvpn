@@ -9,6 +9,7 @@
 #include "core/base/logger.h"
 #include "core/base/utf8.h"
 #include "core/protocol/json.h"
+#include "platform/iface/durable_file.h"
 
 namespace phpvpn {
 namespace {
@@ -26,33 +27,6 @@ Result<std::string> readWholeFile(const std::filesystem::path& path) {
         return Error(ErrorCode::journal_corrupt, "the ownership journal could not be read");
     }
     return content;
-}
-
-Status writeWholeFile(const std::filesystem::path& path, std::string_view content) {
-    std::error_code code;
-    std::filesystem::create_directories(path.parent_path(), code);
-
-    // The journal is written to a temporary file and then renamed, so a crash
-    // during the write cannot leave a half written record behind.
-    std::filesystem::path temporary = path;
-    temporary += ".tmp";
-    {
-        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-        if (!stream) {
-            return Error(ErrorCode::config_write_failed, "the ownership journal could not be written");
-        }
-        stream.write(content.data(), static_cast<std::streamsize>(content.size()));
-        stream.flush();
-        if (!stream) {
-            return Error(ErrorCode::config_write_failed, "the ownership journal could not be written");
-        }
-    }
-    std::filesystem::rename(temporary, path, code);
-    if (code) {
-        std::filesystem::remove(temporary, code);
-        return Error(ErrorCode::config_write_failed, "the ownership journal could not be replaced");
-    }
-    return Status::success();
 }
 
 const JsonValue* requiredMember(const JsonValue& object, std::string_view name, JsonType type) {
@@ -255,7 +229,9 @@ Status TunnelSession::preflight(const ClientConfig& config, std::uint64_t ownLui
 }
 
 Status TunnelSession::applyJournal(const TunnelSessionSettings& settings) {
-    return writeWholeFile(settings.journalPath, journal_.serialize());
+    // A temporary file renamed over the journal, so a crash during the write
+    // cannot leave a half written record behind.
+    return durableReplaceFile(settings.journalPath, journal_.serialize());
 }
 
 Status TunnelSession::start(const ClientConfig& config, const TunnelSessionSettings& settings) {
