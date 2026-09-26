@@ -196,6 +196,8 @@ std::string buildCss() {
         rule(selector + ":active { background-color: " + hex(b.pressed) + "; }");
         rule(selector + ":disabled { background-color: " + hex(Color::disabledBackground) + "; color: " +
              hex(Color::disabledText) + "; }");
+        // The label rule above would keep white text on the light disabled fill.
+        rule(selector + ":disabled label { color: " + hex(Color::disabledText) + "; }");
     }
     // tray_UX.md UX03: visible focus of at least 2 DIP.
     rule(std::string(".") + kWindow + " button:focus, ." + kWindow + " entry:focus { outline-color: " +

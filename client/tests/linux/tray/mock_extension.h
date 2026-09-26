@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/ipc/ipc_protocol.h"
+#include "core/ipc/wizard_ipc.h"
 #include "platform/iface/ipc_server.h"
 
 namespace phpvpn::mock {
@@ -32,5 +33,17 @@ inline std::vector<MockExtension>& mockExtensions() {
 
 struct MockExtensionRegistrar {
     explicit MockExtensionRegistrar(MockExtension extension) { mockExtensions().push_back(std::move(extension)); }
+};
+
+// Wizard IPC counterpart of MockExtension::ipc (WP10b configuration store): answers a
+// Wizard request before the base mock; current is the base mock's status snapshot
+// (connection identity of get-config-state). nullopt leaves it to the base.
+using MockWizardHandler = std::function<std::optional<std::string>(const WizardRequest&, const StatusSnapshot& current)>;
+inline std::vector<MockWizardHandler>& mockWizardHandlers() {
+    static std::vector<MockWizardHandler> handlers;
+    return handlers;
+}
+struct MockWizardRegistrar {
+    explicit MockWizardRegistrar(MockWizardHandler handler) { mockWizardHandlers().push_back(std::move(handler)); }
 };
 }  // namespace phpvpn::mock

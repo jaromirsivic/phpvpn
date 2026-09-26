@@ -254,6 +254,8 @@ private:
         using J = JsonValue;
         std::lock_guard lock(mutex_);
         const auto snapshot = snapshotLocked();
+        for (const auto& handler : mock::mockWizardHandlers())
+            if (auto response = handler(request, snapshot)) return std::move(*response);
         if (request.command == WizardCommand::get_config_state) {
             return WizardIpc::buildResult(request.requestId, J::makeObject({
                 {"availability", J::makeString("valid")}, {"reasonCode", J::makeNull()},

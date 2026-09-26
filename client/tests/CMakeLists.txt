@@ -113,6 +113,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # Server information and Statistics logic (WP10c).
         linux/unit/test_tray_linux_info.cpp
         ../apps/tray-linux/server_info_presenter.cpp
+        # Edit Config, Communication contracts and Password SHA logic (WP10b).
+        linux/unit/test_tray_linux_config.cpp
+        ../apps/tray-linux/editor_model.cpp
+        ../apps/tray-linux/contracts_view.cpp
+        ../apps/tray/contracts_save_machine.cpp
     )
     target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit
         ${CMAKE_SOURCE_DIR}/apps/tray ${CMAKE_SOURCE_DIR}/apps/tray-linux)

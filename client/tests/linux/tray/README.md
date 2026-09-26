@@ -9,6 +9,8 @@ installed, packaged or used by the production tray.
 | `tray_atspi.py` | AT-SPI probe: dump windows, press buttons, wait for texts, close windows. |
 | `sni_stub.py` | Minimal `org.kde.StatusNotifierWatcher`, item inspection (IconName, Title, dbusmenu layout) and menu activation. |
 | `run-tray-checks.sh` | End-to-end checks in a private D-Bus session with a headless mutter: `fallback` (control window, progress window, countdown, errors, Exit) and `sni` (indicator registration and menu). |
+| `mock_config.cpp` | WP10b extension (mock_extension.h): with `--config-dir <dir>` the mock serves get-config, set-config, get-config-state, get-config-document, get-default-config and create-default-config from `<dir>/config.json` through the real core `ConfigStore` (real validation errors). stdin lines `config missing|invalid`, `setconfig normal|busy|foreign|delay <ms>`. |
+| `config_checks.py`, `run-config-checks.sh` | WP10b: AT-SPI scenarios of Edit Config, Communication contracts and Password SHA (`editor`, `deadline`, `contracts`) in the same kind of private session. |
 
 ## Test-only tray settings
 
