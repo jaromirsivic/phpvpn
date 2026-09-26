@@ -46,6 +46,35 @@ function Get-UnsupportedClientReadme([string]$Platform) {
     return "# PHP VPN client for $Platform`n`nNo distributable client implementation is available for this platform yet.`nThis directory does not claim platform support or completed validation.`n"
 }
 
+# Linux client folder client/Linux/x64, staged by client/tools/linux/make-linux-dist.ps1.
+# The complete distribution requires phpvpn and phpvpn-tray for both Fedora and Ubuntu.
+function Get-LinuxPackagePatterns {
+    return [ordered]@{
+        rpm     = '^phpvpn-(\d+\.\d+\.\d+)-(\d+)\.x86_64\.rpm$'
+        deb     = '^phpvpn_(\d+\.\d+\.\d+)-(\d+)_amd64\.deb$'
+        trayRpm = '^phpvpn-tray-(\d+\.\d+\.\d+)-(\d+)\.x86_64\.rpm$'
+        trayDeb = '^phpvpn-tray_(\d+\.\d+\.\d+)-(\d+)_amd64\.deb$'
+    }
+}
+
+# Unchanged copies in client/Linux/x64 besides the packages and the signed manifest.
+function Get-LinuxClientSources {
+    return [ordered]@{
+        'install.sh' = 'client/packaging/linux/dist/install.sh'
+        'uninstall.sh' = 'client/packaging/linux/dist/uninstall.sh'
+        'README.md' = 'client/packaging/linux/dist/README.md'
+        'LICENSE-material-symbols.txt' = 'client/assets/icons/LICENSE-material-symbols.txt'
+        'NOTICE-material-symbols.txt' = 'client/assets/icons/NOTICE-material-symbols.txt'
+    }
+}
+
+function Get-ClientVersion([string]$Repository) {
+    foreach ($line in [IO.File]::ReadAllLines((Join-Path $Repository 'client/CMakeLists.txt'))) {
+        if ($line -match '^\s*VERSION\s+(\d+\.\d+\.\d+)\s*$') { return $Matches[1] }
+    }
+    throw 'The client version was not found in client/CMakeLists.txt.'
+}
+
 function Test-DistributionRuntimePath([string]$RelativePath) {
     return $RelativePath.Replace('\', '/') -match '^server/Python/\.(runtime|venv)(/|$)'
 }

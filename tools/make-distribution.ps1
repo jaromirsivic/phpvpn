@@ -1,12 +1,19 @@
 <# .SYNOPSIS
 Builds, verifies and publishes the entire dist tree and a separately verified ZIP.
 Client CMake configuration must already exist. The build is always refreshed.
+The Linux client comes from a package build of client/tools/linux/build-packages-in-container.sh
+(work/linux-packages/<id>) made from the same commit on a Linux build host.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$BuildDirectory,
+    [Parameter(Mandatory=$true)][string]$LinuxPackagesDirectory,
     [string]$CertificateThumbprint = '7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8',
-    [switch]$SignBinaries
+    [switch]$SignBinaries,
+    # Development only: accept Linux packages from another commit or a modified source tree.
+    [switch]$AllowLinuxProvenanceMismatch,
+    # Stop after the verified staging and ZIP in work/distribution-<id>; dist and dist.zip stay unchanged.
+    [switch]$StagingOnly
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -17,6 +24,64 @@ $cache = Get-Content -LiteralPath (Join-Path $build 'CMakeCache.txt')
 $sourceEntry = @($cache | Where-Object { $_ -like 'CMAKE_HOME_DIRECTORY:INTERNAL=*' })
 if ($sourceEntry.Count -ne 1 -or [IO.Path]::GetFullPath($sourceEntry[0].Split('=',2)[1]) -ne (Join-Path $repository 'client')) {
     throw 'BuildDirectory was not configured from this checkout/client.'
+}
+# Check the Linux package build before the long client build: checksums, the complete
+# package set (phpvpn and phpvpn-tray for Fedora and Ubuntu) and the source provenance.
+$linuxPackages = (Resolve-Path -LiteralPath $LinuxPackagesDirectory).Path
+$null = Assert-DistributionPath $linuxPackages ([IO.Path]::GetDirectoryName($linuxPackages)) -Tree
+$sumsPath = Join-Path $linuxPackages 'SHA256SUMS'
+$provenancePath = Join-Path $linuxPackages 'build-provenance.json'
+foreach ($required in @($sumsPath, $provenancePath)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Linux package build is incomplete, $(Split-Path $required -Leaf) is missing." }
+}
+$linuxSums = @{}
+foreach ($line in [IO.File]::ReadAllLines($sumsPath)) {
+    if ($line -eq '') { continue }
+    if ($line -notmatch '^([0-9a-f]{64}) [ *]([A-Za-z0-9._+-]+)$') { throw "Linux SHA256SUMS holds a malformed line: $line" }
+    $linuxSums[$Matches[2]] = $Matches[1]
+}
+foreach ($name in $linuxSums.Keys) {
+    $path = Join-Path $linuxPackages $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Sha256 $path) -ne $linuxSums[$name]) {
+        throw "Linux package file $name is missing or does not match SHA256SUMS."
+    }
+}
+$linuxPatterns = Get-LinuxPackagePatterns
+$linuxSelected = @{}
+foreach ($file in Get-ChildItem -LiteralPath $linuxPackages -File | Where-Object { $_.Extension -in @('.rpm', '.deb') }) {
+    if (-not $linuxSums.ContainsKey($file.Name)) { throw "Linux package $($file.Name) is not listed in SHA256SUMS." }
+    $kind = @($linuxPatterns.Keys | Where-Object { $file.Name -cmatch $linuxPatterns[$_] })
+    if ($kind.Count -ne 1 -or $linuxSelected.ContainsKey($kind[0])) { throw "Unexpected or duplicate Linux package: $($file.Name)" }
+    $linuxSelected[$kind[0]] = $file.Name
+}
+foreach ($kind in $linuxPatterns.Keys) {
+    if (-not $linuxSelected.ContainsKey($kind)) {
+        throw "Linux $kind package is missing. The complete distribution requires phpvpn and phpvpn-tray for Fedora and Ubuntu."
+    }
+}
+$provenance = [IO.File]::ReadAllText($provenancePath) | ConvertFrom-Json
+$headCommit = & git -C $repository rev-parse HEAD
+if ($LASTEXITCODE -ne 0 -or $headCommit -notmatch '^[0-9a-f]{40}$') { throw 'The checkout HEAD commit could not be determined.' }
+# Packages are built from a committed snapshot, so uncommitted client sources cannot be in them.
+$clientChanges = @(& git -C $repository status --porcelain --untracked-files=all -- client)
+if ($LASTEXITCODE -ne 0) { throw 'The checkout client status could not be determined.' }
+$provenanceProblems = New-Object 'Collections.Generic.List[string]'
+if ([string]$provenance.sourceCommit -cne $headCommit) {
+    $provenanceProblems.Add("Linux packages were built from commit $($provenance.sourceCommit), the checkout HEAD is $headCommit")
+}
+if ($provenance.sourceDirty -isnot [bool] -or $provenance.sourceDirty) {
+    $provenanceProblems.Add('Linux packages were built from a modified source tree (sourceDirty is not false)')
+}
+if ($clientChanges.Count) {
+    $provenanceProblems.Add("the checkout has $($clientChanges.Count) uncommitted change(s) under client/ that the Linux packages do not contain")
+}
+if ($provenanceProblems.Count) {
+    if (-not $AllowLinuxProvenanceMismatch) {
+        throw ("Linux package provenance does not match this checkout: " + ($provenanceProblems -join '; ') +
+            '. Build the packages with client/tools/linux/build-packages-in-container.sh from this committed checkout. ' +
+            '-AllowLinuxProvenanceMismatch is for development only.')
+    }
+    foreach ($problem in $provenanceProblems) { Write-Warning "DEVELOPMENT ONLY (-AllowLinuxProvenanceMismatch): $problem." }
 }
 # Supply the compiler environment for Ninja, including automatic reconfiguration.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -40,19 +105,35 @@ $unpacked = Join-Path $session 'unpacked'
 $dist = Assert-DistributionPath (Join-Path $repository 'dist') $repository -Tree
 $zipTarget = Assert-DistributionPath (Join-Path $repository 'dist.zip') $repository
 $iconTest = Join-Path $build 'tests/phpvpn-icon-resource-tests.exe'
+$provenanceRecord = $null
+if ($provenanceProblems.Count) {
+    # The accepted mismatch stays documented next to the staging, outside the distribution file set.
+    $provenanceRecord = Join-Path $session 'linux-provenance-mismatch.txt'
+    [IO.File]::WriteAllText($provenanceRecord, ("-AllowLinuxProvenanceMismatch (development only)`nPackages: $linuxPackages`n" +
+        ($provenanceProblems -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+}
 foreach ($directory in @('server/PHP','server/Python','server/Node.js','client/Windows/x64','client/macOS','client/Linux')) {
     [IO.Directory]::CreateDirectory((Join-Path $staging $directory)) | Out-Null
 }
 foreach ($entry in (Get-DistributionSources).GetEnumerator()) {
     Copy-Item -LiteralPath (Join-Path $repository $entry.Value) -Destination (Join-Path $staging $entry.Key)
 }
-foreach ($platform in @('macOS','Linux')) {
-    [IO.File]::WriteAllText((Join-Path $staging "client/$platform/README.md"),
-        (Get-UnsupportedClientReadme $platform), [Text.UTF8Encoding]::new($false))
-}
+[IO.File]::WriteAllText((Join-Path $staging 'client/macOS/README.md'),
+    (Get-UnsupportedClientReadme 'macOS'), [Text.UTF8Encoding]::new($false))
 & (Join-Path $repository 'client/tools/make-dist.ps1') -BuildDirectory $build `
     -OutputDirectory (Join-Path $staging 'client/Windows/x64') `
     -CertificateThumbprint $CertificateThumbprint -SignBinaries:$SignBinaries
+$linuxStaging = Join-Path $staging 'client/Linux/x64'
+& (Join-Path $repository 'client/tools/linux/make-linux-dist.ps1') -PackagesDirectory $linuxPackages `
+    -OutputDirectory $linuxStaging -CertificateThumbprint $CertificateThumbprint
+# The staged folder must hold exactly the package build checked above.
+foreach ($name in $linuxSelected.Values) {
+    if ((Get-Sha256 (Join-Path $linuxStaging $name)) -ne $linuxSums[$name]) { throw "Staged Linux package differs from the checked build: $name" }
+}
+$linuxManifest = [IO.File]::ReadAllText((Join-Path $linuxStaging 'release-manifest.json')) | ConvertFrom-Json
+if ($linuxManifest.sourceCommit -cne $provenance.sourceCommit -or $linuxManifest.sourceDirty -ne $provenance.sourceDirty) {
+    throw 'The staged Linux manifest does not record the checked package provenance.'
+}
 & (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $staging -IconResourceTest $iconTest
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::Open($archive, 'Create')
@@ -69,9 +150,29 @@ try {
         $entry.ExternalAttributes = if ($name.EndsWith('.sh')) { -2115174400 } else { -2119958528 }
     }
 } finally { $zip.Dispose() }
+# Extraction on Windows drops POSIX modes, so check them in the archive itself.
+$zip = [IO.Compression.ZipFile]::OpenRead($archive)
+try {
+    foreach ($entry in $zip.Entries) {
+        $mode = ($entry.ExternalAttributes -shr 16) -band 0xFFFF
+        $expectedMode = if ($entry.FullName.EndsWith('/')) { 0x41ED } elseif ($entry.FullName.EndsWith('.sh')) { 0x81ED } else { 0x81A4 }
+        if ($mode -ne $expectedMode) { throw "ZIP entry has an incorrect POSIX mode: $($entry.FullName)" }
+    }
+    foreach ($name in @('client/Linux/x64/install.sh', 'client/Linux/x64/uninstall.sh', 'server/Python/init.sh')) {
+        if ($null -eq $zip.GetEntry($name)) { throw "ZIP is missing the executable entry point $name" }
+    }
+} finally { $zip.Dispose() }
 [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
 & (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $unpacked -IconResourceTest $iconTest
 
+if ($StagingOnly) {
+    Write-Output "Staging only: $dist and $zipTarget were not changed."
+    Write-Output "Verified staging: $staging"
+    Write-Output "Verified archive: $archive"
+    Write-Output "Verified archive extraction (for isolated runtime tests): $unpacked"
+    if ($provenanceRecord) { Write-Warning "Linux provenance mismatch accepted for development only, recorded in $provenanceRecord" }
+    return
+}
 Publish-Distribution -Repository $repository -Session $session -Staging $staging -Archive $archive
 & (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $dist -IconResourceTest $iconTest -AllowLocalRuntime
 # Rollback files are needed only until the canonical output passes validation.
@@ -84,3 +185,4 @@ Write-Output "Distribution: $dist"
 Write-Output "Archive: $zipTarget"
 Write-Output "Verified archive extraction (for isolated runtime tests): $unpacked"
 Write-Output "Build staging: $session (temporary rollback removed after verification)"
+if ($provenanceRecord) { Write-Warning "Linux provenance mismatch accepted for development only, recorded in $provenanceRecord" }
