@@ -11,6 +11,7 @@ installed, packaged or used by the production tray.
 | `run-tray-checks.sh` | End-to-end checks in a private D-Bus session with a headless mutter: `fallback` (control window, progress window, countdown, errors, Exit) and `sni` (indicator registration and menu). |
 | `mock_config.cpp` | WP10b extension (mock_extension.h): with `--config-dir <dir>` the mock serves get-config, set-config, get-config-state, get-config-document, get-default-config and create-default-config from `<dir>/config.json` through the real core `ConfigStore` (real validation errors). stdin lines `config missing|invalid`, `setconfig normal|busy|foreign|delay <ms>`. |
 | `config_checks.py`, `run-config-checks.sh` | WP10b: AT-SPI scenarios of Edit Config, Communication contracts and Password SHA (`editor`, `deadline`, `contracts`) in the same kind of private session. |
+| `wizard_atspi.py`, `run-wizard-checks.sh`, `wizard-lsan.supp` | WP10a: Configuration Wizard, HTTP headers and HTTP error detail. `wizard`/`compact` use a real isolated `phpvpn-service` (sudo, own network namespaces, real Python relay) for the Wizard checks; `detail` uses the mock for the Connect Error detail. LSan suppressions cover only fontconfig and GTK portal caches. |
 
 ## Test-only tray settings
 

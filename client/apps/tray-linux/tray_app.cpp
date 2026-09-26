@@ -20,6 +20,7 @@
 #include "style.h"
 #include "tray_arguments.h"
 #include "tray_text.h"
+#include "wizard_window.h"
 
 namespace phpvpn::tray {
 namespace {
@@ -80,6 +81,9 @@ TrayApp::TrayApp(TrayOptions options)
         else showMessage(parent, kErrorDetailUnavailableText, "PHPVPN", DialogIcon::information);
     };
     progress_.closeErrorDetail = [this] { if (hooks_.closeHttpErrorDetail) hooks_.closeHttpErrorDetail(); };
+    // WP10 windows. The Wizard registers the first lifecycle participant, so its
+    // approvedDiscard veto is checked before any other window (Windows order).
+    installWizardWindows(*this);
     // Read-only windows without drafts; their participants only receive endSession.
     installServerInfoWindow(*this);
     installStatisticsWindow(*this);

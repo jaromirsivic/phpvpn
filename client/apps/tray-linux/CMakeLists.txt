@@ -31,6 +31,12 @@ add_executable(phpvpn-tray
     contracts_view.cpp
     contracts_window.cpp
     password_sha_window.cpp
+    wizard_window.cpp
+    wizard_controller.cpp
+    wizard_dialog_text.cpp
+    wizard_style.cpp
+    http_headers_window.cpp
+    http_error_detail_window.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/status_model.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/progress_model.cpp
     ${PHPVPN_TRAY_SHARED_DIR}/progress_details.cpp

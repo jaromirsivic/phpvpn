@@ -118,6 +118,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ../apps/tray-linux/editor_model.cpp
         ../apps/tray-linux/contracts_view.cpp
         ../apps/tray/contracts_save_machine.cpp
+        # GTK-free Wizard controller and dialog texts (WP10a).
+        linux/unit/test_tray_linux_wizard.cpp
+        ../apps/tray-linux/wizard_controller.cpp
+        ../apps/tray-linux/wizard_dialog_text.cpp
     )
     target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit
         ${CMAKE_SOURCE_DIR}/apps/tray ${CMAKE_SOURCE_DIR}/apps/tray-linux)

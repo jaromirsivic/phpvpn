@@ -1,0 +1,10 @@
+# LeakSanitizer suppressions for the GTK tray checks of run-wizard-checks.sh.
+# Only third-party caches that live until process exit: the fontconfig pattern
+# cache filled by pango while GTK measures labels, and the GVariant of GTK's
+# screensaver portal signal. The tray code itself never calls fontconfig.
+leak:libfontconfig.so
+leak:screensaver_signal_portal
+# The 64-byte parameter tuple of that same portal signal: GTK keeps the parsed
+# message body; its stack ends in GIO's D-Bus reader without a GTK frame. The
+# WP09 fallback check (run-tray-checks.sh) shows the identical leak.
+leak:g_dbus_message_new_from_blob
