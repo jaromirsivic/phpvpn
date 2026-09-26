@@ -80,7 +80,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         linux/unit/test_ipc_unix.cpp
     )
     target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
-    target_link_libraries(phpvpn-linux-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    # The transport tests run an in-process HTTPS server with a generated certificate.
+    find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
+    target_link_libraries(phpvpn-linux-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options
+        OpenSSL::SSL OpenSSL::Crypto)
     add_test(NAME phpvpn-linux-tests COMMAND phpvpn-linux-tests)
     set_tests_properties(phpvpn-linux-tests PROPERTIES LABELS "linux" TIMEOUT 300)
 
