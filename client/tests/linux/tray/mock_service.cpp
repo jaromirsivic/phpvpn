@@ -21,6 +21,10 @@
 // Lines on stdin change the scenario while running: "connect", "disconnect",
 // "result <name>", "recover", "quit". EOF on stdin keeps serving until SIGINT/SIGTERM.
 // Every handled request is logged to stdout as "request <command>".
+//
+// Area mocks in their own files register through mock_extension.h (extra
+// commands, status adjustments, work classes, stdin lines and options), for
+// example mock_server_info.cpp (get-server-info, large counters).
 #include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -42,6 +46,7 @@
 #include "core/protocol/json.h"
 #include "platform/iface/transport.h"
 #include "platform/linux/ipc_unix.h"
+#include "mock_extension.h"
 
 namespace {
 using namespace phpvpn;
@@ -222,6 +227,9 @@ private:
 
     std::string handleIpc(const IpcRequest& request) {
         log(ipcCommandName(request.command));
+        for (const auto& extension : mock::mockExtensions())
+            if (extension.ipc)
+                if (auto response = extension.ipc(request)) return std::move(*response);
         switch (request.command) {
             case IpcCommand::connect: connectNow(); break;
             case IpcCommand::disconnect: disconnectNow(); break;
@@ -235,7 +243,10 @@ private:
             default: return IpcProtocol::buildError(request.requestId, Error(ErrorCode::ipc_unknown_command));
         }
         std::lock_guard lock(mutex_);
-        return IpcProtocol::buildStatusResponse(request.requestId, snapshotLocked());
+        auto snapshot = snapshotLocked();
+        for (const auto& extension : mock::mockExtensions())
+            if (extension.status) extension.status(snapshot);
+        return IpcProtocol::buildStatusResponse(request.requestId, snapshot);
     }
 
     std::string handleWizard(const WizardRequest& request) {
@@ -270,7 +281,8 @@ private:
 
 int usage() {
     std::fputs("usage: phpvpn-tray-mock-service --socket <absolute path> [--result success|endpoint|http|secret|access|"
-               "contracts|tunnel|timeout] [--step-ms <n>] [--initial disconnected|connected]\n", stderr);
+               "contracts|tunnel|timeout] [--step-ms <n>] [--initial disconnected|connected] [area options of mock_*.cpp]\n",
+               stderr);
     return 2;
 }
 }  // namespace
@@ -286,7 +298,9 @@ int main(int argc, char** argv) {
         else if (argument == "--result") service.setResult(value);
         else if (argument == "--step-ms") service.step = std::chrono::milliseconds(std::max(50, std::atoi(value.c_str())));
         else if (argument == "--initial") initial = value;
-        else return usage();
+        else if (!std::any_of(mock::mockExtensions().begin(), mock::mockExtensions().end(),
+                              [&](const auto& e) { return e.option && e.option(argument, value); }))
+            return usage();
     }
     if (socketPath.empty() || socketPath.front() != '/') return usage();
     const auto directory = socketPath.substr(0, socketPath.rfind('/'));
@@ -305,6 +319,19 @@ int main(int argc, char** argv) {
     IpcSocketServerOptions options;
     options.socketPath = socketPath;
     options.expectedOwnerUid = geteuid();
+    options.classify = [](std::string_view request) {
+        for (const auto& extension : mock::mockExtensions())
+            if (extension.classify)
+                if (auto work = extension.classify(request)) return *work;
+        return IpcWorkClass::shortControl;
+    };
+    // The correlated busy responses of the service (service_runtime.cpp).
+    options.busyResponse = [](std::string_view request) {
+        if (auto wizard = WizardIpc::parseRequest(request))
+            return WizardIpc::buildError(wizard->requestId, WizardIpc::safeError(Error(ErrorCode::busy)));
+        auto parsed = IpcProtocol::parseRequest(request);
+        return IpcProtocol::buildError(parsed ? parsed->requestId : std::string{}, Error(ErrorCode::busy));
+    };
     IpcSocketServer server([&](std::string_view request) { return service.handle(request); }, options);
     if (auto started = server.start(); !started) {
         std::fprintf(stderr, "mock service could not listen on %s: %s\n", socketPath.c_str(), started.error().name());
@@ -320,6 +347,8 @@ int main(int argc, char** argv) {
             else if (line.rfind("result ", 0) == 0) service.setResult(line.substr(7));
             else if (line == "recover") service.recover();
             else if (line == "quit") { kill(getpid(), SIGTERM); return; }
+            else for (const auto& extension : mock::mockExtensions())
+                if (extension.control && extension.control(line)) break;
         }
     });
     input.detach();

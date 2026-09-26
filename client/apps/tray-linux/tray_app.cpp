@@ -13,6 +13,8 @@
 #include "core/base/secure_buffer.h"
 #include "core/protocol/json.h"
 #include "dialogs.h"
+#include "server_info_window.h"
+#include "statistics_window.h"
 #include "style.h"
 #include "tray_arguments.h"
 #include "tray_text.h"
@@ -76,6 +78,9 @@ TrayApp::TrayApp(TrayOptions options)
         else showMessage(parent, kErrorDetailUnavailableText, "PHPVPN", DialogIcon::information);
     };
     progress_.closeErrorDetail = [this] { if (hooks_.closeHttpErrorDetail) hooks_.closeHttpErrorDetail(); };
+    // Read-only windows without drafts; their participants only receive endSession.
+    installServerInfoWindow(*this);
+    installStatisticsWindow(*this);
 }
 
 TrayApp::~TrayApp() {

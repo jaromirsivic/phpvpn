@@ -110,6 +110,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ../apps/tray-linux/ipc_async.cpp
         ../apps/tray/status_model.cpp
         ../apps/tray/save_response.cpp
+        # Server information and Statistics logic (WP10c).
+        linux/unit/test_tray_linux_info.cpp
+        ../apps/tray-linux/server_info_presenter.cpp
     )
     target_include_directories(phpvpn-linux-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit
         ${CMAKE_SOURCE_DIR}/apps/tray ${CMAKE_SOURCE_DIR}/apps/tray-linux)
