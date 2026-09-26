@@ -98,7 +98,9 @@ expect 1 - 'hint: the phpvpn service is not running' "a stale socket (ECONNREFUS
 rm -f "$socket"
 mkdir -m 0700 "$base/fake"
 chown 65534:65534 "$base/fake"
-as_nobody python3 -c 'import socket,sys,time
+# Called directly, not through the shell function, so $! is the python process itself
+# (setpriv execs it) and the kill below does not leave it running.
+setpriv --reuid=65534 --regid=65534 --clear-groups python3 -c 'import socket,sys,time
 s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(4)
 while True:
     c,_=s.accept(); time.sleep(0.2); c.close()' "$base/fake/control-v1.sock" &
