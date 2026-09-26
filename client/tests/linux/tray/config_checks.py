@@ -598,6 +598,34 @@ def row_name(peer: int, column: str) -> str:
     return f"10.99.99.2_10.99.99.{peer} {column}"
 
 
+def contracts_geometry(frame) -> None:
+    # Intent 2026-09-26 criterion 4: the default window fits a 1024 x 768 screen
+    # below the GNOME top bar (1024 x 736 including the title bar), with the table
+    # header, the pager and the footer actions inside the window.
+    # The frame's own extents include the client-side shadow; the visible window is
+    # the union of its direct children (content and title bar).
+    boxes = []
+    for index in range(frame.childCount):
+        child = frame.getChildAtIndex(index)
+        if child is not None and "showing" in states(child):
+            box = child.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
+            boxes.append((box.x, box.y, box.x + box.width, box.y + box.height))
+    if not boxes:
+        fail("the Contracts window has no visible content")
+    left, top = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    right, bottom = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    width, height = right - left, bottom - top
+    print(f"contracts window {width}x{height} (content and title bar)")
+    if width > 1024 or height > 736:
+        fail(f"the default Contracts window {width}x{height} does not fit 1024 x 768")
+    for name in ("Contract", "Actions", "First page", "Page 13 of 13", "Last page", "Cancel", "Save"):
+        box = find(frame, name).queryComponent().getExtents(pyatspi.WINDOW_COORDS)
+        print(f"  {name}: x={box.x} y={box.y} {box.width}x{box.height}")
+        if box.width <= 0 or box.x < left or box.y < top or box.x + box.width > right or box.y + box.height > bottom:
+            fail(f"'{name}' is not fully inside the default Contracts window")
+    passed(f"Contracts default window {width}x{height} fits 1024 x 768 with header, pager and actions inside")
+
+
 def contracts_checks() -> None:
     if config_text() is None:
         fail("contracts checks need the configuration of the editor checks")
@@ -627,6 +655,7 @@ def contracts_checks() -> None:
     if not has_focus(frame, find(frame, row_name(3, "Enabled"))):
         fail("focus does not start at the first Enabled")
     passed("Contracts: heading, own IP, four columns, 20 of 252 rows, pager, clean Save disabled")
+    contracts_geometry(frame)
 
     documents = requests("get-config-document")
     menu("Communication contracts")

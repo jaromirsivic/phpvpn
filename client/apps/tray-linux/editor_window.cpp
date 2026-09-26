@@ -51,6 +51,14 @@ void install() {
          hex(Color::contractsChanged) + "; }");
     rule(std::string(".") + style::kWindow + " label." + kValidation + " { color: " + hex(Color::error) +
          "; font-weight: 600; }");
+    // Contracts page buttons: the 36 DIP squares of the Win32 pager, not the footer minimum.
+    const std::string pager = std::string(".") + kPager;
+    rule(pager + " button." + style::kPrimaryButton + ", " + pager + " button." + style::kSecondaryButton +
+         " { min-width: 22px; padding: 0 6px; }");
+    // The row Change button is 104 DIP wide as on Windows (70 + 2 x 16 padding + border).
+    rule(std::string("button.") + kChange + " { min-width: 70px; }");
+    rule(std::string("scrolledwindow") + pager + ", scrolledwindow" + pager +
+         " viewport { background-color: transparent; background-image: none; border: none; }");
     GtkCssProvider* provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider, css.c_str(), static_cast<gssize>(css.size()), nullptr);
     gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider),

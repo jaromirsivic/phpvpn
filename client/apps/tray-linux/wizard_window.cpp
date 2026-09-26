@@ -15,7 +15,7 @@
 namespace phpvpn::tray {
 namespace {
 constexpr Size kWizardMinimum{480, 320};
-constexpr int kSidebarWidth = 230;
+constexpr int kSidebarWidth = 230;      // wizard_layout.cpp: fixed 230 DIP step panel
 constexpr int kCompactWidth = 760;      // tray_UX.md UX03: compact sidebar below 760 DIP
 constexpr int kPrimaryMinWidth = 200;   // computeWizardLayout primary width
 constexpr int kDetailMinWidth = 108;
@@ -174,14 +174,7 @@ void WizardWindow::build() {
     // The content width (without client-side decorations) selects the compact layout.
     g_signal_connect(body_, "size-allocate", gtkCallback([](GtkWidget*, GdkRectangle* allocation, gpointer data) {
         auto* self = static_cast<WizardWindow*>(data);
-        if ((allocation->width < kCompactWidth) == self->compact_ || self->placement_) return;
-        // Re-parenting during allocation would recurse into layout; defer it.
-        self->placement_ = g_idle_add([](gpointer raw) -> gboolean {
-            auto* window = static_cast<WizardWindow*>(raw);
-            window->placement_ = 0;
-            window->placeCompact();
-            return G_SOURCE_REMOVE;
-        }, self);
+        if ((allocation->width < kCompactWidth) != self->compact_) self->schedulePlacement();
     }), this);
     gtk_box_pack_start(GTK_BOX(body_), buildSidebar(), FALSE, FALSE, 0);
     divider_ = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
@@ -226,6 +219,10 @@ GtkWidget* WizardWindow::buildSidebar() {
     sidebar_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     style::addClass(sidebar_, wizardStyle::kSidebar);
     gtk_widget_set_size_request(sidebar_, kSidebarWidth, -1);
+    // The step texts expand horizontally; without an explicit FALSE that would
+    // propagate to the sidebar and split the width with the form (Windows keeps
+    // the step panel at its fixed width and gives the rest to the form).
+    gtk_widget_set_hexpand(sidebar_, FALSE);
     gtk_container_set_border_width(GTK_CONTAINER(sidebar_), 12);
     sidebarHeading_ = label(text(wizardText::configure), style::kLabel);
     style::addClass(sidebarHeading_, wizardStyle::kTextPending);
@@ -251,7 +248,8 @@ GtkWidget* WizardWindow::buildSidebar() {
 }
 
 GtkWidget* WizardWindow::buildFooter() {
-    // [Reset] [Back, Error detail, primary]: side by side, or two rows when compact.
+    // [Reset] [Back, Error detail, primary]: one row while they fit, otherwise two
+    // rows (Windows computeButtonFooterLayout); see placeFooter.
     footer_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, ui::fieldGap);
     style::addClass(footer_, wizardStyle::kFooter);
     gtk_container_set_border_width(GTK_CONTAINER(footer_), ui::compactMargin);
@@ -270,6 +268,10 @@ GtkWidget* WizardWindow::buildFooter() {
     gtk_box_pack_end(GTK_BOX(footerRow_), back_, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(footer_), footerTop_, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(footer_), footerRow_, TRUE, TRUE, 0);
+    g_signal_connect(footer_, "size-allocate", gtkCallback([](GtkWidget*, GdkRectangle* allocation, gpointer data) {
+        auto* self = static_cast<WizardWindow*>(data);
+        if (self->footerWraps(allocation->width) != self->footerWrapped_) self->schedulePlacement();
+    }), this);
     g_signal_connect(reset_, "clicked", gtkCallback([](GtkButton*, gpointer data) {
         auto* self = static_cast<WizardWindow*>(data);
         self->deferred_.post([self] { self->controller_.cancel(true); });
@@ -616,6 +618,8 @@ void WizardWindow::render() {
     gtk_widget_set_visible(detailButton_, p.detailVisible);
     gtk_widget_set_sensitive(detailButton_, p.detailEnabled);
     gtk_widget_set_sensitive(reset_, p.resetEnabled);
+    // Before GTK grows the window for a new button, the footer may wrap instead.
+    placeFooter();
     updating_ = false;
 
     if (stepChanged)
@@ -656,6 +660,7 @@ void WizardWindow::refreshDiagnostic() {
     if (!window_) return;
     const bool visible = controller_.model().httpDiagnostic().has_value();
     gtk_widget_set_visible(detailButton_, visible);
+    placeFooter();
 }
 
 GtkWidget* WizardWindow::widgetFor(WizardField field) const {
@@ -743,11 +748,42 @@ void WizardWindow::placeCompact() {
             gtk_widget_set_halign(stepRows_[i], compact ? GTK_ALIGN_CENTER : GTK_ALIGN_FILL);
             gtk_widget_set_valign(stepMarkers_[i], compact ? GTK_ALIGN_CENTER : GTK_ALIGN_START);
         }
-        // Reset gets its own footer row on a narrow window (Windows footer layout).
-        // Only the orientation changes; no widget is re-parented.
-        gtk_orientable_set_orientation(GTK_ORIENTABLE(footer_), compact ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL);
     }
     render();
+}
+
+void WizardWindow::schedulePlacement() {
+    if (placement_) return;
+    // Changing the layout during an allocation would recurse into it; defer it.
+    placement_ = g_idle_add([](gpointer raw) -> gboolean {
+        auto* window = static_cast<WizardWindow*>(raw);
+        window->placement_ = 0;
+        window->placeCompact();
+        return G_SOURCE_REMOVE;
+    }, this);
+}
+
+bool WizardWindow::footerWraps(int width) const {
+    int leading = 0, trailing = 0;
+    gtk_widget_get_preferred_width(footerTop_, nullptr, &leading);
+    gtk_widget_get_preferred_width(footerRow_, nullptr, &trailing);
+    const int oneRow = 2 * ui::compactMargin + leading + ui::fieldGap + trailing;
+    // A one-row footer requests its whole width as the window minimum, so the
+    // window never gets narrower than oneRow while it is on one row. Reaching
+    // that limit wraps the footer, which lowers the minimum again.
+    return width <= oneRow;
+}
+
+void WizardWindow::placeFooter() {
+    if (!footer_) return;
+    const int width = gtk_widget_get_allocated_width(footer_);
+    if (width <= 1) return;  // not allocated yet
+    const bool wraps = footerWraps(width);
+    if (wraps == footerWrapped_) return;
+    footerWrapped_ = wraps;
+    // Reset gets its own row only when the buttons do not fit side by side (Windows
+    // computeButtonFooterLayout). Only the orientation changes; nothing is re-parented.
+    gtk_orientable_set_orientation(GTK_ORIENTABLE(footer_), wraps ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL);
 }
 
 void WizardWindow::destroyWindow() {
@@ -775,7 +811,7 @@ void WizardWindow::onDestroyed() {
     contracts_ = contractsUnsupported_ = contractsHint_ = nullptr;
     stepRows_ = {}; stepMarkers_ = {}; stepTexts_ = {}; contractCounts_ = {};
     rendered_ = false;
-    compact_ = false;
+    compact_ = footerWrapped_ = false;
     if (!destroying_) controller_.windowLost();
 }
 

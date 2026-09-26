@@ -14,7 +14,8 @@
 #           the calling user. The main network namespace is never changed.
 #   compact the same real service on a 700 x 560 virtual monitor: the window is
 #           constrained below 760 DIP, so the sidebar becomes the compact strip of
-#           numbers and Reset moves to its own footer row; a real URL check passes.
+#           numbers; Reset stays in one footer row with the other actions while
+#           they fit (Windows footer layout); a real URL check passes.
 #   detail  the scripted mock service (phpvpn-tray-mock-service): a failed Connect
 #           with an HTTP diagnostic opens the HTTP error detail from the progress
 #           window.
@@ -205,14 +206,17 @@ Upcoming" 5 || fail "sidebar texts shown in the compact layout"
     $P gone "$W" "Configure this computer" 2 || fail "sidebar heading shown in the compact layout"
     for marker in 1 2 3 4; do grep -q "label: .$marker.$" "$work/compact1.txt" || fail "compact marker $marker missing"; done
     for button in Reset "Verify & continue"; do $P button "$W" "$button" visible || fail "$button not reachable"; done
-    pass "compact layout below 760 DIP: four numbered markers, no step texts, footer actions reachable"
+    $P fits "$W" 700 560 Reset "Verify & continue" || fail "compact footer actions outside the window"
+    $P samerow "$W" Reset "Verify & continue" || fail "Reset and Verify & continue are not in one footer row"
+    pass "compact layout below 760 DIP: four numbered markers, no step texts, footer actions in one row"
     $P settext "$W" "Server URL" "'"$relay_url"'"
     $P click "$W" "Verify & continue"
     $P wait "$W" "Server secret configuration" 20 || fail "URL check in the compact layout"
     $P dump "$W" > "$work/compact2.txt"
     grep -q "label: .✓.$" "$work/compact2.txt" || fail "completed step 1 is not a check mark in the compact strip"
     for button in Reset Back "Verify & continue"; do $P button "$W" "$button" visible || fail "$button not reachable"; done
-    pass "compact layout: check mark for the completed step, Reset, Back and primary reachable"
+    $P samerow "$W" Reset Back "Verify & continue" || fail "Reset, Back and primary are not in one footer row"
+    pass "compact layout: check mark for the completed step, Reset, Back and primary in one row"
     $P close "$W"
     $P absent "$W" 10 || fail "X did not close the Wizard"
 else
@@ -234,7 +238,10 @@ else
     $P button "$W" Reset sensitive || fail "Reset not available"
     $P button "$W" "Verify & continue" sensitive || fail "primary not available"
     focus "$W" "Server URL" || fail "focus is not on the first field"
-    pass "step 1 texts, footer, focus on Server URL"
+    # Wide layout: the fixed 230 DIP step panel of Windows, the form takes the rest.
+    $P width "$W" "Wizard steps" 200 260 || fail "the step panel is not the fixed narrow sidebar"
+    $P samerow "$W" Reset "Verify & continue" || fail "footer actions are not in one row"
+    pass "step 1 texts, footer, focus on Server URL, narrow fixed step panel"
 
     $P settext "$W" "Server URL" "http://MODIFY-THIS-URL/phpvpn.php"
     $P click "$W" "Verify & continue"

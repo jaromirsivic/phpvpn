@@ -21,6 +21,9 @@ or dialog) with that title, so a dialog titled like its parent can be addressed.
     wizard_atspi.py tab <window> <name>           select a page tab
     wizard_atspi.py focused <window> <name>       expect the focused control (exit 3: window not active)
     wizard_atspi.py key <window> <keysym>         synthesize a key press (Escape, Return)
+    wizard_atspi.py samerow <window> <b1> <b2>... showing buttons share one row (same vertical extents)
+    wizard_atspi.py fits <window> <w> <h> <b>...  window at most w x h, the buttons fully inside it
+    wizard_atspi.py width <window> <name> <min> <max>  a showing element's width lies in [min, max]
     wizard_atspi.py close <window>                title bar X
     wizard_atspi.py absent <window> [s]           wait until the window is gone
     wizard_atspi.py present <window> [s]          wait until the window exists
@@ -318,6 +321,80 @@ def key(title, keysym) -> int:
     return 0
 
 
+def extents(node, frame=pyatspi.WINDOW_COORDS):
+    box = node.queryComponent().getExtents(frame)
+    return box.x, box.y, box.width, box.height
+
+
+def samerow(title, names) -> int:
+    rows = []
+    for name in names:
+        node = one(title, ("push button", "button"), name)
+        if node is None:
+            return 1
+        x, y, width, height = extents(node)
+        print(f"'{name}': x={x} y={y} {width}x{height}")
+        rows.append((y, height))
+    if max(y for y, _ in rows) - min(y for y, _ in rows) > 2:
+        print(f"{', '.join(names)} are not in one row of '{title}'")
+        return 1
+    print(f"{', '.join(names)} share one row in '{title}'")
+    return 0
+
+
+def fits(title, max_width, max_height, names) -> int:
+    window = wait_window(title)
+    if window is None:
+        print(f"window '{title}' not found")
+        return 1
+    # The frame's own extents include the client-side shadow; the visible window is
+    # the union of its showing direct children (content and title bar).
+    boxes = []
+    for index in range(window.childCount):
+        child = window.getChildAtIndex(index)
+        if child is not None and showing(child):
+            x, y, w, h = extents(child)
+            boxes.append((x, y, x + w, y + h))
+    if not boxes:
+        print(f"'{title}' has no visible content")
+        return 1
+    left, top = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    right, bottom = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    print(f"'{title}': {right - left}x{bottom - top} (content and title bar)")
+    if right - left > max_width or bottom - top > max_height:
+        print(f"'{title}' is larger than {max_width}x{max_height}")
+        return 1
+    for name in names:
+        node = one(title, ("push button", "button"), name)
+        if node is None:
+            return 1
+        x, y, w, h = extents(node)
+        print(f"'{name}': x={x} y={y} {w}x{h}")
+        if w <= 0 or h <= 0 or x < left or y < top or x + w > right or y + h > bottom:
+            print(f"'{name}' is not fully inside '{title}'")
+            return 1
+    print(f"'{title}' fits {max_width}x{max_height} with {', '.join(names)} inside")
+    return 0
+
+
+def width_between(title, name, low, high) -> int:
+    window = wait_window(title)
+    if window is None:
+        print(f"window '{title}' not found")
+        return 1
+    total, _ = window.queryComponent().getSize()
+    for node, _ in base.walk(window):
+        if node.name == name and showing(node):
+            _, _, width, height = extents(node)
+            print(f"'{name}': {width}x{height} in '{title}' {total} wide")
+            if low <= width <= high:
+                return 0
+            print(f"'{name}' width {width} is not within {low}..{high}")
+            return 1
+    print(f"'{name}' not found in '{title}'")
+    return 1
+
+
 def close(title) -> int:
     window = wait_window(title)
     if window is None:
@@ -380,6 +457,12 @@ def main(arguments: list[str]) -> int:
         ("present", 1): lambda: present(rest[0], 10.0),
         ("present", 2): lambda: present(rest[0], float(rest[1])),
     }
+    if command == "samerow" and len(rest) >= 3:
+        return samerow(rest[0], rest[1:])
+    if command == "fits" and len(rest) >= 4:
+        return fits(rest[0], int(rest[1]), int(rest[2]), rest[3:])
+    if command == "width" and len(rest) == 4:
+        return width_between(rest[0], rest[1], int(rest[2]), int(rest[3]))
     handler = table.get((command, len(rest)))
     if handler is None:
         print(__doc__)

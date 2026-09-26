@@ -64,6 +64,9 @@ private:
     void updateErrorPanel(const ErrorPanel& panel, const WizardPresentation& p);
     void renderSidebar(const WizardPresentation& p);
     void placeCompact();
+    void schedulePlacement();
+    bool footerWraps(int width) const;
+    void placeFooter();
     void openHeaders();
     void openErrorDetail();
     bool onKey(GdkEventKey* event);
@@ -77,7 +80,7 @@ private:
     HttpErrorDetailWindow detail_;
     // Button actions that may open a modal question run from an idle callback.
     DeferredCalls deferred_;
-    bool updating_ = false, destroying_ = false, compact_ = false;
+    bool updating_ = false, destroying_ = false, compact_ = false, footerWrapped_ = false;
     WizardStep renderedStep_ = WizardStep::loading;
     bool rendered_ = false;
     guint timer_ = 0, placement_ = 0;

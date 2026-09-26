@@ -14,10 +14,33 @@
 namespace phpvpn::tray {
 namespace {
 // Column geometry of the Win32 table in DIP (tray_UX.md UX10): Contract 250,
-// Enabled 80, Key flexible (at least 260), Actions 220 (of which Change 104), and
-// 12 DIP cell padding. keyWidth = max(260, viewport - 446) as on Windows.
-constexpr int kContractWidth = 250, kEnabledWidth = 80, kActionsWidth = 220, kFixedWidth = 446;
+// Enabled 80, Key flexible (at least 260), and 12 DIP cell padding.
+// keyWidth = max(260, viewport - 446) and the row width 446 + keyWidth as on
+// Windows, so the Actions column (Change 104) gets the remaining 116 DIP and a
+// window wide enough for the minimum key needs no horizontal scrolling.
+constexpr int kContractWidth = 250, kEnabledWidth = 80, kFixedWidth = 446;
+constexpr int kActionsWidth = kFixedWidth - kContractWidth - kEnabledWidth;
 constexpr int kMinKeyWidth = 260, kCellPadding = 12, kChangeWidth = 104;
+// The Windows default client (ui::contractsClient, 1180 DIP) is wider than a
+// 1024 x 768 screen. The GTK window starts at the Configuration Wizard size, which
+// still shows the whole 810 DIP table; narrower windows scroll the table and the
+// pager inside the window.
+constexpr Size kDefaultClient = ui::wizardClient;
+// Title bar allowance when the default size is fitted to a small work area.
+constexpr int kTitleBarAllowance = 56;
+
+Size defaultClientSize() {
+    Size size = kDefaultClient;
+    GdkDisplay* display = gdk_display_get_default();
+    GdkMonitor* monitor = display ? gdk_display_get_primary_monitor(display) : nullptr;
+    if (!monitor && display && gdk_display_get_n_monitors(display) > 0) monitor = gdk_display_get_monitor(display, 0);
+    if (!monitor) return size;
+    GdkRectangle area{};
+    gdk_monitor_get_workarea(monitor, &area);
+    if (area.width > 0) size.width = std::min(size.width, area.width);
+    if (area.height > kTitleBarAllowance) size.height = std::min(size.height, area.height - kTitleBarAllowance);
+    return size;
+}
 
 GtkWidget* label(std::string_view text, const char* cssClass, bool wrap = false) {
     GtkWidget* widget = gtk_label_new(std::string(text).c_str());
@@ -105,7 +128,7 @@ bool ContractsWindow::open(std::string_view document, std::string path, std::str
 void ContractsWindow::build() {
     config_style::install();
     window_ = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    style::prepareWindow(GTK_WINDOW(window_), std::string(kContractsTitle).c_str(), ui::contractsClient);
+    style::prepareWindow(GTK_WINDOW(window_), std::string(kContractsTitle).c_str(), defaultClientSize());
     gtk_window_set_role(GTK_WINDOW(window_), "phpvpn-contracts");
     gtk_widget_set_size_request(window_, 480, 320);
     g_signal_connect(window_, "delete-event", gtkCallback([](GtkWidget*, GdkEvent*, gpointer data) -> gboolean {
@@ -201,11 +224,27 @@ void ContractsWindow::build() {
     gtk_box_pack_start(GTK_BOX(body), table, TRUE, TRUE, 0);
 
     pager_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, ui::spacing);
-    gtk_widget_set_halign(pager_, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_top(pager_, ui::fieldGap);
-    gtk_widget_set_margin_bottom(pager_, ui::spacing);
+    style::addClass(pager_, config_style::kPager);
     setAccessibleName(pager_, "Contract pages");
-    gtk_box_pack_start(GTK_BOX(body), pager_, FALSE, FALSE, 0);
+    // The page buttons never widen the window: a narrow window scrolls them, and
+    // keyboard focus reveals the focused page button.
+    GtkWidget* pagerScroller = gtk_scrolled_window_new(nullptr, nullptr);
+    style::addClass(pagerScroller, config_style::kPager);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(pagerScroller), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+    gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(pagerScroller), TRUE);
+    gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(pagerScroller), TRUE);
+    gtk_widget_set_halign(pagerScroller, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_top(pagerScroller, ui::fieldGap);
+    gtk_widget_set_margin_bottom(pagerScroller, ui::spacing);
+    GtkWidget* pagerViewport = gtk_viewport_new(nullptr, nullptr);
+    gtk_viewport_set_shadow_type(GTK_VIEWPORT(pagerViewport), GTK_SHADOW_NONE);
+    gtk_container_add(GTK_CONTAINER(pagerViewport), pager_);
+    gtk_container_add(GTK_CONTAINER(pagerScroller), pagerViewport);
+    // Only createPager shows it, and only for more than one page.
+    gtk_widget_set_no_show_all(pagerScroller, TRUE);
+    gtk_container_set_focus_hadjustment(GTK_CONTAINER(pager_),
+                                        gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(pagerScroller)));
+    gtk_box_pack_start(GTK_BOX(body), pagerScroller, FALSE, FALSE, 0);
 
     // The message area sits directly above the footer; a click focuses the
     // first blocking contract.
@@ -304,6 +343,7 @@ bool ContractsWindow::createRows() {
         gtk_widget_set_size_request(actions, kActionsWidth, -1);
         row.change = gtk_button_new_with_label(std::string(kContractsChange).c_str());
         style::addClass(row.change, style::kSecondaryButton);
+        style::addClass(row.change, config_style::kChange);
         gtk_widget_set_size_request(row.change, kChangeWidth, 36);
         gtk_widget_set_valign(row.change, GTK_ALIGN_CENTER);
         gtk_widget_set_margin_start(row.change, ui::fieldGap);
@@ -399,8 +439,10 @@ void ContractsWindow::createPager() {
         }), this);
         gtk_box_pack_start(GTK_BOX(pager_), button, FALSE, FALSE, 0);
     }
-    gtk_widget_set_visible(pager_, !items.empty());
-    if (!items.empty()) gtk_widget_show_all(pager_);
+    // The pager's scrolled window (a no-show-all holder) follows the pager.
+    GtkWidget* viewport = gtk_widget_get_parent(pager_);
+    if (!items.empty()) gtk_widget_show_all(viewport);
+    gtk_widget_set_visible(gtk_widget_get_parent(viewport), !items.empty());
 }
 
 void ContractsWindow::changePage(int page) {

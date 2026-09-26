@@ -36,6 +36,8 @@ inline constexpr const char kTable[] = "phpvpn-table";
 inline constexpr const char kTableHeader[] = "phpvpn-table-header";
 inline constexpr const char kTableRow[] = "phpvpn-table-row";
 inline constexpr const char kValidation[] = "phpvpn-validation";
+inline constexpr const char kPager[] = "phpvpn-contracts-pager";
+inline constexpr const char kChange[] = "phpvpn-contracts-change";
 void install();
 }  // namespace config_style
 
