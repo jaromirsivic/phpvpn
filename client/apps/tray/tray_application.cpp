@@ -10,6 +10,7 @@
 
 #include "core/protocol/json.h"
 #include "editor_window.h"
+#include "ipc_timeouts.h"
 #include "poll_schedule.h"
 #include "progress_window.h"
 #include "resource.h"
@@ -312,7 +313,7 @@ bool TrayApplication::startCommand(IpcCommand command, const std::string& payloa
     }
     if (pendingCommand_) { showError(L"A configuration command is already being processed. Wait for its result and choose this action again."); return false; }
     if (command == IpcCommand::set_config) {
-        const auto operation = editor_.beginSave(GetTickCount64() + 30000);
+        const auto operation = editor_.beginSave(GetTickCount64() + kEditorSaveDeadlineMs);
         if (!operation) return false;
         saveOperation_ = operation;
         commandPlacement_ = menuPlacement_;

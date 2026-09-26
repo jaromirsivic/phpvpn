@@ -1,5 +1,6 @@
 #include "system_dialog.h"
 #include "server_info_window.h"
+#include "ipc_timeouts.h"
 #include "core/presentation/table_pagination.h"
 #include "resource.h"
 #include "server_info_layout.h"
@@ -139,8 +140,8 @@ void ServerInfoWindow::scheduleAutoRefresh() {
     if (window_ && autoTimer_) KillTimer(window_, autoTimer_);
     autoTimer_ = 0;
     if (!window_ || pending_ || SendMessageW(autoRefresh_, BM_GETCHECK, 0, 0) != BST_CHECKED) return;
-    autoDeadline_ = GetTickCount64() + 5000;
-    autoTimer_ = SetTimer(window_, ++nextTimer_, 5000, nullptr);
+    autoDeadline_ = GetTickCount64() + kServerInfoAutoRefreshMs;
+    autoTimer_ = SetTimer(window_, ++nextTimer_, kServerInfoAutoRefreshMs, nullptr);
 }
 void ServerInfoWindow::request() {
     if (pending_ || !window_)

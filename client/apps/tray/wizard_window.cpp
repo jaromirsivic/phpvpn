@@ -1,4 +1,5 @@
 #include "wizard_window.h"
+#include "ipc_timeouts.h"
 #include "system_dialog.h"
 #include "wizard_layout.h"
 #include "wizard_text.h"
@@ -56,7 +57,7 @@ WizardWindow::~WizardWindow() {
         try {
             auto close = request(WizardCommand::close); close.requestId = newId();
             auto encoded = WizardIpc::buildRequest(close);
-            if (encoded) (void)sendIpcRequestTo(pipeName_, *encoded, 1000);
+            if (encoded) (void)sendIpcRequestTo(pipeName_, *encoded, kWizardCloseTimeoutMs);
         } catch (...) {}
     }
     if (window_) destroy();

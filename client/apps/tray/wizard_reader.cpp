@@ -1,5 +1,6 @@
 #include "wizard_reader.h"
 #include "core/crypto/crypto_provider.h"
+#include "ipc_timeouts.h"
 
 namespace phpvpn::tray {
 void WizardReader::clearPending() {
@@ -17,7 +18,7 @@ bool WizardReader::request(WizardRequest request, HWND target, UINT message, std
     if (!id) return false;
     request.requestId = id.value();
     auto encoded = WizardIpc::buildRequest(request);
-    if (!encoded || !reader_.requestRaw(std::move(encoded).value(), 5000, target, message)) return false;
+    if (!encoded || !reader_.requestRaw(std::move(encoded).value(), kWizardRequestTimeoutMs, target, message)) return false;
     pending_ = std::move(request);
     generation_ = generation;
     return true;
@@ -36,7 +37,7 @@ void WizardStatusReader::request(HWND target, UINT message) {
     if (!crypto) return;
     auto id = crypto.value()->randomUuidV4();
     if (!id) return;
-    if (reader_.requestRaw(IpcProtocol::buildRequest(IpcCommand::get_status, *id), 400, target, message))
+    if (reader_.requestRaw(IpcProtocol::buildRequest(IpcCommand::get_status, *id), kStatusRequestTimeoutMs, target, message))
         requestId_ = std::move(*id);
 }
 std::optional<TrayStatus> WizardStatusReader::take() {
