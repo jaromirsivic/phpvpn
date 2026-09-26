@@ -125,7 +125,7 @@ PHPVPN_TEST(fix2, startup_creates_one_shared_default_and_never_changes_existing_
     PHPVPN_CHECK_EQ(created.value(), StartupConfigState::created);
     PHPVPN_CHECK_EQ(*fixture.files->bytes, makeDefaultEditorDocument());
     PHPVPN_CHECK_EQ(fixture.files->writes, 1u);
-    for (const auto text : {std::string(" \n") + Json::serialize(legacyDocument()), std::string("{bad json"),
+    for (const auto& text : {std::string(" \n") + Json::serialize(legacyDocument()), std::string("{bad json"),
         std::string("\xef\xbb\xbf") + Json::serialize(legacyDocument()),
         std::string("\xff\xfe"), std::string(kMaxConfigFileBytes + 1, 'x'), makeDefaultEditorDocument()}) {
         fixture.files->bytes = text;

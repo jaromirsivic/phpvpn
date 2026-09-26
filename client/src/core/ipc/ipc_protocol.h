@@ -25,8 +25,13 @@ inline constexpr int kIpcVersion = 1;
 
 // Fixed implementation constant that carries the contract version. The clients
 // never derive the name from user input.
+#if defined(_WIN32)
 inline constexpr const char* kIpcPipeName = R"(\\.\pipe\phpvpn-control-v1)";
 inline constexpr wchar_t const* kIpcPipeNameW = LR"(\\.\pipe\phpvpn-control-v1)";
+#else
+// Unix domain socket in the root owned runtime directory of the service.
+inline constexpr const char* kIpcSocketPath = "/run/phpvpn/control-v1.sock";
+#endif
 
 // Largest accepted request. A configuration document with the maximum number of
 // contracts stays far below this bound.

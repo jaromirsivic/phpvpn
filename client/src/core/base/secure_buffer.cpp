@@ -2,6 +2,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#elif defined(__linux__)
+#include <string.h>
 #endif
 
 namespace phpvpn {
@@ -12,6 +14,9 @@ void secureWipe(void* data, std::size_t size) noexcept {
     }
 #if defined(_WIN32)
     ::SecureZeroMemory(data, size);
+#elif defined(__linux__)
+    // glibc and musl guarantee that the compiler never elides this store.
+    ::explicit_bzero(data, size);
 #else
     volatile unsigned char* p = static_cast<volatile unsigned char*>(data);
     while (size-- > 0) {

@@ -411,7 +411,7 @@ PHPVPN_TEST(config, rejects_a_document_that_is_not_json) {
 }  // namespace phpvpn
 namespace phpvpn {
 PHPVPN_TEST(config, flow_queue_defaults_are_exact_and_only_materialized_in_memory) {
-    for(const auto runtime : {std::string(),std::string("{}")}) {
+    for(const auto& runtime : {std::string(),std::string("{}")}) {
         const auto text=documentWith({},runtime);
         ConfigWarnings warnings;
         auto config=parseAndValidateConfig(text,warnings);PHPVPN_REQUIRE_OK(config);

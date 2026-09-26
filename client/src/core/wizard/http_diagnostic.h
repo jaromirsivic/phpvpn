@@ -19,6 +19,8 @@ struct BoundedHttpMessage {
     std::string prefix, suffix;
     bool truncated() const { return originalSizeBytes > kHttpDiagnosticLimit; }
 };
+// `winhttp` means captured by the platform transport (WinHTTP or libcurl). The
+// name follows the fixed IPC v1 wire value.
 enum class RequestHeadersSource { winhttp, merged, application };
 enum class ResponseHeadersSource { winhttp, available, unavailable };
 struct DiagnosticRequestHeaders {

@@ -1,3 +1,7 @@
 tools/server-python/*.sh text eol=lf
 tools/server-python/*.bat text eol=crlf
 tools/server-python/*.py text eol=lf
+client/tools/linux/** text eol=lf
+client/packaging/linux/** text eol=lf
+client/tests/linux/** text eol=lf
+client/tests/e2e/linux/** text eol=lf

@@ -1,3 +1,77 @@
+# Portable unit tests (plan 6.1). They compile against the core, the shared
+# platform interface sources and the portable tray models only, and run on every
+# platform. The Windows suite phpvpn-client-tests below keeps its own explicit list.
+set(PHPVPN_PORTABLE_TEST_SOURCES
+    unit/test_base64url.cpp
+    unit/test_config.cpp
+    unit/test_http_diagnostic.cpp
+    unit/test_ipc.cpp
+    unit/test_iso8601.cpp
+    unit/test_json.cpp
+    unit/test_payload_batch.cpp
+    unit/test_queue_drr.cpp
+    unit/test_queue_expiry.cpp
+    unit/test_queues.cpp
+    unit/test_server_info_model.cpp
+    unit/test_server_info_layout.cpp
+    unit/test_status_contract.cpp
+    unit/test_time_sync.cpp
+    unit/test_traffic_counters.cpp
+    unit/test_tunnel_queues.cpp
+    unit/test_tray_geometry.cpp
+    unit/test_tray_layout.cpp
+    unit/test_tray_progress.cpp
+    unit/test_tray_status.cpp
+    unit/test_utf8.cpp
+    unit/test_wizard_ipc.cpp
+    unit/test_wizard_layout.cpp
+    unit/test_wizard_model.cpp
+    ../apps/tray/status_model.cpp
+    ../apps/tray/progress_model.cpp
+    ../apps/tray/progress_details.cpp
+    ../apps/tray/layout.cpp
+    ../apps/tray/wizard_layout.cpp
+)
+
+# Portable tests that need createPlatformCryptoProvider. They join the portable
+# suite wherever a platform library exists; Linux gets it with WP02.
+set(PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES
+    unit/test_config_store.cpp
+    unit/test_contracts_document.cpp
+    unit/test_contracts_model.cpp
+    unit/test_crypto.cpp
+    unit/test_flow_key.cpp
+    unit/test_http_headers.cpp
+    unit/test_info_extensions.cpp
+    unit/test_password_key.cpp
+    unit/test_plan3_fix2.cpp
+    unit/test_wizard_document.cpp
+    unit/test_wp03_models.cpp
+)
+
+add_executable(phpvpn-core-tests unit/harness.cpp ${PHPVPN_PORTABLE_TEST_SOURCES})
+target_include_directories(phpvpn-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-core phpvpn-compile-options)
+if(TARGET phpvpn-platform)
+    target_sources(phpvpn-core-tests PRIVATE ${PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES})
+    target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-platform)
+endif()
+add_test(NAME phpvpn-core-tests COMMAND phpvpn-core-tests)
+set_tests_properties(phpvpn-core-tests PROPERTIES LABELS "portable")
+
+# Isolate the singleton logger and its temporary filesystem fixture from other suites.
+add_executable(phpvpn-logger-tests unit/harness.cpp unit/test_logger.cpp)
+target_include_directories(phpvpn-logger-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+target_link_libraries(phpvpn-logger-tests PRIVATE phpvpn-core phpvpn-compile-options)
+add_test(NAME phpvpn-logger-tests COMMAND phpvpn-logger-tests)
+set_tests_properties(phpvpn-logger-tests PROPERTIES TIMEOUT 30)
+
+if(NOT WIN32)
+    return()
+endif()
+
+# Windows only from here on: the full Win32 client suite, resources, package and
+# opt-in integration targets.
 add_executable(phpvpn-client-tests
     unit/harness.cpp
     unit/test_base64url.cpp
@@ -110,13 +184,6 @@ if(WIN32)
         set_tests_properties(phpvpn-package-${package_test} PROPERTIES LABELS "package" TIMEOUT 60)
     endforeach()
 endif()
-
-# Isolate the singleton logger and its temporary filesystem fixture from other suites.
-add_executable(phpvpn-logger-tests unit/harness.cpp unit/test_logger.cpp)
-target_include_directories(phpvpn-logger-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
-target_link_libraries(phpvpn-logger-tests PRIVATE phpvpn-core phpvpn-compile-options)
-add_test(NAME phpvpn-logger-tests COMMAND phpvpn-logger-tests)
-set_tests_properties(phpvpn-logger-tests PROPERTIES TIMEOUT 30)
 
 option(PHPVPN_BUILD_RESOURCE_TESTS "Build isolated maximum IPC memory and process-local DNS tests" OFF)
 if(PHPVPN_BUILD_RESOURCE_TESTS)

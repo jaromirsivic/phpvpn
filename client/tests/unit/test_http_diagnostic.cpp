@@ -72,9 +72,11 @@ PHPVPN_TEST(http_diagnostic, octets_and_safe_unicode_are_deterministic) {
     PHPVPN_CHECK(!decodeDiagnosticOctets("\xc0\x80", 1));
     const std::string bytes = std::string("\0\x7f\x01", 3) + "\t\r\n\xc4\x8d\xf0\x9f\x98\x80\xc0\xaf\xed\xa0\x80\xe2\x82";
     auto display = diagnosticDisplayText({bytes.size(), bytes, {}});
-    PHPVPN_CHECK_EQ(display.text, L"\\x00\\x7F\\x01\t\r\n\u010d\xd83d\xde00\\xC0\\xAF\\xED\\xA0\\x80\\xE2\\x82");
+    // \U0001F600 is the surrogate pair D83D DE00 with a UTF-16 wchar_t and one
+    // code unit with a UTF-32 wchar_t.
+    PHPVPN_CHECK_EQ(display.text, L"\\x00\\x7F\\x01\t\r\n\u010d\U0001F600\\xC0\\xAF\\xED\\xA0\\x80\\xE2\\x82");
     PHPVPN_CHECK(display.escaped);
-    for (const std::string text : {std::string("\xc4\x8d"), std::string("\xe2\x82\xac"), std::string("\xf0\x9f\x98\x80")}) {
+    for (const std::string& text : {std::string("\xc4\x8d"), std::string("\xe2\x82\xac"), std::string("\xf0\x9f\x98\x80")}) {
         for (std::size_t cut = 1; cut < text.size(); ++cut) {
             BoundedHttpMessage m{65537, std::string(64512 - cut, 'a') + text.substr(0, cut), text.substr(cut) + std::string(1024 - text.size() + cut, 'b')};
             auto projected = diagnosticDisplayText(m);
@@ -88,6 +90,28 @@ PHPVPN_TEST(http_diagnostic, octets_and_safe_unicode_are_deterministic) {
     PHPVPN_CHECK_EQ(diagnosticSizeKiB(65536), "64.00");
     PHPVPN_CHECK_EQ(diagnosticSizeKiB(65537), "64.00");
     PHPVPN_CHECK_EQ(diagnosticSizeKiB((std::numeric_limits<std::uint64_t>::max)()), "18014398509481984.00");
+}
+PHPVPN_TEST(http_diagnostic, display_code_units_follow_the_wchar_width) {
+    // U+10000, U+1F600 and U+10FFFF, the first, a typical and the last
+    // supplementary code point, around one BMP character.
+    const std::string bytes = "\xf0\x90\x80\x80" "A" "\xf0\x9f\x98\x80" "\xf4\x8f\xbf\xbf";
+    const auto display = diagnosticDisplayText({bytes.size(), bytes, {}});
+    PHPVPN_CHECK(!display.escaped);
+    std::wstring expected;
+    if constexpr (sizeof(wchar_t) == 2) {
+        for (const unsigned unit : {0xd800u, 0xdc00u, 0x41u, 0xd83du, 0xde00u, 0xdbffu, 0xdfffu})
+            expected.push_back(static_cast<wchar_t>(unit));
+    } else {
+        for (const unsigned point : {0x10000u, 0x41u, 0x1f600u, 0x10ffffu})
+            expected.push_back(static_cast<wchar_t>(point));
+    }
+    PHPVPN_CHECK_EQ(display.text, expected);
+    // The display limit is the UTF-16 worst case, all escapes, so the shorter
+    // UTF-32 projection of supplementary characters always stays below it.
+    std::string astral;
+    while (astral.size() + 4 <= 64512) astral += "\xf0\x9f\x98\x80";
+    BoundedHttpMessage wide{65537, astral + std::string(64512 - astral.size(), 'a'), std::string(1024, 'b')};
+    PHPVPN_CHECK(diagnosticDisplayText(wide).text.size() < kHttpDiagnosticDisplayLimit);
 }
 }
 

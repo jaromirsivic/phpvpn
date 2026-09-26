@@ -45,7 +45,7 @@ public:
     }
     Result<ConfigFileRecovery> recover() override {
         if (recoveryError) return Error(*recoveryError);
-        return ConfigFileRecovery{recoveryState};
+        return ConfigFileRecovery{recoveryState, {}, {}, {}};
     }
 };
 }

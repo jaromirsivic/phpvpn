@@ -27,6 +27,18 @@ bool absoluteConfigPath(const J* value) {
     if (!text(value)) return false;
     std::string_view path = value->stringValue();
     if (std::any_of(path.begin(), path.end(), [](unsigned char c) { return c < 32; })) return false;
+#if !defined(_WIN32)
+    // An absolute normalized POSIX file path: a leading slash, no empty, "."
+    // or ".." segment and no trailing slash. NUL is a control character above.
+    if (path.size() < 2 || path.front() != '/' || path.back() == '/') return false;
+    for (std::size_t start = 1; start <= path.size();) {
+        const auto end = std::min(path.find('/', start), path.size());
+        const auto segment = path.substr(start, end - start);
+        if (segment.empty() || segment == "." || segment == "..") return false;
+        start = end + 1;
+    }
+    return true;
+#else
     const auto slash = [](char c) { return c == '/' || c == '\\'; };
     const auto drive = [&](std::string_view candidate) {
         return candidate.size() > 3 && ((candidate[0] >= 'A' && candidate[0] <= 'Z') ||
@@ -47,6 +59,7 @@ bool absoluteConfigPath(const J* value) {
     path.remove_prefix(serverEnd + 1);
     const auto shareEnd = path.find_first_of("\\/");
     return shareEnd != 0 && shareEnd != std::string_view::npos && shareEnd + 1 < path.size();
+#endif
 }
 bool oneOf(const J* value, std::initializer_list<std::string_view> allowed) {
     return text(value) && std::find(allowed.begin(), allowed.end(), value->stringValue()) != allowed.end();
@@ -62,6 +75,9 @@ J diagnosticMessageValue(const BoundedHttpMessage& m) {
         {"prefix", str(encodeDiagnosticOctets(m.prefix))}, {"separator", str(m.truncated() ? kHttpDiagnosticSeparator : "")},
         {"suffix", str(encodeDiagnosticOctets(m.suffix))}});
 }
+// IPC v1 wire values. "winhttp" means "captured by the platform transport" on
+// every platform (WinHTTP on Windows, libcurl on Linux); the fixed contract keeps
+// the historical spelling.
 constexpr std::array requestSources = {"winhttp", "merged", "application"};
 constexpr std::array responseSources = {"winhttp", "available", "unavailable"};
 J diagnosticValue(const HttpDiagnostic& d) {

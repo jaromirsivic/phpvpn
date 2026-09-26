@@ -1,6 +1,7 @@
 #include "core/base/logger.h"
 
 #include <chrono>
+#include <cstdio>
 #include <system_error>
 
 #include "core/protocol/iso8601.h"
@@ -32,6 +33,44 @@ const char* logLevelName(LogLevel level) noexcept {
             return "CRIT";
     }
     return "INFO";
+}
+
+const char* journaldPriorityPrefix(LogLevel level) noexcept {
+    switch (level) {
+        case LogLevel::trace:
+        case LogLevel::debug:
+            return "<7>";
+        case LogLevel::info:
+            return "<6>";
+        case LogLevel::warning:
+            return "<4>";
+        case LogLevel::error:
+            return "<3>";
+        case LogLevel::critical:
+            return "<2>";
+    }
+    return "<6>";
+}
+
+std::string journaldLine(LogLevel level, std::string_view line) {
+    std::string out;
+    out.reserve(line.size() + 4);
+    out += journaldPriorityPrefix(level);
+    for (const char character : line) {
+        // journald starts a new record at every line break, which would lose
+        // the priority of the remainder.
+        out.push_back(character == '\r' || character == '\n' ? ' ' : character);
+    }
+    out.push_back('\n');
+    return out;
+}
+
+LogSink makeJournaldStderrSink() {
+    return [](LogLevel level, const std::string& line) {
+        const std::string record = journaldLine(level, line);
+        std::fwrite(record.data(), 1, record.size(), stderr);
+        std::fflush(stderr);
+    };
 }
 
 Logger& Logger::instance() {
@@ -127,13 +166,14 @@ void Logger::write(LogLevel level, std::string_view component, std::string_view 
         line += message;
 
         if (stream_.is_open()) {
-            if (currentBytes_ + line.size() + 2 > maxBytes_) {
+            const std::uint64_t recordBytes = line.size() + kLogLineEnding.size();
+            if (currentBytes_ + recordBytes > maxBytes_) {
                 rotateLocked();
             }
             if (stream_.is_open()) {
-                stream_ << line << "\r\n";
+                stream_ << line << kLogLineEnding;
                 stream_.flush();
-                currentBytes_ += line.size() + 2;
+                currentBytes_ += recordBytes;
             }
         }
 

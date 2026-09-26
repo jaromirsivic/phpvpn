@@ -262,7 +262,7 @@ PHPVPN_TEST(http_headers_config, duplicates_case_insensitive_reject_without_part
     for (std::string name : {"X-Test", "User-Agent", "Cookie", "Cache-Control", "Pragma", "Authorization", "Accept"}) {
         auto lower = name;
         for (char& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        for (const auto second : {name, lower}) {
+        for (const auto& second : {name, lower}) {
             for (const auto separator : {"\n", "\r\n"}) {
                 const auto value = name + ": first-secret" + separator + "X-Other: own" + separator + second + ": second-secret";
                 auto normalized = normalizeHttpHeaders(value);

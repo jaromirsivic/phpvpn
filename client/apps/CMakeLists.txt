@@ -1,3 +1,10 @@
+# Everything below is the Windows application set: Win32 resources, manifests, the tray,
+# the package GUI and the Wintun copy. The Linux service, CLI and tray are added by later
+# work packages; until then a Linux build produces the core and its tests only.
+if(NOT WIN32)
+    return()
+endif()
+
 # Executables carry a version block and per-target manifest/icon. The manifest comes from the
 # resource script, so the linker must not generate a second one.
 get_filename_component(PHPVPN_ICON_DIRECTORY "${CMAKE_SOURCE_DIR}/../assets" ABSOLUTE)

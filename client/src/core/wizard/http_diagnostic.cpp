@@ -174,8 +174,14 @@ void displaySegment(std::string_view bytes, DiagnosticDisplay& out) {
         if (!valid || (b < 32 && b != '\t' && b != '\r' && b != '\n') || b == 127) {
             out.text += L"\\x"; out.text += hex[b >> 4]; out.text += hex[b & 15]; out.escaped = true; ++i;
         } else {
-            if (cp <= 0xffff) out.text.push_back(static_cast<wchar_t>(cp));
-            else { cp -= 0x10000; out.text.push_back(static_cast<wchar_t>(0xd800 + (cp >> 10))); out.text.push_back(static_cast<wchar_t>(0xdc00 + (cp & 1023))); }
+            // UTF-16 wchar_t (Windows) needs a surrogate pair above the BMP,
+            // UTF-32 wchar_t (Linux) holds every code point directly.
+            if constexpr (sizeof(wchar_t) == 2) {
+                if (cp <= 0xffff) out.text.push_back(static_cast<wchar_t>(cp));
+                else { cp -= 0x10000; out.text.push_back(static_cast<wchar_t>(0xd800 + (cp >> 10))); out.text.push_back(static_cast<wchar_t>(0xdc00 + (cp & 1023))); }
+            } else {
+                out.text.push_back(static_cast<wchar_t>(cp));
+            }
             i += n;
         }
     }

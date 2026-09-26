@@ -7,23 +7,13 @@
 #include <system_error>
 
 #include "core/base/logger.h"
+#include "core/base/utf8.h"
 #include "core/protocol/json.h"
 
 namespace phpvpn {
 namespace {
 
 constexpr const char* kComponent = "tunnel-session";
-
-std::string narrow(const std::wstring& text) {
-    // The adapter name is always ASCII in this client, so a widening free
-    // conversion is enough and keeps the journal free of an encoding dependency.
-    std::string out;
-    out.reserve(text.size());
-    for (wchar_t character : text) {
-        out.push_back(character < 128 ? static_cast<char>(character) : '?');
-    }
-    return out;
-}
 
 Result<std::string> readWholeFile(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
@@ -186,8 +176,12 @@ Status TunnelSession::recoverPreviousRun(const TunnelSessionSettings& settings) 
         for (auto& character : text) if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
         return text;
     };
-    if (!parsed->interfaceLuid || parsed->adapterName != narrow(settings.adapterName) ||
-        lowerAscii(parsed->adapterGuid) != lowerAscii(narrow(settings.requestedGuid)))
+    // The journal stores UTF-8. Settings that do not convert can never match.
+    const auto adapterName = toUtf8(settings.adapterName);
+    const auto requestedGuid = toUtf8(settings.requestedGuid);
+    if (!parsed->interfaceLuid || !adapterName.ok() || !requestedGuid.ok() ||
+        parsed->adapterName != adapterName.value() ||
+        lowerAscii(parsed->adapterGuid) != lowerAscii(requestedGuid.value()))
         return Error(ErrorCode::journal_ambiguous, "the ownership journal does not match this installation");
 
     // Startup must not open/create a Wintun adapter before authentication.
@@ -272,6 +266,11 @@ Status TunnelSession::start(const ClientConfig& config, const TunnelSessionSetti
     journalPath_ = settings.journalPath;
     journal_ = OwnershipJournal{};
 
+    // Converted before anything is created, so an unrepresentable name cannot
+    // fail after the adapter already exists.
+    std::string adapterName;
+    PHPVPN_TRY_ASSIGN(adapterName, toUtf8(settings.adapterName));
+
     PHPVPN_TRY(driver_.loadAndVerify(settings.installDirectory));
 
     // The baseline is taken before anything is applied, so the verification
@@ -290,7 +289,7 @@ Status TunnelSession::start(const ClientConfig& config, const TunnelSessionSetti
         PHPVPN_TRY_ASSIGN(luid, netConfig_.interfaceLuidForAlias(settings.adapterName));
     }
 
-    journal_.adapterName = narrow(settings.adapterName);
+    journal_.adapterName = std::move(adapterName);
     journal_.adapterGuid = adapter.adapterGuid;
     journal_.interfaceLuid = luid;
     journal_.adapterCreated = adapter.created;

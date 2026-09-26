@@ -1,8 +1,17 @@
+# Platform independent helpers of the platform boundary. The core calls them
+# itself (action names, snapshot comparison), so they live in the core library and
+# the core links without any platform implementation.
+set(PHPVPN_PLATFORM_SHARED_SOURCES
+    platform/iface/netconfig.cpp
+    platform/iface/transport.cpp
+)
+
 add_library(phpvpn-core STATIC
     core/base/error.cpp
     core/base/hex.cpp
     core/base/logger.cpp
     core/base/secure_buffer.cpp
+    core/base/utf8.cpp
 
     core/config/config_document.cpp
     core/config/contracts_document.cpp
@@ -55,31 +64,36 @@ add_library(phpvpn-core STATIC
     core/runtime/tunnel_session.cpp
     core/runtime/tunnel_workers.cpp
     core/runtime/vpn_engine.cpp
+
+    ${PHPVPN_PLATFORM_SHARED_SOURCES}
 )
 
 target_include_directories(phpvpn-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(phpvpn-core PUBLIC phpvpn-compile-options)
 
-add_library(phpvpn-platform STATIC
-    platform/iface/transport.cpp
+if(WIN32)
+    add_library(phpvpn-platform STATIC
+        platform/windows/clock_win.cpp
+        platform/windows/config_files_win.cpp
+        platform/windows/crypto_cng.cpp
+        platform/windows/durable_file_win.cpp
+        platform/windows/ipc_pipe.cpp
+        platform/windows/netconfig_iphlpapi.cpp
+        platform/windows/paths_win.cpp
+        platform/windows/tray_autostart.cpp
+        platform/windows/transport_winhttp.cpp
+        platform/windows/tunnel_wintun.cpp
+    )
 
-    platform/windows/clock_win.cpp
-    platform/windows/config_files_win.cpp
-    platform/windows/crypto_cng.cpp
-    platform/windows/ipc_pipe.cpp
-    platform/windows/netconfig_iphlpapi.cpp
-    platform/windows/paths_win.cpp
-    platform/windows/tray_autostart.cpp
-    platform/windows/transport_winhttp.cpp
-    platform/windows/tunnel_wintun.cpp
-)
+    target_include_directories(phpvpn-platform
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+        PRIVATE ${CMAKE_SOURCE_DIR}/third_party/wintun/include
+    )
 
-target_include_directories(phpvpn-platform
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/wintun/include
-)
-
-target_link_libraries(phpvpn-platform
-    PUBLIC phpvpn-core phpvpn-compile-options
-    PRIVATE bcrypt winhttp iphlpapi ws2_32 advapi32 shell32 ole32
-)
+    target_link_libraries(phpvpn-platform
+        PUBLIC phpvpn-core phpvpn-compile-options
+        PRIVATE bcrypt winhttp iphlpapi ws2_32 advapi32 shell32 ole32
+    )
+endif()
+# The Linux platform layer (phpvpn-platform) arrives in later work packages. Until
+# then a Linux build produces the core and its portable tests only.

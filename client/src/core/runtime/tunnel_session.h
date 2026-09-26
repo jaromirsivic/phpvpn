@@ -41,13 +41,23 @@ struct OwnershipJournal {
 };
 
 struct TunnelSessionSettings {
+#if defined(_WIN32)
     std::wstring adapterName = L"PHPVPN";
     std::wstring tunnelType = L"PHPVPN";
     // Stable adapter GUID so a restart reuses the same interface identity.
     std::wstring requestedGuid = L"{7d1b4d2f-1f34-4d0e-9a3e-2f6c9b5a41d8}";
+#else
+    // Linux uses the interface name required by client.md and a GUID of its
+    // own, which becomes the ownership mark of the TUN interface.
+    std::wstring adapterName = L"phpvpn";
+    std::wstring tunnelType = L"phpvpn";
+    std::wstring requestedGuid = L"{3f6c2a91-5b7e-4d0a-9c1e-8a2b7d4e6f10}";
+#endif
+    // Wintun ring size. A Linux TUN device has no ring and ignores it.
     std::uint32_t ringCapacity = 4u * 1024 * 1024;
     std::uint32_t routeMetric = 5;
     std::filesystem::path journalPath;
+    // Directory of the Wintun library. Empty and unused on Linux.
     std::wstring installDirectory;
     // Bounded read-only grace for asynchronous OS cleanup after process death.
     std::int64_t recoveryWaitMs = 5000;

@@ -461,17 +461,6 @@ private:
 
 }  // namespace
 
-bool NetworkSnapshot::sameDefaultRouteAndDns(const NetworkSnapshot& other) const {
-    if (hasDefaultRoute != other.hasDefaultRoute) {
-        return false;
-    }
-    if (hasDefaultRoute && (defaultRouteInterfaceLuid != other.defaultRouteInterfaceLuid ||
-                            defaultRouteMetric != other.defaultRouteMetric)) {
-        return false;
-    }
-    return dnsServers == other.dnsServers;
-}
-
 std::unique_ptr<NetConfig> createPlatformNetConfig() {
     return std::make_unique<IpHelperNetConfig>();
 }

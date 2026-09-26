@@ -23,6 +23,26 @@ const char* logLevelName(LogLevel level) noexcept;
 // Sink that receives already formatted lines without the trailing newline.
 using LogSink = std::function<void(LogLevel, const std::string&)>;
 
+// Line terminator of the log file: CRLF on Windows, LF elsewhere. The rotation
+// threshold counts these bytes as part of every record.
+#if defined(_WIN32)
+inline constexpr std::string_view kLogLineEnding = "\r\n";
+#else
+inline constexpr std::string_view kLogLineEnding = "\n";
+#endif
+
+// sd-daemon(3) priority prefix for a level, "<7>" (debug) to "<2>" (critical).
+const char* journaldPriorityPrefix(LogLevel level) noexcept;
+
+// One journald stderr record: priority prefix, the formatted line with any CR
+// or LF folded into a space, and a single LF.
+std::string journaldLine(LogLevel level, std::string_view line);
+
+// Sink that writes journaldLine records to stderr, for a service started by
+// systemd with the default StandardError=journal. Each record is written with
+// one call, so concurrent records are not interleaved inside a line.
+LogSink makeJournaldStderrSink();
+
 class Logger {
 public:
     static Logger& instance();
@@ -37,7 +57,8 @@ public:
     void setLevel(LogLevel level);
     LogLevel level() const;
 
-    // Additional sink used for the Windows Event Log and for tests.
+    // Additional sink used for the Windows Event Log, the journald stderr sink
+    // on Linux and for tests.
     void setSecondarySink(LogSink sink);
 
     void write(LogLevel level, std::string_view component, std::string_view message);

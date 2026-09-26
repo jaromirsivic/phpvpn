@@ -9,6 +9,14 @@ namespace phpvpn {
 namespace {
 constexpr char id[] = "00000000-0000-4000-8000-000000000001";
 constexpr char other[] = "00000000-0000-4000-8000-000000000002";
+// Authoritative configuration paths as the service of each platform reports them.
+#if defined(_WIN32)
+constexpr char kConfigPath[] = "C:/ProgramData/PHPVPN/config.json";
+constexpr char kFixturePath[] = "C:/fixture.json";
+#else
+constexpr char kConfigPath[] = "/etc/phpvpn/config.json";
+constexpr char kFixturePath[] = "/fixture.json";
+#endif
 WizardRequest requestFor(WizardCommand command) {
     WizardRequest request;
     request.command = command;
@@ -28,7 +36,7 @@ bool accepts(WizardCommand command, const J& value) {
     return WizardIpc::parseReply(command, id, WizardIpc::buildResult(id, value)).ok();
 }
 J documentReply(std::string availability, std::optional<std::string> document, std::optional<std::string> revision) {
-    return J::makeObject({{"configPath", string("C:/ProgramData/PHPVPN/config.json")},
+    return J::makeObject({{"configPath", string(kConfigPath)},
         {"availability", string(availability)}, {"reasonCode", availability == "valid" ? J::makeNull() : string("config_invalid_value")},
         {"document", document ? string(*document) : J::makeNull()},
         {"revisionToken", revision ? string(*revision) : J::makeNull()}});
@@ -45,7 +53,7 @@ PHPVPN_TEST(wizard_ipc, http_headers_all_requests_strict_roundtrip_and_legacy) {
         auto* fields = &dom;
         if (command == WizardCommand::check_access || command == WizardCommand::finish)
             for (auto& item : dom.objectValue()) if (item.first == "fields") fields = &item.second;
-        for (const auto bad : {J::makeNull(), J::makeInteger(1), string("HOST: synthetic-secret"), string("X: a\nx: b"), string(std::string("X: \xff"))}) {
+        for (const auto& bad : {J::makeNull(), J::makeInteger(1), string("HOST: synthetic-secret"), string("X: a\nx: b"), string(std::string("X: \xff"))}) {
             set(*fields, "httpHeaders", bad);
             PHPVPN_CHECK(!WizardIpc::parseRequest(Json::serialize(dom)));
         }
@@ -149,7 +157,7 @@ PHPVPN_TEST(wizard_ipc, diagnostic_schema_closed_roundtrip_and_illegal_placement
         PHPVPN_CHECK(!accepts(WizardCommand::get_operation, value));
     }
     for (const auto& [key, replacement] : std::vector<std::pair<std::string, J>>{
-        {"serverUrl", string("http://localhost/")}, {"configPath", string("C:/fixture.json")},
+        {"serverUrl", string("http://localhost/")}, {"configPath", string(kFixturePath)},
         {"code", string(std::string(129, 'a'))}, {"description", string(std::string(4097, 'a'))},
         {"suggestedAction", string(std::string(4097, 'a'))}, {"field", string("serverSecret")}}) {
         auto value = valid, error = *valid.find("error"); set(error, key, replacement); set(value, "error", error);
@@ -226,7 +234,7 @@ PHPVPN_TEST(wizard_ipc, sequence_full_unsigned_range_and_exact_secret_round_trip
     request.attemptSequence = 1;
     built = WizardIpc::buildRequest(request);
     auto dom = Json::parse(*built).value();
-    for (const auto bad : {JsonValue::makeInteger(-1), JsonValue::makeReal(1.5), JsonValue::makeString("1")}) {
+    for (const auto& bad : {JsonValue::makeInteger(-1), JsonValue::makeReal(1.5), JsonValue::makeString("1")}) {
         for (auto& field : dom.objectValue()) if (field.first == "attemptSequence") field.second = bad;
         PHPVPN_CHECK(!WizardIpc::parseRequest(Json::serialize(dom)));
     }
@@ -261,7 +269,7 @@ PHPVPN_TEST(wizard_ipc, views_context_and_operation_payloads_are_validated) {
 }
 PHPVPN_TEST(wizard_ipc, errors_omit_raw_details_and_enforce_allowlisted_fields) {
     const auto error = WizardIpc::safeError(Error(ErrorCode::server_unauthorized, "PRIVATE-KEY-AND-RAW-BODY"), 401,
-        "accessKey", "http://127.0.0.1/phpvpn.php", "C:/ProgramData/PHPVPN/config.json");
+        "accessKey", "http://127.0.0.1/phpvpn.php", kConfigPath);
     const auto text = WizardIpc::buildError(id, error);
     PHPVPN_CHECK(text.find("PRIVATE-KEY-AND-RAW-BODY") == std::string::npos);
     auto reply = WizardIpc::parseReply(WizardCommand::check_access, id, text);
@@ -276,7 +284,7 @@ PHPVPN_TEST(wizard_ipc, configuration_errors_have_safe_action_and_authoritative_
     for (const auto code : {ErrorCode::config_directory_security_invalid, ErrorCode::config_write_failed,
         ErrorCode::config_unreadable, ErrorCode::config_read_failed, ErrorCode::config_too_large,
         ErrorCode::config_encoding_error, ErrorCode::journal_corrupt, ErrorCode::journal_ambiguous}) {
-        const std::string path = "C:/ProgramData/PHPVPN/config.json";
+        const std::string path = kConfigPath;
         const auto error = WizardIpc::safeError(Error(code, "PRIVATE-KEY-AND-RAW-JOURNAL"), {}, {}, {}, path);
         const auto encoded = WizardIpc::buildError(id, error);
         PHPVPN_CHECK(encoded.find("PRIVATE-KEY-AND-RAW-JOURNAL") == std::string::npos);
@@ -332,7 +340,7 @@ PHPVPN_TEST(wizard_ipc, only_exact_correlated_legacy_unknown_command_maps_to_uns
     PHPVPN_REQUIRE_OK(sanitized);
     PHPVPN_CHECK(sanitized->error->description.find("UNTRUSTED") == std::string::npos);
     PHPVPN_CHECK(!WizardIpc::parseError(error)); // General parser remains strict.
-    for (const auto bad : {string("true"), J::makeBool(true), J::makeNull()}) {
+    for (const auto& bad : {string("true"), J::makeBool(true), J::makeNull()}) {
         auto changed = error;
         set(changed, "recoverable", bad);
         set(root, "error", changed);
@@ -372,7 +380,7 @@ PHPVPN_TEST(wizard_ipc, configuration_documents_enforce_availability_nulls_and_a
         set(changed, "reasonCode", string("config_invalid_value"));
         PHPVPN_CHECK(!accepts(WizardCommand::get_config_document, changed));
     }
-    for (const auto bad : {J::makeNull(), string("")}) {
+    for (const auto& bad : {J::makeNull(), string("")}) {
         auto changed = valid;
         set(changed, "revisionToken", bad);
         PHPVPN_CHECK(!accepts(WizardCommand::get_config_document, changed));
@@ -409,6 +417,7 @@ PHPVPN_TEST(wizard_ipc, configuration_paths_state_and_create_results_are_coheren
     set(state, "vpnState", string("disconnected"));
     set(state, "vpnPhase", string("idle"));
     PHPVPN_CHECK(accepts(WizardCommand::get_config_state, state));
+#if defined(_WIN32)
     for (const auto path : {"", "config.json", "C:config.json", "\\config.json", "%ProgramData%/PHPVPN/config.json", "\\\\server", "\\\\.\\pipe\\anything"}) {
         auto changed = state;
         set(changed, "configPath", string(path));
@@ -419,6 +428,27 @@ PHPVPN_TEST(wizard_ipc, configuration_paths_state_and_create_results_are_coheren
         set(changed, "configPath", string(path));
         PHPVPN_CHECK(accepts(WizardCommand::get_config_state, changed));
     }
+#else
+    // Linux accepts only an absolute normalized POSIX file path.
+    for (const std::string& path : {std::string(), std::string("config.json"), std::string("etc/phpvpn/config.json"),
+             std::string("/"), std::string("//etc/phpvpn/config.json"), std::string("/etc//phpvpn/config.json"),
+             std::string("/etc/phpvpn/"), std::string("/etc/./phpvpn/config.json"), std::string("/etc/phpvpn/.."),
+             std::string("/etc/../etc/phpvpn/config.json"), std::string("/etc/phpvpn/config.json/."),
+             std::string("/etc/phpvpn/con\nfig.json"), std::string("/etc/phpvpn/con\x01" "fig.json"),
+             std::string("/etc/phpvpn/con") + std::string(1, '\0') + "fig.json", std::string("C:/ProgramData/PHPVPN/config.json"),
+             std::string("C:\\ProgramData\\PHPVPN\\config.json"), std::string("\\\\server\\share\\config.json"),
+             std::string("~/config.json")}) {
+        auto changed = state;
+        set(changed, "configPath", string(path));
+        PHPVPN_CHECK(!accepts(WizardCommand::get_config_state, changed));
+    }
+    for (const auto path : {"/etc/phpvpn/config.json", "/c", "/var/lib/phpvpn/.config.json",
+             "/etc/phpvpn/...", "/etc/phpvpn/config..json", "/opt/php vpn/config \xc5\xbe.json"}) {
+        auto changed = state;
+        set(changed, "configPath", string(path));
+        PHPVPN_CHECK(accepts(WizardCommand::get_config_state, changed));
+    }
+#endif
     for (const auto availability : {"missing", "unreadable", "encoding_error", "too_large"}) {
         auto changed = state;
         set(changed, "availability", string(availability));
@@ -478,7 +508,7 @@ PHPVPN_TEST(wizard_ipc, context_rejects_impossible_budgets_and_overflow) {
     PHPVPN_CHECK(!WizardIpc::parseContext(changed));
     for (const auto& member : encoded.objectValue()) {
         if (member.first == "vpnCidr" || member.first == "trustAnyTlsCertificate") continue;
-        for (const auto bad : {J::makeInteger(0), J::makeInteger(-1), J::makeReal(1.5),
+        for (const auto& bad : {J::makeInteger(0), J::makeInteger(-1), J::makeReal(1.5),
             J::makeUnsignedInteger((std::numeric_limits<std::uint64_t>::max)())}) {
             changed = encoded;
             set(changed, member.first, bad);

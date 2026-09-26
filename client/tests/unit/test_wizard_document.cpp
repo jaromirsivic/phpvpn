@@ -137,7 +137,7 @@ PHPVPN_TEST(wizard_defaults, ContractsAndIpSuggestion) {
         PHPVPN_CHECK_EQ(parsed->contractPeers.size(), fields.virtualIp == "10.99.99.2" ? std::size_t(13) : std::size_t(14));
     }
     std::vector<SeenClient> clients;
-    for (unsigned i = 2; i <= 15; ++i) clients.push_back({*Ipv4Address::parse("10.99.99." + std::to_string(i)), 10});
+    for (unsigned i = 2; i <= 15; ++i) clients.push_back({*Ipv4Address::parse("10.99.99." + std::to_string(i)), 10, {}});
     clients[8].lastSeenMs = 5;
     PHPVPN_CHECK_EQ(suggestWizardIp(draft, clients)->toString(), std::string("10.99.99.10"));
     clients.erase(clients.begin());
