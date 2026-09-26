@@ -1,6 +1,6 @@
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux: the systemd service and the CLI (plan-v001 sections 4.10 and 4.11).
-    # The Linux tray (PHPVPN_BUILD_TRAY) is added by its own work package.
+    # The GTK tray (PHPVPN_BUILD_TRAY) lives in tray-linux, added further below.
     include(GNUInstallDirs)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(PHPVPN_APP_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
@@ -20,10 +20,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(phpvpn-cli PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
     set_target_properties(phpvpn-cli PROPERTIES OUTPUT_NAME "phpvpn")
 
-    if(PHPVPN_BUILD_TRAY)
-        # Placeholder: apps/tray-linux joins the build with the tray work package.
-    endif()
-
     # The unit starts /usr/libexec/phpvpn/phpvpn-service, the location of the
     # distribution packages (prefix /usr).
     set(PHPVPN_SYSTEMD_UNIT_DIR "lib/systemd/system" CACHE STRING
@@ -41,14 +37,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     install(FILES "${PHPVPN_LINUX_PACKAGING}/NetworkManager/90-phpvpn.conf" DESTINATION "${PHPVPN_NM_CONF_DIR}")
     install(FILES "${PHPVPN_LINUX_PACKAGING}/man/phpvpn.1" DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
     install(FILES "${PHPVPN_LINUX_PACKAGING}/man/phpvpn-service.8" DESTINATION "${CMAKE_INSTALL_MANDIR}/man8")
+
+    if(PHPVPN_BUILD_TRAY)
+        add_subdirectory(tray-linux)
+    endif()
     return()
 endif()
 
 # Everything below is the Windows application set: Win32 resources, manifests, the tray,
-# the package GUI and the Wintun copy. The Linux tray is a separate GTK application.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND PHPVPN_BUILD_TRAY)
-    add_subdirectory(tray-linux)
-endif()
+# the package GUI and the Wintun copy.
 if(NOT WIN32)
     return()
 endif()
