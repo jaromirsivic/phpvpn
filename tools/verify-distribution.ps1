@@ -170,5 +170,5 @@ if ($linuxManifest.sourceDirty) { Write-Warning "Linux packages were built from 
 
 & (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest
 Write-Output "Linux x64: release $($linuxManifest.releaseVersion)-$($linuxManifest.packageRelease), source $($linuxManifest.sourceCommit)$(if ($linuxManifest.sourceDirty) { ' (dirty)' }), signed by $thumbprint."
-Write-Output 'PASS: complete distribution allowlist, source hashes, LF shell scripts, empty Node.js, macOS README, signed Linux folder and signed Windows package.'
+Write-Output 'PASS: complete distribution allowlist, source hashes, LF shell scripts, Node.js server, macOS README, signed Linux folder and signed Windows package.'
 if ($AllowLocalRuntime) { Write-Output 'Local Python .runtime and .venv are preserved and excluded from the distribution file set.' }

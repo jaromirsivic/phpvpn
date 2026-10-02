@@ -1,7 +1,12 @@
-state: awaiting_route
+state: awaiting_realization_choice
 language: Czech
 project_root: C:\git\phpvpn
-intent_directory: C:\git\phpvpn\Intents\2026-09-26-15-09-24
-started_at: 2026-09-26-15-09-24
+intent_directory: C:\git\phpvpn\Intents\2026-09-29-22-07-41
+started_at: 2026-09-29-22-07-41
 last_completed_intent_version: 1
-latest_intent_path: C:\git\phpvpn\Intents\2026-09-26-15-09-24\intent-v001.md
+latest_intent_path: C:\git\phpvpn\Intents\2026-09-29-22-07-41\intent-v001.md
+route: plan
+planning_context_id: 01a0eecc-1d76-7462-bd6c-bf05a1c1f25b
+plan_directory: C:\git\phpvpn\Plans\2026-09-29-22-07-41
+last_completed_plan_version: 2
+latest_plan_path: C:\git\phpvpn\Plans\2026-09-29-22-07-41\plan-v002.md

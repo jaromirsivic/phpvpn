@@ -2068,14 +2068,39 @@ final class Request
 
 final class StatusPageHandler
 {
-    public function handle(ResponseWriter $writer, bool $insecure): void
+    /** @return array<string|int, string> request headers as received by PHP */
+    public static function receivedHeaders(): array
+    {
+        if (function_exists('getallheaders') && is_array($headers = getallheaders())) {
+            return $headers;
+        }
+        $headers = [];
+        foreach ($_SERVER as $name => $value) {
+            if (is_string($name) && str_starts_with($name, 'HTTP_') && is_string($value)) {
+                $headers[str_replace(' ', '-', ucwords(strtolower(strtr(substr($name, 5), '_', ' '))))] = $value;
+            }
+        }
+        return $headers;
+    }
+
+    /** @param array<string|int, string> $headers shown in the Show HTTP Headers dialog */
+    public function handle(ResponseWriter $writer, bool $insecure, array $headers): void
     {
         $html = <<<'STATUS_HTML'
-<!doctype html><html lang=en><meta name=viewport content="width=device-width"><title>PHPVPN server is running</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;font:16px Arial,sans-serif}main{margin:auto;width:48rem;max-width:100%;padding:1.5rem;background:#e8e8e8;border-radius:1rem;box-shadow:0 .4rem 1.5rem #0003}h1{margin-top:0}aside{padding:1rem;background:#c00;color:#fff;border-radius:.6rem}button{padding:.6rem;border:0;border-radius:.5rem;background:#06c;color:#fff;cursor:pointer}#r:not([hidden]){display:flex;gap:.5rem}#k{min-width:0;flex:1;font-family:monospace}</style><main><h1>PHPVPN server is running</h1><aside><b>Warning:</b> The default SERVER_SECRET value is still in use. Set the SERVER_SECRET variable in this script to a secure value immediately. You can use the Generate key button below to create one.</aside><p>Generate a secure hexadecimal key: <button id=g>Generate key</button></p><div id=r hidden><input id=k aria-label="Generated key" readonly><button id=c>Copy key</button></div><noscript>JavaScript must be enabled to generate and copy a key.</noscript></main><script>g.onclick=()=>{k.value=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,0)).join('');r.hidden=false};c.onclick=()=>{k.select();navigator.clipboard?navigator.clipboard.writeText(k.value).catch(()=>document.execCommand('copy')):document.execCommand('copy')}</script>
+<!doctype html><html lang=en><meta name=viewport content="width=device-width"><title>PHPVPN server is running</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font:16px Arial,sans-serif}main{width:48rem;max-width:100%;padding:1.5rem;background:#e8e8e8;border-radius:1rem;box-shadow:0 .4rem 1.5rem #0003}h1,h2{margin-top:0}aside{padding:1rem;background:#c00;color:#fff;border-radius:.6rem}button{padding:.6rem;border:0;border-radius:.5rem;background:#06c;color:#fff;cursor:pointer}#r:not([hidden]){display:flex;gap:.5rem}#k{min-width:0;flex:1;font-family:monospace}dialog{width:44rem;max-width:calc(100% - 2rem);border:0;border-radius:1rem;padding:1.5rem}dialog::backdrop{background:#0006}#x{float:right;padding:0 .5rem;background:none;color:#000;font-size:1.5rem}#t{width:100%;height:14rem;font-family:monospace;white-space:pre}#b{text-align:right}#f{color:#777;font-size:.9rem}#f a{color:inherit}</style><main><h1>PHPVPN server is running</h1><aside><b>Warning:</b> The default SERVER_SECRET value is still in use. Set the SERVER_SECRET variable in this script to a secure value immediately. You can use the Generate key button below to create one.</aside><p>Generate a secure hexadecimal key: <button id=g>Generate key</button></p><div id=r hidden><input id=k aria-label="Generated key" readonly><button id=c>Copy key</button></div><p>View HTTP headers for the Configuration Wizard: <button id=s>Show HTTP Headers</button></p><noscript>JavaScript must be enabled to generate and copy a key or to show HTTP headers.</noscript></main><p id=f>Developed by <a href=https://www.pilandrome.com>www.pilandrome.com</a> (MIT License)</p><dialog id=d><form method=dialog><button id=x aria-label=Close>&times;</button><h2>HTTP headers</h2><p>Headers seen by this script may be incomplete. For exact values, press F12 and copy the request headers from the Network tab.</p><textarea id=t aria-label="HTTP headers" readonly></textarea><p id=b><button id=y type=button>Copy</button> <button>OK</button></p></form></dialog><script>C=e=>{e.select();navigator.clipboard?navigator.clipboard.writeText(e.value).catch(()=>document.execCommand('copy')):document.execCommand('copy')};g.onclick=()=>{k.value=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,0)).join('');r.hidden=false};c.onclick=()=>C(k);s.onclick=()=>{d.showModal();t.select()};y.onclick=()=>C(t)</script>
 STATUS_HTML;
         if (!$insecure) {
             $html = preg_replace('/<aside>.*?<\/aside>/s', '', $html);
         }
+        $lines = [];
+        foreach ($headers as $name => $value) {
+            // The client owns these names and its HTTP headers dialog rejects them.
+            if (!preg_match('/^(host|connection|content-(type|length)|transfer-encoding)$/i', (string) $name)) {
+                $lines[] = $name . ': ' . $value;
+            }
+        }
+        $text = htmlspecialchars(implode("\n", $lines), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $html = str_replace('readonly></textarea>', 'readonly>' . $text . '</textarea>', $html);
         $writer->begin(200, Http::HTML, ['Content-Length' => (string) strlen($html)]);
         $writer->write($html);
     }
@@ -2594,7 +2619,7 @@ final class Application
                     return;
                 }
                 $insecure = self::isConfiguredSecretInsecure();
-                (new StatusPageHandler())->handle($writer, $insecure);
+                (new StatusPageHandler())->handle($writer, $insecure, StatusPageHandler::receivedHeaders());
                 return;
             }
             Http::error($writer, 405, 'method_not_allowed', ['Allow' => 'GET, HEAD']);

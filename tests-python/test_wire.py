@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 import re
@@ -215,3 +216,27 @@ def test_body_limits(runtime, action, delta):
     body = body[:-1] + b' ' * (target - len(body)) + body[-1:] + (b'\n' if action == 'data' else b'')
     response = call(app, action, body)
     assert response.status_code == (413 if delta > 0 else 200)
+
+
+def test_status_template_matches_the_shared_mockup():
+    mockup = (Path(__file__).resolve().parents[1] / 'assets/index.html').read_bytes().rstrip(b'\r\n')
+    assert s.STATUS_HTML == mockup
+
+
+def test_status_page_shows_received_headers(tmp_path):
+    app = s.Application(s.Config(STORAGE_DRIVER='memory', BUFFER_DIRECTORY=str(tmp_path)))
+    try:
+        raw = [(b'host', b'example.test'), (b'user-agent', b'A<b>&"\''), (b'content-type', b'text/plain'),
+               (b'connection', b'close'), (b'cookie', b'a=1'), (b'x-dup', b'1'), (b'cookie', b'b=2'),
+               (b'x-dup', b'2'), (b'x-test', b''), (b'x-bin', b'\xff')]
+        body = app.preflight('GET', None, '', '/phpvpn.php', raw).body
+        assert b'A<b>' not in body
+        shown = re.search(rb'<textarea[^>]*>(.*?)</textarea>', body, re.S).group(1).decode()
+        assert html.unescape(shown) == ('User-Agent: A<b>&"\'\nCookie: a=1; b=2\nX-Dup: 1, 2\n'
+                                        'X-Test: \nX-Bin: �')
+        # The ASGI adapter passes the scope headers through to the page.
+        page = call(app, method='GET', headers={'x-phpvpn-probe': 'yes', 'content-type': 'text/plain'})
+        assert b'readonly>X-Phpvpn-Probe: yes</textarea>' in page.content
+        assert page.headers['content-length'] == str(len(page.content))
+    finally:
+        app.executor.shutdown()

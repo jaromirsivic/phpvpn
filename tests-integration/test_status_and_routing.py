@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import html
+import re
+
 import pytest
 
 from phpvpn_client import (
@@ -45,6 +48,23 @@ def test_status_page_secret_warning_matches_the_configured_secret(
         "the warning must appear exactly for the default, empty, all zero byte or all ASCII "
         "zero server secret"
     )
+
+
+def test_status_page_shows_received_headers(client: PhpVpnClient) -> None:
+    """Chapter 5.1, Show HTTP Headers lists the escaped request headers the client may reuse."""
+    response = client.request(
+        "GET", headers={"X-Phpvpn-Probe": 'a<b>&"', "Content-Type": "text/plain"}
+    )
+    assert response.status_code == 200
+    assert "a<b>" not in response.text, "header values must be HTML escaped"
+    match = re.search(r"<textarea[^>]*>(.*?)</textarea>", response.text, re.S)
+    assert match, "the headers dialog must hold a textarea"
+    lines = html.unescape(match.group(1)).split("\n")
+    assert 'X-Phpvpn-Probe: a<b>&"' in lines
+    names = [line.split(":", 1)[0].lower() for line in lines]
+    assert len(names) == len(set(names)), "header names must be unique"
+    managed = {"host", "connection", "content-type", "content-length", "transfer-encoding"}
+    assert not managed & set(names), "names managed by the client must be omitted"
 
 
 def test_head_on_the_status_page_returns_no_body(client: PhpVpnClient) -> None:

@@ -114,6 +114,8 @@ výchozích `ACCESS_KEYS` pro adresy `.2` až `.15`.
   nikoli pracovní složce procesu. Použij vlastní adresář mimo webroot.
 - `STATUS_PAGE_ENABLED` zapíná veřejnou stránku GET/HEAD. Vypnutí neomezuje API.
   Výchozí, prázdný, nulový a ASCII nulový secret zobrazí warning panel.
+  Tlačítko Show HTTP Headers ukáže přijaté hlavičky pro Configuration Wizard
+  (`protocol.md` §5.1).
 - `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX`, všechny `MAX_*`, TTL,
   autentizační okno, polling a sweep konstanty mají význam popsaný v protokolu.
 - `PROTECT_BUFFER_DIRECTORY` vytváří best-effort diskové guards. Nenahrazují

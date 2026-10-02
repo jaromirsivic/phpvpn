@@ -155,14 +155,14 @@ void queueRecord(Fixture& sender, NetworkWorker& worker, const std::string& reco
         parsed.acceptedMessageIds.front() != fields.messageId || !parsed.deferredMessageIds.empty())
         throw std::runtime_error("the real PHP relay did not confirm exactly the injected record");
 }
-PacketBytes packet() {
+PacketBytes packet(unsigned from = 2, unsigned to = 3) {
     PacketBytes bytes(24, 0);
     bytes[0] = 0x45;
     bytes[3] = 24;
     bytes[8] = 64;
     bytes[9] = 253;
-    Ipv4Address::parse("10.99.99.2")->toNetworkBytes(bytes.data() + 12);
-    Ipv4Address::parse("10.99.99.3")->toNetworkBytes(bytes.data() + 16);
+    Ipv4Address::parse("10.99.99." + std::to_string(from))->toNetworkBytes(bytes.data() + 12);
+    Ipv4Address::parse("10.99.99." + std::to_string(to))->toNetworkBytes(bytes.data() + 16);
     bytes[20] = 't'; bytes[21] = 'e'; bytes[22] = 's'; bytes[23] = 't';
     const auto checksum = ipv4HeaderChecksum(std::span<const std::uint8_t>(bytes.data(), 20));
     bytes[10] = static_cast<std::uint8_t>(checksum >> 8);
@@ -261,6 +261,58 @@ PHPVPN_TEST(server_contract, diagnostic_consumes_without_payload_gcm_while_boots
     PHPVPN_CHECK(delivered.has_value());
     if (delivered) PHPVPN_CHECK_EQ(*delivered, expected);
     PHPVPN_CHECK_EQ(receiver.poll(), std::size_t(0));
+}
+PHPVPN_TEST(server_contract, bidirectional_operational_exchange_through_production_workers) {
+    Fixture a, b;
+    b.identity(3);
+    a.poll(); // Authenticated cleanup of only this isolated fixture's queues.
+    b.poll();
+    NetworkWorker first(a.crypto, a.transport, *a.clock), second(b.crypto, b.transport, *b.clock);
+    require(first.configure(runtimeConfig(2, 3)));
+    require(second.configure(runtimeConfig(3, 2)));
+    require(first.performHealth());
+    require(first.performInfo());
+    require(second.performHealth());
+    require(second.performInfo());
+    DropCounters aOutDrops, aInDrops, bOutDrops, bInDrops;
+    auto hasher = require(HmacFlowHasher::create(a.crypto));
+    DirectionQueues aOut(1024 * 1024, 0, 1, *a.clock, *hasher, aOutDrops),
+        aIn(1024 * 1024, 0, 1, *a.clock, *hasher, aInDrops),
+        bOut(1024 * 1024, 0, 1, *b.clock, *hasher, bOutDrops),
+        bIn(1024 * 1024, 0, 1, *b.clock, *hasher, bInDrops);
+    const auto forward = packet(2, 3), backward = packet(3, 2);
+    DropReason reason{};
+    PHPVPN_CHECK(aOut.tryEnqueue(*Ipv4Address::parse("10.99.99.3"), forward, reason).valueOr(false));
+    PHPVPN_CHECK(bOut.tryEnqueue(*Ipv4Address::parse("10.99.99.2"), backward, reason).valueOr(false));
+    const auto opensA = a.crypto.payloadOpens, opensB = b.crypto.payloadOpens;
+    // .2 sends; .3 sends and receives .2's batch in the same operational response.
+    auto sent = first.exchangeData(aOut, aIn, aOutDrops, aInDrops, true);
+    PHPVPN_REQUIRE_OK(sent);
+    PHPVPN_CHECK_EQ(sent->packetsSent, std::size_t(1));
+    PHPVPN_CHECK_EQ(sent->deferredRecords, std::size_t(0));
+    auto answered = second.exchangeData(bOut, bIn, bOutDrops, bInDrops, true);
+    PHPVPN_REQUIRE_OK(answered);
+    PHPVPN_CHECK_EQ(answered->packetsSent, std::size_t(1));
+    PHPVPN_CHECK_EQ(answered->packetsReceived, std::size_t(1));
+    PHPVPN_CHECK_EQ(b.crypto.payloadOpens, opensB + 1);
+    auto atB = bIn.takePacket(*Ipv4Address::parse("10.99.99.2"));
+    PHPVPN_CHECK(atB.has_value());
+    if (atB) PHPVPN_CHECK_EQ(*atB, forward);
+    // .2 receives the reply by an ordinary operational poll.
+    auto received = first.exchangeData(aOut, aIn, aOutDrops, aInDrops, true);
+    PHPVPN_REQUIRE_OK(received);
+    PHPVPN_CHECK_EQ(received->packetsSent, std::size_t(0));
+    PHPVPN_CHECK_EQ(received->packetsReceived, std::size_t(1));
+    PHPVPN_CHECK_EQ(a.crypto.payloadOpens, opensA + 1);
+    auto atA = aIn.takePacket(*Ipv4Address::parse("10.99.99.3"));
+    PHPVPN_CHECK(atA.has_value());
+    if (atA) PHPVPN_CHECK_EQ(*atA, backward);
+    // At-most-once: nothing is delivered a second time.
+    auto again = second.exchangeData(bOut, bIn, bOutDrops, bInDrops, true);
+    PHPVPN_REQUIRE_OK(again);
+    PHPVPN_CHECK_EQ(again->packetsReceived, std::size_t(0));
+    PHPVPN_CHECK_EQ(a.poll(), std::size_t(0));
+    PHPVPN_CHECK_EQ(b.poll(), std::size_t(0));
 }
 PHPVPN_TEST(server_contract, masked_contracts_full_auth_publish_and_read_only_snapshot) {
     Fixture a, b;

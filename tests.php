@@ -637,12 +637,38 @@ $runner->run('Embedded status template and complete warning removal', function (
     $mockup = trim((string) file_get_contents(__DIR__ . '/assets/index.html'));
     foreach ([true, false] as $insecure) {
         $writer = new BufferedResponseWriter();
-        (new \PhpVpn\StatusPageHandler())->handle($writer, $insecure);
+        (new \PhpVpn\StatusPageHandler())->handle($writer, $insecure, []);
         $expected = $insecure ? $mockup : preg_replace('/<aside>.*?<\/aside>/s', '', $mockup);
         $t->same($expected, $writer->body, 'embedded mockup matches exactly');
         $t->same((string) strlen($writer->body), $writer->headers['Content-Length'], 'exact response length');
         $t->same($insecure, str_contains($writer->body, '<aside>'), 'whole warning panel is conditional');
         $t->ok(str_contains($writer->body, 'crypto.getRandomValues(new Uint8Array(32))'), 'Web Crypto generator retained');
+        $t->ok(str_contains($writer->body, '<button id=s>Show HTTP Headers</button>'), 'Show HTTP Headers button');
+        $t->ok(str_contains($writer->body, '<dialog id=d>'), 'headers dialog');
+        $t->ok(str_contains($writer->body, '<a href=https://www.pilandrome.com>www.pilandrome.com</a> (MIT License)'), 'credits line');
+    }
+});
+
+$runner->run('Status page shows received headers for the Configuration Wizard', function (Runner $t): void {
+    $writer = new BufferedResponseWriter();
+    (new \PhpVpn\StatusPageHandler())->handle($writer, false, [
+        'Host' => 'example.test', 'User-Agent' => 'A<b>&"\'', 'content-type' => 'text/plain', 'Cookie' => 'a=1',
+        'Connection' => 'close', 'Content-Length' => '0', 'Transfer-Encoding' => 'chunked', 'X-Test' => '',
+    ]);
+    $t->ok(
+        str_contains($writer->body, "readonly>User-Agent: A&lt;b&gt;&amp;&quot;&#039;\nCookie: a=1\nX-Test: </textarea>"),
+        'escaped headers without client managed names'
+    );
+    $t->same((string) strlen($writer->body), $writer->headers['Content-Length'], 'exact response length');
+
+    // The CLI SAPI has no getallheaders(), so the $_SERVER fallback is exercised.
+    $saved = $_SERVER;
+    try {
+        $_SERVER['HTTP_X_PHPVPN_PROBE'] = 'yes';
+        $headers = \PhpVpn\StatusPageHandler::receivedHeaders();
+        $t->same('yes', $headers['X-Phpvpn-Probe'] ?? null, 'header name rebuilt from $_SERVER');
+    } finally {
+        $_SERVER = $saved;
     }
 });
 

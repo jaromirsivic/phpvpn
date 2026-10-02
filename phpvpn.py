@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import html
 import json
 import os
 from pathlib import Path
@@ -848,7 +849,22 @@ def media_type(header: str, expected: str) -> bool:
     return True
 
 
-STATUS_HTML = b'''<!doctype html><html lang=en><meta name=viewport content="width=device-width"><title>PHPVPN server is running</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;font:16px Arial,sans-serif}main{margin:auto;width:48rem;max-width:100%;padding:1.5rem;background:#e8e8e8;border-radius:1rem;box-shadow:0 .4rem 1.5rem #0003}h1{margin-top:0}aside{padding:1rem;background:#c00;color:#fff;border-radius:.6rem}button{padding:.6rem;border:0;border-radius:.5rem;background:#06c;color:#fff;cursor:pointer}#r:not([hidden]){display:flex;gap:.5rem}#k{min-width:0;flex:1;font-family:monospace}</style><main><h1>PHPVPN server is running</h1><aside><b>Warning:</b> The default SERVER_SECRET value is still in use. Set the SERVER_SECRET variable in this script to a secure value immediately. You can use the Generate key button below to create one.</aside><p>Generate a secure hexadecimal key: <button id=g>Generate key</button></p><div id=r hidden><input id=k aria-label="Generated key" readonly><button id=c>Copy key</button></div><noscript>JavaScript must be enabled to generate and copy a key.</noscript></main><script>g.onclick=()=>{k.value=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,0)).join('');r.hidden=false};c.onclick=()=>{k.select();navigator.clipboard?navigator.clipboard.writeText(k.value).catch(()=>document.execCommand('copy')):document.execCommand('copy')}</script>'''
+STATUS_HTML = b'''<!doctype html><html lang=en><meta name=viewport content="width=device-width"><title>PHPVPN server is running</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font:16px Arial,sans-serif}main{width:48rem;max-width:100%;padding:1.5rem;background:#e8e8e8;border-radius:1rem;box-shadow:0 .4rem 1.5rem #0003}h1,h2{margin-top:0}aside{padding:1rem;background:#c00;color:#fff;border-radius:.6rem}button{padding:.6rem;border:0;border-radius:.5rem;background:#06c;color:#fff;cursor:pointer}#r:not([hidden]){display:flex;gap:.5rem}#k{min-width:0;flex:1;font-family:monospace}dialog{width:44rem;max-width:calc(100% - 2rem);border:0;border-radius:1rem;padding:1.5rem}dialog::backdrop{background:#0006}#x{float:right;padding:0 .5rem;background:none;color:#000;font-size:1.5rem}#t{width:100%;height:14rem;font-family:monospace;white-space:pre}#b{text-align:right}#f{color:#777;font-size:.9rem}#f a{color:inherit}</style><main><h1>PHPVPN server is running</h1><aside><b>Warning:</b> The default SERVER_SECRET value is still in use. Set the SERVER_SECRET variable in this script to a secure value immediately. You can use the Generate key button below to create one.</aside><p>Generate a secure hexadecimal key: <button id=g>Generate key</button></p><div id=r hidden><input id=k aria-label="Generated key" readonly><button id=c>Copy key</button></div><p>View HTTP headers for the Configuration Wizard: <button id=s>Show HTTP Headers</button></p><noscript>JavaScript must be enabled to generate and copy a key or to show HTTP headers.</noscript></main><p id=f>Developed by <a href=https://www.pilandrome.com>www.pilandrome.com</a> (MIT License)</p><dialog id=d><form method=dialog><button id=x aria-label=Close>&times;</button><h2>HTTP headers</h2><p>Headers seen by this script may be incomplete. For exact values, press F12 and copy the request headers from the Network tab.</p><textarea id=t aria-label="HTTP headers" readonly></textarea><p id=b><button id=y type=button>Copy</button> <button>OK</button></p></form></dialog><script>C=e=>{e.select();navigator.clipboard?navigator.clipboard.writeText(e.value).catch(()=>document.execCommand('copy')):document.execCommand('copy')};g.onclick=()=>{k.value=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,0)).join('');r.hidden=false};c.onclick=()=>C(k);s.onclick=()=>{d.showModal();t.select()};y.onclick=()=>C(t)</script>'''
+# The client owns these names and its HTTP headers dialog rejects them.
+CLIENT_MANAGED_HEADERS = {'host', 'connection', 'content-type', 'content-length', 'transfer-encoding'}
+
+
+def status_headers(raw) -> bytes:
+    """Escaped `Name: value` lines of the request headers for the Show HTTP Headers dialog."""
+    merged = {}
+    for name, value in raw:
+        name, value = name.decode('latin1').lower(), value.decode('utf-8', 'replace')
+        if name in merged:
+            value = merged[name] + ('; ' if name == 'cookie' else ', ') + value
+        merged[name] = value
+    lines = ['-'.join(part.capitalize() for part in name.split('-')) + ': ' + value
+             for name, value in merged.items() if name not in CLIENT_MANAGED_HEADERS]
+    return html.escape('\n'.join(lines)).encode('utf-8')
 
 
 class Application:
@@ -866,7 +882,7 @@ class Application:
             self.storage = (MemoryStorage if self.cfg.STORAGE_DRIVER == 'memory' else DiskStorage)(self.cfg, self.clock)
         self.executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix='phpvpn-storage')
 
-    def preflight(self, method, action, content_type, path):
+    def preflight(self, method, action, content_type, path, headers=()):
         cfg = self.cfg
         if path != (cfg.SERVER_PATH if cfg else SERVER_PATH):
             raise ProtocolError(404)
@@ -878,6 +894,7 @@ class Application:
             body = STATUS_HTML
             if not insecure_secret(cfg.configured_secret if cfg else SERVER_SECRET):
                 body = re.sub(b'<aside>.*?</aside>', b'', body)
+            body = body.replace(b'readonly></textarea>', b'readonly>' + status_headers(headers) + b'</textarea>', 1)
             return Response(content_type='text/html; charset=utf-8', body=body)
         if action not in ('health', 'info', 'data'):
             raise ProtocolError(404)
@@ -1080,7 +1097,8 @@ class Application:
             query = dict(parse_qsl(scope.get('query_string', b'').decode('latin1'), keep_blank_values=True))
             action = query.get('action')
             headers = {k.lower(): v.decode('latin1') for k, v in scope['headers']}
-            response = self.preflight(scope['method'], action, headers.get(b'content-type', ''), scope['path'])
+            response = self.preflight(scope['method'], action, headers.get(b'content-type', ''), scope['path'],
+                                      scope['headers'])
             if response is None:
                 limit = {'health': self.cfg.MAX_AUTH_RECORD_BYTES, 'info': self.cfg.MAX_INFO_REQUEST_BODY_BYTES,
                          'data': self.cfg.MAX_REQUEST_BODY_BYTES}[action]

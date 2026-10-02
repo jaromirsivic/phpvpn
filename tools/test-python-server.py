@@ -1,4 +1,4 @@
-"""Run the same HTTP suite against isolated PHP/disk, Python/disk and memory.
+"""Run the same HTTP suite against isolated PHP/disk, Python/disk, memory and Node/disk.
 
 Use the prepared uv environment (see server-python.md). Never edits live sources
 or server.json. Temporary fixture directories and only owned processes are cleaned.
@@ -39,7 +39,8 @@ def free_port() -> int:
 
 @contextlib.contextmanager
 def fixture(profile: str, php: str | None = None, directory: Path | None = None,
-            python_executable: Path | None = None, server_file: Path | None = None):
+            python_executable: Path | None = None, server_file: Path | None = None,
+            node: str | None = None):
     with contextlib.ExitStack() as stack:
         root = directory or Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="phpvpn-test-")))
         root.mkdir(parents=True, exist_ok=True)
@@ -47,7 +48,7 @@ def fixture(profile: str, php: str | None = None, directory: Path | None = None,
         web.mkdir(exist_ok=True)
         port = free_port()
         implementation, driver = profile.split("-")
-        extension = "php" if implementation == "php" else "py"
+        extension = {"php": "php", "python": "py", "node": "js"}[implementation]
         source = (server_file or ROOT / f"phpvpn.{extension}").read_text(encoding="utf-8")
         buffer = (root / "buffer").as_posix()
         runtime_paths = [p for p in sys.path if p]
@@ -63,6 +64,17 @@ def fixture(profile: str, php: str | None = None, directory: Path | None = None,
                               "http_response_code(404); header('Content-Type: application/json');\n"
                               "echo '{\"type\":\"error\",\"code\":\"not_found\"}'; return true; }\nreturn false;\n", encoding='utf-8')
             command = [php, "-d", "post_max_size=8M", "-S", f"127.0.0.1:{port}", "-t", str(web), str(router)]
+        elif implementation == "node":
+            node = node or shutil.which("node")
+            if not node:
+                raise RuntimeError("Node.js executable required: --node PATH")
+            # The deployed script stays byte identical, fixture values come from
+            # an explicit JSON file. The server reads no environment overrides.
+            node_config = root / "node-config.json"
+            node_config.write_text(json.dumps({
+                "BUFFER_DIRECTORY": buffer, "LISTEN_HOST": "127.0.0.1", "LISTEN_PORT": port,
+            }), encoding="utf-8")
+            command = [node, str(web / "phpvpn.js"), "--config", str(node_config)]
         else:
             source = replace_once(source, r"^BUFFER_DIRECTORY = .*$", f"BUFFER_DIRECTORY = {buffer!r}")
             source = replace_once(source, r"^STORAGE_DRIVER = .*$", f"STORAGE_DRIVER = {driver!r}")
@@ -118,8 +130,9 @@ def fixture(profile: str, php: str | None = None, directory: Path | None = None,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profiles", nargs="+", default=["python-disk", "python-memory"],
-                        choices=["php-disk", "python-disk", "python-memory"])
+                        choices=["php-disk", "python-disk", "python-memory", "node-disk"])
     parser.add_argument("--php")
+    parser.add_argument("--node", help="Node.js executable for the node-disk profile")
     parser.add_argument("--report-dir", type=Path)
     parser.add_argument("--contract-executable", type=Path, help="Built real C++/WinHTTP contract executable")
     parser.add_argument("--contract-only", action="store_true")
@@ -130,7 +143,7 @@ def main() -> int:
     result = 0
     for profile in args.profiles:
         print(f"\n=== {profile} ===", flush=True)
-        with fixture(profile, args.php) as (config, url, process, root):
+        with fixture(profile, args.php, node=args.node) as (config, url, process, root):
             if args.contract_executable:
                 code = subprocess.call([str(args.contract_executable.resolve())], cwd=ROOT,
                                        env={**os.environ, 'PHPVPN_CONTRACT_URL': url})

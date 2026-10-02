@@ -132,6 +132,14 @@ Jiné metody vrací `405 method_not_allowed` s hlavičkou `Allow`. Neznámá akc
 
 `STATUS_PAGE_ENABLED` má výchozí hodnotu `true`. Kořenový GET vrací samostatné HTML podle `assets/index.html` s nadpisem `<h1>PHPVPN server is running</h1>`, generátorem 32 náhodných bajtů přes Web Crypto a kopírováním 64 lowercase hex znaků. HTML, CSS i JavaScript jsou vložené přímo do skriptu. Prázdný, výchozí, nulový nebo ASCII nulový secret zobrazí celý červený warning panel `aside`. Jiný secret jej odstraní. Při `false` GET vrací `404 not_found` bez HTML. HEAD má odpovídající status a hlavičky bez těla. Přepínač neomezuje REST API. Nový datový default `./phpvpn_data` nepřesouvá ani nekopíruje stará data z `./phpvpn`, případnou migraci provádí správce ručně.
 
+Stránka dále obsahuje tlačítko `Show HTTP Headers`. To otevře modální `<dialog>` s nadpisem `HTTP headers`, stručnou poznámkou, že hlavičky viděné skriptem nemusí být úplné a přesné hodnoty ukáže prohlížeč po F12 na kartě Network, polem jen pro čtení a tlačítky `Copy`, `OK` a křížkem. Pole obsahuje hlavičky aktuálního požadavku po jedné ve tvaru `Name: value`, oddělené LF, bez koncového LF a HTML escapované. Hodnoty jsou dekódované jako UTF-8, neplatné sekvence nahrazuje U+FFFD. Zdroj podle implementace:
+
+- PHP: `getallheaders()`, jinak `$_SERVER['HTTP_*']`, tedy tak, jak hlavičky předal webový server,
+- Python: ASGI hlavičky s názvy převedenými do Title-Case, protože Uvicorn názvy převádí na malá písmena,
+- Node.js: `req.rawHeaders` s původním zápisem názvů.
+
+Python a Node.js opakované hlavičky slučují do jednoho řádku: hodnoty spojí `, `, u `Cookie` `; `. Všechny tři servery používají stejnou šablonu `assets/index.html`. Tvar HTML entit v poli se může lišit, dekódovaný text je stejný. Vynechávají se `Host`, `Connection`, `Content-Type`, `Content-Length` a `Transfer-Encoding`, které spravuje klient a jeho validátor HTTP headers odmítá. Výsledek lze vložit beze změny do Configuration Wizard → HTTP headers. Stránka tak vrací klientovi jen jeho vlastní hlavičky, včetně případných `Cookie`, `Authorization` nebo hlaviček přidaných proxy. Odpověď je `no-store`. Pod panelem je šedý řádek `Developed by www.pilandrome.com (MIT License)` s odkazem na `https://www.pilandrome.com`.
+
 Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfiguraci. Varování je informativní: výchozí, prázdný nebo nulový `SERVER_SECRET` neblokuje `health`, `info` ani `data` a sám o sobě nesmí vést k `503 server_misconfigured`. Protože je však taková hodnota veřejně předvídatelná, neposkytuje tag odpovědi `health` praktický důkaz identity serveru.
 
 ### 5.2 `health`

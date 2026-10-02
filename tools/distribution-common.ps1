@@ -5,6 +5,8 @@ function Get-DistributionSources {
         'server/Python/phpvpn.py' = 'phpvpn.py'
         'server/Python/requirements-server.txt' = 'requirements-server.txt'
         'server/Python/server-python.md' = 'server-python.md'
+        'server/Node.js/phpvpn.js' = 'phpvpn.js'
+        'server/Node.js/server-node.md' = 'server-node.md'
     }
     foreach ($name in @('init.bat','start.bat','stop.bat','init.sh','start.sh','stop.sh','bootstrap.ps1','server-control.py')) {
         $files["server/Python/$name"] = "tools/server-python/$name"
@@ -74,7 +76,9 @@ function Get-ClientVersion([string]$Repository) {
 }
 
 function Test-DistributionRuntimePath([string]$RelativePath) {
-    return $RelativePath.Replace('\', '/') -match '^server/Python/\.(runtime|venv)(/|$)'
+    # Local operational state of a server started directly from dist: the Python venv and
+    # control state, and the default Node.js disk queue next to phpvpn.js.
+    return $RelativePath.Replace('\', '/') -match '^server/(Python/\.(runtime|venv)|Node\.js/phpvpn_data)(/|$)'
 }
 
 function Publish-Distribution {
@@ -100,7 +104,7 @@ function Publish-Distribution {
     $newEntries = @(Get-ChildItem -LiteralPath $staging -Recurse -Force)
     foreach ($entry in $newEntries) {
         if (Test-DistributionRuntimePath $entry.FullName.Substring($staging.Length + 1)) {
-            throw 'Distribution staging must not contain local Python runtime state.'
+            throw 'Distribution staging must not contain local server runtime state.'
         }
     }
     $oldDirectories = @($oldEntries | Where-Object PSIsContainer | ForEach-Object { $_.FullName.Substring($dist.Length + 1) })

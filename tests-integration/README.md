@@ -39,6 +39,21 @@ The real C++ client contract can run on the same fixtures using
 Use `--contract-only` to run it without pytest. See [the server guide](../server-python.md)
 for supported deployment and memory limitations.
 
+### Node.js disk fixture
+
+The `node-disk` profile runs an unmodified copy of `phpvpn.js`. Its port and
+buffer directory come from a private `--config` JSON file, the server reads no
+environment overrides. `--node` selects the runtime, otherwise `node` from PATH:
+
+```powershell
+uv run --no-project --python 3.13 --with pytest --with requests --with cryptography --with psutil python tools/test-python-server.py --profiles node-disk --node "C:/Program Files/nodejs/node.exe" --report-dir reports/node-server -- -q
+```
+
+The profile gets no memory skips. Its deterministic counterparts live in
+`tests-node` (`node --test "tests-node/*.test.js"`): known answers of the Node functions,
+strict parsers, faults, queue_busy versus queue_unavailable, two processes on
+one root, hard kill and offline lock recovery. See [the Node guide](../server-node.md).
+
 Python integration tests for the deployed phpvpn v1 relay. The suite talks to a
 running server over real HTTP and verifies the normative requirements of
 `protocol.md`, which is the single source of truth. Every assertion states what

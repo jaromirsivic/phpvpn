@@ -66,11 +66,15 @@ for enabled, secret, custom in [(True, 'CHANGE_THIS_SERVER_SECRET', False),
             head_status, head_body, head_headers = request(url, 'HEAD')
             assert head_status == status and head_body == b''
             if enabled:
+                import re
                 expected = mockup
                 if secret == 'secure-example':
-                    import re
                     expected = re.sub(r'<aside>.*?</aside>', '', expected)
-                assert body.decode() == expected
+                # The dialog shows this request's headers without the names the client manages.
+                shown = re.search(r'<textarea[^>]*>(.*?)</textarea>', body.decode(), re.S).group(1)
+                assert 'User-Agent: Python-urllib/' in shown, shown
+                assert not re.search(r'^(Host|Content-Type|Connection):', shown, re.M | re.I), shown
+                assert body.decode().replace(shown, '', 1) == expected
                 assert head_headers['Content-Length'] == str(len(body))
             else:
                 assert b'not_found' in body and b'<html' not in body
