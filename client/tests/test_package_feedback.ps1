@@ -39,6 +39,7 @@ if ($Scenario) {
             return $process
         }
         Write-TestEvent 'tray-start'
+        if ($WindowStyle -eq 'Hidden') { throw 'Tray launch must not hide its first GUI window' }
         if ($Scenario -eq 'tray-failure') { throw 'Synthetic tray launch failure' }
         if ($ArgumentList -cne '--installation-complete') { throw 'Tray launch lost the installation notice request' }
         Write-TestEvent 'installation-notice-request'

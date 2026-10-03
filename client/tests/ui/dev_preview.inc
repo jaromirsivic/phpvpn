@@ -201,12 +201,12 @@ struct DevPreview {
     std::string error;
     std::function<void(DevPreview&)> automation;
     inline static thread_local DevPreview* active = nullptr;
-    explicit DevPreview(DevSelection value) : selection(std::move(value)), backend(selection),
+    explicit DevPreview(DevSelection value, bool installationComplete = false) : selection(std::move(value)), backend(selection),
         server([this](std::string_view bytes) { return backend.reply(bytes); }, options()) {
         check(validDevSelection(selection), "Invalid preview selection");
         check(server.start().ok(), "Private preview backend could not start");
         auto adapter = std::make_unique<DevShell>(selection.view == "Tray"); shell = adapter.get();
-        app = std::make_unique<TrayApplication>(TrayRuntime{pipe, mutex, std::move(adapter), L"PHPVPN GUI preview - synthetic data"});
+        app = std::make_unique<TrayApplication>(TrayRuntime{pipe, mutex, std::move(adapter), L"PHPVPN GUI preview - synthetic data", installationComplete});
         check(app->initialise(GetModuleHandleW(nullptr)), "Preview application initialisation failed");
         check(IsWindow(app->window()), "Preview mutex collision");
     }
@@ -460,6 +460,34 @@ void devEndpointIsolation() {
     HANDLE orphan = OpenMutexW(SYNCHRONIZE, FALSE, oldMutex.c_str());
     if (orphan) CloseHandle(orphan);
     check(!orphan, "Private mutex survived destruction");
+}
+// Invoked only through a dedicated CLI mode so each target is the first window
+// in a fresh process. Tray mode never applies advance()'s preview ShowWindow.
+void devFirstOpen(std::string_view view) {
+    check(view == "Wizard" || view == "Contracts", "Unknown first-open target");
+    DevPreview preview({"Tray", "Default"}, true);
+    bool selected = false, checked = false;
+    preview.run([&](DevPreview& p) {
+        check(GetTickCount64() - p.readyAt < 8000, "First tray selection timed out");
+        if (!selected) {
+            selected = true;
+            // The production menu dispatches these WM_COMMAND identifiers.
+            p.action(view == "Wizard" ? 206 : 207);
+            return;
+        }
+        const HWND window = findTop(view == "Wizard" ? wizardClass : L"PhpVpnContracts");
+        if (!window) return;
+        STARTUPINFOW startup{sizeof(startup)};
+        GetStartupInfoW(&startup);
+        const bool hidden = (startup.dwFlags & STARTF_USESHOWWINDOW) && startup.wShowWindow == SW_HIDE;
+        const bool visible = IsWindowVisible(window) != FALSE;
+        std::cout << "[ FIRST OPEN ] " << view << " startupHidden=" << hidden
+                  << " selections=1 visible=" << visible << '\n';
+        check(visible, "First tray selection created an invisible window");
+        checked = true;
+        p.app->endSession();
+    });
+    check(checked, "First-open visibility was not checked");
 }
 void devTrayActions() {
     DevPreview preview({"Tray", "Default"});

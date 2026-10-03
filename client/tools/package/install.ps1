@@ -377,7 +377,8 @@ $trayBinary = Join-Path $generation "phpvpn-tray.exe"
 
 # Only this success path requests the notice. Service autostart and ordinary
 # tray launches never carry this switch. A running tray consumes the request.
-Start-Process -FilePath $trayBinary -ArgumentList '--installation-complete' -WindowStyle Hidden -ErrorAction Stop
+# The tray is a GUI executable. SW_HIDE would hide its first opened window.
+Start-Process -FilePath $trayBinary -ArgumentList '--installation-complete' -ErrorAction Stop
 
 Write-Host ""
 Write-Host "phpvpn $($manifest.releaseVersion) is installed."

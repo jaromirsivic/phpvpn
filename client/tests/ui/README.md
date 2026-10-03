@@ -1,5 +1,22 @@
 # Native GUI development
 
+First-window installation regression (interactive Windows desktop):
+
+~~~powershell
+./client/tests/test_package_feedback.ps1
+./client/tests/ui/test-first-open.ps1
+./client/tests/ui/test-first-open.ps1 -Configuration Release
+~~~
+
+The script builds the harness and launches Wizard and Contracts in separate
+fresh processes with the installation notice enabled. Each sends exactly one
+production tray menu WM_COMMAND and checks IsWindowVisible without a second
+selection or a preview ShowWindow. The private memory backend is reused, with
+no installed service or configuration access. Separate SW_HIDE launches must
+fail at that visibility check, proving sensitivity to the original bug. The
+feedback test guards the actual installer's launch arguments. This desktop
+regression is explicit, outside the multi-test process and CTest.
+
 Use an interactive Windows AMD64 desktop with Visual Studio C++ build tools,
 CMake >= 3.28 and Ninja already installed. No administrator rights or installed
 PHPVPN service are required. From the repository root:

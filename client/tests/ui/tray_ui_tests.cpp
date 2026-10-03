@@ -2199,6 +2199,11 @@ int main(int argc, char** argv) {
     InitCommonControlsEx(&controls);
     uiDiagnostics.begin();
     UiDiagnostics::Scope diagnosticScope;
+    if (argc == 4 && std::string_view(argv[1]) == "--first-open" &&
+        std::string_view(argv[3]) == "--installation-complete") {
+        try { devFirstOpen(argv[2]); return 0; }
+        catch (const std::exception& error) { std::cerr << "First-open failed: " << error.what() << '\n'; return 1; }
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--dev-preview") return devPreview(argc, argv);
     if (argc == 2 && std::string_view(argv[1]) == "--interactive") return interactive();
     if (argc == 3 && std::string_view(argv[1]) == "--preview") {
