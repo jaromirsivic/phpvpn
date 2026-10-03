@@ -1,5 +1,5 @@
 <# .SYNOPSIS
-Read-only verification of the complete server and client distribution.
+Read-only verification of the complete server, client and documentation distribution.
 #>
 [CmdletBinding()]
 param(
@@ -28,6 +28,14 @@ foreach ($entry in $sources.GetEnumerator()) {
     }
     $expected.Add($entry.Key)
     if ($entry.Key.EndsWith('.sh')) { Assert-ShellScript $copy }
+}
+$protocolCopy = Join-Path $tree 'documentation/protocol.md'
+if (Test-Path -LiteralPath $protocolCopy -PathType Leaf) {
+    $protocolSource = Get-DistributionProtocolSource $repository
+    if (-not $protocolSource -or (Get-Sha256 $protocolSource) -ne (Get-Sha256 $protocolCopy)) {
+        throw 'Distribution protocol differs from the retained English translation.'
+    }
+    $expected.Add('documentation/protocol.md')
 }
 $name = 'client/macOS/README.md'
 if ([IO.File]::ReadAllText((Join-Path $tree $name)) -cne (Get-UnsupportedClientReadme 'macOS')) {
@@ -79,7 +87,7 @@ $actual = @(Get-ChildItem -LiteralPath $tree -File -Recurse -Force | ForEach-Obj
     -not ($AllowLocalRuntime -and (Test-DistributionRuntimePath $_))
 })
 if (Compare-Object $expected.ToArray() $actual -CaseSensitive) { throw 'Distribution contains missing or unexpected files (including hidden runtime files).' }
-$directories = @('server','server/PHP','server/Python','server/Node.js','client','client/Windows','client/Windows/x64','client/macOS','client/Linux','client/Linux/x64')
+$directories = @('documentation','server','server/PHP','server/Python','server/Node.js','client','client/Windows','client/Windows/x64','client/macOS','client/Linux','client/Linux/x64')
 $actualDirs = @(Get-ChildItem -LiteralPath $tree -Directory -Recurse -Force | ForEach-Object {
     $_.FullName.Substring($tree.Length + 1).Replace('\','/')
 } | Where-Object {
@@ -170,5 +178,5 @@ if ($linuxManifest.sourceDirty) { Write-Warning "Linux packages were built from 
 
 & (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest
 Write-Output "Linux x64: release $($linuxManifest.releaseVersion)-$($linuxManifest.packageRelease), source $($linuxManifest.sourceCommit)$(if ($linuxManifest.sourceDirty) { ' (dirty)' }), signed by $thumbprint."
-Write-Output 'PASS: complete distribution allowlist, source hashes, LF shell scripts, Node.js server, macOS README, signed Linux folder and signed Windows package.'
+Write-Output 'PASS: complete distribution allowlist, source hashes, required README, optional English protocol, LF shell scripts, Node.js server, macOS README, signed Linux folder and signed Windows package.'
 if ($AllowLocalRuntime) { Write-Output 'Local Python .runtime and .venv are preserved and excluded from the distribution file set.' }

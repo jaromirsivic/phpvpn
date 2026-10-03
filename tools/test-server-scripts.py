@@ -177,7 +177,11 @@ def main():
             assert '%C5%BElu%C5%A5%20%25' in output
             invoke(root, 'stop', banner='Server stopped successfully.')
             passed('verified URL ' + host + ', encoded path, status disabled')
-        configure(root, LISTEN_HOST='127.0.0.1', SERVER_PATH='/phpvpn.php', STATUS_PAGE_ENABLED=True)
+        # Use a fresh port for the occupied-listener fixture. On POSIX the previous
+        # server's accepted connections may still leave the old port in TIME_WAIT.
+        port = free_port()
+        configure(root, LISTEN_HOST='127.0.0.1', LISTEN_PORT=port,
+                  SERVER_PATH='/phpvpn.php', STATUS_PAGE_ENABLED=True)
         with socket.socket() as occupied:
             occupied.bind(('127.0.0.1', port))
             occupied.listen()

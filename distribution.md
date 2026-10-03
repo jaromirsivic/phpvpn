@@ -10,7 +10,7 @@ Pravidla tvorby distribučního stromu se řídí tímto dokumentem. [protocol.m
 
 Distribuce se sestavuje typicky po dokončení implementačních úprav určených k vydání nebo na výslovný pokyn uživatele. Sestavení MUSÍ vycházet z aktuálního stavu zdrojů určeného k předání, včetně zamýšlených dosud necommitnutých změn. Vytvoření commitu ani push nejsou podmínkou sestavení a samotné sestavení je neprovádí.
 
-Při každém sestavení se obsah projektového adresáře `dist` MUSÍ znovu vytvořit z aktuálních zdrojů. Pouhé překopírování nových souborů přes starou distribuci nestačí, protože by ponechalo odstraněné nebo přejmenované součásti. Výsledný strom NESMÍ obsahovat soubory ze staršího sestavení. Uchovávané starší balíčky, zálohy a pracovní podklady patří mimo `dist`.
+Při každém sestavení se obsah projektového adresáře `dist` MUSÍ znovu vytvořit z aktuálních zdrojů. Pouhé překopírování nových souborů přes starou distribuci nestačí, protože by ponechalo odstraněné nebo přejmenované součásti. Výsledný strom NESMÍ obsahovat neplánované soubory ze staršího sestavení. Výslovnou výjimkou z aktuálnosti dokumentace je uchovaný anglický překlad protokolu podle oddílu Dokumentace. Uchovávané starší balíčky, zálohy a pracovní podklady patří mimo `dist`.
 
 Před obnovením obsahu se MUSÍ ověřit, že cílem je skutečně adresář `dist` pod kořenem vybraného projektu. Sestavení SMÍ připravit nový strom v odděleném pracovním adresáři a poté jím nahradit obsah `dist`. Neúplný nebo neověřený výsledek NESMÍ být označen za hotovou distribuci.
 
@@ -20,6 +20,9 @@ Cesty jsou relativní ke kořeni projektu. Velikost písmen platformních slože
 
 ```text
 dist/
+  documentation/
+    readme.txt
+    protocol.md                 # volitelný úplný anglický překlad
   server/
     PHP/
       phpvpn.php
@@ -75,6 +78,15 @@ dist/
 
 Uvedené Windows a Linux soubory tvoří základ aktuální klientské distribuce. Seznam se MUSÍ doplnit o všechny další skripty, programy, knihovny, distribuovatelné konfigurace, šablony a podpůrné soubory, které aktuální implementace potřebuje pro instalaci a provoz. Testovací binárky, build cache, pracovní logy a obsah provozních front do distribuce nepatří.
 
+### Dokumentace
+
+Distribuce MUSÍ mít tři hlavní složky `client`, `server` a `documentation`.
+Kořenový [readme.txt](readme.txt), vedle `protocol.md` a `client.md`, je udržovaný zdroj stručného anglického instalačního návodu. Při KAŽDÉM sestavení se MUSÍ beze změny zkopírovat do `dist/documentation/readme.txt`. README je povinné, i když překlad protokolu chybí. Uvádí klientskou a serverovou část, skutečné postupy pro Windows a Linux, připravovaný macOS klient a nasazení PHP, Node.js a Python serveru.
+
+Český [protocol.md](protocol.md) zůstává autoritativním zdrojem a NESMÍ se překladem přepsat. Úplný anglický překlad se udržuje mimo distribuci jako `documentation/protocol.en.md`. Aktualizovat jej podle celého aktuálního českého dokumentu se SMÍ pouze na výslovnou žádost uživatele o aktualizaci dokumentace při tvorbě distribuce. Nestačí shrnutí ani překlad změněných částí bez kontroly celého dokumentu. Překlad zachová normativní význam, identifikátory, vzorce, příklady a všechny kapitoly. Vedle něj se uchovává `documentation/protocol.en.source.sha256` s SHA-256 českého zdroje použitého pro poslední překlad. Tento záznam nepatří do distribuce a nevyžaduje se jeho shoda s budoucím českým zdrojem bez žádosti o aktualizaci.
+
+Bez takové žádosti se nový překlad NESMÍ vytvářet ani automaticky aktualizovat. Sestavovací skript pouze zkopíruje existující `documentation/protocol.en.md` do `dist/documentation/protocol.md`. Není-li uchovaný zdroj dostupný, překlad vynechá. Již existující anglický protokol z předchozí distribuce lze nejprve uchovat na této zdrojové cestě beze změny, bez tvrzení o jeho aktuálnosti. Přepínač `-OmitProtocol` dovoluje překlad vynechat i při existujícím zdroji. Kontrola distribuce dovoluje jeho nepřítomnost, ale přítomný překlad MUSÍ bajtově odpovídat uchovanému anglickému zdroji. README se vždy ověřuje proti aktuálnímu kořenovému zdroji. Nový překlad pro aktuální sestavení se připraví před spuštěním sestavovacího skriptu. Relativní odkazy na vývojovou dokumentaci, například `client.md`, vyžadují soubory ze zdrojového repozitáře a v samostatné distribuci nejsou dostupné. Tato dokumentace se tím nestává povinnou součástí distribuce.
+
 ### Server
 
 `dist/server/PHP/phpvpn.php` MUSÍ obsahovat nejaktuálnější distribuovatelnou verzi serveru v PHP. Aktuální zdrojový soubor v repozitáři se jmenuje [phpvpn.php](phpvpn.php). Při sestavení se jeho aktuální obsah zkopíruje do složky `dist/server/PHP` beze změny názvu jako `phpvpn.php`. Jeho obsah se při kopírování nemění.
@@ -118,10 +130,10 @@ V aktuální etapě jsou implementovanými cíli Windows x64 a Linux x64. Pro ma
 ## Postup sestavení a ověření
 
 1. Určit aktuální zdrojový stav určený k vydání a provést kontroly odpovídající změnám. Zaznamenat použité zdroje, verzi, platformu a výsledky ověření. Neprovedené testy se NESMĚJÍ vykazovat jako úspěšné.
-2. Sestavit klientské programy z těchto zdrojů, na linuxovém build hostiteli z téhož commitu linuxové balíčky, a připravit aktuální PHP a Python serverové soubory, Python lock a návod. Pracovní build adresáře zůstávají mimo výslednou distribuci.
-3. Znovu vytvořit obsah `dist` a celou povinnou strukturu. Naplnit serverovou část a platformní klientské složky podle skutečně dostupné implementace.
+2. Sestavit klientské programy z těchto zdrojů, na linuxovém build hostiteli z téhož commitu linuxové balíčky, a připravit aktuální PHP, Python a Node.js serverové soubory, Python lock a návody. Připravit kořenový anglický `readme.txt`. Jen při výslovné žádosti o aktualizaci dokumentace přeložit celý aktuální `protocol.md` a uchovat překlad i hash zdroje. Pracovní build adresáře zůstávají mimo výslednou distribuci.
+3. Znovu vytvořit obsah `dist` a celou povinnou strukturu. Naplnit serverovou část, platformní klientské složky a `documentation` podle pravidel výše. Vždy zahrnout `documentation/readme.txt`, volitelně uchovaný anglický `documentation/protocol.md`.
 4. Připravit úplný Windows x64 balíček a linuxovou složku x64, ověřit architekturu a závislosti, zahrnout licence a po dokončení obsahu vytvořit pro každou z nich odpovídající podepsaný manifest. Úroveň důvěry podpisu se uvede pravdivě, vývojový podpis se NESMÍ vydávat za veřejně důvěryhodný vydavatelský podpis.
-5. Ověřit hashovou shodu PHP souboru, všech jedenácti souborů Python části a obou souborů Node.js části s aktuálními zdroji, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu obou klientských balíčků včetně podpisu linuxového manifestu a provenance linuxových balíčků. Python část ověřit čistým prostředím mimo `dist`, inicializací distribuovanými skripty a spuštěním distribuovaného serveru. Ověřit health, info a data v obou režimech pomocí izolovaných konfiguračních kopií. Node.js část ověřit spuštěním distribuovaného `phpvpn.js` z rozbalené kopie s izolovanou konfigurací (`--config`, vlastní port a root) a výměnou health, info a data. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
+5. Ověřit hashovou shodu povinného README s kořenovým zdrojem a přítomného protokolu s uchovaným anglickým překladem. Ověřit hashovou shodu PHP souboru, všech jedenácti souborů Python části a obou souborů Node.js části s aktuálními zdroji, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu obou klientských balíčků včetně podpisu linuxového manifestu a provenance linuxových balíčků. Python část ověřit čistým prostředím mimo `dist`, inicializací distribuovanými skripty a spuštěním distribuovaného serveru. Ověřit health, info a data v obou režimech pomocí izolovaných konfiguračních kopií. Node.js část ověřit spuštěním distribuovaného `phpvpn.js` z rozbalené kopie s izolovanou konfigurací (`--config`, vlastní port a root) a výměnou health, info a data. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
 6. Předat přesnou cestu k výsledku a stručný stav ověření. Pokud se vytváří ZIP, jeho obsah MUSÍ odpovídat ověřenému výsledku a zachovat příslušnou adresářovou strukturu. Archiv a pracovní reporty se ukládají mimo `dist`, aby se při dalším sestavení nemísily s jeho obsahem.
 
 Kanonický vstup pro **celou distribuci** je [tools/make-distribution.ps1](tools/make-distribution.ps1). Vyžaduje explicitní existující CMake build z tohoto checkoutu a složku linuxových balíčků ze stejného commitu. Vždy znovu spustí sestavení Windows klienta, takže nebalí pouze nalezené staré binárky.
