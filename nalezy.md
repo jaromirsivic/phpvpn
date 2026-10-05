@@ -353,9 +353,23 @@ Logy jsou ve `work/verify-20261005/` (Windows) a `~/phpvpn/work/verify/` (Fedora
 | Instalace podepsané linuxové složky v kontejneru (release 1 → 2) | Fedora 44 62/62, Ubuntu 24.04 62/62 |
 | Servery z rozbalené distribuce | PHP: kontrakt 6/6 a 431 passed. Node.js: kontrakt 6/6 a 431 passed. Python: init/start/stop 30/30 na Windows i na Fedoře. |
 
-### 9.4 Omezení a poznámky
+### 9.4 Dokončení po commitu 1d0a399
 
-- **Provenance:** pracovní strom obsahuje necommitnuté změny. Linuxové balíčky proto nesou `sourceDirty=true` a distribuce se sestavila s vývojovým přepínačem `-AllowLinuxProvenanceMismatch`. Pro vydání je třeba změny commitnout a balíčky i distribuci sestavit znovu.
-- **Kódování:** `tools/test-server-scripts.py` na českých Windows bez `-X utf8` selže při čtení cesty s diakritikou z podprocesu. Jde o existující vadu testu, nesouvisí se změnami.
-- **Necommitnuté soubory:** nové soubory `phpvpn.config.json`, `tools/phpvpn_config.py`, `tools/phpvpn-config.ps1` a `tools/test-server/` nejsou v gitu.
-- **Bez spuštění** zůstalo: přenos do Hyper-V VM, administrátorské testy Windows (service E2E a resource testy vyžadují UAC) a grafická akceptace v uživatelské relaci.
+Změny jsou commitnuté a pushnuté (`origin/linux`, commit `1d0a399`).
+
+- **Linuxové balíčky:** release 1 a 2 se sestavily znovu z přesného `git archive` commitu, s provenance `sourceDirty=false`. Build, testy v balíčku a lint prošly na Fedora 44 i Ubuntu 24.04.
+- **Finální distribuce:** `tools/make-distribution.ps1 -SignBinaries` prošla **bez** `-AllowLinuxProvenanceMismatch`.
+  - `dist.zip`: SHA-256 `07BA2AE132184A16E38561100367B3BBE72C02E9E448AAADBF7D9A9F3F76142D`, 3 898 201 B.
+- **Ověření finální distribuce:**
+  - dokumentace 7/7;
+  - instalace v kontejneru Fedora 44 62/62 a Ubuntu 24.04 62/62;
+  - PHP z distribuce: kontrakt 6/6 a 431 passed;
+  - Node.js z distribuce: kontrakt 6/6 a 431 passed;
+  - Python z distribuce: 30/30 na Windows i na Fedoře.
+- **Windows testy s povýšením:**
+  - izolovaný SCM/Wintun E2E: 14 PASS, 0 FAIL; produkční služba, konfigurace i výchozí trasy beze změny;
+  - resource testy (IPC RSS, process-local DNS): 2/2, hostitel beze změny.
+- **Oprava kódování:** `tools/test-server-scripts.py` čte cestu z podprocesu jako UTF-8. Test teď prochází i bez `-X utf8` (30/30).
+- **Přenos do Hyper-V VM:** `copydistributiontovm.ps1` načetl `hyperV.vmName` z konfigurace. `Copy-VMFile` ale odmítl přenos, protože VM „windows 11“ neběží. Přenos zbývá provést po spuštění VM.
+  - Upozornění: `copydistributiontovm.bat` před přenosem přepíše ověřený `dist.zip` archivem celého `dist/`, včetně lokálního `.venv` a `.runtime` Python serveru.
+- **Neprovedeno:** ruční grafická akceptace v uživatelské relaci. U průvodce na Linuxu headless režim nespouští 5 kontrol fokusu a SCM E2E nepokrývá dva uživatele, sleep/resume ani zpožděné DNS.
