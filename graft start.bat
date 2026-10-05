@@ -58,12 +58,29 @@ function Open-Graph([string]$url) {
     }
 }
 
+# Optional tools.<name> of the global configuration phpvpn.config.json (PHPVPN_CONFIG
+# selects another file). A relative path resolves against the project root.
+function Get-ConfiguredTool([string]$name) {
+    $file = if ($env:PHPVPN_CONFIG) { $env:PHPVPN_CONFIG } else { Join-Path $root 'phpvpn.config.json' }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+    try { $value = ([IO.File]::ReadAllText($file) | ConvertFrom-Json).tools.$name } catch { return $null }
+    if ($value -is [Management.Automation.PSCustomObject]) { $value = $value.windows }
+    if ([string]::IsNullOrWhiteSpace([string]$value)) { return $null }
+    if (-not [IO.Path]::IsPathRooted($value)) { $value = Join-Path $root $value }
+    return [IO.Path]::GetFullPath($value)
+}
+
 function Find-GraftCli {
     if ($env:GRAFT_CLI) {
         if (Test-Path -LiteralPath $env:GRAFT_CLI -PathType Leaf) {
             return [IO.Path]::GetFullPath($env:GRAFT_CLI)
         }
         Fail "Graft CLI nebyl nalezen v cestě GRAFT_CLI: $env:GRAFT_CLI"
+    }
+    $configured = Get-ConfiguredTool 'graftCli'
+    if ($configured) {
+        if (Test-Path -LiteralPath $configured -PathType Leaf) { return $configured }
+        Fail "Graft CLI nebyl nalezen v cestě tools.graftCli: $configured"
     }
 
     $candidates = [Collections.Generic.List[string]]::new()
@@ -95,10 +112,16 @@ function Find-Node {
         if (Test-Path -LiteralPath $env:GRAFT_NODE -PathType Leaf) { return [IO.Path]::GetFullPath($env:GRAFT_NODE) }
         Fail "Node.js nebyl nalezen v cestě GRAFT_NODE: $env:GRAFT_NODE"
     }
-    $fixed = 'C:\Program Files\nodejs\node.exe'
-    if (Test-Path -LiteralPath $fixed -PathType Leaf) { return $fixed }
+    $configured = Get-ConfiguredTool 'node'
+    if ($configured) {
+        if (Test-Path -LiteralPath $configured -PathType Leaf) { return $configured }
+        Fail "Node.js nebyl nalezen v cestě tools.node: $configured"
+    }
     $command = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command -and $command.Source) { return $command.Source }
+    # Default location of the official installer, derived from the system rather than a drive letter.
+    $installed = Join-Path $env:ProgramFiles 'nodejs\node.exe'
+    if (Test-Path -LiteralPath $installed -PathType Leaf) { return $installed }
     Fail 'Node.js nebyl nalezen. Nastav GRAFT_NODE na úplnou cestu k node.exe.'
 }
 

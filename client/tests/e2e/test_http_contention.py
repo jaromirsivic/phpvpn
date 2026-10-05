@@ -1,7 +1,8 @@
 """Real PHP workers sharing an isolated disk queue, including held flock timeout.
 
 Run with uv run --python 3.13 --with requests --with cryptography -- python
-client/tests/e2e/test_http_contention.py --php D:/nginx/php8.5.9/php.exe
+client/tests/e2e/test_http_contention.py [--php PATH]
+Without --php, tools.php of phpvpn.config.json or php from PATH is used.
 Only newly created fixture paths and child processes are changed.
 """
 from __future__ import annotations
@@ -21,6 +22,8 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tests-integration"))
+sys.path.insert(0, str(ROOT / "tools"))
+import phpvpn_config  # noqa: E402
 from phpvpn_client import (  # noqa: E402
     Configuration, PhpVpnClient, JSON_CONTENT_TYPE, assert_protocol_headers,
     make_record,
@@ -35,9 +38,12 @@ def free_port() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--php", required=True)
+    parser.add_argument("--php", help="PHP executable, default tools.php of phpvpn.config.json or php from PATH")
     parser.add_argument("--full-suite", action="store_true", help="Run full Python integration against the same isolated workers")
     args = parser.parse_args()
+    args.php = args.php or phpvpn_config.tool("php")
+    if not args.php:
+        parser.error("PHP executable not found: pass --php, set tools.php in phpvpn.config.json or add php to PATH")
     fixture = Path(tempfile.mkdtemp(prefix="http-contention-", dir=ROOT / "work/build"))
     source = (ROOT / "phpvpn.php").read_bytes()
     (fixture / "phpvpn.php").write_bytes(source)

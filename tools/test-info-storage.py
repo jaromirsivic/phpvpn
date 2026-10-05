@@ -1,7 +1,8 @@
 """Exercise real PHP atomic info publication in isolated local storage.
 
 No HTTP deployment, privileged filesystem changes or production paths.
-Run with uv run --python 3.13 python tools/test-info-storage.py --php PATH.
+Run with uv run --python 3.13 python tools/test-info-storage.py [--php PATH].
+Without --php, tools.php of phpvpn.config.json or php from PATH is used.
 """
 from __future__ import annotations
 
@@ -11,15 +12,21 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--php", required=True)
+    parser.add_argument("--php", help="PHP executable, default tools.php of phpvpn.config.json or php from PATH")
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repository / "tools"))
+    import phpvpn_config
+    args.php = args.php or phpvpn_config.tool("php")
+    if not args.php:
+        parser.error("PHP executable not found: pass --php, set tools.php in phpvpn.config.json or add php to PATH")
     workspace = repository / "work"
     workspace.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="info-storage-", dir=workspace) as temporary:

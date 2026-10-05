@@ -71,13 +71,6 @@ REQUIRED_HEADERS = {
 #: in the fixed JSON scaffolding of a data response, so scanning whole NDJSON
 #: bodies for them cannot produce a random false positive.
 LEAK_PATTERNS = (
-    b"D:\\",
-    b"D:/",
-    b"C:\\",
-    b"C:/",
-    b"/nginx/",
-    b"\\nginx\\",
-    b"phpvpn-buffer",
     b" on line ",
     b"Stack trace",
     b"Fatal error",
@@ -87,6 +80,29 @@ LEAK_PATTERNS = (
     b"php-cgi",
     b"php.ini",
 )
+
+#: A drive qualified Windows path such as `C:\` or `e:/`, on any machine. The
+#: look-behind keeps URL schemes such as `https://` from matching.
+DRIVE_PATH = re.compile(rb"(?<![A-Za-z0-9])[A-Za-z]:[\\/]")
+
+#: The directories of the loaded deployment, see `deployment_leak_patterns`.
+_DEPLOYMENT_DIRECTORIES: list[Path] = []
+
+
+def deployment_leak_patterns() -> tuple[bytes, ...]:
+    """Both spellings of the buffer directory and web root of the deployment.
+
+    They come from the deployment description, so the check follows wherever
+    the test server of this machine keeps its files. Each contains a path
+    separator, which canonical base64url and the JSON scaffolding never hold.
+    """
+    patterns: set[bytes] = set()
+    for directory in _DEPLOYMENT_DIRECTORIES:
+        text = str(directory)
+        for spelling in (text, text.replace("\\", "/"), text.replace("/", "\\")):
+            if len(spelling) > 3:
+                patterns.add(spelling.encode("utf-8"))
+    return tuple(sorted(patterns))
 
 
 # ---------------------------------------------------------------------------
@@ -519,11 +535,16 @@ def assert_protocol_headers(response: Response, content_type: str | None = None)
         f"the Server header must not disclose PHP: {server_header!r}"
     )
 
-    for pattern in LEAK_PATTERNS:
+    for pattern in LEAK_PATTERNS + deployment_leak_patterns():
         assert pattern not in response.content, (
             f"{response.method} {response.url} -> {response.status_code} leaked "
             f"{pattern!r} in the response body"
         )
+    drive_path = DRIVE_PATH.search(response.content)
+    assert drive_path is None, (
+        f"{response.method} {response.url} -> {response.status_code} leaked "
+        f"the path {drive_path.group(0)!r} in the response body"
+    )
 
     if content_type is not None:
         assert response.content_type == content_type, (
@@ -551,6 +572,9 @@ class Configuration:
     @classmethod
     def load(cls, path: Path, large_body_url: str | None = None) -> "Configuration":
         document = json.loads(path.read_text(encoding="utf-8-sig"))
+        _DEPLOYMENT_DIRECTORIES[:] = [Path(document["bufferDirectory"])]
+        if document.get("deployedFile"):
+            _DEPLOYMENT_DIRECTORIES.append(Path(document["deployedFile"]).parent)
         return cls(
             base_url=document["baseUrl"],
             server_secret=document["serverSecret"].encode("utf-8"),

@@ -187,12 +187,13 @@ Testovací balíčky přidej do vývojového prostředí přes uv:
 uv pip install pytest requests psutil
 uv run --no-project python -B -m pytest tests-python -q
 uv run --no-project python tools/test-python-server.py --profiles python-disk python-memory -- -q
-uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --php D:/nginx/php8.5.9/php.exe --report-dir reports/python-server -- -q
+uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --report-dir reports/python-server -- -q
 ```
 
-Poslední příkaz používá lokální cestu k PHP, kterou přizpůsob prostředí. Každý
-profil má vlastní port, kopii serveru, konfiguraci a úložiště mimo webroot.
-Původní server ani sdílený `tests-integration/server.json` se nepřepisují.
+Poslední příkaz bere PHP z `--php`, jinak z `tools.php` globální konfigurace
+`phpvpn.config.json` nebo z PATH. Každý profil má vlastní port, kopii serveru,
+konfiguraci a úložiště mimo webroot. Původní server ani popis nasazení
+testovacího serveru se nepřepisují.
 Bez `-m "not slow"` běží i skutečná expirace. Memory přeskočí pouze čtyři
 testy fyzického diskového layoutu. Společné frontové assertions jsou stejné.
 

@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "tools": {
+    "php": { "windows": "D:/nginx/php8.5.9/php.exe", "linux": "" },
+    "phpCgi": { "windows": "D:/nginx/php8.5.9/php-cgi.exe", "linux": "" },
+    "nginx": { "windows": "D:/nginx/nginx.exe", "linux": "" },
+    "node": { "windows": "work/node24-distribution-check/node-v24.21.0-win-x64/node.exe", "linux": "" },
+    "graftCli": ""
+  },
+  "testServer": {
+    "directory": "work/test-server",
+    "webRoot": "work/test-server/html",
+    "bufferDirectory": "work/test-server/phpvpn-buffer",
+    "deploymentDescription": "work/test-server/server.json",
+    "nginxListen": "127.0.0.1:18080",
+    "fastCgiListen": "127.0.0.1:19000",
+    "largeBodyListen": "127.0.0.1:18081",
+    "nginxBodyLimitBytes": 1048576
+  },
+  "linuxHost": {
+    "sshHost": "172.30.199.240",
+    "sshUser": "fedora",
+    "sshIdentityFile": "work/linux-plan/ssh/id_ed25519",
+    "sshKnownHostsFile": "",
+    "remoteDirectory": "phpvpn",
+    "serverPython": "~/phpvpn-wp06-venv/bin/python"
+  },
+  "hyperV": {
+    "vmName": "windows 11",
+    "destinationDirectory": "C:\\Temp"
+  }
+}

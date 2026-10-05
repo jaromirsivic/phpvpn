@@ -1,9 +1,15 @@
 $ErrorActionPreference = "Stop"
 
-$vmName = "windows 11"
+# The Hyper-V virtual machine and the target folder in its guest come from the
+# hyperV section of the global configuration phpvpn.config.json.
+. (Join-Path $PSScriptRoot "tools\phpvpn-config.ps1")
+$vmName = [string](Get-PhpVpnConfigValue "hyperV.vmName")
+$destinationDirectory = [string](Get-PhpVpnConfigValue "hyperV.destinationDirectory")
+if ([string]::IsNullOrWhiteSpace($vmName) -or [string]::IsNullOrWhiteSpace($destinationDirectory)) {
+  throw "Set hyperV.vmName and hyperV.destinationDirectory in $(Get-PhpVpnConfigFile)."
+}
 $sourceArchive = Join-Path $PSScriptRoot "dist.zip"
 $sourceDirectory = Join-Path $PSScriptRoot "dist"
-$destinationDirectory = "C:\Temp"
 $destinationDistDirectory = Join-Path $destinationDirectory "dist"
 
 if (-not (Test-Path -LiteralPath $sourceArchive -PathType Leaf)) {

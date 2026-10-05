@@ -1,4 +1,5 @@
 """Isolated real-HTTP regression for the embedded status page and storage defaults."""
+import argparse
 import json
 import base64
 import datetime
@@ -11,10 +12,19 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import sys
 import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PHP = pathlib.Path('D:/nginx/php8.5.9/php.exe')
+sys.path.insert(0, str(ROOT / 'tools'))
+import phpvpn_config  # noqa: E402
+
+_arguments = argparse.ArgumentParser(description=__doc__)
+_arguments.add_argument('--php', help='PHP executable, default tools.php of phpvpn.config.json or php from PATH')
+PHP = _arguments.parse_args().php or phpvpn_config.tool('php')
+if not PHP:
+    raise SystemExit('PHP executable not found: pass --php, set tools.php in phpvpn.config.json or add php to PATH')
+PHP = pathlib.Path(PHP)
 
 
 def request(url, method='GET', data=None):

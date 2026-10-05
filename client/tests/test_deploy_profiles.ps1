@@ -8,8 +8,10 @@ $source = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'phpvpn.php'))
 [IO.File]::WriteAllText((Join-Path $sandbox 'phpvpn.php'), $source)
 $deploy = Join-Path $sandbox 'tools\deploy-test.ps1'
 $fixture = Join-Path $sandbox 'fixture.json'
+# Explicit URLs keep the sandbox independent of the global configuration.
+$urls = @{ BaseUrl = 'http://127.0.0.1:1/phpvpn.php'; LargeBodyBaseUrl = 'http://127.0.0.1:2/phpvpn.php' }
 foreach ($profile in 'integration', 'wizard-default') {
-    & $deploy -WebRoot (Join-Path $sandbox 'web') -BufferDirectory (Join-Path $sandbox 'buffer') -Profile $profile -ConfigurationPath $fixture
+    & $deploy -WebRoot (Join-Path $sandbox 'web') -BufferDirectory (Join-Path $sandbox 'buffer') -Profile $profile -ConfigurationPath $fixture @urls
     $config = [IO.File]::ReadAllText($fixture) | ConvertFrom-Json
     $expectedCount = if ($profile -eq 'integration') { 4 } else { 14 }
     if (@($config.accessKeys.PSObject.Properties).Count -ne $expectedCount) { throw 'Wrong profile key count.' }
@@ -27,7 +29,7 @@ foreach ($mutation in 'secret', 'keys', 'buffer') {
                else { $source.Replace("'10.99.99.15' =>", "'10.99.99.16' =>") }
     [IO.File]::WriteAllText((Join-Path $sandbox 'phpvpn.php'), $invalid)
     $rejected = $false
-    try { & $deploy -WebRoot (Join-Path $sandbox 'web') -BufferDirectory (Join-Path $sandbox 'buffer') -ConfigurationPath $fixture }
+    try { & $deploy -WebRoot (Join-Path $sandbox 'web') -BufferDirectory (Join-Path $sandbox 'buffer') -ConfigurationPath $fixture @urls }
     catch { $rejected = $true }
     if (-not $rejected -or [IO.File]::ReadAllText($target) -ne $before) { throw 'Unexpected header was not rejected before publication.' }
 }

@@ -239,7 +239,8 @@ def main():
             finally:
                 controller_path.write_text(controller_source, encoding='utf-8')
         cryptography = Path(subprocess.check_output([str(local_python), '-I', '-X', 'utf8', '-c',
-                             'import cryptography;print(cryptography.__path__[0])'], text=True).strip())
+                             'import cryptography;print(cryptography.__path__[0])'], text=True,
+                             encoding='utf-8').strip())
         missing_dependency = cryptography.with_name('cryptography-saved')
         cryptography.rename(missing_dependency)
         try:

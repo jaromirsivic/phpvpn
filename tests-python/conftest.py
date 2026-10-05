@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests-integration'))
+sys.path.insert(0, str(ROOT / 'tools'))
 
 import phpvpn as server
 from phpvpn_client import Configuration, PhpVpnClient, Response, parse_data_response, format_timestamp

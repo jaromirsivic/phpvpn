@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from phpvpn_client import (
+    DRIVE_PATH,
     HTML_CONTENT_TYPE,
     JSON_CONTENT_TYPE,
     NDJSON_CONTENT_TYPE,
@@ -20,6 +21,7 @@ from phpvpn_client import (
     Response,
     assert_protocol_headers,
     b64u_encode,
+    deployment_leak_patterns,
     make_record,
 )
 
@@ -139,10 +141,11 @@ def test_no_response_leaks_implementation_details(client: PhpVpnClient) -> None:
                 b"server is not secure. please modify server_secret in the phpvpn.php",
                 b"",
             )
-        markers = (b".php", b"php/", b"php-cgi", b"d:/", b"d:\\", b"c:\\",
-                   b"exception", b"stack trace", b" on line ")
+        markers = (b".php", b"php/", b"php-cgi", b"exception", b"stack trace", b" on line ",
+                   *(pattern.lower() for pattern in deployment_leak_patterns()))
         for marker in markers:
             assert marker not in lowered, f"{label} leaked {marker!r}"
+        assert DRIVE_PATH.search(lowered) is None, f"{label} leaked a drive qualified path"
 
 
 def test_405_carries_allow_and_503_carries_retry_after(client: PhpVpnClient) -> None:

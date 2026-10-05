@@ -22,6 +22,8 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+import phpvpn_config  # noqa: E402
 
 
 def replace_once(source: str, pattern: str, replacement: str) -> str:
@@ -54,9 +56,9 @@ def fixture(profile: str, php: str | None = None, directory: Path | None = None,
         runtime_paths = [p for p in sys.path if p]
         if implementation == "php":
             source = replace_once(source, r"^const BUFFER_DIRECTORY = .*;$", f"const BUFFER_DIRECTORY = '{buffer}';")
-            php = php or shutil.which("php")
+            php = php or phpvpn_config.tool("php")
             if not php:
-                raise RuntimeError("PHP executable required: --php PATH")
+                raise RuntimeError("PHP executable required: --php PATH or tools.php in phpvpn.config.json")
             # The built-in server's stock 404 reflects the URL. Use the same
             # generic denial as a production proxy, without changing phpvpn.php.
             router = root / 'router.php'
@@ -65,9 +67,9 @@ def fixture(profile: str, php: str | None = None, directory: Path | None = None,
                               "echo '{\"type\":\"error\",\"code\":\"not_found\"}'; return true; }\nreturn false;\n", encoding='utf-8')
             command = [php, "-d", "post_max_size=8M", "-S", f"127.0.0.1:{port}", "-t", str(web), str(router)]
         elif implementation == "node":
-            node = node or shutil.which("node")
+            node = node or phpvpn_config.tool("node")
             if not node:
-                raise RuntimeError("Node.js executable required: --node PATH")
+                raise RuntimeError("Node.js executable required: --node PATH or tools.node in phpvpn.config.json")
             # The deployed script stays byte identical, fixture values come from
             # an explicit JSON file. The server reads no environment overrides.
             node_config = root / "node-config.json"

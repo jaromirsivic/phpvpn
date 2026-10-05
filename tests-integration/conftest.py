@@ -1,13 +1,15 @@
 """Shared fixtures for the phpvpn integration suite.
 
 The suite talks to the deployed PHP relay over real HTTP. The deployment is
-described by `server.json`, which is produced by `tools/deploy-test.ps1`.
+described by the JSON file at `testServer.deploymentDescription` of the global
+configuration `phpvpn.config.json`, which is produced by `tools/deploy-test.ps1`.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 from typing import Iterator
 
 import pytest
@@ -15,15 +17,24 @@ import requests
 
 from phpvpn_client import Configuration, PhpVpnClient, ServerClock
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import phpvpn_config  # noqa: E402
+
+#: Deployment description of the private test server (tools/deploy-test.ps1).
+DEFAULT_SERVER_CONFIG = phpvpn_config.optional("testServer.deploymentDescription")
+if DEFAULT_SERVER_CONFIG:
+    DEFAULT_SERVER_CONFIG = str(phpvpn_config.path("testServer.deploymentDescription"))
+
 #: Optional second endpoint used only for bodies larger than the nginx limit.
-DEFAULT_LARGE_BODY_URL = "http://127.0.0.1:8081/phpvpn.php"
+_large_body_listen = phpvpn_config.optional("testServer.largeBodyListen")
+DEFAULT_LARGE_BODY_URL = f"http://{_large_body_listen}/phpvpn.php" if _large_body_listen else None
 
 #: Collected performance samples, printed in the terminal summary.
 PERFORMANCE_SAMPLES: list[tuple[str, float, str]] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption("--server-config", default=str(Path(__file__).with_name("server.json")),
+    parser.addoption("--server-config", default=DEFAULT_SERVER_CONFIG,
                      help="Path to an isolated deployment fixture JSON.")
     parser.addoption(
         "--large-body-url",
@@ -38,8 +49,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 @pytest.fixture(scope="session")
 def configuration(pytestconfig: pytest.Config) -> Configuration:
-    """Load the deployment description from `server.json`."""
-    path = Path(pytestconfig.getoption("--server-config"))
+    """Load the deployment description given by --server-config."""
+    option = pytestconfig.getoption("--server-config")
+    assert option, "no deployment description: pass --server-config or set testServer.deploymentDescription"
+    path = Path(option)
     assert path.is_file(), f"missing deployment description: {path}"
     return Configuration.load(path, large_body_url=pytestconfig.getoption("--large-body-url"))
 

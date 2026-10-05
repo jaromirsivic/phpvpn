@@ -23,8 +23,8 @@
 # Both modes run the tray in a private D-Bus session with a headless mutter, like
 # run-tray-checks.sh, and verify it through AT-SPI (wizard_atspi.py). Needs mutter,
 # python3-gobject, python3-pyatspi; wizard mode also the relay requirements in
-# PHPVPN_SERVER_PYTHON (default ~/phpvpn-wp06-venv/bin/python). Exit 0 when every
-# check passed.
+# PHPVPN_SERVER_PYTHON (default linuxHost.serverPython of the global configuration
+# phpvpn.config.json, otherwise python3). Exit 0 when every check passed.
 set -euo pipefail
 build=${1:?usage: run-wizard-checks.sh <build-dir> wizard|compact|detail}
 mode=${2:?usage: run-wizard-checks.sh <build-dir> wizard|compact|detail}
@@ -32,7 +32,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 build=$(cd "$build" && pwd)
 repository=$(cd "$here/../../../.." && pwd)
 work=${PHPVPN_WIZARD_WORK:-$repository/work/wizard-checks-$mode-$(date +%Y%m%d-%H%M%S)}
-python_server=${PHPVPN_SERVER_PYTHON:-$HOME/phpvpn-wp06-venv/bin/python}
+configured_python=$(python3 "$repository/tools/phpvpn_config.py" path linuxHost.serverPython 2> /dev/null || true)
+python_server=${PHPVPN_SERVER_PYTHON:-${configured_python:-python3}}
 mkdir -p "$work"
 echo "work directory: $work"
 

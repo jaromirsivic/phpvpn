@@ -1,5 +1,17 @@
 # phpvpn integration test suite
 
+## Global configuration
+
+Machine specific values of the tests live in one file, `phpvpn.config.json` in
+the repository root (`PHPVPN_CONFIG` selects another file). `tools.php`,
+`tools.phpCgi`, `tools.nginx` and `tools.node` name the executables; an empty
+value means a lookup in PATH. The `testServer` section describes the private
+nginx test server: its directory, web root, buffer directory, deployment
+description, listen addresses and nginx body limit. Relative paths resolve
+against the repository root. `tools/phpvpn_config.py` and
+`tools/phpvpn-config.ps1` read the file, so no test or tool carries a path of a
+particular machine.
+
 ## Shared PHP and Python fixtures
 
 The same protocol inputs and assertions run against PHP/disk, Python/disk and
@@ -11,12 +23,13 @@ Prepare a Python 3.13 uv environment with `requirements-server.txt`, then add
 `pytest`, `requests` and `psutil` using `uv pip install`. Run:
 
 ```powershell
-uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --php D:/nginx/php8.5.9/php.exe --report-dir reports/python-server -- -q
+uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --report-dir reports/python-server -- -q
 uv run --no-project python -B -m pytest tests-python -q
 ```
 
-The runner owns isolated copies, ports, processes and buffer directories. It
-does not rewrite the source servers or this directory's `server.json`. Both
+The runner owns isolated copies, ports, processes and buffer directories. PHP
+comes from `--php`, otherwise from the global configuration. It does not rewrite
+the source servers or the deployment description of the test server. Both
 `--server-config` and `--large-body-url` are explicit. PHP's built-in HTTP
 fixture uses a generic 404 router to avoid reflecting paths in its stock error
 page. This is a webserver fixture rule, not a change to the PHP application.
@@ -43,10 +56,11 @@ for supported deployment and memory limitations.
 
 The `node-disk` profile runs an unmodified copy of `phpvpn.js`. Its port and
 buffer directory come from a private `--config` JSON file, the server reads no
-environment overrides. `--node` selects the runtime, otherwise `node` from PATH:
+environment overrides. `--node` selects the runtime, otherwise `tools.node` of the
+global configuration or `node` from PATH:
 
 ```powershell
-uv run --no-project --python 3.13 --with pytest --with requests --with cryptography --with psutil python tools/test-python-server.py --profiles node-disk --node "C:/Program Files/nodejs/node.exe" --report-dir reports/node-server -- -q
+uv run --no-project --python 3.13 --with pytest --with requests --with cryptography --with psutil python tools/test-python-server.py --profiles node-disk --report-dir reports/node-server -- -q
 ```
 
 The profile gets no memory skips. Its deterministic counterparts live in
@@ -97,24 +111,32 @@ pytest using `--server-config path/to/fixture.json`. Header replacement rejects
 anything other than exactly one expected secret, key-map and buffer block.
 `test_default_profile.py` verifies authentication for all fourteen defaults.
 
-- nginx and php-cgi are running. Start them with
-  `powershell -ExecutionPolicy Bypass -File tools\start-test-server.ps1`.
+- The private nginx and php-cgi pair is running. Start it with
+  `powershell -ExecutionPolicy Bypass -File tools\start-test-server.ps1` and
+  stop it with `tools\stop-test-server.ps1`. nginx gets its configuration from
+  `tools/test-server/nginx.conf.template`, rendered into
+  `<testServer.directory>/conf`, so no file of the nginx installation is used.
+  The stop script ends only the processes the start script recorded; other
+  nginx or PHP processes of the machine stay untouched.
 - After changing `phpvpn.php`, redeploy with
   `powershell -ExecutionPolicy Bypass -File tools\deploy-test.ps1`.
-- `curl.exe -s -i "http://127.0.0.1/phpvpn.php"` returns the HTML status page.
+- `curl.exe -s -i "http://127.0.0.1:18080/phpvpn.php"` (`testServer.nginxListen`)
+  returns the HTML status page.
 
-The deployment description is read from `tests-integration/server.json`, which
-`tools/deploy-test.ps1` writes. It holds `baseUrl`, `serverSecret`,
-`accessKeys`, `bufferDirectory` and `deployedFile`. Nothing is hardcoded in the
-tests.
+The deployment description is read from `testServer.deploymentDescription` of
+the global configuration, which `tools/deploy-test.ps1` writes. It holds
+`baseUrl`, `serverSecret`, `accessKeys`, `bufferDirectory` and `deployedFile`.
+The leak checks derive the buffer directory and web root from it. Nothing is
+hardcoded in the tests.
 
 ### The second endpoint for large bodies
 
-The nginx deployment keeps the default `client_max_body_size` of one mebibyte,
-which is above `MAX_REQUEST_BODY_BYTES` of 983040 bytes. A body above one
-mebibyte is therefore rejected by nginx before PHP runs. To exercise the real
-application limit, `tools/start-test-server.ps1` also starts the PHP built in
-server on `http://127.0.0.1:8081/phpvpn.php`, serving the same deployed file
+The nginx deployment uses a `client_max_body_size` of
+`testServer.nginxBodyLimitBytes` (one mebibyte), which is above
+`MAX_REQUEST_BODY_BYTES` of 983040 bytes. A larger body is therefore rejected by
+nginx before PHP runs. To exercise the real application limit,
+`tools/start-test-server.ps1` also starts the PHP built in server on
+`testServer.largeBodyListen` (`http://127.0.0.1:18081/phpvpn.php`), serving the same deployed file
 with `post_max_size` of eight mebibytes. The body limit tests use it and skip
 when it is not reachable. Override it with:
 
@@ -187,7 +209,7 @@ or with the environment variable `PHPVPN_LARGE_BODY_URL`.
 
 Status fixtures cover enabled/disabled GET and HEAD and predictable/secure secrets. Default storage is `./phpvpn_data`, without automatic migration from `./phpvpn`. Deploy only `phpvpn.php`, without assets, and keep fixture storage outside the webroot.
 
-Run `uv run --python 3.13 python tools/test-status-variants.py` for four isolated PHP HTTP variants. The test checks exact embedded HTML, removal of the entire warning panel, HEAD without a body, successful health/info/data with the page disabled, custom/default storage paths and no migration. It uses `D:/nginx/php8.5.9/php.exe` and disposes its temporary servers and directories.
+Run `uv run --python 3.13 python tools/test-status-variants.py` for four isolated PHP HTTP variants. The test checks exact embedded HTML, removal of the entire warning panel, HEAD without a body, successful health/info/data with the page disabled, custom/default storage paths and no migration. It uses `--php`, otherwise `tools.php` of the global configuration or `php` from PATH, and disposes its temporary servers and directories.
 
 ## Masked communication contracts
 
@@ -200,7 +222,7 @@ and write/partial-write/flush fault injection, interrupted-writer cleanup and a
 forced Windows rename failure without changing a deployment:
 
 ```powershell
-uv run --python 3.13 python tools/test-info-storage.py --php D:/nginx/php8.5.9/php.exe
+uv run --python 3.13 python tools/test-info-storage.py
 ```
 
 The storage test creates and removes only its temporary directory below `work`.

@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 import phpvpn as s
+import phpvpn_config
 from conftest import call, verified_data
 from phpvpn_client import (build_auth_none, derive_full_auth_key, derive_health_key,
                           derive_semi_key, make_record, new_uuid4)
@@ -158,6 +159,8 @@ def test_routing_precedes_bad_configuration(enabled, monkeypatch):
 
 def test_pretty_exact_boundaries_and_php_bytes(runtime):
     app, _, clock = runtime
+    # tools.php of phpvpn.config.json, otherwise php from PATH.
+    php = phpvpn_config.tool('php')
     for address in app.cfg.addresses:
         app.storage.publish_contracts(address, [{'peer': '10.99.99.2', 'hash': 'a'*64}] if address != '10.99.99.2' else [], clock.ms)
     for requester in (None, '10.99.99.2'):
@@ -171,15 +174,16 @@ def test_pretty_exact_boundaries_and_php_bytes(runtime):
         trimmed = json.loads(app.build_info(requester))
         assert [c['address'] for c in trimmed['clients']] == app.cfg.addresses[:-1]
         # Independent PHP encoder is the authoritative pretty representation.
-        php = Path('D:/nginx/php8.5.9/php.exe')
-        if php.exists():
-            result = subprocess.run([str(php), '-r', 'echo json_encode(json_decode(stream_get_contents(STDIN)), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);'],
+        if php:
+            result = subprocess.run([php, '-r', 'echo json_encode(json_decode(stream_get_contents(STDIN)), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);'],
                                     input=json.dumps(document).encode(), capture_output=True, check=True)
             assert full == result.stdout
         app.cfg.MAX_INFO_PLAINTEXT_BYTES = 10
         with pytest.raises(s.ProtocolError) as error:
             app.build_info(requester)
         assert error.value.code == 'server_misconfigured'
+    if php is None:
+        pytest.skip('PHP byte comparison not run: set tools.php in phpvpn.config.json or add php to PATH')
 
 
 def test_data_bytes_and_auth_precedence(runtime):

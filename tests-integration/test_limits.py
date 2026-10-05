@@ -1,8 +1,9 @@
 """Syntactic limits, chapters 11.1, 16.2.3, 16.2.4 and 16.2.5.
 
-The deployment behind nginx uses the default `client_max_body_size` of one
-mebibyte, which is far below `MAX_REQUEST_BODY_BYTES`. Bodies above that size
-are therefore rejected by nginx before PHP ever runs. The suite asserts the
+The deployment behind nginx uses the `client_max_body_size` of
+`testServer.nginxBodyLimitBytes` in `phpvpn.config.json` (one mebibyte), which
+is far below `MAX_REQUEST_BODY_BYTES`. Bodies above that size are therefore
+rejected by nginx before PHP ever runs. The suite asserts the
 status code in that case and exercises the real application limit against the
 second endpoint of the same `phpvpn.php`, the PHP built in server started by
 `tools/start-test-server.ps1`, which allows an eight mebibyte body.
@@ -10,6 +11,7 @@ second endpoint of the same `phpvpn.php`, the PHP built in server started by
 
 from __future__ import annotations
 
+import phpvpn_config  # tools/ is on sys.path through conftest.py
 import pytest
 
 from phpvpn_client import (
@@ -27,7 +29,7 @@ from phpvpn_client import (
 
 pytestmark = pytest.mark.usefixtures("clean_queues")
 
-NGINX_BODY_LIMIT = 1024 * 1024
+NGINX_BODY_LIMIT = int(phpvpn_config.optional("testServer.nginxBodyLimitBytes", 1024 * 1024))
 
 
 def ciphertext_length_for(encoded_length: int) -> int:
