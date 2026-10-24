@@ -4,13 +4,20 @@
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$PackageDirectory,
+    [string]$CertificateThumbprint,
     [string]$IconResourceTest = (Join-Path $PSScriptRoot '../../work/build/release/tests/phpvpn-icon-resource-tests.exe'))
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../tools/distribution-common.ps1')
+$signingCertificate = Get-DistributionSigningCertificate -Thumbprint $CertificateThumbprint
 $package = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $scriptNames = @('install.bat', 'install.ps1', 'uninstall.bat', 'uninstall.ps1')
 foreach ($name in $scriptNames) {
     $source = Join-Path $PSScriptRoot "package/$name"
     $copy = Join-Path $package $name
+    if ($name -eq 'install.ps1') {
+        Assert-PinnedInstaller -Source $source -Copy $copy -Platform Windows -Certificate $signingCertificate
+        continue
+    }
     if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $copy).Hash) {
         throw "The package contains a stale $name. Rebuild the complete distribution with tools/make-distribution.ps1, or only this client package with client/tools/make-dist.ps1 -OutputDirectory <path>."
     }

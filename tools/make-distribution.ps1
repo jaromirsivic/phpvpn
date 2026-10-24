@@ -8,7 +8,7 @@ The Linux client comes from a package build of client/tools/linux/build-packages
 param(
     [Parameter(Mandatory=$true)][string]$BuildDirectory,
     [Parameter(Mandatory=$true)][string]$LinuxPackagesDirectory,
-    [string]$CertificateThumbprint = '7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8',
+    [string]$CertificateThumbprint = '',
     [switch]$SignBinaries,
     # Development only: accept Linux packages from another commit or a modified source tree.
     [switch]$AllowLinuxProvenanceMismatch,
@@ -20,6 +20,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'distribution-common.ps1')
+$signingCertificate = Get-DistributionSigningCertificate -Thumbprint $CertificateThumbprint -RequirePrivateKey
+$CertificateThumbprint = $signingCertificate.Thumbprint
 $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $build = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $cache = Get-Content -LiteralPath (Join-Path $build 'CMakeCache.txt')
@@ -140,7 +142,7 @@ $linuxManifest = [IO.File]::ReadAllText((Join-Path $linuxStaging 'release-manife
 if ($linuxManifest.sourceCommit -cne $provenance.sourceCommit -or $linuxManifest.sourceDirty -ne $provenance.sourceDirty) {
     throw 'The staged Linux manifest does not record the checked package provenance.'
 }
-& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $staging -IconResourceTest $iconTest
+& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $staging -IconResourceTest $iconTest -CertificateThumbprint $CertificateThumbprint
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::Open($archive, 'Create')
 try {
@@ -169,7 +171,7 @@ try {
     }
 } finally { $zip.Dispose() }
 [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
-& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $unpacked -IconResourceTest $iconTest
+& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $unpacked -IconResourceTest $iconTest -CertificateThumbprint $CertificateThumbprint
 
 if ($StagingOnly) {
     Write-Output "Staging only: $dist and $zipTarget were not changed."
@@ -180,7 +182,7 @@ if ($StagingOnly) {
     return
 }
 Publish-Distribution -Repository $repository -Session $session -Staging $staging -Archive $archive
-& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $dist -IconResourceTest $iconTest -AllowLocalRuntime
+& (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $dist -IconResourceTest $iconTest -CertificateThumbprint $CertificateThumbprint -AllowLocalRuntime
 # Rollback files are needed only until the canonical output passes validation.
 # Python operational state was never moved out of dist by the publisher.
 $previous = Assert-DistributionPath (Join-Path $session 'previous-dist') $session -Tree

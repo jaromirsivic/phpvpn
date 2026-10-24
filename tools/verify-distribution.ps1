@@ -4,12 +4,14 @@ Read-only verification of the complete server, client and documentation distribu
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$DistributionDirectory,
+    [string]$CertificateThumbprint,
     [string]$IconResourceTest = (Join-Path $PSScriptRoot '../work/build/release/tests/phpvpn-icon-resource-tests.exe'),
     [switch]$AllowLocalRuntime
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'distribution-common.ps1')
+$signingCertificate = Get-DistributionSigningCertificate -Thumbprint $CertificateThumbprint
 $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $tree = (Resolve-Path -LiteralPath $DistributionDirectory).Path
 $null = Assert-DistributionPath -Path $tree -Within ([IO.Path]::GetDirectoryName($tree)) -Tree
@@ -56,7 +58,9 @@ $linuxNames = New-Object 'Collections.Generic.List[string]'
 foreach ($entry in (Get-LinuxClientSources).GetEnumerator()) {
     $copy = Join-Path $linux $entry.Key
     if (-not (Test-Path -LiteralPath $copy -PathType Leaf)) { throw "Missing distribution file: client/Linux/x64/$($entry.Key)" }
-    if ((Get-FileHash -LiteralPath (Join-Path $repository $entry.Value)).Hash -ne (Get-FileHash -LiteralPath $copy).Hash) {
+    if ($entry.Key -eq 'install.sh') {
+        Assert-PinnedInstaller -Source (Join-Path $repository $entry.Value) -Copy $copy -Platform Linux -Certificate $signingCertificate
+    } elseif ((Get-FileHash -LiteralPath (Join-Path $repository $entry.Value)).Hash -ne (Get-FileHash -LiteralPath $copy).Hash) {
         throw "Stale distribution source: client/Linux/x64/$($entry.Key)"
     }
     if ($entry.Key.EndsWith('.sh')) { Assert-ShellScript $copy }
@@ -127,33 +131,6 @@ foreach ($entry in $linuxManifest.files) {
 
 # Linux signature: the same certificate as the Windows package (pinned by install.ps1), the
 # signing key pinned in install.sh, and RSA PKCS#1 v1.5 SHA-256 over the exact manifest bytes.
-function Get-DerElement([byte[]]$Data, [int]$Offset) {
-    if ($Offset + 2 -gt $Data.Length) { throw 'Truncated DER element.' }
-    $length = [int]$Data[$Offset + 1]
-    $content = $Offset + 2
-    if ($length -ge 0x80) {
-        $count = $length -band 0x7F
-        if ($count -lt 1 -or $count -gt 3) { throw 'Unsupported DER length.' }
-        $length = 0
-        for ($index = 0; $index -lt $count; ++$index) { $length = ($length -shl 8) -bor $Data[$content]; ++$content }
-    }
-    if ($content + $length -gt $Data.Length) { throw 'Truncated DER element.' }
-    return [pscustomobject]@{ Tag = $Data[$Offset]; Offset = $Offset; Content = $content; End = $content + $length }
-}
-function Get-SubjectPublicKeyInfoSha256([byte[]]$Certificate) {
-    $tbs = Get-DerElement $Certificate (Get-DerElement $Certificate 0).Content
-    $field = Get-DerElement $Certificate $tbs.Content
-    if ($field.Tag -eq 0xA0) { $field = Get-DerElement $Certificate $field.End } # explicit version
-    # serialNumber, signature, issuer, validity and subject precede subjectPublicKeyInfo.
-    foreach ($tag in @(0x02, 0x30, 0x30, 0x30, 0x30)) {
-        if ($field.Tag -ne $tag) { throw 'Unexpected certificate structure.' }
-        $field = Get-DerElement $Certificate $field.End
-    }
-    if ($field.Tag -ne 0x30) { throw 'Unexpected certificate structure.' }
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { $digest = $sha.ComputeHash($Certificate, $field.Offset, $field.End - $field.Offset) } finally { $sha.Dispose() }
-    return (-join ($digest | ForEach-Object { $_.ToString('x2') }))
-}
 $linuxCertificateBytes = [IO.File]::ReadAllBytes((Join-Path $linux 'release-signing.cer'))
 $windowsCertificateBytes = [IO.File]::ReadAllBytes((Join-Path $client 'release-signing.cer'))
 if (-not (Test-ByteArrayEqual $linuxCertificateBytes $windowsCertificateBytes)) { throw 'Linux manifest is not signed with the certificate of the Windows package.' }
@@ -176,7 +153,7 @@ try {
 } finally { $linuxCertificate.Dispose() }
 if ($linuxManifest.sourceDirty) { Write-Warning "Linux packages were built from a modified source tree ($($linuxManifest.sourceCommit)); not a release build." }
 
-& (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest
+& (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest -CertificateThumbprint $signingCertificate.Thumbprint
 Write-Output "Linux x64: release $($linuxManifest.releaseVersion)-$($linuxManifest.packageRelease), source $($linuxManifest.sourceCommit)$(if ($linuxManifest.sourceDirty) { ' (dirty)' }), signed by $thumbprint."
 Write-Output 'PASS: complete distribution allowlist, source hashes, required README, optional English protocol, LF shell scripts, Node.js server, macOS README, signed Linux folder and signed Windows package.'
 if ($AllowLocalRuntime) { Write-Output 'Local Python .runtime and .venv are preserved and excluded from the distribution file set.' }

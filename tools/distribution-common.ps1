@@ -1,4 +1,54 @@
 # Shared, explicit distribution contract. Source paths are checkout-relative.
+function Get-DistributionSigningCertificate {
+    param([string]$Thumbprint, [switch]$RequirePrivateKey)
+    if ([string]::IsNullOrWhiteSpace($Thumbprint)) {
+        . (Join-Path $PSScriptRoot 'phpvpn-config.ps1')
+        $Thumbprint = [string](Get-PhpVpnConfigValue 'signing.certificateThumbprint')
+    }
+    if ($Thumbprint -notmatch '^[0-9a-fA-F]{40}$') {
+        throw 'Set signing.certificateThumbprint in phpvpn.config.json or supply -CertificateThumbprint (40 hexadecimal characters).'
+    }
+    $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$Thumbprint" -ErrorAction Stop
+    $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+    if ($null -eq $rsa) { throw 'Only an RSA signing certificate is supported.' }
+    $rsa.Dispose()
+    if ($RequirePrivateKey -and -not $certificate.HasPrivateKey) { throw 'The selected signing certificate has no private key.' }
+    return $certificate
+}
+
+function Get-PinnedInstallerText {
+    param([string]$Source, [ValidateSet('Windows','Linux')][string]$Platform,
+        [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+    $text = [IO.File]::ReadAllText($Source)
+    if ($Platform -eq 'Windows') {
+        $marker = '@PHPVPN_SIGNING_THUMBPRINT@'
+        $pin = $Certificate.Thumbprint.ToUpperInvariant()
+    } else {
+        $marker = '@PHPVPN_SIGNING_SPKI_SHA256@'
+        $pin = Get-SubjectPublicKeyInfoSha256 $Certificate.RawData
+    }
+    if ([regex]::Matches($text, [regex]::Escape($marker)).Count -ne 1) {
+        throw "Installer template must contain exactly one $marker marker: $Source"
+    }
+    return $text.Replace($marker, $pin)
+}
+
+function Write-PinnedInstaller {
+    param([string]$Source, [string]$Destination, [ValidateSet('Windows','Linux')][string]$Platform,
+        [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+    $text = Get-PinnedInstallerText -Source $Source -Platform $Platform -Certificate $Certificate
+    [IO.File]::WriteAllText($Destination, $text, [Text.UTF8Encoding]::new($false))
+}
+
+function Assert-PinnedInstaller {
+    param([string]$Source, [string]$Copy, [ValidateSet('Windows','Linux')][string]$Platform,
+        [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
+    $expected = [Text.Encoding]::UTF8.GetBytes((Get-PinnedInstallerText -Source $Source -Platform $Platform -Certificate $Certificate))
+    if (-not (Test-ByteArrayEqual $expected ([IO.File]::ReadAllBytes($Copy)))) {
+        throw "Installer differs from the source template and configured signing identity: $Copy"
+    }
+}
+
 function Get-DistributionSources {
     $files = [ordered]@{
         'documentation/readme.txt' = 'readme.txt'
@@ -527,4 +577,32 @@ function Write-SignedReleaseManifest {
         UsedCngCompatibilityPath = $usedCngCompatibilityPath
         ManifestBytes            = $manifestBytes
     }
+}
+
+function Get-DerElement([byte[]]$Data, [int]$Offset) {
+    if ($Offset + 2 -gt $Data.Length) { throw 'Truncated DER element.' }
+    $length = [int]$Data[$Offset + 1]
+    $content = $Offset + 2
+    if ($length -ge 0x80) {
+        $count = $length -band 0x7F
+        if ($count -lt 1 -or $count -gt 3) { throw 'Unsupported DER length.' }
+        $length = 0
+        for ($index = 0; $index -lt $count; ++$index) { $length = ($length -shl 8) -bor $Data[$content]; ++$content }
+    }
+    if ($content + $length -gt $Data.Length) { throw 'Truncated DER element.' }
+    return [pscustomobject]@{ Tag = $Data[$Offset]; Offset = $Offset; Content = $content; End = $content + $length }
+}
+function Get-SubjectPublicKeyInfoSha256([byte[]]$Certificate) {
+    $tbs = Get-DerElement $Certificate (Get-DerElement $Certificate 0).Content
+    $field = Get-DerElement $Certificate $tbs.Content
+    if ($field.Tag -eq 0xA0) { $field = Get-DerElement $Certificate $field.End } # explicit version
+    # serialNumber, signature, issuer, validity and subject precede subjectPublicKeyInfo.
+    foreach ($tag in @(0x02, 0x30, 0x30, 0x30, 0x30)) {
+        if ($field.Tag -ne $tag) { throw 'Unexpected certificate structure.' }
+        $field = Get-DerElement $Certificate $field.End
+    }
+    if ($field.Tag -ne 0x30) { throw 'Unexpected certificate structure.' }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash($Certificate, $field.Offset, $field.End - $field.Offset) } finally { $sha.Dispose() }
+    return (-join ($digest | ForEach-Object { $_.ToString('x2') }))
 }

@@ -28,7 +28,7 @@
 [CmdletBinding()]
 param(
     # Pinned signing identity of the phpvpn release key.
-    [string]$ExpectedThumbprint = "7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8",
+    [string]$ExpectedThumbprint = "@PHPVPN_SIGNING_THUMBPRINT@",
 
     # Verifies the package and stops before anything is created.
     [switch]$VerifyOnly

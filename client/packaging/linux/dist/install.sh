@@ -31,10 +31,8 @@
 # effect at the next login.
 set -eu
 
-# SHA-256 of the DER SubjectPublicKeyInfo of the phpvpn signing key
-# (client/assets/signing/phpvpn-development-test.cer, the development
-# certificate that also signs the Windows package).
-PINNED_SPKI_SHA256=1ac5908c54a54dc3daa1465113407b11ff8ab817ca1fb9c65397136a7b0f15f0
+# Set by the packager from the configured publisher certificate.
+PINNED_SPKI_SHA256=@PHPVPN_SIGNING_SPKI_SHA256@
 SOCKET=/run/phpvpn/control-v1.sock
 SOCKET_TIMEOUT=30
 

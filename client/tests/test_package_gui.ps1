@@ -5,11 +5,16 @@ $fixture = Join-Path ([IO.Path]::GetTempPath()) ('phpvpn-package-contract-' + [G
 $source = Join-Path $PSScriptRoot '../tools/package'
 $verifier = Join-Path $PSScriptRoot '../tools/verify-package.ps1'
 $required = @('phpvpn-service.exe', 'phpvpn-tray.exe', 'phpvpn.exe', 'install-phpvpn.exe', 'uninstall-phpvpn.exe', 'wintun.dll')
+. (Join-Path $PSScriptRoot '../../tools/distribution-common.ps1')
+$certificate = $null
 try {
+    $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=phpvpn package contract test' `
+        -KeyAlgorithm RSA -KeyLength 2048 -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
     New-Item -ItemType Directory -Path $fixture | Out-Null
     foreach ($script in @('install.bat', 'install.ps1', 'uninstall.bat', 'uninstall.ps1')) {
         Copy-Item -LiteralPath (Join-Path $source $script) -Destination $fixture
     }
+    Write-PinnedInstaller -Source (Join-Path $source 'install.ps1') -Destination (Join-Path $fixture 'install.ps1') -Platform Windows -Certificate $certificate
     foreach ($name in $required) { [IO.File]::WriteAllText((Join-Path $fixture $name), 'never executable') }
     foreach ($missing in @('install-phpvpn.exe', 'uninstall-phpvpn.exe')) {
         foreach ($omitManifestOnly in @($true, $false)) {
@@ -19,7 +24,7 @@ try {
             if (-not $omitManifestOnly) { Remove-Item -LiteralPath (Join-Path $fixture $missing) }
             @{ files=$files } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $fixture 'release-manifest.json') -Encoding UTF8
             $rejected = $false
-            try { & $verifier -PackageDirectory $fixture } catch {
+            try { & $verifier -PackageDirectory $fixture -CertificateThumbprint $certificate.Thumbprint } catch {
                 if ($_.Exception.Message -notlike "Required package file is missing or duplicated: $missing*") { throw }
                 $rejected = $true
             }
@@ -29,6 +34,10 @@ try {
     }
     Write-Output 'PASS: both launchers are mandatory on disk and in the manifest, even if a manifest omits them consistently.'
 } finally {
+    if ($certificate) {
+        Remove-Item -LiteralPath ("Cert:\CurrentUser\My\" + $certificate.Thumbprint) -DeleteKey
+        $certificate.Dispose()
+    }
     # Only the unique temp fixture created above is removed.
     $resolved = [IO.Path]::GetFullPath($fixture)
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())

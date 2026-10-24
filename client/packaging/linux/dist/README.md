@@ -104,9 +104,10 @@ The package alone follows the distribution convention: Ubuntu enables and
 starts the service on installation, Fedora leaves it disabled (presets).
 `install.sh` always enables and starts it, as the Windows installer does.
 
-The signing certificate of this build is the phpvpn development test
-certificate. It is not a publicly trusted publisher certificate; the pinned key
-protects the integrity of the folder, not the identity of a public publisher.
+The packager pins the publisher key selected for this build in `install.sh`
+before signing the manifest. Obtain the installer from a trusted publisher
+channel. A self-signed development certificate does not establish a publicly
+trusted publisher identity. The private signing key is never included.
 
 ## Configuration
 

@@ -22,8 +22,8 @@ param(
     [Parameter(Mandatory=$true)][string]$PackagesDirectory,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
 
-    # Pinned signing identity, the same default as make-dist.ps1.
-    [string]$CertificateThumbprint = "7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8"
+    # Overrides signing.certificateThumbprint in the development configuration.
+    [string]$CertificateThumbprint = ""
 )
 
 Set-StrictMode -Version Latest
@@ -33,6 +33,8 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $clientRoot = (Resolve-Path (Join-Path $scriptRoot "..\..")).Path
 $repositoryRoot = (Resolve-Path (Join-Path $clientRoot "..")).Path
 . (Join-Path $repositoryRoot 'tools/distribution-common.ps1')
+$signingCertificate = Get-DistributionSigningCertificate -Thumbprint $CertificateThumbprint -RequirePrivateKey
+$CertificateThumbprint = $signingCertificate.Thumbprint
 
 # Like make-dist.ps1: never erase the full dist or a source directory.
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -161,6 +163,8 @@ foreach ($name in $selected.Values) {
 foreach ($name in @('install.sh', 'uninstall.sh', 'README.md')) {
     Copy-Item -LiteralPath (Join-Path $distSource $name) -Destination $OutputDirectory
 }
+
+Write-PinnedInstaller -Source (Join-Path $distSource "install.sh") -Destination (Join-Path $OutputDirectory "install.sh") -Platform Linux -Certificate $signingCertificate
 
 # --------------------------------------------------------------- the manifest
 

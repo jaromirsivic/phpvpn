@@ -1,5 +1,8 @@
 {
   "formatVersion": 1,
+  "signing": {
+    "certificateThumbprint": "7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8"
+  },
   "tools": {
     "php": { "windows": "D:/nginx/php8.5.9/php.exe", "linux": "" },
     "phpCgi": { "windows": "D:/nginx/php8.5.9/php-cgi.exe", "linux": "" },

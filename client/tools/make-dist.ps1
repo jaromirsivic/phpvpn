@@ -19,9 +19,8 @@ param(
     [string]$BuildDirectory,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
 
-    # Pinned signing identity. The development certificate is the default so a
-    # local package can be produced without a release key.
-    [string]$CertificateThumbprint = "7430CCA24F5DE8A6614D582AFBFED7C80E0F2CA8",
+    # Overrides signing.certificateThumbprint in the development configuration.
+    [string]$CertificateThumbprint = "",
 
     # Also applies an Authenticode signature to all five executables.
     [switch]$SignBinaries
@@ -41,6 +40,8 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $repositoryRoot "work\build\release"
 }
 . (Join-Path $repositoryRoot 'tools/distribution-common.ps1')
+$signingCertificate = Get-DistributionSigningCertificate -Thumbprint $CertificateThumbprint -RequirePrivateKey
+$CertificateThumbprint = $signingCertificate.Thumbprint
 # This partial packager must never erase the full dist or a source directory.
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $allowed = @((Join-Path $repositoryRoot 'work'), (Join-Path $repositoryRoot 'dist'))
@@ -132,7 +133,7 @@ Copy-Item -LiteralPath (Join-Path $clientRoot "third_party\wintun\LICENSE.txt") 
           -Destination (Join-Path $OutputDirectory "LICENSE-wintun.txt")
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\install.bat") -Destination $OutputDirectory
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\uninstall.bat") -Destination $OutputDirectory
-Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\install.ps1") -Destination $OutputDirectory
+Write-PinnedInstaller -Source (Join-Path $clientRoot "tools/package/install.ps1") -Destination (Join-Path $OutputDirectory "install.ps1") -Platform Windows -Certificate $signingCertificate
 Copy-Item -LiteralPath (Join-Path $clientRoot "tools\package\uninstall.ps1") -Destination $OutputDirectory
 
 if ($SignBinaries) {

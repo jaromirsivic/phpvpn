@@ -10,7 +10,7 @@ Výrazy **MUSÍ**, **NESMÍ** a **ZASTAV** jsou závazné. Při nejistotě, kter
 
 | Úloha | Cesta |
 | --- | --- |
-| Výchozí zdrojový checkout | `C:\git\phpvpn` |
+| Výchozí zdrojový checkout | kořen tohoto repozitáře (složka s tímto dokumentem) |
 | Nová zdrojová distribuce | `C:\gitsigma\phpvpn` |
 | Záloha předchozího obsahu cíle | `C:\gitsigma\phpvpn_old` |
 | Dočasný staging | Nový unikátní adresář vedle cíle, například `C:\gitsigma\phpvpn_source_stage_<id>` |
@@ -60,6 +60,16 @@ Kořenový `readme.txt` musí vysvětlit, že jde o zdrojové kódy, uvést rozl
 
 Současný kořenový `readme.txt` popisuje instalaci hotové binární distribuce. Je-li tomu při provádění stále tak, zachovej jeho původní obsah na místě očekávaném binárním packagerem a doplň kořenový README zdrojové distribuce tak, aby nebyl zavádějící. Prověř zejména skripty ověřující bajtovou shodu README. Jakákoli úprava balicího stromu nebo README musí být zaznamenaná, ověřená a nesmí tiše změnit význam binárního návodu. Zdrojový checkout tím bez samostatného zadání nepřepisuj.
 
+### Sestavení binární distribuce z nového Git repozitáře
+
+Do kořenového `readme.txt` zdrojové distribuce uveď tento předpoklad: před sestavením kompletní binární distribuce musí příjemce vložit dodané zdroje do svého Git repozitáře a vytvořit commit. Může jít o jiný repozitář s vlastní historií. Původní `.git` se nepřenáší a původní historie není k sestavení potřeba.
+
+Linuxové balíčky i následná kompletní binární distribuce musí vzniknout ze stejného commitu nového repozitáře, bez necommitnutých změn distribuovaných zdrojů. `tools/make-distribution.ps1` čte aktuální `HEAD` a porovnává jej s původem linuxových balíčků. Balíčky sestavené z původního repozitáře proto nelze použít jen na základě shody obsahu, pokud uvádějí jiný commit. Kontrolu původu neobcházej přepínačem `-AllowLinuxProvenanceMismatch`.
+
+Commit původního checkoutu v `source-distribution-manifest.json` zůstává záznamem původu dodaných zdrojů. Nenahrazuje commit nového repozitáře používaný při sestavení binárních balíčků a nesmí se za něj přepsat.
+
+Pro ověření tohoto postupu je dovoleno inicializovat samostatný dočasný Git repozitář a vytvořit testovací commit pouze v externí ověřovací kopii podle oddílu 5. Použij neutrální testovací identitu. Tento repozitář ani jeho `.git` nepatří do stagingu, cíle nebo zálohy a nic se z něj nepublikuje. Inicializace či commit ve skutečném cílovém repozitáři nadále vyžadují samostatné zadání.
+
 ### Licence a externí komponenty
 
 Cílová licence vlastního projektu je MIT. Nejprve ověř existující licenční prohlášení a oprávnění k jejich použití. V aktuálním stromu je text MIT v `client/packaging/linux/LICENSE`, jeho samotná existence však není důkazem licence každé součásti. Pro kořenové `LICENSE` použij příslušný úplný text a doložené copyright údaje. Nevymýšlej autora, neměň držitele práv ani neodstraňuj povinné atribuce.
@@ -75,7 +85,7 @@ Do výsledku NESMĚJÍ být zahrnuty:
 - Výsledky sestavení, CMake cache a generované build stromy, virtuální prostředí, závislosti stažené jako lokální cache, `node_modules`, nástroje dodávané jako binárky a předchozí distribuce.
 - Žádné certifikáty, včetně veřejných, kořenových, vývojových, testovacích a self-signed certifikátů, certifikačních řetězců a úložišť certifikátů. Zákaz platí i pro certifikáty vložené do zdrojového kódu, dokumentace, prostředků, testovacích dat nebo archivů.
 - Citlivé klíče, soukromé podpisové materiály, skutečná hesla, přístupové tokeny, API klíče a další přihlašovací údaje. Výjimku pro veřejné výchozí hodnoty phpvpn stanoví následující oddíl.
-- Provozní konfigurace, relace, fronty, databáze, logy, dumpy, dočasné soubory a zálohy.
+- Provozní konfigurace s citlivými údaji, relace, fronty, databáze, logy, dumpy, dočasné soubory a zálohy. Vývojovou a testovací konfiguraci, například `phpvpn.config.json`, zahrň podle výjimky v oddílu 4.
 - `.git` ani jiná historie VCS, lokální konfigurace editorů, osobní nastavení, pracovní reporty a interní poznámky bez významu pro příjemce. Generovatelný kontextový graf a lokální stav agentů také nejsou součástí distribuovaného zdroje.
 
 Rozhoduj podle obsahu a účelu, nikoli jen přípony nebo názvu složky. Například `client/packaging/linux/dist/` dnes obsahuje zdrojové instalační skripty a dokumentaci, které nelze vyřadit pouze kvůli názvu `dist`. Naopak nativní ELF bez přípony je stále zakázaná binárka. Kontrola musí poznat PE, ELF a Mach-O a jejich běžné varianty, knihovny a bytecode i po přejmenování.
@@ -119,6 +129,12 @@ Pouhý průchod `rg` nebo vyhledání ASCII řetězců v binárním souboru nen�
 
 ### Vazby na konkrétní počítač
 
+**Absolutní cesty specifické pro daný počítač, zejména cesty pro testování, patří pouze do konfigurace, nikoli natvrdo do zdrojového kódu nebo skriptů.** Kód a skripty je musí načítat z konfigurace.
+
+**Pro konfigurační soubory neplatí zákaz absolutních cest.** Soubor `phpvpn.config.json` lze přenést do nové zdrojové distribuce se stávajícími hodnotami, včetně cest k nástrojům, testovacím adresářům a SSH klíči i nastavení lokální VM. Samotná taková konfigurační hodnota není důvodem k zastavení distribuce a automaticky ji nepřepisuj ani neanonymizuj. Cesta ke klíči nepovoluje přibalit samotný soukromý klíč. Ostatní kontroly obsahu konfigurace, zejména zákaz certifikátů a citlivých přihlašovacích údajů, zůstávají v platnosti.
+
+V kořenovém `readme.txt` vysvětli, že příjemce musí před sestavením nebo testováním přizpůsobit konfiguraci svému prostředí. Při ověření přenositelnosti uprav konfiguraci pouze v externí ověřovací kopii nebo použij podporovaný konfigurační přepínač `PHPVPN_CONFIG`. Do reportu zaznamenej použité nastavení bez tajemství. Tato výjimka neomlouvá skryté závislosti v kódu ani neprovedené kontroly sestavení.
+
 Prověř zejména:
 
 - Absolutní Windows a UNC cesty, `file://` odkazy, uživatelské profily, domovské adresáře, konkrétní checkouty, připojené disky, lokální VM a interní síťové adresy.
@@ -126,7 +142,7 @@ Prověř zejména:
 - CMake cache, user presety, generované projektové soubory, proměnné prostředí, registry, názvy účtů, stroje, certifikáty či thumbprinty, bez nichž by jiný uživatel nedokázal projekt sestavit nebo zabalit.
 - Skripty odkazující na nedodané helpery, soubory mimo kořen projektu, soukromé repozitáře nebo nastavení dostupné jen původnímu autorovi.
 
-Nález absolutní cesty nejprve zařaď podle kontextu. Standardní systémová cesta, výslovný ilustrační placeholder, izolovaný testovací údaj nebo cílové cesty této publikační metodiky nejsou samy o sobě vazbou na původní počítač. Výjimka musí mít konkrétní zdůvodnění v reportu. Nezaváděj plošné výjimky pro celé adresáře či všechny testy. Pochybnost o přenositelnosti znamená **ZASTAV**.
+Nález absolutní cesty nejprve zařaď podle kontextu. Konfigurační hodnota podle výjimky výše, standardní systémová cesta, výslovný ilustrační placeholder, izolovaný testovací údaj nebo cílové cesty této publikační metodiky nejsou samy o sobě zakázanou vazbou na původní počítač. Výjimka musí mít konkrétní zdůvodnění v reportu. Nezaváděj plošné výjimky pro celé adresáře či všechny testy. Nevyřešená pochybnost o přenositelnosti mimo tyto výjimky znamená **ZASTAV**.
 
 ### Reakce na nález
 
@@ -144,7 +160,7 @@ Neprováděj rotaci zálohy, mazání cíle ani publikaci. Pokud nález vznikne 
 6. Porovnej přesné množiny cest. Výsledek musí obsahovat právě deklarované soubory a manifest, včetně skrytých souborů. Každý povinný vstup musí být zahrnut nebo mít ověřený postup externího získání, pokud jej pravidla zakazují přibalit. Neznámý soubor znamená kontrolu, nikoli automatické přijetí.
 7. Proveď kontrolu zakázaného obsahu, certifikátů, tajemství, jmen, metadat a cest podle předchozích oddílů. Výchozí hesla a tokeny přijímej jen podle doloženého seznamu povolených hodnot. Zkontroluj i nově vytvořené README a manifest.
 8. Zkopíruj staging do nové ověřovací složky mimo původní checkout, ideálně s mezerami a neASCII znakem v cestě. Ověř sestavení podle dodaného návodu z této kopie bez `.git`, původní build cache, osobních presetů a přístupu k souborům původního checkoutu. Systémové nástroje jsou povolené pouze jako dokumentované předpoklady. Pro silné ověření použij čistý kontejner nebo VM, pokud je dostupný.
-9. Získej závislosti dokumentovaným způsobem, nakonfiguruj a sestav podporované cíle, spusť relevantní testy a ověř, že dodané skripty dokážou vytvořit binární distribuci z této kopie. Pro Python používej `uv`, včetně instalace balíčků přes `uv pip`. Veškeré vzniklé binárky, prostředí a logy musí zůstat mimo staging a výsledný zdrojový balík.
+9. Získej závislosti dokumentovaným způsobem, nakonfiguruj a sestav podporované cíle, spusť relevantní testy a ověř, že dodané skripty dokážou vytvořit binární distribuci z této kopie. Pro kompletní binární distribuci nejprve vytvoř v ověřovací kopii nový testovací Git repozitář a commit podle oddílu 2. Nepřebírej původní `.git` ani historii. Pro Python používej `uv`, včetně instalace balíčků přes `uv pip`. Veškeré vzniklé binárky, prostředí a logy musí zůstat mimo staging a výsledný zdrojový balík.
 10. Report musí rozlišit úspěch, chybu a neprovedenou kontrolu pro každou platformu. Chybějící prostředí ani přístup k závislosti neznamenají úspěch. Pokud nelze potřebnou přenositelnost nebo úplnost ověřit, nepublikuj, dokud uživatel výslovně nerozhodne o konkrétním omezení ověření. Zákaz binárek, jmen a nevyřešených lokálních vazeb zůstává v platnosti.
 11. Po testech znovu ověř čistotu stagingu a shodu jeho hashů s manifestem. Teprve úspěšně ověřený staging smí postoupit k výměně cíle.
 
@@ -222,4 +238,4 @@ Distribuce je dokončená pouze tehdy, když:
 
 Uživateli předej cestu k výsledku a záloze, verzi a identifikaci zdrojového stavu, počet souborů, hash manifestu, stručné výsledky ověření a odkaz na externí report. Uveď neprovedené kontroly a otevřené překážky. Nikdy neoznač částečný výsledek za hotovou distribuci.
 
-Vytvoření ZIP, inicializace Gitu, commit, push nebo zveřejnění nejsou součástí této operace, pokud je uživatel samostatně nepožaduje. Případný později vytvářený archiv musí po bezpečném rozbalení projít stejnými kontrolami a zachovat potřebné režimy skriptů.
+Vytvoření ZIP, inicializace Gitu, commit, push nebo zveřejnění nejsou součástí této operace, pokud je uživatel samostatně nepožaduje. Jedinou výjimkou je dočasný testovací repozitář v externí ověřovací kopii podle oddílů 2 a 5. Případný později vytvářený archiv musí po bezpečném rozbalení projít stejnými kontrolami a zachovat potřebné režimy skriptů.
