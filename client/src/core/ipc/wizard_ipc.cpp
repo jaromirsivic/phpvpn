@@ -177,7 +177,7 @@ std::optional<ConnectionState> vpnState(const J* value) {
 std::optional<ConnectionPhase> vpnPhase(const J* value) {
     if (!text(value)) return {};
     for (auto phase : {ConnectionPhase::idle, ConnectionPhase::health, ConnectionPhase::info,
-         ConnectionPhase::access_key_check, ConnectionPhase::communication_contracts_check, ConnectionPhase::starting_tunnel, ConnectionPhase::running, ConnectionPhase::stopping})
+         ConnectionPhase::access_key_check, ConnectionPhase::communication_contracts_check, ConnectionPhase::starting_tunnel, ConnectionPhase::running, ConnectionPhase::reconnecting, ConnectionPhase::stopping})
         if (value->stringValue() == connectionPhaseName(phase)) return phase;
     return {};
 }

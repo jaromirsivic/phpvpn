@@ -70,6 +70,8 @@ struct VpnEngineTestAccess {
     static unsigned tunnelRoles(VpnEngine& engine) {
         return unsigned(bool(engine.inputWorker_)) + unsigned(bool(engine.outputWorker_));
     }
+    // Soft recovery budget. 0 disables soft recovery, call before start().
+    static void softRecoveryGrace(VpnEngine& engine, std::int64_t ms) { engine.softRecoveryGraceMs_ = ms; }
 };
 namespace {
 constexpr const char* kConfig = R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://runtime.invalid/secret-path","serverSecret":"runtime-fixture-secret","vpnCidr":"10.99.99.0/24","virtualIp":"10.99.99.2","accessKey":"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},"communicationContracts":{"10.99.99.3":{"payloadKey":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"}}})";
@@ -1903,6 +1905,9 @@ PHPVPN_TEST(runtime, lifecycle_recovery_tears_down_and_recreates_after_current_b
         return {};
     };
     fixture.transport.cancel = [&] { failedPoll.release(); recoveredPoll.release(); };
+    // A timeout is transient; with soft recovery disabled the first failure
+    // takes the full teardown path this scenario verifies.
+    VpnEngineTestAccess::softRecoveryGrace(fixture.engine, 0);
     PHPVPN_REQUIRE_OK(fixture.engine.start());
     const auto networkThread = VpnEngineTestAccess::networkThread(fixture.engine);
     PHPVPN_REQUIRE_OK(fixture.engine.connect());
@@ -1966,6 +1971,213 @@ PHPVPN_TEST(runtime, lifecycle_recovery_tears_down_and_recreates_after_current_b
     PHPVPN_CHECK_EQ(fixture.driver.closes.load(), 2);
     PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 2);
     PHPVPN_CHECK(sameNetworkThread.load());
+}
+
+PHPVPN_TEST(runtime, transient_error_classification_for_soft_recovery) {
+    for (const auto code : {ErrorCode::transport_timeout, ErrorCode::transport_receive_failed,
+                            ErrorCode::transport_connect_failed, ErrorCode::transport_dns_failed,
+                            ErrorCode::server_unavailable, ErrorCode::server_internal_error,
+                            ErrorCode::server_unexpected_status, ErrorCode::response_invalid,
+                            ErrorCode::response_mac_invalid, ErrorCode::wire_invalid_json}) {
+        PHPVPN_CHECK(errorCodeIsTransient(code));
+        PHPVPN_CHECK(errorCodeIsRecoverable(code));
+    }
+    for (const auto code : {ErrorCode::cancelled, ErrorCode::server_unauthorized, ErrorCode::server_bad_request,
+                            ErrorCode::config_missing, ErrorCode::contract_missing, ErrorCode::tunnel_io_failed,
+                            ErrorCode::time_not_synchronised, ErrorCode::crypto_failed, ErrorCode::internal}) {
+        PHPVPN_CHECK(!errorCodeIsTransient(code));
+    }
+    PHPVPN_CHECK_EQ(std::string(connectionPhaseName(ConnectionPhase::reconnecting)), std::string("reconnecting"));
+}
+
+PHPVPN_TEST(runtime, soft_recovery_keeps_tunnel_and_queue_through_one_transient_failure) {
+    Gate failedPoll, retriedPoll;
+    std::mutex requestMutex;
+    std::string retriedRequest;
+    EngineFixture fixture;
+    fixture.transport.incoming = {packet(100, true)};
+    fixture.transport.hook = [&](HttpAction action, std::string_view request, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && call == 2) {
+            failedPoll.block();
+            // nginx in front of a stalled PHP backend: one 502 with an HTML body.
+            return HttpExchangeResult{HttpResponse{502, std::string("<html>502 Bad Gateway</html>"), "text/html"}, 29};
+        }
+        if (action == HttpAction::data && call == 3) {
+            { std::lock_guard lock(requestMutex); retriedRequest = std::string(request); }
+            retriedPoll.block();
+        }
+        return {};
+    };
+    fixture.transport.cancel = [&] { failedPoll.release(); retriedPoll.release(); };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(failedPoll.await());
+    PHPVPN_CHECK(eventually([&] {
+        return fixture.driver.activity.readers.load() == 1 && fixture.driver.activity.writers.load() == 1;
+    }));
+    // A packet admitted while the failing exchange is in flight must survive
+    // the failure inside the outbound queue and leave with the retry.
+    VpnEngineTestAccess::enqueue(fixture.engine, packet(100, false));
+    failedPoll.release();
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::reconnecting; }));
+    const auto during = fixture.engine.status();
+    PHPVPN_CHECK_EQ(during.state, ConnectionState::connected);
+    PHPVPN_CHECK_EQ(during.tunnelReady, Tristate::yes);
+    PHPVPN_CHECK(!during.lastError.has_value());
+    PHPVPN_CHECK_EQ(during.recoveryCount, std::uint64_t(0));
+    PHPVPN_CHECK(during.connectionStartedAtUtc.has_value());
+    PHPVPN_CHECK(retriedPoll.await());
+    // The retry happened on the same tunnel session: nothing was released.
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 2u);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.closes.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.destroyed.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 1);
+    {
+        std::lock_guard lock(requestMutex);
+        PHPVPN_CHECK(retriedRequest.find("\"dst\":\"10.99.99.3\"") != std::string::npos);
+    }
+    retriedPoll.release();
+    PHPVPN_CHECK(eventually([&] {
+        const auto status = fixture.engine.status();
+        return status.state == ConnectionState::connected && status.phase == ConnectionPhase::running;
+    }));
+    const auto diagnostics = fixture.engine.diagnostics();
+    PHPVPN_CHECK_EQ(diagnostics.softRecoveryCount, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(diagnostics.recoveryCount, std::uint64_t(0));
+    PHPVPN_CHECK(!diagnostics.lastSoftRecoveryAtUtc.empty());
+    PHPVPN_CHECK(diagnostics.lastRecoveryAtUtc.empty());
+    PHPVPN_CHECK(!diagnostics.lastError.has_value());
+    PHPVPN_CHECK_EQ(diagnostics.responsesRejected, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(fixture.engine.status().connectionStartedAtUtc, during.connectionStartedAtUtc);
+    fixture.engine.shutdown();
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+}
+
+PHPVPN_TEST(runtime, soft_recovery_401_refreshes_verified_time_once_without_teardown) {
+    Gate retriedPoll;
+    EngineFixture fixture;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && call == 2)
+            return HttpExchangeResult{HttpResponse{401, std::string("{\"type\":\"error\",\"code\":\"unauthorized\"}"), "application/json"}, 40};
+        if (action == HttpAction::data && call == 3) retriedPoll.block();
+        return {};
+    };
+    fixture.transport.cancel = [&] { retriedPoll.release(); };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(retriedPoll.await());
+    // The 401 was answered by one fresh verified health, not by a bootstrap.
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 0);
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 2u);
+    PHPVPN_CHECK_EQ(fixture.engine.status().phase, ConnectionPhase::reconnecting);
+    retriedPoll.release();
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::running; }));
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::connected);
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().softRecoveryCount, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().recoveryCount, std::uint64_t(0));
+}
+
+PHPVPN_TEST(runtime, soft_recovery_repeated_401_after_refresh_takes_the_full_path) {
+    EngineFixture fixture;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && (call == 2 || call == 3))
+            return HttpExchangeResult{HttpResponse{401, std::string("{\"type\":\"error\",\"code\":\"unauthorized\"}"), "application/json"}, 40};
+        return {};
+    };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    // A 401 while running is not recoverable: after the single time refresh
+    // the second 401 releases the tunnel and reports the error.
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::error; }));
+    const auto status = fixture.engine.status();
+    PHPVPN_CHECK_EQ(status.phase, ConnectionPhase::idle);
+    PHPVPN_CHECK(status.lastError.has_value());
+    PHPVPN_CHECK_EQ(status.lastError->code, std::string("communication_failed"));
+    PHPVPN_CHECK(!status.lastError->recoverable);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.transport.dataCalls.load(), 3);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().softRecoveryCount, std::uint64_t(1));
+}
+
+PHPVPN_TEST(runtime, soft_recovery_budget_exhausted_falls_back_to_full_recovery) {
+    std::atomic<bool> failing{true};
+    EngineFixture fixture;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && call >= 2 && failing.load())
+            return HttpExchangeResult{Error(ErrorCode::transport_timeout), 0};
+        return {};
+    };
+    VpnEngineTestAccess::softRecoveryGrace(fixture.engine, 3000);
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::reconnecting; }));
+    // Several retries inside the budget keep the tunnel and publish no error.
+    const auto calls = fixture.transport.dataCalls.load();
+    PHPVPN_CHECK(eventually([&] { return fixture.transport.dataCalls.load() >= calls + 2; }));
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::connected);
+    PHPVPN_CHECK(!fixture.engine.status().lastError.has_value());
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 0);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 0);
+    // Beyond the budget the next failure takes the full teardown and backoff.
+    fixture.clock.now += 3000;
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::recovering; }));
+    const auto failed = fixture.engine.status();
+    PHPVPN_CHECK_EQ(failed.phase, ConnectionPhase::idle);
+    PHPVPN_CHECK(failed.lastError.has_value());
+    PHPVPN_CHECK_EQ(failed.lastError->code, std::string("communication_timeout"));
+    PHPVPN_CHECK(failed.lastError->recoverable);
+    PHPVPN_CHECK_EQ(failed.recoveryCount, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.driver.activity.stopped.load(), 1);
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().softRecoveryCount, std::uint64_t(1));
+    // The full recovery reconnects once the server answers again.
+    failing.store(false);
+    fixture.clock.now += 10000;
+    PHPVPN_CHECK(eventually([&] {
+        const auto status = fixture.engine.status();
+        return status.state == ConnectionState::connected && status.phase == ConnectionPhase::running;
+    }));
+    PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().softRecoveryCount, std::uint64_t(1));
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().recoveryCount, std::uint64_t(1));
+}
+
+PHPVPN_TEST(runtime, soft_recovery_honours_disconnect_and_stop_during_backoff) {
+    std::atomic<bool> failing{false};
+    EngineFixture fixture;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && failing.load())
+            return HttpExchangeResult{Error(ErrorCode::transport_receive_failed), 0};
+        return {};
+    };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::running; }));
+    failing.store(true);
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::reconnecting; }));
+    PHPVPN_REQUIRE_OK(fixture.engine.disconnect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::disconnected; }));
+    PHPVPN_CHECK_EQ(fixture.engine.status().phase, ConnectionPhase::idle);
+    PHPVPN_CHECK(!fixture.engine.status().lastError.has_value());
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 1);
+    PHPVPN_CHECK_EQ(VpnEngineTestAccess::tunnelRoles(fixture.engine), 0u);
+    failing.store(false);
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::running; }));
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().softRecoveryCount, std::uint64_t(1));
+    failing.store(true);
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().phase == ConnectionPhase::reconnecting; }));
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().softRecoveryCount, std::uint64_t(2));
+    fixture.engine.shutdown();
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::disconnected);
+    PHPVPN_CHECK_EQ(fixture.driver.ends.load(), 2);
 }
 
 PHPVPN_TEST(runtime, health_syntax_is_published_before_key_derivation) {

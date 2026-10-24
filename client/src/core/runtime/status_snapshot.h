@@ -20,7 +20,9 @@ namespace phpvpn {
 
 enum class ConnectionState { disconnected, connecting, connected, recovering, error };
 
-enum class ConnectionPhase { idle, health, info, access_key_check, communication_contracts_check, starting_tunnel, running, stopping };
+// `reconnecting` is the soft recovery of a `connected` connection: the tunnel
+// stays up while the `data` exchange is retried, client.md "Obnova".
+enum class ConnectionPhase { idle, health, info, access_key_check, communication_contracts_check, starting_tunnel, running, reconnecting, stopping };
 
 enum class Tristate { unknown, yes, no };
 enum class CheckpointResult { pending, success, failed };
@@ -86,6 +88,9 @@ struct DiagnosticsSnapshot {
     Tristate lastDataVerified = Tristate::unknown;
     std::string lastRecoveryAtUtc;
     std::uint64_t recoveryCount = 0;
+    // Soft recoveries: episodes of `reconnecting` that kept the tunnel up.
+    std::string lastSoftRecoveryAtUtc;
+    std::uint64_t softRecoveryCount = 0;
 
     Tristate tunnelReady = Tristate::unknown;
 

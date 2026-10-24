@@ -6,10 +6,17 @@
 // network operation.
 //
 // The connection sequence is fixed: health, info, access key check, tunnel
-// start, running. A recoverable failure moves the connection to `recovering`
-// with an exponential backoff of 1, 2, 4, 8, 16, 32 and then 60 seconds, plus a
-// jitter of up to 20 percent so that many clients do not retry in lockstep. A
-// non recoverable failure moves it to `error` and waits for the user.
+// start, running. A transient failure of a `data` exchange while running
+// (transport error, server 5xx, unverifiable response) enters soft recovery:
+// the tunnel, its I/O roles and the queues stay in place, the phase becomes
+// `reconnecting` and the exchange is retried after 250 ms, 500 ms, 1, 2 and
+// then 5 seconds with jitter. A 401 first refreshes the verified time once.
+// When no exchange verifies within kSoftRecoveryGraceMs, or the failure is
+// recoverable but not transient, the connection is torn down and moves to
+// `recovering` with an exponential backoff of 1, 2, 4, 8, 16, 32 and then 60
+// seconds, plus a jitter of up to 20 percent so that many clients do not retry
+// in lockstep. A non recoverable failure moves it to `error` and waits for the
+// user.
 #pragma once
 
 #include <atomic>
@@ -34,6 +41,10 @@
 #include "platform/iface/tunnel.h"
 
 namespace phpvpn {
+
+// Budget of one soft recovery episode: continuous failed `data` exchanges
+// beyond this window release the tunnel and start the full recovery.
+inline constexpr std::int64_t kSoftRecoveryGraceMs = 90000;
 
 struct EnginePaths {
     std::filesystem::path configFile;
@@ -125,6 +136,7 @@ private:
     void clearError();
 
     std::int64_t backoffDelayMs();
+    std::int64_t softBackoffDelayMs();
 
     CryptoProvider& crypto_;
     Transport& transport_;
@@ -178,6 +190,8 @@ private:
     std::optional<SafeError> lastError_;
     std::string lastRecoveryAtUtc_;
     std::uint64_t recoveryCount_ = 0;
+    std::string lastSoftRecoveryAtUtc_;
+    std::uint64_t softRecoveryCount_ = 0;
     std::uint64_t packetsReceived_ = 0;
     std::uint64_t packetsSent_ = 0;
     std::uint64_t responsesRejected_ = 0;
@@ -209,6 +223,14 @@ private:
     int backoffStep_ = 0;
     std::int64_t startedAtMs_ = 0;
     std::uint32_t jitterState_ = 0x9e3779b9u;
+
+    // Soft recovery state, owned by the network thread.
+    std::optional<Error> lastDataError_;
+    bool softRecoveryActive_ = false;
+    std::int64_t softRecoveryStartedAtMs_ = 0;
+    int softBackoffStep_ = 0;
+    bool softAuthRefreshed_ = false;
+    std::int64_t softRecoveryGraceMs_ = kSoftRecoveryGraceMs;
 };
 
 }  // namespace phpvpn

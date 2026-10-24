@@ -19,6 +19,11 @@ constexpr const char* kComponent = "engine";
 constexpr std::int64_t kBackoffLadderMs[] = {1000, 2000, 4000, 8000, 16000, 32000, 60000};
 constexpr int kBackoffLadderSize = static_cast<int>(sizeof(kBackoffLadderMs) / sizeof(kBackoffLadderMs[0]));
 
+// client.md "Obnova", soft recovery: the tunnel stays up, the exchange is
+// retried quickly so that TCP inside the tunnel sees a short lossy period.
+constexpr std::int64_t kSoftBackoffLadderMs[] = {250, 500, 1000, 2000, 5000};
+constexpr int kSoftBackoffLadderSize = static_cast<int>(sizeof(kSoftBackoffLadderMs) / sizeof(kSoftBackoffLadderMs[0]));
+
 }  // namespace
 
 VpnEngine::VpnEngine(CryptoProvider& crypto,
@@ -372,6 +377,14 @@ std::int64_t VpnEngine::backoffDelayMs() {
     return base + jitter;
 }
 
+std::int64_t VpnEngine::softBackoffDelayMs() {
+    const int step = std::min(softBackoffStep_, kSoftBackoffLadderSize - 1);
+    const std::int64_t base = kSoftBackoffLadderMs[step];
+    jitterState_ = jitterState_ * 1664525u + 1013904223u;
+    const std::int64_t jitter = static_cast<std::int64_t>(jitterState_ >> 16) % (base / 5 + 1);
+    return base + jitter;
+}
+
 Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {
     if (failedDiagnostic) failedDiagnostic->reset();
     if (rejectedResponse) *rejectedResponse = false;
@@ -522,12 +535,15 @@ std::int64_t VpnEngine::runConnectedIteration() {
     auto outcome = network_.exchangeData(*outbound_, *inbound_, outboundDrops_, inboundDrops_,
                                          /*allowSending=*/true);
     if (!outcome.ok()) {
+        // The public lastError is published by the loop only when the failure
+        // leaves soft recovery; a retried transient failure stays private.
+        lastDataError_ = outcome.error();
         std::lock_guard<std::mutex> lock(stateMutex_);
         ++responsesRejected_;
         lastDataVerified_ = Tristate::no;
-        lastError_ = SafeError::fromConnection(outcome.error(), ConnectionPhase::running);
         return 0;
     }
+    lastDataError_.reset();
 
     const DataExchangeOutcome& result = outcome.value();
     {
@@ -547,6 +563,10 @@ std::int64_t VpnEngine::runConnectedIteration() {
 }
 
 void VpnEngine::teardown(bool keepError) {
+    softRecoveryActive_ = false;
+    softBackoffStep_ = 0;
+    softAuthRefreshed_ = false;
+    lastDataError_.reset();
     if (inputWorker_) {
         inputWorker_->stop();
         inputWorker_.reset();
@@ -688,10 +708,57 @@ void VpnEngine::runNetworkThread() {
             }
 
             if (!healthy) {
-                bool recoverable = false;
+                const Error failure = lastDataError_.value_or(Error(ErrorCode::internal));
+                const bool recoverable = failure.recoverable();
+                // Soft recovery: a transient failure, or a 401 that one fresh
+                // verified time may explain, keeps the tunnel and retries.
+                const bool softEligible = softRecoveryGraceMs_ > 0 &&
+                    ((recoverable && failure.transient()) || failure.code == ErrorCode::server_unauthorized) &&
+                    running_.load() && connectRequested_.load();
+                if (softEligible) {
+                    const std::int64_t now = clock_.monotonicMs();
+                    if (!softRecoveryActive_) {
+                        softRecoveryActive_ = true;
+                        softRecoveryStartedAtMs_ = now;
+                        softBackoffStep_ = 0;
+                        softAuthRefreshed_ = false;
+                        {
+                            std::lock_guard<std::mutex> lock(stateMutex_);
+                            ++softRecoveryCount_;
+                            lastSoftRecoveryAtUtc_ = Iso8601::format(clock_.systemUtcMs());
+                        }
+                        setPhase(ConnectionPhase::reconnecting);
+                        PHPVPN_LOG_WARN(kComponent, "the data exchange failed, retrying while the tunnel stays up");
+                    }
+                    bool escalate = now - softRecoveryStartedAtMs_ >= softRecoveryGraceMs_;
+                    if (!escalate && failure.code == ErrorCode::server_unauthorized) {
+                        if (softAuthRefreshed_) {
+                            escalate = true;
+                        } else {
+                            // One verified time refresh explains a clock drift 401;
+                            // a repeated 401 needs the full bootstrap.
+                            softAuthRefreshed_ = true;
+                            auto health = network_.performHealth();
+                            std::lock_guard<std::mutex> lock(stateMutex_);
+                            lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
+                        }
+                    }
+                    if (!escalate) {
+                        const Command queued = takeCommand(softBackoffDelayMs());
+                        ++softBackoffStep_;
+                        if (queued == Command::stop) {
+                            break;
+                        }
+                        if (queued == Command::disconnect) {
+                            pushCommand(Command::disconnect);
+                        }
+                        continue;
+                    }
+                    PHPVPN_LOG_WARN(kComponent, "the soft recovery budget is exhausted");
+                }
                 {
                     std::lock_guard<std::mutex> lock(stateMutex_);
-                    recoverable = lastError_.has_value() && lastError_->recoverable;
+                    lastError_ = SafeError::fromConnection(failure, ConnectionPhase::running);
                 }
                 if (!recoverable) {
                     teardown(/*keepError=*/true);
@@ -709,6 +776,14 @@ void VpnEngine::runNetworkThread() {
                 retryAtMs = clock_.monotonicMs() + backoffDelayMs();
                 setState(ConnectionState::recovering, ConnectionPhase::idle);
                 continue;
+            }
+
+            if (softRecoveryActive_) {
+                softRecoveryActive_ = false;
+                softBackoffStep_ = 0;
+                softAuthRefreshed_ = false;
+                setPhase(ConnectionPhase::running);
+                PHPVPN_LOG_INFO(kComponent, "the data exchange recovered, the tunnel was kept");
             }
 
             // Refresh the verified time well before the safety margin can drift.
@@ -859,6 +934,8 @@ DiagnosticsSnapshot VpnEngine::diagnostics() const {
     snapshot.lastDataVerified = lastDataVerified_;
     snapshot.lastRecoveryAtUtc = lastRecoveryAtUtc_;
     snapshot.recoveryCount = recoveryCount_;
+    snapshot.lastSoftRecoveryAtUtc = lastSoftRecoveryAtUtc_;
+    snapshot.softRecoveryCount = softRecoveryCount_;
     snapshot.tunnelReady = tunnelReady_;
     snapshot.counters = counters_.snapshot();
     snapshot.batchesRejected = batchesRejected_;

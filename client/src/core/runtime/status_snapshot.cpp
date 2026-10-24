@@ -73,6 +73,8 @@ const char* connectionPhaseName(ConnectionPhase phase) noexcept {
             return "starting-tunnel";
         case ConnectionPhase::running:
             return "running";
+        case ConnectionPhase::reconnecting:
+            return "reconnecting";
         case ConnectionPhase::stopping:
             return "stopping";
     }

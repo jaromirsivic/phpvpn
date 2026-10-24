@@ -5,6 +5,8 @@ PHPVPN_TEST(runtime, communication_contracts_order_and_recovery_once_per_epoch) 
         if(action==HttpAction::data && failData.exchange(false))return HttpExchangeResult{Error(ErrorCode::transport_timeout),0};
         return {};
     };
+    // Full recovery semantics are under test: soft recovery is disabled.
+    VpnEngineTestAccess::softRecoveryGrace(f.engine,0);
     PHPVPN_REQUIRE_OK(f.engine.start());PHPVPN_REQUIRE_OK(f.engine.connect());
     PHPVPN_CHECK(eventually([&]{return f.engine.status().state==ConnectionState::connected;}));
     const auto requests=f.transport.observedHeaders();PHPVPN_CHECK(requests.size()>=4);

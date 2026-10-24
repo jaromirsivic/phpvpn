@@ -13,7 +13,8 @@
 namespace phpvpn::tray {
 TrayIconState selectTrayIcon(const TrayStatus& status, bool unavailable, bool localOperation) {
     if (unavailable || !status.valid) return TrayIconState::disconnected;
-    if (localOperation || status.phase == "stopping" || status.state == "connecting" || status.state == "recovering")
+    if (localOperation || status.phase == "stopping" || status.state == "connecting" || status.state == "recovering" ||
+        (status.state == "connected" && status.phase == "reconnecting"))
         return TrayIconState::connecting;
     if (status.state == "connected" && status.phase == "running" && status.tunnelReady == "yes" && !status.hasError)
         return TrayIconState::connected;
@@ -59,7 +60,7 @@ TrayStatus parseStatusResponse(std::string_view json) {
         !nonemptyString(status->find("stateChangedAt")) ||
         !unsignedNumber(status->find("recoveryCount")) ||
         !stringIn(status->find("state"), {"disconnected", "connecting", "connected", "recovering", "error"}) ||
-        !stringIn(status->find("phase"), {"idle", "health", "info", "access-key-check", "communication-contracts-check", "starting-tunnel", "running", "stopping"}) ||
+        !stringIn(status->find("phase"), {"idle", "health", "info", "access-key-check", "communication-contracts-check", "starting-tunnel", "running", "reconnecting", "stopping"}) ||
         !stringIn(status->find("serverReachable"), {"unknown", "yes", "no"}) ||
         !stringIn(status->find("serverVerified"), {"unknown", "yes", "no"}) ||
         !stringIn(status->find("tunnelReady"), {"unknown", "yes", "no"})) return result;

@@ -132,6 +132,40 @@ const char* errorCodeDescription(ErrorCode code) noexcept { return lookup(code).
 
 bool errorCodeIsRecoverable(ErrorCode code) noexcept { return lookup(code).recoverable; }
 
+bool errorCodeIsTransient(ErrorCode code) noexcept {
+    switch (code) {
+        case ErrorCode::timeout:
+        case ErrorCode::transport_dns_failed:
+        case ErrorCode::transport_connect_failed:
+        case ErrorCode::transport_tls_failed:
+        case ErrorCode::transport_send_failed:
+        case ErrorCode::transport_receive_failed:
+        case ErrorCode::transport_response_too_large:
+        case ErrorCode::transport_timeout:
+        case ErrorCode::server_payload_too_large:
+        case ErrorCode::server_unavailable:
+        case ErrorCode::server_internal_error:
+        case ErrorCode::server_unexpected_status:
+        case ErrorCode::response_invalid:
+        case ErrorCode::response_request_id_mismatch:
+        case ErrorCode::response_mac_invalid:
+        case ErrorCode::wire_invalid_base64url:
+        case ErrorCode::wire_invalid_timestamp:
+        case ErrorCode::wire_invalid_uuid:
+        case ErrorCode::wire_invalid_json:
+        case ErrorCode::wire_unexpected_field:
+        case ErrorCode::wire_missing_field:
+        case ErrorCode::wire_duplicate_field:
+        case ErrorCode::wire_invalid_record_order:
+        case ErrorCode::wire_line_too_long:
+        case ErrorCode::wire_too_many_records:
+        case ErrorCode::wire_body_too_large:
+            return lookup(code).recoverable;
+        default:
+            return false;
+    }
+}
+
 std::string Error::message() const {
     std::string text = errorCodeDescription(code);
     if (!detail.empty()) {

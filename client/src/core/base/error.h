@@ -133,6 +133,13 @@ const char* errorCodeDescription(ErrorCode code) noexcept;
 // change something, see client.md "Obnova".
 bool errorCodeIsRecoverable(ErrorCode code) noexcept;
 
+// True for a recoverable failure of one `data` exchange that the running
+// connection retries without releasing the tunnel (soft recovery, client.md
+// "Obnova"): transport failures, server 5xx, and a response that could not be
+// received or verified. False for everything that needs a new bootstrap or
+// the user, including 401, cancellation and configuration errors.
+bool errorCodeIsTransient(ErrorCode code) noexcept;
+
 struct Error {
     ErrorCode code = ErrorCode::internal;
     std::string detail;
@@ -143,6 +150,7 @@ struct Error {
 
     const char* name() const noexcept { return errorCodeName(code); }
     bool recoverable() const noexcept { return errorCodeIsRecoverable(code); }
+    bool transient() const noexcept { return errorCodeIsTransient(code); }
 
     // Safe one line rendering used by the logger and by IPC error envelopes.
     std::string message() const;

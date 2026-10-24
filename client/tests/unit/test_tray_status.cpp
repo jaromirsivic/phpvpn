@@ -110,6 +110,10 @@ PHPVPN_TEST(TrayStatus, IconMappingRequiresHealthyConnectedAndHonorsLocalOperati
     PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::disconnected);
     status.phase = "stopping";
     PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::connecting);
+    // Soft recovery: the tunnel is up but the exchange is being retried.
+    status.phase = "reconnecting"; status.tunnelReady = "yes";
+    PHPVPN_CHECK_EQ(selectTrayIcon(status, false, false), TrayIconState::connecting);
+    status.tunnelReady = "no";
     status.phase = "idle";
     for (const auto* state : {"connecting", "recovering"}) {
         status.state = state;

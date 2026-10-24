@@ -273,6 +273,8 @@ std::string IpcProtocol::buildDiagnosticsResponse(std::string_view requestId,
     diagnostics.emplace_back("lastDataVerified", tristateValue(snapshot.lastDataVerified));
     diagnostics.emplace_back("lastRecoveryAt", JsonValue::makeString(snapshot.lastRecoveryAtUtc));
     diagnostics.emplace_back("recoveryCount", JsonValue::makeInteger(asCounter(snapshot.recoveryCount)));
+    diagnostics.emplace_back("lastSoftRecoveryAt", JsonValue::makeString(snapshot.lastSoftRecoveryAtUtc));
+    diagnostics.emplace_back("softRecoveryCount", JsonValue::makeInteger(asCounter(snapshot.softRecoveryCount)));
     diagnostics.emplace_back("tunnelReady", tristateValue(snapshot.tunnelReady));
     diagnostics.emplace_back("outboundQueue", queueValue(snapshot.outbound));
     diagnostics.emplace_back("inboundQueue", queueValue(snapshot.inbound));

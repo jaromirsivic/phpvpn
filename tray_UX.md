@@ -427,7 +427,7 @@ Scene matrix obsahuje také produkční Disconnect progress ve stavech Disconnec
 
 Aplikační ikona všech top-level oken a systémových dialogů je `assets/default.ico`, nastavená pro ICON_SMALL i ICON_BIG. Stav VPN ji nemění. Načítá se také v oknech, která nepotřebují stavové ikony. Při změně DPI se nejprve načte celá nová sada a přepne HWND, poté se uvolní staré handles. Neúspěšné načtení zachová původní sadu.
 
-Notification area používá přesné embedded resources: disconnected=101, connecting=102 a connected=103. Nedostupný nebo neplatný aktuální status má přednost a ukazuje disconnected. Probíhající lokální Connect/Disconnect, stopping, connecting a recovering používají connecting. Connected je vyhrazeno zdravému connected/running s tunnelReady=yes bez chyby. Disconnected, error a nekonzistentní stav používají disconnected.
+Notification area používá přesné embedded resources: disconnected=101, connecting=102 a connected=103. Nedostupný nebo neplatný aktuální status má přednost a ukazuje disconnected. Probíhající lokální Connect/Disconnect, stopping, connecting, recovering a connected s fází reconnecting (soft recovery) používají connecting. Connected je vyhrazeno zdravému connected/running s tunnelReady=yes bez chyby. Disconnected, error a nekonzistentní stav používají disconnected.
 
 Přijatý Disconnect mění ikonu ihned, i nad posledním connected snapshotem. Přijetí RPC samo neukončuje čekání na teardown. Terminální status nebo chyba ukončí lokální průběh. Neplatná odpověď a timeout označí status jako nedostupný a vyžádají nové čtení. Čtení zahájené před příkazem se zahodí.
 
