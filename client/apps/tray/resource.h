@@ -10,6 +10,7 @@
 #define IDM_TOGGLE      203
 #define IDM_EXIT        204
 #define IDM_STATISTICS  205
+#define IDM_ABOUT       208
 
 #define IDC_TEXT_AREA 301
 #define IDC_SAVE      302

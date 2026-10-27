@@ -146,12 +146,21 @@ PHPVPN_TEST(WizardLayout, ErrorDetailHasStandardGapAndNoCollision) {
 }
 PHPVPN_TEST(TrayMenu, ExactOrderAndOnlyChosenStateActions) {
     constexpr MenuAction expected[]{MenuAction::toggle, MenuAction::separator, MenuAction::wizard, MenuAction::contracts,
-        MenuAction::edit, MenuAction::separator, MenuAction::info, MenuAction::statistics, MenuAction::separator, MenuAction::exit};
+        MenuAction::edit, MenuAction::separator, MenuAction::info, MenuAction::statistics, MenuAction::about,
+        MenuAction::separator, MenuAction::exit};
+    static_assert(std::size(expected) == configurationMenu.size());
     for (std::size_t i = 0; i < configurationMenu.size(); ++i) {
         PHPVPN_CHECK(configurationMenu[i].action == expected[i]);
         // Contracts loads one document directly. Only Statistics needs state.
         PHPVPN_CHECK(requiresConfigState(expected[i]) == (i == 7));
     }
+    PHPVPN_CHECK(configurationMenu[8].title == L"About");
+}
+PHPVPN_TEST(TrayMenu, AboutNamesBuildVersionLicenceAndCopyright) {
+    PHPVPN_CHECK(aboutTitle == L"About PHPVPN");
+    PHPVPN_CHECK(aboutHeading == L"PHPVPN version " PHPVPN_CLIENT_VERSION);
+    PHPVPN_CHECK(aboutText == L"PHPVPN is freeware and open source software.\nLicense: MIT\n"
+                              L"Copyright © www.pilandrome.com");
 }
 PHPVPN_TEST(EditorDocument, ExactUnmodifiedBytesAndUnambiguousRawNulRepair) {
     EditorDocument model;

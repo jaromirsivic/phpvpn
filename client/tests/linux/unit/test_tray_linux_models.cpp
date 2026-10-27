@@ -181,7 +181,7 @@ PHPVPN_TEST(tray_linux_indicator, menu_has_status_item_then_exact_ux04_order) {
     const auto menu = indicatorMenu(view);
     PHPVPN_CHECK((labels(menu) == std::vector<std::string>{
         "PHPVPN: disconnected", "-", "Connect", "-", "Configuration Wizard", "Communication contracts",
-        "Edit Config", "-", "Show Server Info", "Statistics", "-", "Exit"}));
+        "Edit Config", "-", "Show Server Info", "Statistics", "About", "-", "Exit"}));
     PHPVPN_CHECK(menu[0].kind == IndicatorMenuEntry::Kind::status);
     PHPVPN_CHECK(!menu[0].sensitive);
     for (std::size_t i = 2; i < menu.size(); ++i)
@@ -348,6 +348,14 @@ PHPVPN_TEST(tray_linux_text, utf8_catalogue_and_placeholders) {
                     std::string("Statistics is not available in this build of the PHPVPN tray."));
     PHPVPN_CHECK(std::string(kWatcherHintText).find("gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com") !=
                  std::string::npos);
+}
+
+PHPVPN_TEST(tray_linux_text, about_puts_version_first_then_licence_and_copyright) {
+    PHPVPN_CHECK_EQ(utf8(aboutTitle), std::string("About PHPVPN"));
+    PHPVPN_CHECK_EQ(aboutDialogText(), std::string("PHPVPN version " PHPVPN_CLIENT_VERSION "\n\n"
+                                                   "PHPVPN is freeware and open source software.\nLicense: MIT\n"
+                                                   "Copyright \xC2\xA9 www.pilandrome.com"));
+    PHPVPN_CHECK_EQ(menuLabel(MenuAction::about, false), std::string("About"));
 }
 
 PHPVPN_TEST(tray_linux_ipc, status_channel_delivers_in_order_and_abandon_revokes) {

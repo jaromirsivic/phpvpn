@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# PHP VPN 1.0.0 (MIT License, Copyright (c) www.pilandrome.com)
 """PHPVPN v1 relay. Python 3.13, uvicorn and cryptography. MIT licensed.
 
 Run this file directly, one process and one worker for either storage driver.

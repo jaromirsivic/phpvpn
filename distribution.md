@@ -12,6 +12,17 @@ Distribuce se sestavuje typicky po dokončení implementačních úprav určený
 
 Při každém sestavení se obsah projektového adresáře `dist` MUSÍ znovu vytvořit z aktuálních zdrojů. Pouhé překopírování nových souborů přes starou distribuci nestačí, protože by ponechalo odstraněné nebo přejmenované součásti. Výsledný strom NESMÍ obsahovat neplánované soubory ze staršího sestavení. Výslovnou výjimkou z aktuálnosti dokumentace je uchovaný anglický překlad protokolu podle oddílu Dokumentace. Uchovávané starší balíčky, zálohy a pracovní podklady patří mimo `dist`.
 
+### Verze
+
+Každá nová distribuce MUSÍ mít novou verzi PHP VPN. Před sestavením se vždy spustí `./tools/bump-version.ps1`, který zvýší poslední číslo verze (`X.Y.Z` na `X.Y.Z+1`). Jedním během přepíše všechna místa verze podle `Get-VersionLocations` v `tools/distribution-common.ps1`:
+- `VERSION` projektu v `client/CMakeLists.txt`, ze kterého ji přebírají tray, služba, CLI, Windows version resource i linuxové balíčky,
+- `Version:` RPM specu a nový záznam `X.Y.Z-1` v jeho `%changelog` i v `debian/changelog`,
+- hlavičky `.TH` manuálových stránek (verze a datum),
+- hlavičku na druhém řádku `phpvpn.php`, `phpvpn.py` a `phpvpn.js` ve tvaru `PHP VPN X.Y.Z (MIT License, Copyright (c) www.pilandrome.com)`,
+- `SERVER_VERSION` všech tří serverů, kterou server hlásí v odpovědích health a info.
+
+Pokud místa nemají stejnou výchozí verzi, skript nic nezmění. Protože linuxové balíčky nesou verzi a sestavují se z commitu, změna verze se MUSÍ commitnout před linuxovým buildem (`-Commit` vytvoří commit `Version X.Y.Z` jen z přepsaných souborů). Výjimka pro necommitnuté změny z oddílu Kdy distribuci sestavit se na změnu verze nevztahuje. `tools/make-distribution.ps1` odmítne sestavení, pokud se některé místo verze liší od verze klienta, a odmítne publikaci, pokud verze není vyšší než `releaseVersion` aktuálně publikovaného `dist`. S `-StagingOnly` tuto druhou neshodu pouze vypíše jako varování.
+
 Před obnovením obsahu se MUSÍ ověřit, že cílem je skutečně adresář `dist` pod kořenem vybraného projektu. Sestavení SMÍ připravit nový strom v odděleném pracovním adresáři a poté jím nahradit obsah `dist`. Neúplný nebo neověřený výsledek NESMÍ být označen za hotovou distribuci.
 
 ## Povinná struktura
@@ -129,6 +140,7 @@ V aktuální etapě jsou implementovanými cíli Windows x64 a Linux x64. Pro ma
 
 ## Postup sestavení a ověření
 
+0. Spustit `./tools/bump-version.ps1` a novou verzi commitnout podle oddílu Verze.
 1. Určit aktuální zdrojový stav určený k vydání a provést kontroly odpovídající změnám. Zaznamenat použité zdroje, verzi, platformu a výsledky ověření. Neprovedené testy se NESMĚJÍ vykazovat jako úspěšné.
 2. Sestavit klientské programy z těchto zdrojů, na linuxovém build hostiteli z téhož commitu linuxové balíčky, a připravit aktuální PHP, Python a Node.js serverové soubory, Python lock a návody. Připravit kořenový anglický `readme.txt`. Jen při výslovné žádosti o aktualizaci dokumentace přeložit celý aktuální `protocol.md` a uchovat překlad i hash zdroje. Pracovní build adresáře zůstávají mimo výslednou distribuci.
 3. Znovu vytvořit obsah `dist` a celou povinnou strukturu. Naplnit serverovou část, platformní klientské složky a `documentation` podle pravidel výše. Vždy zahrnout `documentation/readme.txt`, volitelně uchovaný anglický `documentation/protocol.md`.
@@ -137,6 +149,12 @@ V aktuální etapě jsou implementovanými cíli Windows x64 a Linux x64. Pro ma
 6. Předat přesnou cestu k výsledku a stručný stav ověření. Pokud se vytváří ZIP, jeho obsah MUSÍ odpovídat ověřenému výsledku a zachovat příslušnou adresářovou strukturu. Archiv a pracovní reporty se ukládají mimo `dist`, aby se při dalším sestavení nemísily s jeho obsahem.
 
 Kanonický vstup pro **celou distribuci** je [tools/make-distribution.ps1](tools/make-distribution.ps1). Vyžaduje explicitní existující CMake build z tohoto checkoutu a složku linuxových balíčků ze stejného commitu. Vždy znovu spustí sestavení Windows klienta, takže nebalí pouze nalezené staré binárky.
+
+Nejdřív se na Windows hostiteli zvýší a commitne verze:
+
+```powershell
+./tools/bump-version.ps1 -Commit
+```
 
 Linuxové balíčky se sestaví na linuxovém build hostiteli v checkoutu téhož commitu bez necommitnutých změn. Oba běhy zapisují do stejné složky, `<id>` je podle konvence `<verze>-<release>-<krátký commit>`:
 

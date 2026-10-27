@@ -196,6 +196,10 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
                 case IDM_STATISTICS:
                     self->startConfigAction(MenuAction::statistics);
                     return 0;
+                case IDM_ABOUT:
+                    showSystemMessage(window, aboutText.data(), aboutTitle.data(), SystemDialogIcon::information,
+                                      aboutHeading.data());
+                    return 0;
                 case IDM_EXIT: self->requestExit(); return 0;
                 default: break;
             }
@@ -221,6 +225,7 @@ void TrayApplication::showMenu(bool keyboard) {
             case MenuAction::edit: id = IDM_EDIT_CONFIG; break;
             case MenuAction::info: id = IDM_SHOW_INFO; break;
             case MenuAction::statistics: id = IDM_STATISTICS; break;
+            case MenuAction::about: id = IDM_ABOUT; break;
             case MenuAction::exit: id = IDM_EXIT; break;
             case MenuAction::separator: break;
         }

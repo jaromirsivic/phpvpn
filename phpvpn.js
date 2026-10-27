@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// PHP VPN 1.0.0 (MIT License, Copyright (c) www.pilandrome.com)
 'use strict';
 /*
  * PHPVPN v1 relay for Node.js. MIT licensed.

@@ -1,4 +1,5 @@
 <?php
+// PHP VPN 1.0.0 (MIT License, Copyright (c) www.pilandrome.com)
 
 /**
  * phpvpn v1 relay server.

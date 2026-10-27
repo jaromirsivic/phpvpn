@@ -134,6 +134,45 @@ function Get-ClientVersion([string]$Repository) {
     throw 'The client version was not found in client/CMakeLists.txt.'
 }
 
+# Every place that carries the product version, matched by exactly one occurrence of
+# Pattern (multiline). Group v is the version and the optional group d the manual date.
+# bump-version.ps1 rewrites these groups in the Replace entries and prepends a new entry
+# to both package changelogs, whose top entry is the remaining location.
+function Get-VersionLocations {
+    $version = '(?<v>\d+\.\d+\.\d+)'
+    $man = "^\.TH \S+ \d `"(?<d>\d{4}-\d{2}-\d{2})`" `"phpvpn $version`""
+    $header = "PHP VPN $version \(MIT License, Copyright \(c\) www\.pilandrome\.com\)\r?$"
+    return @(
+        @{ Path = 'client/CMakeLists.txt'; Pattern = "^\s*VERSION\s+$version\s*$"; Replace = $true }
+        @{ Path = 'client/packaging/linux/rpm/phpvpn.spec'; Pattern = "^Version:\s+$version\s*$"; Replace = $true }
+        @{ Path = 'client/packaging/linux/rpm/phpvpn.spec'; Pattern = "^%changelog\r?\n\* .+ - $version-1\r?$"; Replace = $false }
+        @{ Path = 'client/packaging/linux/debian/changelog'; Pattern = "\Aphpvpn \($version-1\)"; Replace = $false }
+        @{ Path = 'client/packaging/linux/man/phpvpn.1'; Pattern = $man; Replace = $true }
+        @{ Path = 'client/packaging/linux/man/phpvpn-tray.1'; Pattern = $man; Replace = $true }
+        @{ Path = 'client/packaging/linux/man/phpvpn-service.8'; Pattern = $man; Replace = $true }
+        @{ Path = 'phpvpn.php'; Pattern = "\A<\?php\r?\n// $header"; Replace = $true }
+        @{ Path = 'phpvpn.php'; Pattern = "^const SERVER_VERSION = '$version';"; Replace = $true }
+        @{ Path = 'phpvpn.py'; Pattern = "\A#!.*\r?\n# $header"; Replace = $true }
+        @{ Path = 'phpvpn.py'; Pattern = "^SERVER_VERSION = '$version'"; Replace = $true }
+        @{ Path = 'phpvpn.js'; Pattern = "\A#!.*\r?\n// $header"; Replace = $true }
+        @{ Path = 'phpvpn.js'; Pattern = "^    SERVER_VERSION: '$version',"; Replace = $true }
+    )
+}
+
+# Returns one problem per location that is missing, ambiguous or not at $Version.
+function Get-VersionLocationProblems([string]$Repository, [string]$Version) {
+    $problems = New-Object 'Collections.Generic.List[string]'
+    foreach ($location in Get-VersionLocations) {
+        $text = [IO.File]::ReadAllText((Join-Path $Repository $location.Path))
+        $found = [regex]::Matches($text, $location.Pattern, 'Multiline')
+        if ($found.Count -ne 1) { $problems.Add("$($location.Path): $($found.Count) version entries match $($location.Pattern)"); continue }
+        if ($found[0].Groups['v'].Value -cne $Version) {
+            $problems.Add("$($location.Path): version $($found[0].Groups['v'].Value) instead of $Version")
+        }
+    }
+    return ,$problems
+}
+
 function Test-DistributionRuntimePath([string]$RelativePath) {
     # Local operational state of a server started directly from dist: the Python venv and
     # control state, and the default Node.js disk queue next to phpvpn.js.

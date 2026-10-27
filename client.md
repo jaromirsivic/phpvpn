@@ -418,7 +418,7 @@ Všechny konfiguračně závislé položky zůstávají kliknutelné. Tabulka po
 | missing | návod k vytvoření, bez Connect | odeslat bez čtení souboru | create | Ano/Ne k vytvoření, po Ano zápis a editor | varování bez okna | návod k vytvoření |
 | služba nedostupná | konkrétní chyba služby/IPC | pokus o odeslání, při selhání viditelná chyba | vysvětlení, bez kontrol a Finish | vysvětlení nedostupnosti | vysvětlení nedostupnosti | vysvětlení nedostupnosti |
 
-Dosud neznámá konfigurace není missing, vyhodnotí se až v akci. Exit zůstává dostupné vždy. Otevřené Statistics dále používají paměťový get-status, změnu souboru na pozadí nesledují ani kvůli ní nevynulují cache. Nové zvolení Statistics opět provede jednorázovou kontrolu. Save úplně validuje odeslaný dokument včetně UTF-8 a velikosti a bezpečnost publikace, nikoli obsahovou platnost nebo revizní shodu dosavadního souboru. Smí tak opravit nevalidní obsah i uložit starší koncept podle pravidla poslední úspěšné publikace.
+Dosud neznámá konfigurace není missing, vyhodnotí se až v akci. Exit a About zůstávají dostupné vždy, About pouze zobrazí verzi klienta, licenci MIT a copyright bez IPC ([tray_UX.md](tray_UX.md)). Otevřené Statistics dále používají paměťový get-status, změnu souboru na pozadí nesledují ani kvůli ní nevynulují cache. Nové zvolení Statistics opět provede jednorázovou kontrolu. Save úplně validuje odeslaný dokument včetně UTF-8 a velikosti a bezpečnost publikace, nikoli obsahovou platnost nebo revizní shodu dosavadního souboru. Smí tak opravit nevalidní obsah i uložit starší koncept podle pravidla poslední úspěšné publikace.
 
 ### Atomický zápis: poslední úspěšné uložení vyhrává
 

@@ -10,7 +10,7 @@
 #include "platform/linux/paths_linux.h"
 
 namespace phpvpn::tray {
-// The shared catalogue is fixed ASCII, so a failed conversion is a programming error
+// The shared catalogue is fixed valid text, so a failed conversion is a programming error
 // that must stay visible rather than crash the tray: it yields an empty text.
 inline std::string utf8(std::wstring_view text) {
     auto converted = toUtf8(text);
@@ -40,10 +40,12 @@ inline std::string unavailableWindowText(MenuAction action) {
         case MenuAction::edit: name = "Edit Config"; break;
         case MenuAction::info: name = "Server information"; break;
         case MenuAction::statistics: name = "Statistics"; break;
-        case MenuAction::toggle: case MenuAction::separator: case MenuAction::exit: break;
+        case MenuAction::toggle: case MenuAction::separator: case MenuAction::about: case MenuAction::exit: break;
     }
     return std::string(name) + " is not available in this build of the PHPVPN tray.";
 }
+// GTK message dialogs have no separate heading, so the version leads the body text.
+inline std::string aboutDialogText() { return utf8(aboutHeading) + "\n\n" + utf8(aboutText); }
 inline constexpr std::string_view kErrorDetailUnavailableText =
     "The HTTP error detail is not available in this build of the PHPVPN tray.";
 }  // namespace phpvpn::tray

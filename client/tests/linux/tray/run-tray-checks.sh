@@ -77,7 +77,7 @@ P="python3 $here/tray_atspi.py"
 if [ "$mode" = fallback ]; then
     $P wait PHPVPN "PHPVPN: disconnected" 15 || fail "control window without disconnected status"
     $P dump | tee "$work/control.txt"
-    for label in Connect "Configuration Wizard" "Communication contracts" "Edit Config" "Show Server Info" Statistics Exit; do
+    for label in Connect "Configuration Wizard" "Communication contracts" "Edit Config" "Show Server Info" Statistics About Exit; do
         grep -q "button: .$label." "$work/control.txt" || fail "control window lacks $label"
     done
     pass "fallback control window with status and menu buttons"
@@ -125,7 +125,7 @@ else
     python3 "$here/sni_stub.py" inspect | tee "$work/sni1.txt"
     grep -q "IconName: .phpvpn-disconnected." "$work/sni1.txt" || fail "IconName not disconnected"
     grep -q "Title: .PHPVPN: disconnected." "$work/sni1.txt" || fail "Title not the status text"
-    grep -q "menu: PHPVPN: disconnected \[insensitive\] | - | Connect | - | Configuration Wizard | Communication contracts | Edit Config | - | Show Server Info | Statistics | - | Exit" "$work/sni1.txt" || fail "menu differs"
+    grep -q "menu: PHPVPN: disconnected \[insensitive\] | - | Connect | - | Configuration Wizard | Communication contracts | Edit Config | - | Show Server Info | Statistics | About | - | Exit" "$work/sni1.txt" || fail "menu differs"
     pass "SNI item, icon, title and dbusmenu layout"
     echo connect >"$work/control"
     sleep 9

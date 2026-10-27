@@ -29,6 +29,23 @@ $sourceEntry = @($cache | Where-Object { $_ -like 'CMAKE_HOME_DIRECTORY:INTERNAL
 if ($sourceEntry.Count -ne 1 -or [IO.Path]::GetFullPath($sourceEntry[0].Split('=',2)[1]) -ne (Join-Path $repository 'client')) {
     throw 'BuildDirectory was not configured from this checkout/client.'
 }
+# Every distribution is a new version made by tools/bump-version.ps1: all version
+# locations agree and the version is higher than the published dist.
+$clientVersion = Get-ClientVersion $repository
+$versionProblems = Get-VersionLocationProblems $repository $clientVersion
+if ($versionProblems.Count) {
+    throw ("Version locations differ from the client version $clientVersion, run tools/bump-version.ps1:`n" + ($versionProblems -join "`n"))
+}
+$publishedManifest = Join-Path $repository 'dist/client/Windows/x64/release-manifest.json'
+if (Test-Path -LiteralPath $publishedManifest -PathType Leaf) {
+    $publishedVersion = [string]([IO.File]::ReadAllText($publishedManifest) | ConvertFrom-Json).releaseVersion
+    if ([version]$clientVersion -le [version]$publishedVersion) {
+        $message = "Version $clientVersion is not higher than the published distribution $publishedVersion. " +
+            'Run tools/bump-version.ps1 and commit before the Linux package build.'
+        if (-not $StagingOnly) { throw $message }
+        Write-Warning "$message Accepted for -StagingOnly."
+    }
+}
 # Check the Linux package build before the long client build: checksums, the complete
 # package set (phpvpn and phpvpn-tray for Fedora and Ubuntu) and the source provenance.
 $linuxPackages = (Resolve-Path -LiteralPath $LinuxPackagesDirectory).Path

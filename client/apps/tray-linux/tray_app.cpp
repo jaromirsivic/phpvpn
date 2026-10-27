@@ -258,6 +258,9 @@ void TrayApp::onMenuAction(MenuAction action) {
             if (hooks_.openServerInfo) hooks_.openServerInfo();
             else showMessage(dialogParent(), unavailableWindowText(action), "PHPVPN", DialogIcon::information);
             break;
+        case MenuAction::about:
+            showMessage(dialogParent(), aboutDialogText(), utf8(aboutTitle), DialogIcon::information);
+            break;
         case MenuAction::exit: requestExit(); break;
         case MenuAction::separator: break;
     }
