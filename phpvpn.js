@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PHP VPN 1.0.0 (MIT License, Copyright (c) www.pilandrome.com)
+// PHP VPN 1.0.1 (MIT License, Copyright (c) www.pilandrome.com)
 'use strict';
 /*
  * PHPVPN v1 relay for Node.js. MIT licensed.
@@ -24,7 +24,7 @@
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONFIG = Object.freeze({
-    SERVER_VERSION: '1.0.0',
+    SERVER_VERSION: '1.0.1',
     // Empty means the public default, not an absent secret. Replace before use.
     SERVER_SECRET: 'CHANGE_THIS_SERVER_SECRET',
     // VPN address -> exactly 64 lowercase hex characters (32 bytes).

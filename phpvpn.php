@@ -1,5 +1,5 @@
 <?php
-// PHP VPN 1.0.0 (MIT License, Copyright (c) www.pilandrome.com)
+// PHP VPN 1.0.1 (MIT License, Copyright (c) www.pilandrome.com)
 
 /**
  * phpvpn v1 relay server.
@@ -32,7 +32,7 @@ if (PHP_INT_SIZE < 8) {
 // ---------------------------------------------------------------------------
 
 /** Informative SemVer version of this server application. */
-const SERVER_VERSION = '1.0.0';
+const SERVER_VERSION = '1.0.1';
 
 /**
  * Single server secret shared with authorized clients.
