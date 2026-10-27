@@ -25,6 +25,10 @@ image=${1:?usage: package-install-container.sh fedora:<N>|ubuntu:24.04 <folder-r
 first=$(cd "${2:?folder of release 1}" && pwd)
 second=$(cd "${3:?folder of release 2}" && pwd)
 engine=${PHPVPN_CONTAINER_ENGINE:-podman}
+# The client version of both folders, as an extended regular expression.
+version=$(sed -n 's/.*"releaseVersion": *"\([0-9.]*\)".*/\1/p' "$first/release-manifest.json")
+[ -n "$version" ] || { echo "release-manifest.json of $first has no releaseVersion" >&2; exit 2; }
+version_pattern=$(printf '%s' "$version" | sed 's/\./\\./g')
 
 case $image in
     fedora:[0-9]*)
@@ -211,7 +215,7 @@ if ls "$first"/phpvpn-tray[-_]* > /dev/null 2>&1 && ls "$second"/phpvpn-tray[-_]
     for dependency in $tray_gui_dependencies; do
         check "phpvpn-tray depends on $dependency" "$tray_requires | grep -qF '$dependency'"
     done
-    check "phpvpn-tray requires the exact phpvpn release" "$tray_requires | grep -Eq '^ *phpvpn(\(x86-64\))? *[(]?= *1\.0\.0-1\)?$'"
+    check "phpvpn-tray requires the exact phpvpn release" "$tray_requires | grep -Eq '^ *phpvpn(\(x86-64\))? *[(]?= *$version_pattern-1\)?$'"
     check "the phpvpn package still has no graphical dependency" "! $base_requires | grep -Eiq 'gtk|gdk|ayatana|libX|wayland'"
     check "phpvpn and phpvpn-service still load no graphical library" '! ldd /usr/bin/phpvpn /usr/libexec/phpvpn/phpvpn-service | grep -Eiq "gtk|gdk|libX|wayland|ayatana"'
     for arguments in "--help" "" "--show-window"; do

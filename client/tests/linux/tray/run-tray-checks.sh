@@ -81,6 +81,19 @@ if [ "$mode" = fallback ]; then
         grep -q "button: .$label." "$work/control.txt" || fail "control window lacks $label"
     done
     pass "fallback control window with status and menu buttons"
+    $P click PHPVPN About
+    for _ in $(seq 50); do
+        $P dump >"$work/about.txt" 2>&1
+        grep -q "window .About PHPVPN." "$work/about.txt" && break
+        sleep 0.2
+    done
+    grep -q "window .About PHPVPN." "$work/about.txt" || fail "About did not open"
+    for text in "PHPVPN version [0-9]" "freeware and open source software" "License: MIT" "www.pilandrome.com"; do
+        grep -q "$text" "$work/about.txt" || { cat "$work/about.txt"; fail "About lacks: $text"; }
+    done
+    $P click "About PHPVPN" OK
+    $P absent "About PHPVPN" 5 || fail "OK did not close About"
+    pass "About shows the version, licence and copyright and closes with OK"
     $P click PHPVPN Connect
     $P wait "PHPVPN connection" "Connecting client to the server." 10 || fail "no Connect progress window"
     $P wait "PHPVPN connection" "http://127.0.0.1/phpvpn.php" 10 || fail "Server URL detail missing"
