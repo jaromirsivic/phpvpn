@@ -183,3 +183,89 @@ sh tests/e2e/linux/package-install-container.sh ubuntu:24.04 <rozbalena-kopie>/c
 Test ověřuje `--verify-only`, odmítnutí upravených a nezapsaných souborů, instalaci, běžící službu, `phpvpn status`, upgrade na vyšší release se zachováním konfigurace, balíček tray a odinstalaci s daty i bez nich. `<slozka-release-2>` je složka téže verze s vyšším release (balíčky sestavené s `PHPVPN_PACKAGE_RELEASE=2`, složené `make-linux-dist.ps1` pod `work`). Slouží pouze k testu upgrade a do distribuce nepatří. Instalace do skutečného systému, grafický tray a AppIndicator na Fedora GNOME se ověřují podle [client.md](client.md), neprovedené platformy a testy se uvádějí v datovaném reportu.
 
 Status stránka je vložená přímo v `phpvpn.php`, `phpvpn.py` i `phpvpn.js`. Žádná serverová distribuce nepotřebuje `assets/index.html`. PHP, Python a Node.js nepoužívají vzájemně čitelný diskový formát, výměna implementace nad rozpracovanými frontami není podporovaná migrace.
+
+## distribuce zdrojových kódů do gitpilandrome
+
+Tato kapitola je postup pro AI agenta při výslovném zadání zkopírovat zdrojovou
+verzi projektu. Samotná úprava tohoto dokumentu distribuci nespouští.
+Zdroj `D:\git\phpvpn` patří do cílového klonu `D:\gitpilandrome\phpvpn`
+(remote `https://github.com/pilandrome/phpvpn.git`).
+
+Pro tuto konkrétní operaci je autoritativní tato kapitola. Metodika
+[create_source_code_distribution.md](create_source_code_distribution.md)
+slouží jako podklad pro nalezení potřebných vstupů a závislostí. Nepřebírej z ní
+cíl `C:\gitsigma`, rotaci `phpvpn_old` ani vyprázdnění cílového klonu.
+Rozsah přenosu určuje nezbytnost podle pravidel níže. Anglické README a další
+přibalené popisy a návody jsou zde povinné a jejich překlad je součástí zadání,
+neuplatňuje se volitelný překlad s dalším souhlasem. Výslovně je povoleno zachovat
+veřejné výchozí hodnoty PHPVPN potřebné ke spuštění: výchozí server secret,
+výchozí tokeny, přístupové klíče a výchozí hesla. Tato výjimka zachovává současné
+chování klienta a serverů, neopravňuje k přenosu skutečných lokálních tajemství.
+Předchozí pravidla běžné binární distribuce v tomto dokumentu se nemění.
+
+Zahrň potřebné zdroje klienta i serverů, build a instalační šablony, konfigurace,
+prostředky, dependency locky a návody. Například `client/packaging/linux/dist`
+obsahuje zdrojové vstupy a nelze jej vyřadit jen podle názvu `dist`.
+Nepřebírej certifikáty a hotové DLL z binární distribuce. Dokumentuj získání
+potřebných externích komponent a nastavení vlastní podpisové identity.
+Pokud kompletní binární sestavení vyžaduje commit příjemce, uveď tento předpoklad
+v README. Distribuční agent jej nesmí sám vytvořit v cílovém klonu ani nahrazovat
+původní historií, chybějící ověření musí přiznat. Kořenový `readme.txt` určený
+binárnímu packageru zachovej v jeho roli a pro zdrojovou kopii přidej anglický
+`README.md`, pokud stávající soubor popisuje pouze instalaci hotových balíčků.
+
+1. Nejdřív ověř skutečný zdroj, cílový Git remote a stav obou pracovních stromů.
+   Název cílové složky neodvozuj automaticky od názvu zdroje. Kopíruj aktuální
+   zamýšlený obsah včetně potřebných necommitnutých změn. Neměň zdrojovou větev,
+   neprováděj reset, stash ani čištění. Při nejasném rozpracovaném obsahu vyjasni rozsah.
+2. Sestav explicitní inventář nezbytných vstupů podle skutečných závislostí,
+   včetně skrytých, nesledovaných a ignorovaných souborů. Zahrň jen zdroje,
+   prostředky, konfigurace, generátory a skripty potřebné k sestavení nebo spuštění,
+   dále README, potřebné návody a licence. Pokud je sestavení vyžaduje, zahrň také
+   zdrojové testy a jejich bezpečné vstupy. Samotný seznam souborů v Gitu nestačí.
+   Chybějící submodul nebo skutečný obsah Git LFS doplň, pouhý pointer nestačí.
+3. Zachovej manifesty závislostí, existující lock soubory a potřebné licenční
+   texty, copyright a NOTICE. Verze závislostí při kopírování neaktualizuj.
+   Stažitelné závislosti nahraď dokumentovaným získáním konkrétní kompatibilní
+   verze a ověřením integrity, nikoli kopií místní instalace nebo cache.
+   Nejasná redistribuční práva vyřeš před předáním.
+4. README a další přibalené popisy a návody musí být anglicky. Aktuální neanglické
+   části při přípravě distribuční kopie přelož úplně do angličtiny, původní
+   dokumenty neměň. Zachovej příkazy, identifikátory a význam, oprav a ověř odkazy.
+   Povinné licenční texty svévolně nepřekládej. README musí uvést předpoklady,
+   verze nástrojů, instalaci závislostí a přesné příkazy pro sestavení a spuštění.
+5. Vnitřní cesty musí být relativní a fungovat po přesunutí celého projektu.
+   Žádná část nesmí potřebovat absolutní cestu původního počítače ani soubor mimo
+   předaný projekt. To zahrnuje konfigurace, skripty, prostředky a odkazy přes
+   symlinky či junctiony. Dokumentované standardní nástroje a instalovatelné
+   závislosti jsou předpoklady prostředí, ne vazba na autorovu lokální instalaci.
+   Cesty zdroje a cíle uvedené zde slouží pouze pro kopírování.
+6. Nekopíruj žádné certifikáty, soukromé klíče ani skutečná lokální hesla,
+   přístupové tokeny, API klíče a jiné tajné údaje, a to ani uvnitř zdrojů,
+   dokumentace či archivů. Výjimkou jsou pouze veřejné výchozí hodnoty PHPVPN
+   potřebné ke spuštění podle vymezení výše. U každé ponechané hodnoty ověř její
+   původ v aktuální výchozí implementaci a zaznamenej jej v reportu. Výjimku
+   nerozšiřuj na jiné hodnoty stejného pole nebo souboru a nikdy na certifikáty
+   či soukromé klíče. Prohlédni obsah, nestačí filtr přípon. Přibal bezpečné
+   konfigurační šablony a popiš nahrazení veřejných výchozích hodnot vlastními
+   údaji před skutečným nasazením.
+   Pokud jejich odstranění naruší funkčnost, vyřeš přenositelnou konfiguraci
+   a ověř ji před předáním, neobcházej bezpečnostní kontroly.
+7. Vynech sestavené programy a balíčky, build a testovací výstupy, cache,
+   virtuální prostředí, `node_modules`, logy, provozní data, zálohy a pracovní
+   poznámky. Rozhoduj podle účelu, nikoli jen názvu adresáře nebo přípony.
+   Nutné zdrojové obrázky, modely a textové spouštěcí skripty nejsou build odpad.
+8. Připrav vybraný obsah v nové dočasné složce mimo zdroj i cílový klon.
+   Nikdy nepřenášej zdrojové `.git` a nemaž ani nepřepisuj cílové `.git`.
+   Před zápisem do cíle porovnej konkrétní soubory a znovu ověř jeho stav.
+   Zachovej existující nesouvisející i rozpracované změny. Při kolizi vyžádej
+   rozhodnutí o konkrétním souboru. Nepoužívej plošné mazání ani zrcadlení cíle.
+   Odstranění prokazatelně zastaralých distribuovaných souborů řeš jednotlivě
+   podle inventáře, nikdy podle předpokladu, že cílový klon je prázdný.
+9. Úplnost a přenositelnost ověř z čisté kopie v jiné cestě podle anglického README,
+   bez čtení zdrojového stromu a bez původních cache či prostředí. Ověř sestavení
+   a základní spuštění aplikace, u modelů otevření a funkční ovládání s potřebnými
+   texturami. Výstupy ověření ukládej mimo předávaný obsah. Předání zakonči
+   kontrolou cílového diffu, inventáře, odkazů a nepřítomnosti zakázaných údajů.
+   Uveď cílovou cestu, změněné soubory, provedené i neprovedené kontroly a překážky.
+   Bez samostatného pokynu nevytvářej commit, push, release ani jinou publikaci.
