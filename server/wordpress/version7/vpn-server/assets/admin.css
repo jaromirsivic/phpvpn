@@ -1,0 +1,38 @@
+.vpn-server .vpn-server-key {
+	width: 36em;
+	max-width: 100%;
+	font-size: 12px;
+}
+
+.vpn-server .vpn-server-inline {
+	display: inline-block;
+	margin: 0 4px 4px 0;
+}
+
+.vpn-server .vpn-server-clients td {
+	vertical-align: middle;
+}
+
+.vpn-server .vpn-server-snippet {
+	padding: 8px 12px;
+	overflow-x: auto;
+	background: #f6f7f7;
+	border: 1px solid #dcdcde;
+}
+
+.vpn-server .vpn-server-checks td:first-child {
+	width: 7em;
+	font-weight: 600;
+}
+
+.vpn-server .vpn-server-check-ok {
+	color: #00a32a;
+}
+
+.vpn-server .vpn-server-check-warning {
+	color: #996800;
+}
+
+.vpn-server .vpn-server-check-error {
+	color: #d63638;
+}

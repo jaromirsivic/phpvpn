@@ -156,6 +156,11 @@ function Get-VersionLocations {
         @{ Path = 'phpvpn.py'; Pattern = "^SERVER_VERSION = '$version'"; Replace = $true }
         @{ Path = 'phpvpn.js'; Pattern = "\A#!.*\r?\n// $header"; Replace = $true }
         @{ Path = 'phpvpn.js'; Pattern = "^    SERVER_VERSION: '$version',"; Replace = $true }
+        @{ Path = 'server/wordpress/version7/vpn-server/vpn-server.php'; Pattern = "^ \* Version:\s+$version\s*$"; Replace = $true }
+        @{ Path = 'server/wordpress/version7/vpn-server/vpn-server.php'; Pattern = "^const VERSION = '$version';"; Replace = $true }
+        @{ Path = 'server/wordpress/version7/vpn-server/readme.txt'; Pattern = "^Stable tag: $version\s*$"; Replace = $true }
+        @{ Path = 'server/wordpress/version7/vpn-server/includes/relay-core.php'; Pattern = "^ \* PHP VPN relay core of the VPN Server plugin, version $version\.\s*$"; Replace = $true }
+        @{ Path = 'server/wordpress/version7/vpn-server/includes/relay-core.php'; Pattern = "^const SERVER_VERSION = '$version';"; Replace = $true }
     )
 }
 

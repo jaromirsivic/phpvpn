@@ -1,0 +1,85 @@
+=== VPN Server ===
+Contributors: pilandrome
+Tags: vpn, relay, tunnel, private network, encryption
+Requires at least: 6.6
+Tested up to: 7.1
+Requires PHP: 8.2
+Stable tag: 1.0.1
+License: MIT
+License URI: https://opensource.org/license/mit
+
+Runs a PHP VPN relay server on your site. PHP VPN clients for Windows and Linux connect their devices into one private network through it.
+
+== Description ==
+
+VPN Server turns a WordPress site into the relay server of PHP VPN. PHP VPN connects your own computers and servers into one private IPv4 network (10.99.99.0/24) over ordinary HTTPS, so it works wherever a web page can be opened, even behind NAT and firewalls that allow nothing else.
+
+The plugin does not route your devices to the internet and does not hide your public IP address. It only relays traffic between your own PHP VPN clients.
+
+**How it works**
+
+* Every client polls the Server URL over HTTP or HTTPS and exchanges small encrypted messages with it.
+* Payloads are encrypted end to end with AES-256-GCM between each pair of clients. The relay stores only ciphertext and cannot read it, the payload keys never reach the server.
+* Requests are authenticated with HMAC-SHA-256 using the server secret and a per client access key.
+* Messages wait in a short lived queue on disk for at most 60 seconds and are deleted after delivery.
+
+**Features**
+
+* Settings, VPN Server: Server URL, clients with VPN addresses and access keys, server secret and storage folder.
+* Download a ready config.json for each client.
+* Checks and a self test of the permalinks, HTTPS, the endpoint and the storage protection.
+* Fast: relay requests are answered right after the plugins load, before the theme. The optional fast route answers them even before other plugins load.
+* No external services, no tracking, no ads. All cryptography runs in plain PHP without extensions.
+
+The PHP VPN clients and the protocol specification are available from [www.pilandrome.com](https://www.pilandrome.com).
+
+== Installation ==
+
+1. Install and activate the plugin.
+2. Use pretty permalinks (Settings, Permalinks, anything except Plain). The Server URL does not work with plain permalinks.
+3. Open Settings, VPN Server, add a client for every device and download its config.json.
+4. Import config.json in the PHP VPN client, or copy Server URL, server secret, VPN address and access key into its Configuration Wizard.
+5. Set up the communication contracts and payload keys between the clients in the clients themselves.
+6. On nginx add the rule shown under Storage protection, then press Run self test.
+
+== Frequently Asked Questions ==
+
+= Can I run it on shared hosting? =
+
+Technically yes, the plugin needs only 64-bit PHP 8.2 and a writable folder. Many hosting providers forbid proxy, relay or VPN services in their terms, though. Check the terms of your provider first.
+
+= Why do the clients poll so often? =
+
+PHP cannot keep connections open on most hosts, so the clients ask for new messages every 50 to 3200 milliseconds. Each poll is a short request. Use the fast route on sites with many plugins and a PHP opcode cache for best response times.
+
+= Where are the messages stored? =
+
+In a folder with a random name inside wp-content/uploads, protected by .htaccess and web.config files. nginx needs the rule shown in the settings. You can move the folder outside the web root in the settings.
+
+= Why does the Server URL have no .php file name? =
+
+The PHP VPN client appends ?action=... to the Server URL itself, so the Server URL is a plain path such as https://example.com/vpn-relay/.
+
+= Can a browser open the Server URL? =
+
+Yes. It shows a status page with a key generator and the request headers that the Configuration Wizard of the client can reuse. You can turn the page off.
+
+= What does the fast route do? =
+
+It writes wp-content/mu-plugins/vpn-server-fast-route.php, which answers relay requests before the regular plugins load. You install and remove it in the settings, and deactivating VPN Server removes it.
+
+== Privacy ==
+
+The plugin stores its settings (server secret, client VPN addresses and access keys) in the WordPress options table. Its storage folder holds encrypted client messages for at most 60 seconds, and per client a small info.json file with the time it was last seen and the masked list of its communication contracts, which the client replaces whenever it publishes a new one. Uninstalling the plugin deletes the storage folder it created. It does not store IP addresses, does not use cookies and does not contact any external service.
+
+The status page shows a visitor the request headers of their own request (without cookies, credentials and proxy headers), so they can copy them into the client. The self test in the settings sends requests from the site to its own Server URL and storage folder only.
+
+== Changelog ==
+
+= 1.0.1 =
+* First release, PHP VPN protocol version 1.
+
+== Upgrade Notice ==
+
+= 1.0.1 =
+First release.

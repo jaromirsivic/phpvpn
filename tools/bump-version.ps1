@@ -2,7 +2,7 @@
 Raises the last number of the PHP VPN version (X.Y.Z -> X.Y.Z+1) before a new distribution.
 Rewrites every location of Get-VersionLocations: the client CMake project, the RPM spec,
 the manual pages, the version header and SERVER_VERSION of the PHP, Python and Node.js
-servers, and prepends a release entry to the RPM and Debian changelogs. All locations must
+servers, the VPN Server WordPress plugin (header, Stable tag, generated relay core), and prepends a release entry to the RPM and Debian changelogs. All locations must
 hold the same current version, otherwise nothing is written. Run it as the first step of a
 distribution, before the Linux package build, and commit the result (or pass -Commit).
 #>

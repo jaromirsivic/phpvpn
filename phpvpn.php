@@ -22,10 +22,15 @@ declare(strict_types=1);
 
 namespace PhpVpn;
 
+// @wp-skip-begin
+// Regions between @wp-skip-begin and @wp-skip-end belong to this standalone file only.
+// tools/build-wordpress-plugin.py copies everything else into the WordPress plugin core.
+
 if (PHP_INT_SIZE < 8) {
     echo '<h1>This PHP script is supported only on 64-bit PHP.</h1>';
     exit;
 }
+// @wp-skip-end
 
 // ---------------------------------------------------------------------------
 // 1. Configuration header. This is the only part an administrator edits.
@@ -34,6 +39,7 @@ if (PHP_INT_SIZE < 8) {
 /** Informative SemVer version of this server application. */
 const SERVER_VERSION = '1.0.1';
 
+// @wp-skip-begin The WordPress plugin keeps these four values in its settings.
 /**
  * Single server secret shared with authorized clients.
  * Replace the default with a strong random value. An empty string is normalized
@@ -63,15 +69,16 @@ const ACCESS_KEYS = [
     '10.99.99.15' => '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f',
 ];
 
-/** Storage backend. Only 'disk' exists in v1. */
-const STORAGE_DRIVER = 'disk';
-
 /** Storage root, relative to this file. Old ./phpvpn data is NOT migrated automatically. */
 const BUFFER_DIRECTORY = './phpvpn_data';
 
 /** true serves the root status page. false returns 404 not_found for GET/HEAD,
  * without HTML. All REST API actions remain available. */
 const STATUS_PAGE_ENABLED = true;
+// @wp-skip-end
+
+/** Storage backend. Only 'disk' exists in v1. */
+const STORAGE_DRIVER = 'disk';
 
 /** VPN address space. Changing it requires the same change on every participant. */
 const VPN_ADDRESS_PREFIX = '10.99.99.';
@@ -109,6 +116,7 @@ const PROTECT_BUFFER_DIRECTORY = true;
 // 2. Runtime hardening
 // ---------------------------------------------------------------------------
 
+// @wp-skip-begin Process wide settings are allowed only in the standalone file.
 final class Runtime
 {
     private static bool $initialized = false;
@@ -190,11 +198,16 @@ final class Runtime
         return $n;
     }
 }
+// @wp-skip-end
 
 // ---------------------------------------------------------------------------
 // 3. Filesystem helpers. None of them ever throws or emits output.
 // ---------------------------------------------------------------------------
 
+// The queue needs flock(), exclusive creation, fsync and atomic rename() on its own storage
+// root, which WP_Filesystem does not provide. Paths are built only from the configured root and
+// validated names, never from request text.
+// phpcs:disable WordPress.WP.AlternativeFunctions
 final class Fs
 {
     public static function isDir(string $path): bool
@@ -264,6 +277,8 @@ final class Fs
         return $entries;
     }
 }
+
+// phpcs:enable WordPress.WP.AlternativeFunctions
 
 // ---------------------------------------------------------------------------
 // 4. Time
@@ -1196,10 +1211,22 @@ final class Config
     ) {
     }
 
+    // @wp-skip-begin Standalone configuration header, the WordPress plugin passes values.
     public static function fromConstants(): self
     {
+        return self::fromValues(SERVER_SECRET, ACCESS_KEYS, self::resolveBufferDirectory(BUFFER_DIRECTORY));
+    }
+    // @wp-skip-end
+
+    /**
+     * Validates one configuration. Embedding hosts, for example the WordPress plugin, call it directly.
+     *
+     * @param array<mixed,mixed> $hexAccessKeys address to 64 lowercase hexadecimal characters
+     * @param string $bufferDirectory absolute storage root
+     */
+    public static function fromValues(string $configured, array $hexAccessKeys, string $bufferDirectory): self
+    {
         // Chapter 3.2, only an exactly empty string is normalized.
-        $configured = SERVER_SECRET;
         $secret = $configured;
         if ($secret === '') {
             $secret = 'CHANGE_THIS_SERVER_SECRET';
@@ -1229,7 +1256,7 @@ final class Config
         }
 
         $keys = [];
-        foreach (ACCESS_KEYS as $address => $hex) {
+        foreach ($hexAccessKeys as $address => $hex) {
             if (!is_string($address) || !Validators::isVpnAddress($address)) {
                 throw new ConfigException('access key address');
             }
@@ -1239,7 +1266,7 @@ final class Config
             $keys[$address] = (string) hex2bin($hex);
         }
 
-        return new self($configured, $secret, $keys, self::resolveBufferDirectory(BUFFER_DIRECTORY));
+        return new self($configured, $secret, $keys, rtrim($bufferDirectory, '\\/'));
     }
 
     public function withBufferDirectory(string $directory): self
@@ -1287,6 +1314,7 @@ final class Config
         return $secret === 'CHANGE_THIS_SERVER_SECRET' || $secret === str_repeat("\x00", strlen($secret)) || $secret === str_repeat('0', strlen($secret));
     }
 
+    // @wp-skip-begin
     private static function resolveBufferDirectory(string $path): string
     {
         if (preg_match('~^([A-Za-z]:[\\\\/]|\\\\\\\\|/)~', $path) === 1) {
@@ -1295,6 +1323,7 @@ final class Config
         $relative = preg_replace('~^\./~', '', $path) ?? $path;
         return rtrim(__DIR__ . DIRECTORY_SEPARATOR . $relative, '\\/');
     }
+    // @wp-skip-end
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,6 +1444,9 @@ interface Storage
     public function touchLastSeenBestEffort(string $client, int $nowMs): void;
 }
 
+// Queue files need locks and atomic renames, see section 3. The HTTP layer below streams
+// php://input, php://output and php://temp, which are not files of the site.
+// phpcs:disable WordPress.WP.AlternativeFunctions
 final class DiskStorage implements Storage
 {
     private const BATCH_PATTERN =
@@ -1804,7 +1836,8 @@ final class DiskStorage implements Storage
         ];
     }
 
-    private function writeGuards(): void
+    /** Missing guards only, an existing file is never replaced. Embedding hosts call it for a folder that already exists. */
+    public function writeGuards(): void
     {
         Fs::writeFileIfMissing(
             $this->root . DIRECTORY_SEPARATOR . '.htaccess',
@@ -1872,7 +1905,8 @@ final class HttpResponseWriter implements ResponseWriter
         if ($this->suppressBody || $data === '') {
             return;
         }
-        echo $data;
+        // Exact protocol bytes: JSON and NDJSON covered by HMAC tags, or HTML escaped by its producer.
+        echo $data; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
     }
 
     public function copyFrom($stream): int
@@ -2029,6 +2063,7 @@ final class Request
     ) {
     }
 
+    // @wp-skip-begin The WordPress plugin builds the request from sanitized superglobals itself.
     public static function fromGlobals(): self
     {
         $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
@@ -2043,6 +2078,7 @@ final class Request
             new PhpInput(),
         );
     }
+    // @wp-skip-end
 
     /** Reads at most $max bytes, returns null when the body is larger. */
     public function readBody(int $max): ?string
@@ -2063,10 +2099,13 @@ final class Request
     }
 }
 
+// phpcs:enable WordPress.WP.AlternativeFunctions
+
 // ---------------------------------------------------------------------------
 // 14. Handlers
 // ---------------------------------------------------------------------------
 
+// @wp-skip-begin The WordPress plugin renders its own status page.
 final class StatusPageHandler
 {
     /** @return array<string|int, string> request headers as received by PHP */
@@ -2106,6 +2145,7 @@ STATUS_HTML;
         $writer->write($html);
     }
 }
+// @wp-skip-end
 
 final class HealthHandler
 {
@@ -2578,6 +2618,8 @@ final class DataHandler
 
     private function emitBatch(ResponseWriter $writer, ClaimedBatch $batch): bool
     {
+        // Streams a claimed queue batch from the storage root, see section 3.
+        // phpcs:disable WordPress.WP.AlternativeFunctions
         $handle = @fopen($batch->path, 'rb');
         if ($handle === false) {
             return false;
@@ -2588,6 +2630,7 @@ final class DataHandler
         }
         $copied = $writer->copyFrom($handle);
         @fclose($handle);
+        // phpcs:enable WordPress.WP.AlternativeFunctions
         Fs::unlink($batch->path);
         // A short copy means a truncated or damaged batch file, the response must not be completed.
         return $copied === $batch->bytes;
@@ -2608,36 +2651,53 @@ final class DataHandler
 
 final class Application
 {
+    // @wp-skip-begin Standalone entry point, the WordPress plugin calls handleRoot and handleAction.
     public function handle(Request $request, ResponseWriter $writer): void
     {
-        $method = $request->method;
-        $action = $request->action;
-
-        if ($action === null || $action === '') {
-            if ($method === 'GET' || $method === 'HEAD') {
-                if (!STATUS_PAGE_ENABLED) {
-                    Http::error($writer, 404, 'not_found');
-                    return;
-                }
-                $insecure = self::isConfiguredSecretInsecure();
-                (new StatusPageHandler())->handle($writer, $insecure, StatusPageHandler::receivedHeaders());
-                return;
-            }
-            Http::error($writer, 405, 'method_not_allowed', ['Allow' => 'GET, HEAD']);
+        if ($request->action === null || $request->action === '') {
+            $statusPage = STATUS_PAGE_ENABLED
+                ? static fn() => (new StatusPageHandler())->handle(
+                    $writer,
+                    self::isSecretInsecure(SERVER_SECRET),
+                    StatusPageHandler::receivedHeaders()
+                )
+                : null;
+            self::handleRoot($request, $writer, $statusPage);
             return;
         }
+        $this->handleAction($request, $writer, static fn(): Config => Config::fromConstants());
+    }
+    // @wp-skip-end
 
+    /** The root URL without an action, $statusPage null means a disabled status page. */
+    public static function handleRoot(Request $request, ResponseWriter $writer, ?callable $statusPage): void
+    {
+        if ($request->method === 'GET' || $request->method === 'HEAD') {
+            if ($statusPage === null) {
+                Http::error($writer, 404, 'not_found');
+                return;
+            }
+            $statusPage();
+            return;
+        }
+        Http::error($writer, 405, 'method_not_allowed', ['Allow' => 'GET, HEAD']);
+    }
+
+    /** @param callable(): Config $configFactory may throw ConfigException */
+    public function handleAction(Request $request, ResponseWriter $writer, callable $configFactory): void
+    {
+        $action = (string) $request->action;
         if ($action !== 'health' && $action !== 'info' && $action !== 'data') {
             Http::error($writer, 404, 'not_found');
             return;
         }
-        if ($method !== 'POST') {
+        if ($request->method !== 'POST') {
             Http::error($writer, 405, 'method_not_allowed', ['Allow' => 'POST']);
             return;
         }
 
         try {
-            $config = Config::fromConstants();
+            $config = $configFactory();
         } catch (ConfigException) {
             Http::error($writer, 503, 'server_misconfigured');
             return;
@@ -2677,9 +2737,8 @@ final class Application
     }
 
     /** The status page must never depend on full configuration validation, chapter 5.1. */
-    private static function isConfiguredSecretInsecure(): bool
+    public static function isSecretInsecure(string $configured): bool
     {
-        $configured = SERVER_SECRET;
         if ($configured === '') {
             return true;
         }
@@ -2687,6 +2746,7 @@ final class Application
             || $configured === str_repeat('0', strlen($configured));
     }
 
+    // @wp-skip-begin
     public static function runFromGlobals(): void
     {
         Runtime::init();
@@ -2695,8 +2755,11 @@ final class Application
         Runtime::bindWriter($writer);
         (new Application())->handle($request, $writer);
     }
+    // @wp-skip-end
 }
 
+// @wp-skip-begin
 if (!defined('PHPVPN_NO_AUTORUN')) {
     Application::runFromGlobals();
 }
+// @wp-skip-end

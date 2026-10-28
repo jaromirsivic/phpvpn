@@ -1,0 +1,459 @@
+# Copyright (C) 2026 pilandrome.com
+# This file is distributed under the MIT.
+msgid ""
+msgstr ""
+"Project-Id-Version: VPN Server 1.0.1\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/vpn-server\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-10-28T01:59:27+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.12.0\n"
+"X-Domain: vpn-server\n"
+
+#. Plugin Name of the plugin
+#: vpn-server.php
+#: includes/class-admin.php:60
+#: includes/class-admin.php:61
+#: includes/class-admin.php:122
+msgid "VPN Server"
+msgstr ""
+
+#. Plugin URI of the plugin
+#. Author URI of the plugin
+#: vpn-server.php
+msgid "https://www.pilandrome.com"
+msgstr ""
+
+#. Description of the plugin
+#: vpn-server.php
+msgid "Runs a PHP VPN relay server on this site for the PHP VPN Windows and Linux clients."
+msgstr ""
+
+#. Author of the plugin
+#: vpn-server.php
+msgid "pilandrome.com"
+msgstr ""
+
+#: includes/class-admin.php:76
+msgid "Settings"
+msgstr ""
+
+#: includes/class-admin.php:95
+msgid "Copied"
+msgstr ""
+
+#: includes/class-admin.php:124
+msgid "This site relays encrypted traffic between PHP VPN clients. The relay never sees the payload: clients encrypt it with keys that only they know."
+msgstr ""
+
+#: includes/class-admin.php:145
+msgid "Settings saved."
+msgstr ""
+
+#: includes/class-admin.php:146
+msgid "The server secret was changed. Update serverSecret in every client."
+msgstr ""
+
+#: includes/class-admin.php:147
+msgid "Client added. Download its configuration and import it in the client."
+msgstr ""
+
+#: includes/class-admin.php:148
+msgid "A new access key was generated. Update accessKey in that client."
+msgstr ""
+
+#: includes/class-admin.php:149
+msgid "Client removed."
+msgstr ""
+
+#: includes/class-admin.php:150
+msgid "The fast route is installed."
+msgstr ""
+
+#: includes/class-admin.php:151
+msgid "The fast route is removed."
+msgstr ""
+
+#: includes/class-admin.php:152
+msgid "The self test finished, see Checks below."
+msgstr ""
+
+#: includes/class-admin.php:153
+msgid "The endpoint path is empty or reserved by WordPress."
+msgstr ""
+
+#: includes/class-admin.php:154
+msgid "The storage folder must be an absolute path to a dedicated folder that WordPress can create and write. It cannot be the site root, wp-content, the uploads folder itself, a folder that contains the site, or a folder inside the plugins, themes, wp-admin or wp-includes folders."
+msgstr ""
+
+#: includes/class-admin.php:155
+msgid "On a multisite network only a super admin can install the fast route or move the storage folder outside the uploads folder."
+msgstr ""
+
+#: includes/class-admin.php:156
+msgid "The server secret must have 16 to 256 printable ASCII characters without spaces."
+msgstr ""
+
+#: includes/class-admin.php:157
+msgid "The VPN address is invalid or already used."
+msgstr ""
+
+#: includes/class-admin.php:158
+msgid "The access key must have exactly 64 hexadecimal characters."
+msgstr ""
+
+#: includes/class-admin.php:159
+msgid "All VPN addresses are already used."
+msgstr ""
+
+#: includes/class-admin.php:160
+msgid "The client does not exist."
+msgstr ""
+
+#: includes/class-admin.php:161
+msgid "The fast route could not be installed. WordPress needs direct write access to wp-content/mu-plugins."
+msgstr ""
+
+#: includes/class-admin.php:193
+msgid "Connection"
+msgstr ""
+
+#: includes/class-admin.php:197
+msgid "Server URL"
+msgstr ""
+
+#: includes/class-admin.php:200
+#: includes/class-admin.php:266
+#: includes/class-admin.php:341
+msgid "Copy"
+msgstr ""
+
+#: includes/class-admin.php:201
+msgid "Enter this address as Server URL in the PHP VPN client."
+msgstr ""
+
+#: includes/class-admin.php:205
+msgid "Endpoint path"
+msgstr ""
+
+#: includes/class-admin.php:208
+msgid "Letters, digits, hyphens, underscores and slashes. Changing it disconnects all clients until they use the new Server URL."
+msgstr ""
+
+#: includes/class-admin.php:212
+msgid "Status page"
+msgstr ""
+
+#: includes/class-admin.php:214
+msgid "Show the status page when the Server URL is opened in a browser"
+msgstr ""
+
+#: includes/class-admin.php:215
+msgid "When it is off, a browser gets 404. The clients are not affected."
+msgstr ""
+
+#: includes/class-admin.php:219
+msgid "Storage folder"
+msgstr ""
+
+#: includes/class-admin.php:222
+msgid "Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds."
+msgstr ""
+
+#: includes/class-admin.php:226
+msgid "Save Changes"
+msgstr ""
+
+#: includes/class-admin.php:241
+msgid "Clients"
+msgstr ""
+
+#: includes/class-admin.php:242
+msgid "Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them."
+msgstr ""
+
+#: includes/class-admin.php:246
+#: includes/class-admin.php:301
+msgid "VPN address"
+msgstr ""
+
+#: includes/class-admin.php:247
+#: includes/class-admin.php:314
+msgid "Access key"
+msgstr ""
+
+#: includes/class-admin.php:248
+msgid "Last seen"
+msgstr ""
+
+#: includes/class-admin.php:249
+msgid "Actions"
+msgstr ""
+
+#: includes/class-admin.php:254
+msgid "No clients yet. Add the first one below."
+msgstr ""
+
+#: includes/class-admin.php:271
+msgid "Never"
+msgstr ""
+
+#. translators: %s: human readable time difference, for example "5 mins".
+#: includes/class-admin.php:274
+#, php-format
+msgid "%s ago"
+msgstr ""
+
+#: includes/class-admin.php:281
+msgid "Download config.json"
+msgstr ""
+
+#: includes/class-admin.php:285
+msgid "Generate a new access key? The client stops working until it gets the new key."
+msgstr ""
+
+#: includes/class-admin.php:285
+msgid "New key"
+msgstr ""
+
+#: includes/class-admin.php:289
+msgid "Remove this client? It can no longer connect."
+msgstr ""
+
+#: includes/class-admin.php:289
+msgid "Remove"
+msgstr ""
+
+#: includes/class-admin.php:297
+#: includes/class-admin.php:321
+msgid "Add client"
+msgstr ""
+
+#: includes/class-admin.php:304
+msgid "Next free address"
+msgstr ""
+
+#: includes/class-admin.php:316
+msgid "Leave empty to generate a random key"
+msgstr ""
+
+#: includes/class-admin.php:317
+msgid "Enter an existing key only when you move a client from another PHP VPN server."
+msgstr ""
+
+#: includes/class-admin.php:333
+#: includes/class-admin.php:338
+msgid "Server secret"
+msgstr ""
+
+#: includes/class-admin.php:334
+msgid "Shared by the server and all its clients. Changing it disconnects every client until it gets the new value."
+msgstr ""
+
+#: includes/class-admin.php:342
+msgid "Keep the generated value, or enter the secret of the PHP VPN server you move from."
+msgstr ""
+
+#: includes/class-admin.php:347
+msgid "Change the server secret? All clients stop working until they get the new value."
+msgstr ""
+
+#: includes/class-admin.php:347
+msgid "Save secret"
+msgstr ""
+
+#: includes/class-admin.php:348
+msgid "Generate a new server secret? All clients stop working until they get the new value."
+msgstr ""
+
+#: includes/class-admin.php:348
+msgid "Generate new secret"
+msgstr ""
+
+#: includes/class-admin.php:362
+msgid "Storage protection"
+msgstr ""
+
+#: includes/class-admin.php:364
+msgid "The storage folder is outside the uploads folder. Make sure the web server does not serve it."
+msgstr ""
+
+#: includes/class-admin.php:366
+msgid "The storage folder is inside the uploads folder. Apache and IIS are protected by the .htaccess and web.config files that the plugin writes there. On nginx add this rule to the server block and reload nginx:"
+msgstr ""
+
+#: includes/class-admin.php:378
+msgid "Fast route"
+msgstr ""
+
+#: includes/class-admin.php:379
+msgid "Clients poll the server several times per second. By default a relay request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated."
+msgstr ""
+
+#: includes/class-admin.php:383
+msgid "Status: not installed."
+msgstr ""
+
+#: includes/class-admin.php:385
+msgid "Status: installed."
+msgstr ""
+
+#: includes/class-admin.php:387
+msgid "Status: installed for another version or location of this plugin, install it again."
+msgstr ""
+
+#: includes/class-admin.php:393
+msgid "The fast route serves the whole network, only a super admin can install or remove it."
+msgstr ""
+
+#: includes/class-admin.php:400
+msgid "Remove fast route"
+msgstr ""
+
+#: includes/class-admin.php:402
+msgid "Install fast route"
+msgstr ""
+
+#: includes/class-admin.php:418
+msgid "Checks"
+msgstr ""
+
+#: includes/class-admin.php:423
+msgid "OK"
+msgstr ""
+
+#: includes/class-admin.php:423
+msgid "Warning"
+msgstr ""
+
+#: includes/class-admin.php:423
+msgid "Error"
+msgstr ""
+
+#: includes/class-admin.php:430
+msgid "The self test sends requests from this server to the Server URL and to the storage folder, the same way a client and a visitor would."
+msgstr ""
+
+#: includes/class-admin.php:431
+msgid "Run self test"
+msgstr ""
+
+#: includes/class-admin.php:445
+msgid "PHP is 64-bit."
+msgstr ""
+
+#: includes/class-admin.php:446
+msgid "PHP is 32-bit. The relay requires 64-bit PHP."
+msgstr ""
+
+#: includes/class-admin.php:448
+msgid "Pretty permalinks are enabled."
+msgstr ""
+
+#: includes/class-admin.php:449
+msgid "Plain permalinks are used. The Server URL works only with pretty permalinks: choose another structure in Settings, Permalinks."
+msgstr ""
+
+#: includes/class-admin.php:451
+msgid "The site uses HTTPS."
+msgstr ""
+
+#: includes/class-admin.php:452
+msgid "The site does not use HTTPS. The traffic stays encrypted, but HTTPS also hides addresses and timing from the network."
+msgstr ""
+
+#: includes/class-admin.php:454
+msgid "zlib.output_compression is enabled in PHP. Disable it for this site if the clients report damaged responses."
+msgstr ""
+
+#: includes/class-admin.php:457
+msgid "A page or post uses the same address as the endpoint. Visitors get the relay instead of that content, choose another endpoint path."
+msgstr ""
+
+#: includes/class-admin.php:460
+msgid "No client is configured yet."
+msgstr ""
+
+#: includes/class-admin.php:464
+msgid "No storage folder is set."
+msgstr ""
+
+#: includes/class-admin.php:467
+msgid "The storage folder is writable."
+msgstr ""
+
+#: includes/class-admin.php:468
+msgid "The storage folder is not writable by PHP."
+msgstr ""
+
+#: includes/class-admin.php:470
+msgid "The storage folder is created with the first client request."
+msgstr ""
+
+#: includes/class-admin.php:486
+msgid "Sorry, you are not allowed to manage VPN Server."
+msgstr ""
+
+#. translators: %s: error message.
+#: includes/class-admin.php:714
+#, php-format
+msgid "The Server URL cannot be reached from this server: %s. A server with a single PHP worker cannot answer its own request, test the Server URL from a client then."
+msgstr ""
+
+#: includes/class-admin.php:716
+msgid "The Server URL answers protocol requests."
+msgstr ""
+
+#. translators: %d: HTTP status code.
+#: includes/class-admin.php:719
+#, php-format
+msgid "The Server URL returned HTTP %d without a protocol answer. Check the permalinks and the web server rewrite rules."
+msgstr ""
+
+#: includes/class-admin.php:736
+msgid "The storage folder is outside the uploads folder, no web request was made."
+msgstr ""
+
+#: includes/class-admin.php:740
+msgid "The storage folder cannot be created."
+msgstr ""
+
+#: includes/class-admin.php:744
+msgid "The storage protection was not tested, WordPress cannot write files directly."
+msgstr ""
+
+#: includes/class-admin.php:751
+msgid "The storage folder is not writable."
+msgstr ""
+
+#: includes/class-admin.php:762
+msgid "The storage folder can be downloaded from the web. Add the web server rule shown under Storage protection, or move the folder outside the web root."
+msgstr ""
+
+#: includes/class-admin.php:764
+msgid "The storage folder cannot be downloaded from the web."
+msgstr ""
+
+#: includes/class-fast-route.php:60
+msgid "WordPress cannot write files directly on this server."
+msgstr ""
+
+#: includes/class-fast-route.php:64
+msgid "The mu-plugins folder could not be created."
+msgstr ""
+
+#: includes/class-fast-route.php:67
+msgid "The fast route file could not be written."
+msgstr ""
+
+#: includes/class-settings.php:134
+msgid "VPN Server requires 64-bit PHP."
+msgstr ""
+
+#: includes/class-settings.php:138
+msgid "VPN Server cannot be network activated. Activate it on each site that should run a relay."
+msgstr ""
