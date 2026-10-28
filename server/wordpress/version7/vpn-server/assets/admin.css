@@ -4,13 +4,47 @@
 	font-size: 12px;
 }
 
+.vpn-server #vpn-server-secret {
+	width: 36em;
+	max-width: 100%;
+}
+
+.vpn-server .vpn-server-unsaved {
+	margin-left: 4px;
+	color: #996800;
+}
+
 .vpn-server .vpn-server-inline {
 	display: inline-block;
 	margin: 0 4px 4px 0;
 }
 
+.vpn-server .vpn-server-toolbar {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	margin: 0 0 8px;
+}
+
+.vpn-server .vpn-server-toolbar .vpn-server-inline {
+	margin: 0;
+}
+
+.vpn-server .vpn-server-toolbar label {
+	margin-right: 4px;
+}
+
 .vpn-server .vpn-server-clients td {
 	vertical-align: middle;
+}
+
+.vpn-server .vpn-server-clients .vpn-server-edit,
+.vpn-server .vpn-server-clients tr.is-editing .vpn-server-view {
+	display: none;
+}
+
+.vpn-server .vpn-server-clients tr.is-editing .vpn-server-edit {
+	display: inline-block;
 }
 
 .vpn-server .vpn-server-snippet {

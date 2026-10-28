@@ -30,8 +30,9 @@ final class Admin {
 	/** admin-post.php actions, without the vpn_server_ prefix, and their handlers. */
 	const ACTIONS = array(
 		'save'           => 'handle_save',
-		'secret'         => 'handle_secret',
+		'storage'        => 'handle_storage',
 		'add_client'     => 'handle_add_client',
+		'set_key'        => 'handle_set_key',
 		'client_key'     => 'handle_client_key',
 		'remove_client'  => 'handle_remove_client',
 		'client_config'  => 'handle_client_config',
@@ -125,7 +126,6 @@ final class Admin {
 			<?php
 			self::render_connection( $settings );
 			self::render_clients( $settings );
-			self::render_secret( $settings );
 			self::render_storage( $settings );
 			self::render_fast_route();
 			self::render_checks( $settings );
@@ -143,19 +143,23 @@ final class Admin {
 		$code     = isset( $_GET[ self::NOTICE ] ) ? sanitize_key( wp_unslash( $_GET[ self::NOTICE ] ) ) : '';
 		$messages = array(
 			'saved'              => array( 'success', __( 'Settings saved.', 'vpn-server' ) ),
-			'secret'             => array( 'success', __( 'The server secret was changed. Update serverSecret in every client.', 'vpn-server' ) ),
+			'unchanged'          => array( 'info', __( 'Nothing was changed.', 'vpn-server' ) ),
+			'reconnect'          => array( 'success', __( 'Settings saved. The Server URL or the server secret changed, update it in every client.', 'vpn-server' ) ),
+			'storage'            => array( 'success', __( 'The storage folder was changed.', 'vpn-server' ) ),
 			'client_added'       => array( 'success', __( 'Client added. Download its configuration and import it in the client.', 'vpn-server' ) ),
 			'client_key'         => array( 'success', __( 'A new access key was generated. Update accessKey in that client.', 'vpn-server' ) ),
+			'key_saved'          => array( 'success', __( 'The access key was saved. Update accessKey in that client.', 'vpn-server' ) ),
 			'client_removed'     => array( 'success', __( 'Client removed.', 'vpn-server' ) ),
 			'fast_route_on'      => array( 'success', __( 'The fast route is installed.', 'vpn-server' ) ),
 			'fast_route_off'     => array( 'success', __( 'The fast route is removed.', 'vpn-server' ) ),
 			'self_test'          => array( 'info', __( 'The self test finished, see Checks below.', 'vpn-server' ) ),
-			'bad_endpoint'       => array( 'error', __( 'The endpoint path is empty or reserved by WordPress.', 'vpn-server' ) ),
+			'bad_endpoint'       => array( 'error', __( 'The path of the Server URL is empty or reserved by WordPress.', 'vpn-server' ) ),
 			'bad_storage'        => array( 'error', __( 'The storage folder must be an absolute path to a dedicated folder that WordPress can create and write. It cannot be the site root, wp-content, the uploads folder itself, a folder that contains the site, or a folder inside the plugins, themes, wp-admin or wp-includes folders.', 'vpn-server' ) ),
 			'network_only'       => array( 'error', __( 'On a multisite network only a super admin can install the fast route or move the storage folder outside the uploads folder.', 'vpn-server' ) ),
 			'bad_secret'         => array( 'error', __( 'The server secret must have 16 to 256 printable ASCII characters without spaces.', 'vpn-server' ) ),
 			'bad_address'        => array( 'error', __( 'The VPN address is invalid or already used.', 'vpn-server' ) ),
 			'bad_key'            => array( 'error', __( 'The access key must have exactly 64 hexadecimal characters.', 'vpn-server' ) ),
+			'duplicate_key'      => array( 'error', __( 'Another client already uses this access key.', 'vpn-server' ) ),
 			'no_address'         => array( 'error', __( 'All VPN addresses are already used.', 'vpn-server' ) ),
 			'unknown_client'     => array( 'error', __( 'The client does not exist.', 'vpn-server' ) ),
 			'fast_route_failed'  => array( 'error', __( 'The fast route could not be installed. WordPress needs direct write access to wp-content/mu-plugins.', 'vpn-server' ) ),
@@ -175,37 +179,38 @@ final class Admin {
 	 *
 	 * @param string $action  Action without the vpn_server_ prefix.
 	 * @param string $classes Extra CSS classes.
+	 * @param string $id      Form id, empty for none.
 	 */
-	private static function form_start( string $action, string $classes = '' ): void {
-		printf( '<form method="post" action="%1$s" class="%2$s">', esc_url( admin_url( 'admin-post.php' ) ), esc_attr( trim( 'vpn-server-form ' . $classes ) ) );
+	private static function form_start( string $action, string $classes = '', string $id = '' ): void {
+		printf(
+			'<form method="post" action="%1$s" class="%2$s"%3$s>',
+			esc_url( admin_url( 'admin-post.php' ) ),
+			esc_attr( trim( 'vpn-server-form ' . $classes ) ),
+			'' === $id ? '' : ' id="' . esc_attr( $id ) . '"'
+		);
 		printf( '<input type="hidden" name="action" value="%s">', esc_attr( 'vpn_server_' . $action ) );
 		wp_nonce_field( 'vpn_server_' . $action );
 	}
 
 	/**
-	 * Server URL and endpoint path.
+	 * Server URL, status page and server secret, saved together.
 	 *
 	 * @param array<string, mixed> $settings Current settings.
 	 */
 	private static function render_connection( array $settings ): void {
 		$url = Settings::endpoint_url( $settings );
 		?>
+		<?php self::form_start( 'save', 'vpn-server-settings' ); ?>
 		<h2><?php echo esc_html__( 'Connection', 'vpn-server' ); ?></h2>
-		<?php self::form_start( 'save' ); ?>
 		<table class="form-table" role="presentation">
 			<tr>
-				<th scope="row"><?php echo esc_html__( 'Server URL', 'vpn-server' ); ?></th>
-				<td>
-					<input type="text" class="large-text code" id="vpn-server-url" value="<?php echo esc_attr( $url ); ?>" readonly>
-					<button type="button" class="button" data-vpn-server-copy="vpn-server-url"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-					<p class="description"><?php echo esc_html__( 'Enter this address as Server URL in the PHPVPN client.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-			<tr>
-				<th scope="row"><label for="vpn-server-endpoint"><?php echo esc_html__( 'Endpoint path', 'vpn-server' ); ?></label></th>
+				<th scope="row"><label for="vpn-server-endpoint"><?php echo esc_html__( 'Server URL', 'vpn-server' ); ?></label></th>
 				<td>
 					<code><?php echo esc_html( home_url( '/' ) ); ?></code><input type="text" id="vpn-server-endpoint" name="endpoint" class="regular-text code" value="<?php echo esc_attr( $settings['endpoint'] ); ?>"><code>/</code>
-					<p class="description"><?php echo esc_html__( 'Letters, digits, hyphens, underscores and slashes. Changing it disconnects all clients until they use the new Server URL.', 'vpn-server' ); ?></p>
+					<button type="button" class="button hide-if-no-js" data-vpn-server-copy-text="<?php echo esc_attr( $url ); ?>" data-vpn-server-saved-url><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+					<a class="button" href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer" data-vpn-server-saved-url><?php echo esc_html__( 'Open', 'vpn-server' ); ?></a>
+					<span class="vpn-server-unsaved" hidden><?php echo esc_html__( 'Save changes first.', 'vpn-server' ); ?></span>
+					<p class="description"><?php echo esc_html__( 'Enter this address as Server URL in the PHPVPN client. The path may contain letters, digits, hyphens, underscores and slashes. Changing it disconnects all clients until they use the new Server URL.', 'vpn-server' ); ?></p>
 				</td>
 			</tr>
 			<tr>
@@ -215,15 +220,24 @@ final class Admin {
 					<p class="description"><?php echo esc_html__( 'When it is off, a browser gets 404. The clients are not affected.', 'vpn-server' ); ?></p>
 				</td>
 			</tr>
+		</table>
+
+		<h2><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></h2>
+		<p><?php echo esc_html__( 'Shared by the server and all its clients. Changing it disconnects every client until it gets the new value.', 'vpn-server' ); ?></p>
+		<table class="form-table" role="presentation">
 			<tr>
-				<th scope="row"><label for="vpn-server-storage"><?php echo esc_html__( 'Storage folder', 'vpn-server' ); ?></label></th>
+				<th scope="row"><label for="vpn-server-secret"><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></label></th>
 				<td>
-					<input type="text" id="vpn-server-storage" name="storage" class="large-text code" value="<?php echo esc_attr( $settings['storage'] ); ?>">
-					<p class="description"><?php echo esc_html__( 'Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds.', 'vpn-server' ); ?></p>
+					<input type="text" id="vpn-server-secret" name="secret" class="code" autocomplete="off" spellcheck="false" value="<?php echo esc_attr( $settings['secret'] ); ?>">
+					<button type="button" class="button hide-if-no-js" data-vpn-server-copy="vpn-server-secret"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+					<button type="button" class="button hide-if-no-js" data-vpn-server-generate="vpn-server-secret"><?php echo esc_html__( 'Generate New Secret', 'vpn-server' ); ?></button>
+					<p class="description"><?php echo esc_html__( 'Keep the generated value, or enter the secret of the PHPVPN server you move from. Generate New Secret only fills in the field, the secret changes when you save.', 'vpn-server' ); ?></p>
 				</td>
 			</tr>
 		</table>
-		<?php submit_button( __( 'Save Changes', 'vpn-server' ) ); ?>
+		<p class="submit">
+			<button type="submit" class="button button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'The Server URL or the server secret changed. All clients stop working until they get the new value. Save the changes?', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button>
+		</p>
 		</form>
 		<?php
 	}
@@ -236,10 +250,28 @@ final class Admin {
 	private static function render_clients( array $settings ): void {
 		$storage = '' !== $settings['storage'] ? new \PhpVpn\DiskStorage( $settings['storage'] ) : null;
 		$keys    = $settings['access_keys'];
+		$free    = self::free_addresses( $settings );
 		uksort( $keys, static fn( $a, $b ): int => \PhpVpn\Validators::addressSortKey( (string) $a ) <=> \PhpVpn\Validators::addressSortKey( (string) $b ) );
 		?>
 		<h2><?php echo esc_html__( 'Clients', 'vpn-server' ); ?></h2>
 		<p><?php echo esc_html__( 'Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them.', 'vpn-server' ); ?></p>
+		<div class="vpn-server-toolbar">
+			<?php if ( array() === $free ) : ?>
+				<span><?php echo esc_html__( 'All VPN addresses are already used.', 'vpn-server' ); ?></span>
+			<?php else : ?>
+				<?php self::form_start( 'add_client', 'vpn-server-inline' ); ?>
+					<label for="vpn-server-address"><?php echo esc_html__( 'VPN address', 'vpn-server' ); ?></label>
+					<select id="vpn-server-address" name="address">
+						<?php
+						foreach ( $free as $address ) {
+							printf( '<option value="%1$s">%1$s</option>', esc_attr( $address ) );
+						}
+						?>
+					</select>
+					<button type="submit" class="button"><?php echo esc_html__( 'Add Client', 'vpn-server' ); ?></button>
+				</form>
+			<?php endif; ?>
+		</div>
 		<table class="widefat striped vpn-server-clients">
 			<thead>
 				<tr>
@@ -251,19 +283,20 @@ final class Admin {
 			</thead>
 			<tbody>
 			<?php if ( array() === $keys ) : ?>
-				<tr><td colspan="4"><?php echo esc_html__( 'No clients yet. Add the first one below.', 'vpn-server' ); ?></td></tr>
+				<tr><td colspan="4"><?php echo esc_html__( 'No clients yet. Add the first one with Add Client.', 'vpn-server' ); ?></td></tr>
 			<?php endif; ?>
 			<?php foreach ( $keys as $address => $key ) : ?>
 				<?php
 				$address  = (string) $address;
-				$field_id = 'vpn-server-key-' . str_replace( '.', '-', $address );
+				$suffix   = str_replace( '.', '-', $address );
+				$field_id = 'vpn-server-key-' . $suffix;
+				$form_id  = 'vpn-server-set-key-' . $suffix;
 				$seen     = null !== $storage ? $storage->readLastSeenMs( $address ) : null;
 				?>
 				<tr>
 					<td><code><?php echo esc_html( $address ); ?></code></td>
 					<td>
-						<input type="text" class="code vpn-server-key" id="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $key ); ?>" readonly>
-						<button type="button" class="button button-small" data-vpn-server-copy="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+						<input type="text" class="code vpn-server-key" id="<?php echo esc_attr( $field_id ); ?>" name="access_key" form="<?php echo esc_attr( $form_id ); ?>" value="<?php echo esc_attr( $key ); ?>" aria-label="<?php echo esc_attr( sprintf( /* translators: %s: VPN address of the client. */ __( 'Access key of %s', 'vpn-server' ), $address ) ); ?>" pattern="[0-9a-fA-F]{64}" title="<?php echo esc_attr__( 'Exactly 64 hexadecimal characters.', 'vpn-server' ); ?>" required readonly autocomplete="off" spellcheck="false">
 					</td>
 					<td>
 						<?php
@@ -276,83 +309,38 @@ final class Admin {
 						?>
 					</td>
 					<td class="vpn-server-actions">
-						<?php self::form_start( 'client_config', 'vpn-server-inline' ); ?>
+						<span class="vpn-server-view">
+							<button type="button" class="button button-small hide-if-no-js" data-vpn-server-copy="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+							<button type="button" class="button button-small hide-if-no-js" data-vpn-server-edit="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Edit', 'vpn-server' ); ?></button>
+							<?php self::form_start( 'client_key', 'vpn-server-inline' ); ?>
+								<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+								<button type="submit" class="button button-small" data-vpn-server-confirm="<?php echo esc_attr__( 'Generate a new access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'New Key', 'vpn-server' ); ?></button>
+							</form>
+							<?php self::form_start( 'client_config', 'vpn-server-inline' ); ?>
+								<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+								<button type="submit" class="button button-small"><?php echo esc_html__( 'Download config.json', 'vpn-server' ); ?></button>
+							</form>
+							<?php self::form_start( 'remove_client', 'vpn-server-inline' ); ?>
+								<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+								<button type="submit" class="button button-small button-link-delete" data-vpn-server-confirm="<?php echo esc_attr__( 'Remove this client? It can no longer connect.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Remove', 'vpn-server' ); ?></button>
+							</form>
+						</span>
+						<?php // The access key field joins this form through its form attribute. ?>
+						<?php self::form_start( 'set_key', 'vpn-server-inline vpn-server-edit', $form_id ); ?>
 							<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-							<button type="submit" class="button button-small"><?php echo esc_html__( 'Download config.json', 'vpn-server' ); ?></button>
-						</form>
-						<?php self::form_start( 'client_key', 'vpn-server-inline' ); ?>
-							<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-							<button type="submit" class="button button-small" data-vpn-server-confirm="<?php echo esc_attr__( 'Generate a new access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'New key', 'vpn-server' ); ?></button>
-						</form>
-						<?php self::form_start( 'remove_client', 'vpn-server-inline' ); ?>
-							<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-							<button type="submit" class="button button-small button-link-delete" data-vpn-server-confirm="<?php echo esc_attr__( 'Remove this client? It can no longer connect.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Remove', 'vpn-server' ); ?></button>
+							<button type="submit" class="button button-small button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'Save the access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save', 'vpn-server' ); ?></button>
+							<button type="button" class="button button-small" data-vpn-server-cancel="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Cancel', 'vpn-server' ); ?></button>
 						</form>
 					</td>
 				</tr>
 			<?php endforeach; ?>
 			</tbody>
 		</table>
-
-		<h3><?php echo esc_html__( 'Add client', 'vpn-server' ); ?></h3>
-		<?php self::form_start( 'add_client' ); ?>
-		<table class="form-table" role="presentation">
-			<tr>
-				<th scope="row"><label for="vpn-server-address"><?php echo esc_html__( 'VPN address', 'vpn-server' ); ?></label></th>
-				<td>
-					<select id="vpn-server-address" name="address">
-						<option value=""><?php echo esc_html__( 'Next free address', 'vpn-server' ); ?></option>
-						<?php
-						foreach ( self::free_addresses( $settings ) as $address ) {
-							printf( '<option value="%1$s">%1$s</option>', esc_attr( $address ) );
-						}
-						?>
-					</select>
-				</td>
-			</tr>
-			<tr>
-				<th scope="row"><label for="vpn-server-new-key"><?php echo esc_html__( 'Access key', 'vpn-server' ); ?></label></th>
-				<td>
-					<input type="text" id="vpn-server-new-key" name="access_key" class="large-text code" autocomplete="off" placeholder="<?php echo esc_attr__( 'Leave empty to generate a random key', 'vpn-server' ); ?>">
-					<p class="description"><?php echo esc_html__( 'Enter an existing key only when you move a client from another PHPVPN server.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-		</table>
-		<?php submit_button( __( 'Add client', 'vpn-server' ), 'secondary' ); ?>
-		</form>
 		<?php
 	}
 
 	/**
-	 * Server secret.
-	 *
-	 * @param array<string, mixed> $settings Current settings.
-	 */
-	private static function render_secret( array $settings ): void {
-		?>
-		<h2><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></h2>
-		<p><?php echo esc_html__( 'Shared by the server and all its clients. Changing it disconnects every client until it gets the new value.', 'vpn-server' ); ?></p>
-		<?php self::form_start( 'secret' ); ?>
-		<table class="form-table" role="presentation">
-			<tr>
-				<th scope="row"><label for="vpn-server-secret"><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></label></th>
-				<td>
-					<input type="text" id="vpn-server-secret" name="secret" class="large-text code" autocomplete="off" value="<?php echo esc_attr( $settings['secret'] ); ?>">
-					<button type="button" class="button" data-vpn-server-copy="vpn-server-secret"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-					<p class="description"><?php echo esc_html__( 'Keep the generated value, or enter the secret of the PHPVPN server you move from.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-		</table>
-		<p class="submit">
-			<button type="submit" name="mode" value="save" class="button button-primary" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the server secret? All clients stop working until they get the new value.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save secret', 'vpn-server' ); ?></button>
-			<button type="submit" name="mode" value="generate" class="button" data-vpn-server-confirm="<?php echo esc_attr__( 'Generate a new server secret? All clients stop working until they get the new value.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Generate new secret', 'vpn-server' ); ?></button>
-		</p>
-		</form>
-		<?php
-	}
-
-	/**
-	 * Storage protection and the nginx rule.
+	 * Storage folder, its protection and the nginx rule.
 	 *
 	 * @param array<string, mixed> $settings Current settings.
 	 */
@@ -360,6 +348,20 @@ final class Admin {
 		$location = self::storage_url_path( $settings );
 		?>
 		<h2><?php echo esc_html__( 'Storage protection', 'vpn-server' ); ?></h2>
+		<?php self::form_start( 'storage' ); ?>
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><label for="vpn-server-storage"><?php echo esc_html__( 'Storage folder', 'vpn-server' ); ?></label></th>
+				<td>
+					<input type="text" id="vpn-server-storage" name="storage" class="large-text code" value="<?php echo esc_attr( $settings['storage'] ); ?>">
+					<p class="description"><?php echo esc_html__( 'Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds.', 'vpn-server' ); ?></p>
+				</td>
+			</tr>
+		</table>
+		<p class="submit">
+			<button type="submit" class="button" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Change Folder', 'vpn-server' ); ?></button>
+		</p>
+		</form>
 		<?php if ( null === $location ) : ?>
 			<p><?php echo esc_html__( 'The storage folder is outside the uploads folder. Make sure the web server does not serve it.', 'vpn-server' ); ?></p>
 		<?php else : ?>
@@ -454,7 +456,7 @@ final class Admin {
 			$checks[] = array( 'warning', __( 'zlib.output_compression is enabled in PHP. Disable it for this site if the clients report damaged responses.', 'vpn-server' ) );
 		}
 		if ( url_to_postid( Settings::endpoint_url( $settings ) ) > 0 ) {
-			$checks[] = array( 'warning', __( 'A page or post uses the same address as the endpoint. Visitors get the VPN server instead of that content, choose another endpoint path.', 'vpn-server' ) );
+			$checks[] = array( 'warning', __( 'A page or post uses the same address as the Server URL. Visitors get the VPN server instead of that content, choose another path.', 'vpn-server' ) );
 		}
 		if ( array() === $settings['access_keys'] ) {
 			$checks[] = array( 'warning', __( 'No client is configured yet.', 'vpn-server' ) );
@@ -511,7 +513,7 @@ final class Admin {
 	}
 
 	/**
-	 * Saves endpoint, status page and storage folder.
+	 * Saves the endpoint, the status page and the server secret together.
 	 */
 	public static function handle_save(): void {
 		self::verify( 'save' );
@@ -523,60 +525,59 @@ final class Admin {
 			self::done( 'bad_endpoint' );
 		}
 
-		$storage = untrailingslashit( wp_normalize_path( self::posted( 'storage' ) ) );
-		if ( $storage !== $settings['storage'] ) {
-			if ( ! self::is_allowed_storage( $storage, $settings ) ) {
-				self::done( 'bad_storage' );
-			}
-			// On multisite only a super admin may place the queues outside the uploads folder.
-			if ( is_multisite() && ! is_super_admin() && null === self::storage_url( array( 'storage' => $storage ) ) ) {
-				self::done( 'network_only' );
-			}
-			require_once __DIR__ . '/server-core.php';
-			$disk = new \PhpVpn\DiskStorage( $storage );
-			if ( ! $disk->isUsable() || ! wp_is_writable( $storage ) ) {
-				self::done( 'bad_storage' );
-			}
-			// isUsable() writes the guards only into a folder it creates itself.
-			$disk->writeGuards();
-			if ( Settings::is_managed_storage( $settings ) ) {
-				self::delete_folder( $settings['storage'] );
-			}
-			$settings['storage']         = $storage;
-			$settings['storage_managed'] = false;
+		// The exact bytes of the secret enter the key derivation, chapter 3.2. Only printable ASCII
+		// without spaces is accepted, so a validated value never needs sanitizing.
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- validated by the pattern below.
+		$secret = isset( $_POST['secret'] ) && is_string( $_POST['secret'] ) ? trim( wp_unslash( $_POST['secret'] ) ) : '';
+		if ( 1 !== preg_match( '/^[\x21-\x7e]{16,256}$/', $secret ) ) {
+			self::done( 'bad_secret' );
 		}
 
+		$reconnect               = $endpoint !== $settings['endpoint'] || $secret !== $settings['secret'];
 		$settings['endpoint']    = $endpoint;
+		$settings['secret']      = $secret;
 		$settings['status_page'] = '1' === self::posted( 'status_page' );
 		Settings::save( $settings );
 		delete_transient( self::SELF_TEST );
-		self::done( 'saved' );
+		self::done( $reconnect ? 'reconnect' : 'saved' );
 	}
 
 	/**
-	 * Saves an entered secret or generates a new one.
+	 * Moves the storage folder.
 	 */
-	public static function handle_secret(): void {
-		self::verify( 'secret' );
+	public static function handle_storage(): void {
+		self::verify( 'storage' );
 		$settings = Settings::get();
-		if ( 'generate' === self::posted( 'mode' ) ) {
-			$settings['secret'] = Settings::random_hex( 32 );
-		} else {
-			// The exact bytes of the secret enter the key derivation, chapter 3.2. Only printable ASCII
-			// without spaces is accepted, so a validated value never needs sanitizing.
-			// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- validated by the pattern below.
-			$secret = isset( $_POST['secret'] ) && is_string( $_POST['secret'] ) ? trim( wp_unslash( $_POST['secret'] ) ) : '';
-			if ( 1 !== preg_match( '/^[\x21-\x7e]{16,256}$/', $secret ) ) {
-				self::done( 'bad_secret' );
-			}
-			$settings['secret'] = $secret;
+		$storage  = untrailingslashit( wp_normalize_path( self::posted( 'storage' ) ) );
+		if ( $storage === $settings['storage'] ) {
+			self::done( 'unchanged' );
 		}
+		if ( ! self::is_allowed_storage( $storage, $settings ) ) {
+			self::done( 'bad_storage' );
+		}
+		// On multisite only a super admin may place the queues outside the uploads folder.
+		if ( is_multisite() && ! is_super_admin() && null === self::storage_url( array( 'storage' => $storage ) ) ) {
+			self::done( 'network_only' );
+		}
+		require_once __DIR__ . '/server-core.php';
+		$disk = new \PhpVpn\DiskStorage( $storage );
+		if ( ! $disk->isUsable() || ! wp_is_writable( $storage ) ) {
+			self::done( 'bad_storage' );
+		}
+		// isUsable() writes the guards only into a folder it creates itself.
+		$disk->writeGuards();
+		if ( Settings::is_managed_storage( $settings ) ) {
+			self::delete_folder( $settings['storage'] );
+		}
+		$settings['storage']         = $storage;
+		$settings['storage_managed'] = false;
 		Settings::save( $settings );
-		self::done( 'secret' );
+		delete_transient( self::SELF_TEST );
+		self::done( 'storage' );
 	}
 
 	/**
-	 * Adds a client with the chosen or the next free address.
+	 * Adds a client with the chosen or the next free address and a random access key.
 	 */
 	public static function handle_add_client(): void {
 		self::verify( 'add_client' );
@@ -592,15 +593,37 @@ final class Admin {
 		} elseif ( ! in_array( $address, $free, true ) ) {
 			self::done( 'bad_address' );
 		}
+		$settings['access_keys'][ $address ] = Settings::random_hex( 32 );
+		Settings::save( $settings );
+		self::done( 'client_added' );
+	}
+
+	/**
+	 * Saves an access key entered for a client, for example the key of a client moved from another server.
+	 */
+	public static function handle_set_key(): void {
+		self::verify( 'set_key' );
+		$settings = Settings::get();
+		$address  = self::posted( 'address' );
+		if ( ! isset( $settings['access_keys'][ $address ] ) ) {
+			self::done( 'unknown_client' );
+		}
 		$key = strtolower( self::posted( 'access_key' ) );
-		if ( '' === $key ) {
-			$key = Settings::random_hex( 32 );
-		} elseif ( 1 !== preg_match( '/^[0-9a-f]{64}$/', $key ) ) {
+		if ( 1 !== preg_match( '/^[0-9a-f]{64}$/', $key ) ) {
 			self::done( 'bad_key' );
+		}
+		if ( $key === $settings['access_keys'][ $address ] ) {
+			self::done( 'unchanged' );
+		}
+		// Whoever knows an access key can sign requests of every address that uses it.
+		foreach ( $settings['access_keys'] as $other => $other_key ) {
+			if ( (string) $other !== $address && $other_key === $key ) {
+				self::done( 'duplicate_key' );
+			}
 		}
 		$settings['access_keys'][ $address ] = $key;
 		Settings::save( $settings );
-		self::done( 'client_added' );
+		self::done( 'key_saved' );
 	}
 
 	/**
