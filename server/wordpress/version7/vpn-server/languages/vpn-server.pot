@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-28T21:01:06+00:00\n"
+"POT-Creation-Date: 2026-10-28T21:21:58+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: vpn-server\n"
@@ -18,7 +18,7 @@ msgstr ""
 #: vpn-server.php
 #: includes/class-admin.php:61
 #: includes/class-admin.php:62
-#: includes/class-admin.php:123
+#: includes/class-admin.php:125
 msgid "VPN Server"
 msgstr ""
 
@@ -42,429 +42,429 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
-#: includes/class-admin.php:96
+#: includes/class-admin.php:98
 msgid "Copied"
 msgstr ""
 
-#: includes/class-admin.php:125
+#: includes/class-admin.php:127
 msgid "This site forwards encrypted traffic between PHPVPN clients. The VPN server never sees the payload: clients encrypt it with keys that only they know."
 msgstr ""
 
-#: includes/class-admin.php:145
+#: includes/class-admin.php:147
 msgid "Settings saved."
 msgstr ""
 
-#: includes/class-admin.php:146
+#: includes/class-admin.php:148
 msgid "Nothing was changed."
 msgstr ""
 
-#: includes/class-admin.php:147
+#: includes/class-admin.php:149
 msgid "Settings saved. The Server URL or the server secret changed, update it in every client."
 msgstr ""
 
-#: includes/class-admin.php:148
+#: includes/class-admin.php:150
 msgid "The storage folder was changed."
 msgstr ""
 
-#: includes/class-admin.php:149
+#: includes/class-admin.php:151
 msgid "Client added. Download its configuration and import it in the client."
 msgstr ""
 
-#: includes/class-admin.php:150
+#: includes/class-admin.php:152
 msgid "A new access key was generated. Update accessKey in that client."
 msgstr ""
 
-#: includes/class-admin.php:151
+#: includes/class-admin.php:153
 msgid "The access key was saved. Update accessKey in that client."
 msgstr ""
 
-#: includes/class-admin.php:152
+#: includes/class-admin.php:154
 msgid "Client removed."
 msgstr ""
 
-#: includes/class-admin.php:153
+#: includes/class-admin.php:155
 msgid "The fast route is installed."
 msgstr ""
 
-#: includes/class-admin.php:154
+#: includes/class-admin.php:156
 msgid "The fast route is removed."
 msgstr ""
 
-#: includes/class-admin.php:155
+#: includes/class-admin.php:157
 msgid "The self test finished, see Checks below."
 msgstr ""
 
-#: includes/class-admin.php:156
+#: includes/class-admin.php:158
 msgid "The path of the Server URL is empty or reserved by WordPress."
 msgstr ""
 
-#: includes/class-admin.php:157
+#: includes/class-admin.php:159
 msgid "The storage folder must be an absolute path to a dedicated folder that WordPress can create and write. It cannot be the site root, wp-content, the uploads folder itself, a folder that contains the site, or a folder inside the plugins, themes, wp-admin or wp-includes folders."
 msgstr ""
 
-#: includes/class-admin.php:158
+#: includes/class-admin.php:160
 msgid "On a multisite network only a super admin can install the fast route or move the storage folder outside the uploads folder."
 msgstr ""
 
-#: includes/class-admin.php:159
+#: includes/class-admin.php:161
 msgid "The server secret must have 16 to 256 printable ASCII characters without spaces."
 msgstr ""
 
-#: includes/class-admin.php:160
+#: includes/class-admin.php:162
 msgid "The VPN address is invalid or already used."
 msgstr ""
 
-#: includes/class-admin.php:161
+#: includes/class-admin.php:163
 msgid "The access key must have exactly 64 hexadecimal characters."
 msgstr ""
 
-#: includes/class-admin.php:162
+#: includes/class-admin.php:164
 msgid "Another client already uses this access key."
 msgstr ""
 
-#: includes/class-admin.php:163
-#: includes/class-admin.php:260
+#: includes/class-admin.php:165
+#: includes/class-admin.php:276
 msgid "All VPN addresses are already used."
 msgstr ""
 
-#: includes/class-admin.php:164
+#: includes/class-admin.php:166
 msgid "The client does not exist."
 msgstr ""
 
-#: includes/class-admin.php:165
+#: includes/class-admin.php:167
 msgid "The fast route could not be installed. WordPress needs direct write access to wp-content/mu-plugins."
 msgstr ""
 
-#: includes/class-admin.php:204
+#: includes/class-admin.php:207
 msgid "Connection"
 msgstr ""
 
-#: includes/class-admin.php:207
+#: includes/class-admin.php:209
 msgid "Server URL"
 msgstr ""
 
-#: includes/class-admin.php:210
-#: includes/class-admin.php:232
-#: includes/class-admin.php:313
+#: includes/class-admin.php:217
+#: includes/class-admin.php:241
+#: includes/class-admin.php:329
 msgid "Copy"
 msgstr ""
 
-#: includes/class-admin.php:211
+#: includes/class-admin.php:218
 msgid "Open"
 msgstr ""
 
-#: includes/class-admin.php:212
+#: includes/class-admin.php:219
 msgid "Save changes first."
 msgstr ""
 
-#: includes/class-admin.php:213
+#: includes/class-admin.php:221
 msgid "Enter this address as Server URL in the PHPVPN client. The path may contain letters, digits, hyphens, underscores and slashes. Changing it disconnects all clients until they use the new Server URL."
 msgstr ""
 
-#: includes/class-admin.php:217
+#: includes/class-admin.php:225
 msgid "Status page"
 msgstr ""
 
-#: includes/class-admin.php:219
+#: includes/class-admin.php:227
 msgid "Show the status page when the Server URL is opened in a browser"
 msgstr ""
 
-#: includes/class-admin.php:220
+#: includes/class-admin.php:228
 msgid "When it is off, a browser gets 404. The clients are not affected."
 msgstr ""
 
-#: includes/class-admin.php:225
-#: includes/class-admin.php:229
+#: includes/class-admin.php:234
+#: includes/class-admin.php:237
 msgid "Server secret"
 msgstr ""
 
-#: includes/class-admin.php:226
+#: includes/class-admin.php:235
 msgid "Shared by the server and all its clients. Changing it disconnects every client until it gets the new value."
 msgstr ""
 
-#: includes/class-admin.php:233
+#: includes/class-admin.php:242
 msgid "Generate New Secret"
 msgstr ""
 
-#: includes/class-admin.php:234
+#: includes/class-admin.php:244
 msgid "Keep the generated value, or enter the secret of the PHPVPN server you move from. Generate New Secret only fills in the field, the secret changes when you save."
 msgstr ""
 
-#: includes/class-admin.php:239
+#: includes/class-admin.php:249
 msgid "The Server URL or the server secret changed. All clients stop working until they get the new value. Save the changes?"
 msgstr ""
 
-#: includes/class-admin.php:239
+#: includes/class-admin.php:249
 msgid "Save Changes"
 msgstr ""
 
-#: includes/class-admin.php:256
-msgid "Clients"
-msgstr ""
-
-#: includes/class-admin.php:257
-msgid "Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them."
-msgstr ""
-
-#: includes/class-admin.php:263
-#: includes/class-admin.php:278
+#: includes/class-admin.php:266
+#: includes/class-admin.php:279
 msgid "VPN address"
 msgstr ""
 
-#: includes/class-admin.php:271
-msgid "Add Client"
-msgstr ""
-
-#: includes/class-admin.php:279
+#: includes/class-admin.php:267
 msgid "Access key"
 msgstr ""
 
-#: includes/class-admin.php:280
+#: includes/class-admin.php:268
 msgid "Last seen"
 msgstr ""
 
-#: includes/class-admin.php:281
+#: includes/class-admin.php:269
 msgid "Actions"
 msgstr ""
 
-#: includes/class-admin.php:286
+#: includes/class-admin.php:274
+msgid "Clients"
+msgstr ""
+
+#: includes/class-admin.php:287
+msgid "Add Client"
+msgstr ""
+
+#: includes/class-admin.php:291
+msgid "Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them."
+msgstr ""
+
+#: includes/class-admin.php:302
 msgid "No clients yet. Add the first one with Add Client."
 msgstr ""
 
 #. translators: %s: VPN address of the client.
-#: includes/class-admin.php:299
+#: includes/class-admin.php:315
 #, php-format
 msgid "Access key of %s"
 msgstr ""
 
 #. translators: %s: VPN address of the client.
-#: includes/class-admin.php:299
+#: includes/class-admin.php:315
 msgid "Exactly 64 hexadecimal characters."
 msgstr ""
 
-#: includes/class-admin.php:304
+#: includes/class-admin.php:320
 msgid "Never"
 msgstr ""
 
 #. translators: %s: human readable time difference, for example "5 mins".
-#: includes/class-admin.php:307
+#: includes/class-admin.php:323
 #, php-format
 msgid "%s ago"
 msgstr ""
 
-#: includes/class-admin.php:314
+#: includes/class-admin.php:330
 msgid "Edit"
 msgstr ""
 
-#: includes/class-admin.php:317
+#: includes/class-admin.php:333
 msgid "Generate a new access key? The client stops working until it gets the new key."
 msgstr ""
 
-#: includes/class-admin.php:317
+#: includes/class-admin.php:333
 msgid "New Key"
 msgstr ""
 
-#: includes/class-admin.php:321
+#: includes/class-admin.php:337
 msgid "Download config.json"
 msgstr ""
 
-#: includes/class-admin.php:325
+#: includes/class-admin.php:341
 msgid "Remove this client? It can no longer connect."
 msgstr ""
 
-#: includes/class-admin.php:325
+#: includes/class-admin.php:341
 msgid "Remove"
 msgstr ""
 
-#: includes/class-admin.php:331
+#: includes/class-admin.php:347
 msgid "Save the access key? The client stops working until it gets the new key."
 msgstr ""
 
-#: includes/class-admin.php:331
+#: includes/class-admin.php:347
 msgid "Save"
 msgstr ""
 
-#: includes/class-admin.php:332
+#: includes/class-admin.php:348
 msgid "Cancel"
 msgstr ""
 
-#: includes/class-admin.php:350
+#: includes/class-admin.php:368
 msgid "Storage protection"
 msgstr ""
 
-#: includes/class-admin.php:354
+#: includes/class-admin.php:371
 msgid "Storage folder"
 msgstr ""
 
-#: includes/class-admin.php:357
-msgid "Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds."
-msgstr ""
-
-#: includes/class-admin.php:362
+#: includes/class-admin.php:375
 msgid "Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted."
 msgstr ""
 
-#: includes/class-admin.php:362
+#: includes/class-admin.php:375
 msgid "Change Folder"
 msgstr ""
 
-#: includes/class-admin.php:366
+#: includes/class-admin.php:377
+msgid "Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds."
+msgstr ""
+
+#: includes/class-admin.php:382
 msgid "The storage folder is outside the uploads folder. Make sure the web server does not serve it."
 msgstr ""
 
-#: includes/class-admin.php:368
+#: includes/class-admin.php:384
 msgid "The storage folder is inside the uploads folder. Apache and IIS are protected by the .htaccess and web.config files that the plugin writes there. On nginx add this rule to the server block and reload nginx:"
 msgstr ""
 
-#: includes/class-admin.php:380
-msgid "Fast route"
+#: includes/class-admin.php:398
+msgid "Not installed"
 msgstr ""
 
-#: includes/class-admin.php:381
-msgid "Clients poll the server several times per second. By default a client request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated."
-msgstr ""
-
-#: includes/class-admin.php:385
-msgid "Status: not installed."
-msgstr ""
-
-#: includes/class-admin.php:387
-msgid "Status: installed."
-msgstr ""
-
-#: includes/class-admin.php:389
-msgid "Status: installed for another version or location of this plugin, install it again."
-msgstr ""
-
-#: includes/class-admin.php:395
-msgid "The fast route serves the whole network, only a super admin can install or remove it."
+#: includes/class-admin.php:400
+msgid "Installed"
 msgstr ""
 
 #: includes/class-admin.php:402
+msgid "Installed for another version or location of this plugin, install it again"
+msgstr ""
+
+#: includes/class-admin.php:407
+msgid "Fast route"
+msgstr ""
+
+#: includes/class-admin.php:410
+msgid "Clients poll the server several times per second. By default a client request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated."
+msgstr ""
+
+#: includes/class-admin.php:412
+msgid "The fast route serves the whole network, only a super admin can install or remove it."
+msgstr ""
+
+#: includes/class-admin.php:415
 msgid "Remove fast route"
 msgstr ""
 
-#: includes/class-admin.php:404
+#: includes/class-admin.php:415
 msgid "Install fast route"
 msgstr ""
 
-#: includes/class-admin.php:420
-msgid "Checks"
-msgstr ""
-
-#: includes/class-admin.php:425
+#: includes/class-admin.php:431
 msgid "OK"
 msgstr ""
 
-#: includes/class-admin.php:425
+#: includes/class-admin.php:432
 msgid "Warning"
 msgstr ""
 
-#: includes/class-admin.php:425
+#: includes/class-admin.php:433
 msgid "Error"
 msgstr ""
 
-#: includes/class-admin.php:432
-msgid "The self test sends requests from this server to the Server URL and to the storage folder, the same way a client and a visitor would."
+#: includes/class-admin.php:438
+msgid "Checks"
 msgstr ""
 
-#: includes/class-admin.php:433
+#: includes/class-admin.php:440
 msgid "Run self test"
 msgstr ""
 
-#: includes/class-admin.php:447
+#: includes/class-admin.php:451
+msgid "The self test sends requests from this server to the Server URL and to the storage folder, the same way a client and a visitor would."
+msgstr ""
+
+#: includes/class-admin.php:465
 msgid "PHP is 64-bit."
 msgstr ""
 
-#: includes/class-admin.php:448
+#: includes/class-admin.php:466
 msgid "PHP is 32-bit. The VPN server requires 64-bit PHP."
 msgstr ""
 
-#: includes/class-admin.php:450
+#: includes/class-admin.php:468
 msgid "Pretty permalinks are enabled."
 msgstr ""
 
-#: includes/class-admin.php:451
+#: includes/class-admin.php:469
 msgid "Plain permalinks are used. The Server URL works only with pretty permalinks: choose another structure in Settings, Permalinks."
 msgstr ""
 
-#: includes/class-admin.php:453
+#: includes/class-admin.php:471
 msgid "The site uses HTTPS."
 msgstr ""
 
-#: includes/class-admin.php:454
+#: includes/class-admin.php:472
 msgid "The site does not use HTTPS. The traffic stays encrypted, but HTTPS also hides addresses and timing from the network."
 msgstr ""
 
-#: includes/class-admin.php:456
+#: includes/class-admin.php:474
 msgid "zlib.output_compression is enabled in PHP. Disable it for this site if the clients report damaged responses."
 msgstr ""
 
-#: includes/class-admin.php:459
+#: includes/class-admin.php:477
 msgid "A page or post uses the same address as the Server URL. Visitors get the VPN server instead of that content, choose another path."
 msgstr ""
 
-#: includes/class-admin.php:462
+#: includes/class-admin.php:480
 msgid "No client is configured yet."
 msgstr ""
 
-#: includes/class-admin.php:466
+#: includes/class-admin.php:484
 msgid "No storage folder is set."
 msgstr ""
 
-#: includes/class-admin.php:469
+#: includes/class-admin.php:487
 msgid "The storage folder is writable."
 msgstr ""
 
-#: includes/class-admin.php:470
+#: includes/class-admin.php:488
 msgid "The storage folder is not writable by PHP."
 msgstr ""
 
-#: includes/class-admin.php:472
+#: includes/class-admin.php:490
 msgid "The storage folder is created with the first client request."
 msgstr ""
 
-#: includes/class-admin.php:488
+#: includes/class-admin.php:506
 msgid "Sorry, you are not allowed to manage VPN Server."
 msgstr ""
 
 #. translators: %s: error message.
-#: includes/class-admin.php:737
+#: includes/class-admin.php:755
 #, php-format
 msgid "The Server URL cannot be reached from this server: %s. A server with a single PHP worker cannot answer its own request, test the Server URL from a client then."
 msgstr ""
 
-#: includes/class-admin.php:739
+#: includes/class-admin.php:757
 msgid "The Server URL answers protocol requests."
 msgstr ""
 
 #. translators: %d: HTTP status code.
-#: includes/class-admin.php:742
+#: includes/class-admin.php:760
 #, php-format
 msgid "The Server URL returned HTTP %d without a protocol answer. Check the permalinks and the web server rewrite rules."
 msgstr ""
 
-#: includes/class-admin.php:759
+#: includes/class-admin.php:777
 msgid "The storage folder is outside the uploads folder, no web request was made."
 msgstr ""
 
-#: includes/class-admin.php:763
+#: includes/class-admin.php:781
 msgid "The storage folder cannot be created."
 msgstr ""
 
-#: includes/class-admin.php:767
+#: includes/class-admin.php:785
 msgid "The storage protection was not tested, WordPress cannot write files directly."
 msgstr ""
 
-#: includes/class-admin.php:774
+#: includes/class-admin.php:792
 msgid "The storage folder is not writable."
 msgstr ""
 
-#: includes/class-admin.php:785
+#: includes/class-admin.php:803
 msgid "The storage folder can be downloaded from the web. Add the web server rule shown under Storage protection, or move the folder outside the web root."
 msgstr ""
 
-#: includes/class-admin.php:787
+#: includes/class-admin.php:805
 msgid "The storage folder cannot be downloaded from the web."
 msgstr ""
 

@@ -87,8 +87,10 @@ final class Admin {
 		if ( 'settings_page_' . self::PAGE !== $hook_suffix ) {
 			return;
 		}
-		wp_enqueue_style( 'vpn-server-admin', plugins_url( 'assets/admin.css', PLUGIN_FILE ), array(), VERSION );
-		wp_enqueue_script( 'vpn-server-admin', plugins_url( 'assets/admin.js', PLUGIN_FILE ), array(), VERSION, array( 'in_footer' => true ) );
+		// The file time as version reloads changed assets even when the plugin version stays.
+		$assets = dirname( PLUGIN_FILE ) . '/assets/';
+		wp_enqueue_style( 'vpn-server-admin', plugins_url( 'assets/admin.css', PLUGIN_FILE ), array(), (string) filemtime( $assets . 'admin.css' ) );
+		wp_enqueue_script( 'vpn-server-admin', plugins_url( 'assets/admin.js', PLUGIN_FILE ), array(), (string) filemtime( $assets . 'admin.js' ), array( 'in_footer' => true ) );
 		wp_localize_script(
 			'vpn-server-admin',
 			'vpnServerAdmin',
@@ -122,7 +124,7 @@ final class Admin {
 		<div class="wrap vpn-server">
 			<h1><?php echo esc_html__( 'VPN Server', 'vpn-server' ); ?></h1>
 			<?php self::render_notice(); ?>
-			<p><?php echo esc_html__( 'This site forwards encrypted traffic between PHPVPN clients. The VPN server never sees the payload: clients encrypt it with keys that only they know.', 'vpn-server' ); ?></p>
+			<p class="vpn-server-intro"><?php echo esc_html__( 'This site forwards encrypted traffic between PHPVPN clients. The VPN server never sees the payload: clients encrypt it with keys that only they know.', 'vpn-server' ); ?></p>
 			<?php
 			self::render_connection( $settings );
 			self::render_clients( $settings );
@@ -201,41 +203,49 @@ final class Admin {
 		$url = Settings::endpoint_url( $settings );
 		?>
 		<?php self::form_start( 'save', 'vpn-server-settings' ); ?>
-		<h2><?php echo esc_html__( 'Connection', 'vpn-server' ); ?></h2>
-		<table class="form-table" role="presentation">
-			<tr>
-				<th scope="row"><label for="vpn-server-endpoint"><?php echo esc_html__( 'Server URL', 'vpn-server' ); ?></label></th>
-				<td>
-					<code><?php echo esc_html( home_url( '/' ) ); ?></code><input type="text" id="vpn-server-endpoint" name="endpoint" class="regular-text code" value="<?php echo esc_attr( $settings['endpoint'] ); ?>"><code>/</code>
-					<button type="button" class="button hide-if-no-js" data-vpn-server-copy-text="<?php echo esc_attr( $url ); ?>" data-vpn-server-saved-url><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-					<a class="button" href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer" data-vpn-server-saved-url><?php echo esc_html__( 'Open', 'vpn-server' ); ?></a>
-					<span class="vpn-server-unsaved" hidden><?php echo esc_html__( 'Save changes first.', 'vpn-server' ); ?></span>
+		<section class="vpn-server-card">
+			<h2><?php echo esc_html__( 'Connection', 'vpn-server' ); ?></h2>
+			<div class="vpn-server-field">
+				<label class="vpn-server-label" for="vpn-server-endpoint"><?php echo esc_html__( 'Server URL', 'vpn-server' ); ?></label>
+				<div class="vpn-server-control">
+					<div class="vpn-server-line">
+						<div class="vpn-server-group">
+							<span class="vpn-server-addon"><?php echo esc_html( home_url( '/' ) ); ?></span>
+							<input type="text" id="vpn-server-endpoint" name="endpoint" class="code" value="<?php echo esc_attr( $settings['endpoint'] ); ?>" spellcheck="false">
+							<span class="vpn-server-addon">/</span>
+						</div>
+						<button type="button" class="button hide-if-no-js" data-vpn-server-copy-text="<?php echo esc_attr( $url ); ?>" data-vpn-server-saved-url><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+						<a class="button" href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer" data-vpn-server-saved-url><?php echo esc_html__( 'Open', 'vpn-server' ); ?></a>
+						<span class="vpn-server-unsaved" hidden><?php echo esc_html__( 'Save changes first.', 'vpn-server' ); ?></span>
+					</div>
 					<p class="description"><?php echo esc_html__( 'Enter this address as Server URL in the PHPVPN client. The path may contain letters, digits, hyphens, underscores and slashes. Changing it disconnects all clients until they use the new Server URL.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-			<tr>
-				<th scope="row"><?php echo esc_html__( 'Status page', 'vpn-server' ); ?></th>
-				<td>
+				</div>
+			</div>
+			<div class="vpn-server-field">
+				<span class="vpn-server-label"><?php echo esc_html__( 'Status page', 'vpn-server' ); ?></span>
+				<div class="vpn-server-control">
 					<label><input type="checkbox" name="status_page" value="1" <?php checked( $settings['status_page'] ); ?>> <?php echo esc_html__( 'Show the status page when the Server URL is opened in a browser', 'vpn-server' ); ?></label>
 					<p class="description"><?php echo esc_html__( 'When it is off, a browser gets 404. The clients are not affected.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-		</table>
+				</div>
+			</div>
+		</section>
 
-		<h2><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></h2>
-		<p><?php echo esc_html__( 'Shared by the server and all its clients. Changing it disconnects every client until it gets the new value.', 'vpn-server' ); ?></p>
-		<table class="form-table" role="presentation">
-			<tr>
-				<th scope="row"><label for="vpn-server-secret"><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></label></th>
-				<td>
-					<input type="text" id="vpn-server-secret" name="secret" class="code" autocomplete="off" spellcheck="false" value="<?php echo esc_attr( $settings['secret'] ); ?>">
-					<button type="button" class="button hide-if-no-js" data-vpn-server-copy="vpn-server-secret"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-					<button type="button" class="button hide-if-no-js" data-vpn-server-generate="vpn-server-secret"><?php echo esc_html__( 'Generate New Secret', 'vpn-server' ); ?></button>
+		<section class="vpn-server-card">
+			<h2><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></h2>
+			<p class="vpn-server-lead"><?php echo esc_html__( 'Shared by the server and all its clients. Changing it disconnects every client until it gets the new value.', 'vpn-server' ); ?></p>
+			<div class="vpn-server-field">
+				<label class="vpn-server-label" for="vpn-server-secret"><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></label>
+				<div class="vpn-server-control">
+					<div class="vpn-server-line">
+						<input type="text" id="vpn-server-secret" name="secret" class="code vpn-server-wide" autocomplete="off" spellcheck="false" value="<?php echo esc_attr( $settings['secret'] ); ?>">
+						<button type="button" class="button hide-if-no-js" data-vpn-server-copy="vpn-server-secret"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+						<button type="button" class="button hide-if-no-js" data-vpn-server-generate="vpn-server-secret"><?php echo esc_html__( 'Generate New Secret', 'vpn-server' ); ?></button>
+					</div>
 					<p class="description"><?php echo esc_html__( 'Keep the generated value, or enter the secret of the PHPVPN server you move from. Generate New Secret only fills in the field, the secret changes when you save.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-		</table>
-		<p class="submit">
+				</div>
+			</div>
+		</section>
+		<p class="vpn-server-submit">
 			<button type="submit" class="button button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'The Server URL or the server secret changed. All clients stop working until they get the new value. Save the changes?', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button>
 		</p>
 		</form>
@@ -252,90 +262,97 @@ final class Admin {
 		$keys    = $settings['access_keys'];
 		$free    = self::free_addresses( $settings );
 		uksort( $keys, static fn( $a, $b ): int => \PhpVpn\Validators::addressSortKey( (string) $a ) <=> \PhpVpn\Validators::addressSortKey( (string) $b ) );
+		$labels = array(
+			'address' => __( 'VPN address', 'vpn-server' ),
+			'key'     => __( 'Access key', 'vpn-server' ),
+			'seen'    => __( 'Last seen', 'vpn-server' ),
+			'actions' => __( 'Actions', 'vpn-server' ),
+		);
 		?>
-		<h2><?php echo esc_html__( 'Clients', 'vpn-server' ); ?></h2>
-		<p><?php echo esc_html__( 'Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them.', 'vpn-server' ); ?></p>
-		<div class="vpn-server-toolbar">
-			<?php if ( array() === $free ) : ?>
-				<span><?php echo esc_html__( 'All VPN addresses are already used.', 'vpn-server' ); ?></span>
-			<?php else : ?>
-				<?php self::form_start( 'add_client', 'vpn-server-inline' ); ?>
-					<label for="vpn-server-address"><?php echo esc_html__( 'VPN address', 'vpn-server' ); ?></label>
-					<select id="vpn-server-address" name="address">
-						<?php
-						foreach ( $free as $address ) {
-							printf( '<option value="%1$s">%1$s</option>', esc_attr( $address ) );
-						}
-						?>
-					</select>
-					<button type="submit" class="button"><?php echo esc_html__( 'Add Client', 'vpn-server' ); ?></button>
-				</form>
-			<?php endif; ?>
-		</div>
-		<table class="widefat striped vpn-server-clients">
-			<thead>
-				<tr>
-					<th scope="col"><?php echo esc_html__( 'VPN address', 'vpn-server' ); ?></th>
-					<th scope="col"><?php echo esc_html__( 'Access key', 'vpn-server' ); ?></th>
-					<th scope="col"><?php echo esc_html__( 'Last seen', 'vpn-server' ); ?></th>
-					<th scope="col"><?php echo esc_html__( 'Actions', 'vpn-server' ); ?></th>
-				</tr>
-			</thead>
-			<tbody>
-			<?php if ( array() === $keys ) : ?>
-				<tr><td colspan="4"><?php echo esc_html__( 'No clients yet. Add the first one with Add Client.', 'vpn-server' ); ?></td></tr>
-			<?php endif; ?>
-			<?php foreach ( $keys as $address => $key ) : ?>
-				<?php
-				$address  = (string) $address;
-				$suffix   = str_replace( '.', '-', $address );
-				$field_id = 'vpn-server-key-' . $suffix;
-				$form_id  = 'vpn-server-set-key-' . $suffix;
-				$seen     = null !== $storage ? $storage->readLastSeenMs( $address ) : null;
-				?>
-				<tr>
-					<td><code><?php echo esc_html( $address ); ?></code></td>
-					<td>
-						<input type="text" class="code vpn-server-key" id="<?php echo esc_attr( $field_id ); ?>" name="access_key" form="<?php echo esc_attr( $form_id ); ?>" value="<?php echo esc_attr( $key ); ?>" aria-label="<?php echo esc_attr( sprintf( /* translators: %s: VPN address of the client. */ __( 'Access key of %s', 'vpn-server' ), $address ) ); ?>" pattern="[0-9a-fA-F]{64}" title="<?php echo esc_attr__( 'Exactly 64 hexadecimal characters.', 'vpn-server' ); ?>" required readonly autocomplete="off" spellcheck="false">
-					</td>
-					<td>
-						<?php
-						if ( null === $seen ) {
-							echo esc_html__( 'Never', 'vpn-server' );
-						} else {
-							/* translators: %s: human readable time difference, for example "5 mins". */
-							echo esc_html( sprintf( __( '%s ago', 'vpn-server' ), human_time_diff( intdiv( $seen, 1000 ) ) ) );
-						}
-						?>
-					</td>
-					<td class="vpn-server-actions">
-						<span class="vpn-server-view">
-							<button type="button" class="button button-small hide-if-no-js" data-vpn-server-copy="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-							<button type="button" class="button button-small hide-if-no-js" data-vpn-server-edit="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Edit', 'vpn-server' ); ?></button>
-							<?php self::form_start( 'client_key', 'vpn-server-inline' ); ?>
+		<section class="vpn-server-card">
+			<div class="vpn-server-card-head">
+				<h2><?php echo esc_html__( 'Clients', 'vpn-server' ); ?></h2>
+				<?php if ( array() === $free ) : ?>
+					<span class="vpn-server-muted"><?php echo esc_html__( 'All VPN addresses are already used.', 'vpn-server' ); ?></span>
+				<?php else : ?>
+					<?php self::form_start( 'add_client', 'vpn-server-line' ); ?>
+						<label class="screen-reader-text" for="vpn-server-address"><?php echo esc_html__( 'VPN address', 'vpn-server' ); ?></label>
+						<select id="vpn-server-address" name="address">
+							<?php
+							foreach ( $free as $address ) {
+								printf( '<option value="%1$s">%1$s</option>', esc_attr( $address ) );
+							}
+							?>
+						</select>
+						<button type="submit" class="button button-primary"><?php echo esc_html__( 'Add Client', 'vpn-server' ); ?></button>
+					</form>
+				<?php endif; ?>
+			</div>
+			<p class="vpn-server-lead"><?php echo esc_html__( 'Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them.', 'vpn-server' ); ?></p>
+			<table class="vpn-server-table">
+				<thead>
+					<tr>
+						<?php foreach ( $labels as $label ) : ?>
+							<th scope="col"><?php echo esc_html( $label ); ?></th>
+						<?php endforeach; ?>
+					</tr>
+				</thead>
+				<tbody>
+				<?php if ( array() === $keys ) : ?>
+					<tr><td colspan="4" class="vpn-server-empty"><?php echo esc_html__( 'No clients yet. Add the first one with Add Client.', 'vpn-server' ); ?></td></tr>
+				<?php endif; ?>
+				<?php foreach ( $keys as $address => $key ) : ?>
+					<?php
+					$address  = (string) $address;
+					$suffix   = str_replace( '.', '-', $address );
+					$field_id = 'vpn-server-key-' . $suffix;
+					$form_id  = 'vpn-server-set-key-' . $suffix;
+					$seen     = null !== $storage ? $storage->readLastSeenMs( $address ) : null;
+					?>
+					<tr>
+						<td data-label="<?php echo esc_attr( $labels['address'] ); ?>"><span class="vpn-server-badge"><?php echo esc_html( $address ); ?></span></td>
+						<td data-label="<?php echo esc_attr( $labels['key'] ); ?>">
+							<input type="text" class="code vpn-server-key" id="<?php echo esc_attr( $field_id ); ?>" name="access_key" form="<?php echo esc_attr( $form_id ); ?>" value="<?php echo esc_attr( $key ); ?>" aria-label="<?php echo esc_attr( sprintf( /* translators: %s: VPN address of the client. */ __( 'Access key of %s', 'vpn-server' ), $address ) ); ?>" pattern="[0-9a-fA-F]{64}" title="<?php echo esc_attr__( 'Exactly 64 hexadecimal characters.', 'vpn-server' ); ?>" required readonly autocomplete="off" spellcheck="false">
+						</td>
+						<td data-label="<?php echo esc_attr( $labels['seen'] ); ?>" class="vpn-server-muted">
+							<?php
+							if ( null === $seen ) {
+								echo esc_html__( 'Never', 'vpn-server' );
+							} else {
+								/* translators: %s: human readable time difference, for example "5 mins". */
+								echo esc_html( sprintf( __( '%s ago', 'vpn-server' ), human_time_diff( intdiv( $seen, 1000 ) ) ) );
+							}
+							?>
+						</td>
+						<td data-label="<?php echo esc_attr( $labels['actions'] ); ?>">
+							<div class="vpn-server-actions vpn-server-view">
+								<button type="button" class="button button-small hide-if-no-js" data-vpn-server-copy="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
+								<button type="button" class="button button-small hide-if-no-js" data-vpn-server-edit="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Edit', 'vpn-server' ); ?></button>
+								<?php self::form_start( 'client_key' ); ?>
+									<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+									<button type="submit" class="button button-small" data-vpn-server-confirm="<?php echo esc_attr__( 'Generate a new access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'New Key', 'vpn-server' ); ?></button>
+								</form>
+								<?php self::form_start( 'client_config' ); ?>
+									<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+									<button type="submit" class="button button-small"><?php echo esc_html__( 'Download config.json', 'vpn-server' ); ?></button>
+								</form>
+								<?php self::form_start( 'remove_client' ); ?>
+									<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+									<button type="submit" class="button button-small vpn-server-danger" data-vpn-server-confirm="<?php echo esc_attr__( 'Remove this client? It can no longer connect.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Remove', 'vpn-server' ); ?></button>
+								</form>
+							</div>
+							<?php // The access key field joins this form through its form attribute. ?>
+							<?php self::form_start( 'set_key', 'vpn-server-actions vpn-server-edit', $form_id ); ?>
 								<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-								<button type="submit" class="button button-small" data-vpn-server-confirm="<?php echo esc_attr__( 'Generate a new access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'New Key', 'vpn-server' ); ?></button>
+								<button type="submit" class="button button-small button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'Save the access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save', 'vpn-server' ); ?></button>
+								<button type="button" class="button button-small" data-vpn-server-cancel="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Cancel', 'vpn-server' ); ?></button>
 							</form>
-							<?php self::form_start( 'client_config', 'vpn-server-inline' ); ?>
-								<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-								<button type="submit" class="button button-small"><?php echo esc_html__( 'Download config.json', 'vpn-server' ); ?></button>
-							</form>
-							<?php self::form_start( 'remove_client', 'vpn-server-inline' ); ?>
-								<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-								<button type="submit" class="button button-small button-link-delete" data-vpn-server-confirm="<?php echo esc_attr__( 'Remove this client? It can no longer connect.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Remove', 'vpn-server' ); ?></button>
-							</form>
-						</span>
-						<?php // The access key field joins this form through its form attribute. ?>
-						<?php self::form_start( 'set_key', 'vpn-server-inline vpn-server-edit', $form_id ); ?>
-							<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
-							<button type="submit" class="button button-small button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'Save the access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save', 'vpn-server' ); ?></button>
-							<button type="button" class="button button-small" data-vpn-server-cancel="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Cancel', 'vpn-server' ); ?></button>
-						</form>
-					</td>
-				</tr>
-			<?php endforeach; ?>
-			</tbody>
-		</table>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+		</section>
 		<?php
 	}
 
@@ -347,27 +364,27 @@ final class Admin {
 	private static function render_storage( array $settings ): void {
 		$location = self::storage_url_path( $settings );
 		?>
-		<h2><?php echo esc_html__( 'Storage protection', 'vpn-server' ); ?></h2>
-		<?php self::form_start( 'storage' ); ?>
-		<table class="form-table" role="presentation">
-			<tr>
-				<th scope="row"><label for="vpn-server-storage"><?php echo esc_html__( 'Storage folder', 'vpn-server' ); ?></label></th>
-				<td>
-					<input type="text" id="vpn-server-storage" name="storage" class="large-text code" value="<?php echo esc_attr( $settings['storage'] ); ?>">
+		<section class="vpn-server-card">
+			<h2><?php echo esc_html__( 'Storage protection', 'vpn-server' ); ?></h2>
+			<?php self::form_start( 'storage' ); ?>
+			<div class="vpn-server-field">
+				<label class="vpn-server-label" for="vpn-server-storage"><?php echo esc_html__( 'Storage folder', 'vpn-server' ); ?></label>
+				<div class="vpn-server-control">
+					<div class="vpn-server-line">
+						<input type="text" id="vpn-server-storage" name="storage" class="code vpn-server-wide" spellcheck="false" value="<?php echo esc_attr( $settings['storage'] ); ?>">
+						<button type="submit" class="button" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Change Folder', 'vpn-server' ); ?></button>
+					</div>
 					<p class="description"><?php echo esc_html__( 'Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds.', 'vpn-server' ); ?></p>
-				</td>
-			</tr>
-		</table>
-		<p class="submit">
-			<button type="submit" class="button" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Change Folder', 'vpn-server' ); ?></button>
-		</p>
-		</form>
-		<?php if ( null === $location ) : ?>
-			<p><?php echo esc_html__( 'The storage folder is outside the uploads folder. Make sure the web server does not serve it.', 'vpn-server' ); ?></p>
-		<?php else : ?>
-			<p><?php echo esc_html__( 'The storage folder is inside the uploads folder. Apache and IIS are protected by the .htaccess and web.config files that the plugin writes there. On nginx add this rule to the server block and reload nginx:', 'vpn-server' ); ?></p>
-			<pre class="vpn-server-snippet"><code><?php echo esc_html( 'location ^~ ' . $location . ' { deny all; return 404; }' ); ?></code></pre>
-		<?php endif; ?>
+				</div>
+			</div>
+			</form>
+			<?php if ( null === $location ) : ?>
+				<p class="vpn-server-lead"><?php echo esc_html__( 'The storage folder is outside the uploads folder. Make sure the web server does not serve it.', 'vpn-server' ); ?></p>
+			<?php else : ?>
+				<p class="vpn-server-lead"><?php echo esc_html__( 'The storage folder is inside the uploads folder. Apache and IIS are protected by the .htaccess and web.config files that the plugin writes there. On nginx add this rule to the server block and reload nginx:', 'vpn-server' ); ?></p>
+				<pre class="vpn-server-snippet"><code><?php echo esc_html( 'location ^~ ' . $location . ' { deny all; return 404; }' ); ?></code></pre>
+			<?php endif; ?>
+		</section>
 		<?php
 	}
 
@@ -376,35 +393,29 @@ final class Admin {
 	 */
 	private static function render_fast_route(): void {
 		$installed = Fast_Route::is_installed();
-		?>
-		<h2><?php echo esc_html__( 'Fast route', 'vpn-server' ); ?></h2>
-		<p><?php echo esc_html__( 'Clients poll the server several times per second. By default a client request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated.', 'vpn-server' ); ?></p>
-		<p>
-			<?php
-			if ( ! $installed ) {
-				echo esc_html__( 'Status: not installed.', 'vpn-server' );
-			} elseif ( Fast_Route::is_current() ) {
-				echo esc_html__( 'Status: installed.', 'vpn-server' );
-			} else {
-				echo esc_html__( 'Status: installed for another version or location of this plugin, install it again.', 'vpn-server' );
-			}
-			?>
-		</p>
-		<?php
-		if ( ! self::can_manage_network_files() ) {
-			echo '<p>' . esc_html__( 'The fast route serves the whole network, only a super admin can install or remove it.', 'vpn-server' ) . '</p>';
-			return;
-		}
-		self::form_start( $installed && Fast_Route::is_current() ? 'fast_route_off' : 'fast_route_on' );
-		?>
-		<?php
-		if ( $installed && Fast_Route::is_current() ) {
-			submit_button( __( 'Remove fast route', 'vpn-server' ), 'secondary', 'submit', false );
+		$current   = $installed && Fast_Route::is_current();
+		if ( ! $installed ) {
+			$status = array( 'warning', __( 'Not installed', 'vpn-server' ) );
+		} elseif ( $current ) {
+			$status = array( 'ok', __( 'Installed', 'vpn-server' ) );
 		} else {
-			submit_button( __( 'Install fast route', 'vpn-server' ), 'secondary', 'submit', false );
+			$status = array( 'error', __( 'Installed for another version or location of this plugin, install it again', 'vpn-server' ) );
 		}
 		?>
-		</form>
+		<section class="vpn-server-card">
+			<div class="vpn-server-card-head">
+				<h2><?php echo esc_html__( 'Fast route', 'vpn-server' ); ?></h2>
+				<span class="vpn-server-pill vpn-server-pill-<?php echo esc_attr( $status[0] ); ?>"><?php echo esc_html( $status[1] ); ?></span>
+			</div>
+			<p class="vpn-server-lead"><?php echo esc_html__( 'Clients poll the server several times per second. By default a client request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated.', 'vpn-server' ); ?></p>
+			<?php if ( ! self::can_manage_network_files() ) : ?>
+				<p class="vpn-server-lead"><?php echo esc_html__( 'The fast route serves the whole network, only a super admin can install or remove it.', 'vpn-server' ); ?></p>
+			<?php else : ?>
+				<?php self::form_start( $current ? 'fast_route_off' : 'fast_route_on' ); ?>
+				<button type="submit" class="button"><?php echo esc_html( $current ? __( 'Remove fast route', 'vpn-server' ) : __( 'Install fast route', 'vpn-server' ) ); ?></button>
+				</form>
+			<?php endif; ?>
+		</section>
 		<?php
 	}
 
@@ -416,22 +427,29 @@ final class Admin {
 	private static function render_checks( array $settings ): void {
 		$checks = self::checks( $settings );
 		$test   = get_transient( self::SELF_TEST );
+		$names  = array(
+			'ok'      => __( 'OK', 'vpn-server' ),
+			'warning' => __( 'Warning', 'vpn-server' ),
+			'error'   => __( 'Error', 'vpn-server' ),
+		);
 		?>
-		<h2><?php echo esc_html__( 'Checks', 'vpn-server' ); ?></h2>
-		<table class="widefat striped vpn-server-checks">
-			<tbody>
-			<?php foreach ( array_merge( $checks, is_array( $test ) ? $test : array() ) as $check ) : ?>
-				<tr>
-					<td class="vpn-server-check-<?php echo esc_attr( $check[0] ); ?>"><?php echo esc_html( 'ok' === $check[0] ? __( 'OK', 'vpn-server' ) : ( 'warning' === $check[0] ? __( 'Warning', 'vpn-server' ) : __( 'Error', 'vpn-server' ) ) ); ?></td>
-					<td><?php echo esc_html( $check[1] ); ?></td>
-				</tr>
-			<?php endforeach; ?>
-			</tbody>
-		</table>
-		<?php self::form_start( 'self_test' ); ?>
-		<p><?php echo esc_html__( 'The self test sends requests from this server to the Server URL and to the storage folder, the same way a client and a visitor would.', 'vpn-server' ); ?></p>
-		<?php submit_button( __( 'Run self test', 'vpn-server' ), 'secondary', 'submit', false ); ?>
-		</form>
+		<section class="vpn-server-card">
+			<div class="vpn-server-card-head">
+				<h2><?php echo esc_html__( 'Checks', 'vpn-server' ); ?></h2>
+				<?php self::form_start( 'self_test' ); ?>
+				<button type="submit" class="button"><?php echo esc_html__( 'Run self test', 'vpn-server' ); ?></button>
+				</form>
+			</div>
+			<ul class="vpn-server-checks">
+				<?php foreach ( array_merge( $checks, is_array( $test ) ? $test : array() ) as $check ) : ?>
+					<li>
+						<span class="vpn-server-pill vpn-server-pill-<?php echo esc_attr( $check[0] ); ?>"><?php echo esc_html( $names[ $check[0] ] ?? $names['error'] ); ?></span>
+						<span><?php echo esc_html( $check[1] ); ?></span>
+					</li>
+				<?php endforeach; ?>
+			</ul>
+			<p class="vpn-server-lead"><?php echo esc_html__( 'The self test sends requests from this server to the Server URL and to the storage folder, the same way a client and a visitor would.', 'vpn-server' ); ?></p>
+		</section>
 		<?php
 	}
 
