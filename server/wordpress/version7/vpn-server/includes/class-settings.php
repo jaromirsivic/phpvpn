@@ -19,6 +19,15 @@ final class Settings {
 	const OPTION           = 'vpn_server_settings';
 	const DEFAULT_ENDPOINT = 'vpn-server';
 
+	/** Default server secret of phpvpn.php and of the client Configuration Wizard. */
+	const DEFAULT_SECRET = 'CHANGE_THIS_SERVER_SECRET';
+
+	/** Shortest server secret that the settings show as secure. */
+	const SECURE_SECRET_LENGTH = 32;
+
+	/** Last octets of the clients created on activation, the ACCESS_KEYS of phpvpn.php. */
+	const DEFAULT_CLIENTS = array( 2, 15 );
+
 	/** Storage folders the plugin creates itself, the only ones uninstall removes. */
 	const MANAGED_STORAGE_PATTERN = '/^vpn-server-[0-9a-f]{16}$/';
 
@@ -102,6 +111,30 @@ final class Settings {
 	}
 
 	/**
+	 * Why a server secret is weak: 'default' for the default or an all zero secret, 'short' below
+	 * SECURE_SECRET_LENGTH characters, '' for a secret that is shown as secure.
+	 *
+	 * @param string $secret Server secret.
+	 */
+	public static function secret_weakness( string $secret ): string {
+		if ( self::DEFAULT_SECRET === $secret || str_repeat( '0', strlen( $secret ) ) === $secret ) {
+			return 'default';
+		}
+		return strlen( $secret ) < self::SECURE_SECRET_LENGTH ? 'short' : '';
+	}
+
+	/**
+	 * Default access key of a client as in phpvpn.php and the client Configuration Wizard: the last
+	 * octet of the VPN address as one hexadecimal byte, repeated 32 times.
+	 *
+	 * @param string $address VPN address of the client.
+	 */
+	public static function default_access_key( string $address ): string {
+		$octets = explode( '.', $address );
+		return str_repeat( sprintf( '%02x', (int) end( $octets ) & 0xff ), 32 );
+	}
+
+	/**
 	 * Default storage folder: a random, unguessable name inside the uploads folder.
 	 *
 	 * @return string Absolute path, empty when the uploads folder is unavailable.
@@ -140,13 +173,21 @@ final class Settings {
 		if ( false !== get_option( self::OPTION ) ) {
 			return;
 		}
+		require_once __DIR__ . '/server-core.php';
 		$storage = self::default_storage();
+		$keys    = array();
+		foreach ( range( self::DEFAULT_CLIENTS[0], self::DEFAULT_CLIENTS[1] ) as $octet ) {
+			$address          = \PhpVpn\VPN_ADDRESS_PREFIX . $octet;
+			$keys[ $address ] = self::default_access_key( $address );
+		}
 		add_option(
 			self::OPTION,
 			self::normalize(
 				array(
-					'secret'          => self::random_hex( 32 ),
-					'access_keys'     => array(),
+					// The same defaults as phpvpn.php and the client wizard. The settings screen and
+					// the status page show that this secret is insecure until it is replaced.
+					'secret'          => self::DEFAULT_SECRET,
+					'access_keys'     => $keys,
 					'endpoint'        => self::DEFAULT_ENDPOINT,
 					'storage'         => $storage,
 					'storage_managed' => '' !== $storage,

@@ -39,10 +39,11 @@ The PHPVPN clients and the protocol specification are available from [www.piland
 
 1. Install and activate the plugin.
 2. Use pretty permalinks (Settings, Permalinks, anything except Plain). The Server URL does not work with plain permalinks.
-3. Open Settings, VPN Server, add a client for every device and download its config.json.
-4. Import config.json in the PHPVPN client, or copy Server URL, server secret, VPN address and access key into its Configuration Wizard.
-5. Set up the communication contracts and payload keys between the clients in the clients themselves.
-6. On nginx add the rule shown under Storage protection, then press Run self test.
+3. Open Settings, VPN Server and generate a new server secret. The plugin starts like phpvpn.php with the default secret of PHPVPN and the clients 10.99.99.2 to 10.99.99.15 with their default access keys. These values are the same on every installation and work with the default values of the client Configuration Wizard.
+4. Replace the default access key of every client you use with New Key, remove the others, add more if you need them, and download the config.json of each client.
+5. Import config.json in the PHPVPN client, or copy Server URL, server secret, VPN address and access key into its Configuration Wizard.
+6. Set up the communication contracts and payload keys between the clients in the clients themselves.
+7. On nginx add the rule shown under Storage protection, then press Run self test.
 
 == Frequently Asked Questions ==
 

@@ -33,6 +33,7 @@ final class Admin {
 		'storage'        => 'handle_storage',
 		'add_client'     => 'handle_add_client',
 		'set_key'        => 'handle_set_key',
+		'default_key'    => 'handle_default_key',
 		'client_key'     => 'handle_client_key',
 		'remove_client'  => 'handle_remove_client',
 		'client_config'  => 'handle_client_config',
@@ -151,6 +152,7 @@ final class Admin {
 			'client_added'       => array( 'success', __( 'Client added. Download its configuration and import it in the client.', 'vpn-server' ) ),
 			'client_key'         => array( 'success', __( 'A new access key was generated. Update accessKey in that client.', 'vpn-server' ) ),
 			'key_saved'          => array( 'success', __( 'The access key was saved. Update accessKey in that client.', 'vpn-server' ) ),
+			'default_key'        => array( 'success', __( 'The default access key was set. Update accessKey in that client.', 'vpn-server' ) ),
 			'client_removed'     => array( 'success', __( 'Client removed.', 'vpn-server' ) ),
 			'fast_route_on'      => array( 'success', __( 'The fast route is installed.', 'vpn-server' ) ),
 			'fast_route_off'     => array( 'success', __( 'The fast route is removed.', 'vpn-server' ) ),
@@ -230,14 +232,19 @@ final class Admin {
 			</div>
 		</section>
 
-		<section class="vpn-server-card">
-			<h2><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></h2>
+		<?php $weakness = Settings::secret_weakness( $settings['secret'] ); ?>
+		<section class="vpn-server-card vpn-server-secret-card <?php echo esc_attr( '' === $weakness ? 'is-secure' : 'is-insecure' ); ?>">
+			<h2>
+				<?php echo esc_html__( 'Server secret', 'vpn-server' ); ?>
+				<span class="vpn-server-secret-state" data-weakness="default" <?php echo 'default' === $weakness ? '' : 'hidden'; ?>><?php echo esc_html__( '(default server secret, insecure: generate a new one)', 'vpn-server' ); ?></span>
+				<span class="vpn-server-secret-state" data-weakness="short" <?php echo 'short' === $weakness ? '' : 'hidden'; ?>><?php echo esc_html( sprintf( /* translators: %d: minimum number of characters. */ __( '(shorter than %d characters, insecure: generate a new one)', 'vpn-server' ), Settings::SECURE_SECRET_LENGTH ) ); ?></span>
+			</h2>
 			<p class="vpn-server-lead"><?php echo esc_html__( 'Shared by the server and all its clients. Changing it disconnects every client until it gets the new value.', 'vpn-server' ); ?></p>
 			<div class="vpn-server-field">
 				<label class="vpn-server-label" for="vpn-server-secret"><?php echo esc_html__( 'Server secret', 'vpn-server' ); ?></label>
 				<div class="vpn-server-control">
 					<div class="vpn-server-line">
-						<input type="text" id="vpn-server-secret" name="secret" class="code vpn-server-wide" autocomplete="off" spellcheck="false" value="<?php echo esc_attr( $settings['secret'] ); ?>">
+						<input type="text" id="vpn-server-secret" name="secret" class="code vpn-server-wide" autocomplete="off" spellcheck="false" value="<?php echo esc_attr( $settings['secret'] ); ?>" data-vpn-server-default-secret="<?php echo esc_attr( Settings::DEFAULT_SECRET ); ?>" data-vpn-server-secure-length="<?php echo esc_attr( (string) Settings::SECURE_SECRET_LENGTH ); ?>">
 						<button type="button" class="button hide-if-no-js" data-vpn-server-copy="vpn-server-secret"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
 						<button type="button" class="button hide-if-no-js" data-vpn-server-generate="vpn-server-secret"><?php echo esc_html__( 'Generate New Secret', 'vpn-server' ); ?></button>
 					</div>
@@ -289,6 +296,7 @@ final class Admin {
 				<?php endif; ?>
 			</div>
 			<p class="vpn-server-lead"><?php echo esc_html__( 'Every client has its own VPN address and access key. Communication contracts and payload keys are set up between the clients themselves, the server never knows them.', 'vpn-server' ); ?></p>
+			<div class="vpn-server-table-wrap">
 			<table class="vpn-server-table">
 				<thead>
 					<tr>
@@ -328,6 +336,10 @@ final class Admin {
 							<div class="vpn-server-actions vpn-server-view">
 								<button type="button" class="button button-small hide-if-no-js" data-vpn-server-copy="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
 								<button type="button" class="button button-small hide-if-no-js" data-vpn-server-edit="<?php echo esc_attr( $field_id ); ?>"><?php echo esc_html__( 'Edit', 'vpn-server' ); ?></button>
+								<?php self::form_start( 'default_key' ); ?>
+									<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
+									<button type="submit" class="button button-small" data-vpn-server-confirm="<?php echo esc_attr__( 'Set the default access key? It is predictable, anyone who knows the server secret can then act as this client.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Default Key', 'vpn-server' ); ?></button>
+								</form>
 								<?php self::form_start( 'client_key' ); ?>
 									<input type="hidden" name="address" value="<?php echo esc_attr( $address ); ?>">
 									<button type="submit" class="button button-small" data-vpn-server-confirm="<?php echo esc_attr__( 'Generate a new access key? The client stops working until it gets the new key.', 'vpn-server' ); ?>"><?php echo esc_html__( 'New Key', 'vpn-server' ); ?></button>
@@ -352,6 +364,7 @@ final class Admin {
 				<?php endforeach; ?>
 				</tbody>
 			</table>
+			</div>
 		</section>
 		<?php
 	}
@@ -595,7 +608,7 @@ final class Admin {
 	}
 
 	/**
-	 * Adds a client with the chosen or the next free address and a random access key.
+	 * Adds a client with the chosen or the next free address and its default access key.
 	 */
 	public static function handle_add_client(): void {
 		self::verify( 'add_client' );
@@ -611,9 +624,24 @@ final class Admin {
 		} elseif ( ! in_array( $address, $free, true ) ) {
 			self::done( 'bad_address' );
 		}
-		$settings['access_keys'][ $address ] = Settings::random_hex( 32 );
+		$settings['access_keys'][ $address ] = Settings::default_access_key( $address );
 		Settings::save( $settings );
 		self::done( 'client_added' );
+	}
+
+	/**
+	 * Sets the default access key of a client.
+	 */
+	public static function handle_default_key(): void {
+		self::verify( 'default_key' );
+		$settings = Settings::get();
+		$address  = self::posted( 'address' );
+		if ( ! isset( $settings['access_keys'][ $address ] ) ) {
+			self::done( 'unknown_client' );
+		}
+		$settings['access_keys'][ $address ] = Settings::default_access_key( $address );
+		Settings::save( $settings );
+		self::done( 'default_key' );
 	}
 
 	/**

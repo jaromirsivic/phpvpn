@@ -59,6 +59,26 @@
 		}
 	}
 
+	// The secret card turns red for the default, an all zero or a short secret, as Settings::secret_weakness().
+	var secret = document.getElementById( 'vpn-server-secret' );
+	if ( secret ) {
+		secret.addEventListener( 'input', function () {
+			var value = secret.value;
+			var weakness = '';
+			if ( value === secret.getAttribute( 'data-vpn-server-default-secret' ) || /^0*$/.test( value ) ) {
+				weakness = 'default';
+			} else if ( value.length < Number( secret.getAttribute( 'data-vpn-server-secure-length' ) ) ) {
+				weakness = 'short';
+			}
+			var card = secret.closest( '.vpn-server-secret-card' );
+			card.classList.toggle( 'is-insecure', '' !== weakness );
+			card.classList.toggle( 'is-secure', '' === weakness );
+			card.querySelectorAll( '.vpn-server-secret-state' ).forEach( function ( state ) {
+				state.hidden = state.getAttribute( 'data-weakness' ) !== weakness;
+			} );
+		} );
+	}
+
 	// Copy and Open use the saved Server URL, an edited path is not live before it is saved.
 	if ( endpoint ) {
 		endpoint.addEventListener( 'input', function () {

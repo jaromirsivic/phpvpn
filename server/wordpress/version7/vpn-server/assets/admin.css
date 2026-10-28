@@ -19,7 +19,13 @@
 	--vs-field-width: 560px;
 	--vs-label-width: 170px;
 	--vs-gap: 8px;
-	max-width: 1200px;
+	--vs-table-head: 40px;
+	--vs-table-row: 51px;
+	--vs-table-rows: 8;
+	--vs-insecure-surface: #fcf0f1;
+	--vs-insecure-line: #f1b9bc;
+	--vs-secure-surface: #edfaef;
+	--vs-secure-line: #a7e0b1;
 	color: var(--vs-text);
 }
 
@@ -43,6 +49,29 @@
 .vpn-server .vpn-server-card h2 {
 	margin: 0 0 16px;
 	font-size: 16px;
+	font-weight: 600;
+}
+
+/* Server secret: red while it is the default or short, green otherwise */
+
+.vpn-server .vpn-server-secret-card.is-insecure {
+	background: var(--vs-insecure-surface);
+	border-color: var(--vs-insecure-line);
+}
+
+.vpn-server .vpn-server-secret-card.is-secure {
+	background: var(--vs-secure-surface);
+	border-color: var(--vs-secure-line);
+}
+
+.vpn-server .vpn-server-secret-card .vpn-server-field {
+	border-top-color: transparent;
+}
+
+.vpn-server .vpn-server-secret-state {
+	margin-left: 6px;
+	color: var(--vs-error);
+	font-size: 13px;
 	font-weight: 600;
 }
 
@@ -118,6 +147,11 @@
 	border-radius: var(--vs-radius);
 	box-shadow: none;
 	line-height: 1;
+}
+
+.vpn-server select {
+	min-width: 10em;
+	padding-right: 32px;
 }
 
 .vpn-server input[type="text"]:focus,
@@ -238,17 +272,27 @@
 
 /* Clients table */
 
+/* Every row has the same height, so the wrapper shows the header and at most 8 rows and scrolls the rest. */
+.vpn-server .vpn-server-table-wrap {
+	max-height: calc(var(--vs-table-head) + var(--vs-table-rows) * var(--vs-table-row) + 2px);
+	overflow-y: auto;
+	border: 1px solid var(--vs-line);
+	border-radius: var(--vs-radius);
+}
+
 .vpn-server .vpn-server-table {
 	width: 100%;
 	border-collapse: separate;
 	border-spacing: 0;
-	border: 1px solid var(--vs-line);
-	border-radius: var(--vs-radius);
-	overflow: hidden;
 }
 
 .vpn-server .vpn-server-table th {
-	padding: 10px 12px;
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	box-sizing: border-box;
+	height: var(--vs-table-head);
+	padding: 0 12px;
 	background: var(--vs-soft);
 	color: var(--vs-muted);
 	font-size: 12px;
@@ -259,7 +303,9 @@
 }
 
 .vpn-server .vpn-server-table td {
-	padding: 10px 12px;
+	box-sizing: border-box;
+	height: var(--vs-table-row);
+	padding: 0 12px;
 	border-top: 1px solid var(--vs-line);
 	vertical-align: middle;
 }
@@ -413,8 +459,14 @@
 		display: block;
 	}
 
-	.vpn-server .vpn-server-table {
+	.vpn-server .vpn-server-table-wrap {
+		max-height: none;
+		overflow: visible;
 		border: 0;
+	}
+
+	.vpn-server .vpn-server-table td {
+		height: auto;
 	}
 
 	.vpn-server .vpn-server-table thead {
