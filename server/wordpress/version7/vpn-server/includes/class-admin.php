@@ -317,7 +317,7 @@ final class Admin {
 					$form_id  = 'vpn-server-set-key-' . $suffix;
 					$seen     = null !== $storage ? $storage->readLastSeenMs( $address ) : null;
 					?>
-					<tr>
+					<tr<?php echo Settings::default_access_key( $address ) === $key ? '' : ' class="is-custom-key"'; ?>>
 						<td data-label="<?php echo esc_attr( $labels['address'] ); ?>"><span class="vpn-server-badge"><?php echo esc_html( $address ); ?></span></td>
 						<td data-label="<?php echo esc_attr( $labels['key'] ); ?>">
 							<input type="text" class="code vpn-server-key" id="<?php echo esc_attr( $field_id ); ?>" name="access_key" form="<?php echo esc_attr( $form_id ); ?>" value="<?php echo esc_attr( $key ); ?>" aria-label="<?php echo esc_attr( sprintf( /* translators: %s: VPN address of the client. */ __( 'Access key of %s', 'vpn-server' ), $address ) ); ?>" pattern="[0-9a-fA-F]{64}" title="<?php echo esc_attr__( 'Exactly 64 hexadecimal characters.', 'vpn-server' ); ?>" required readonly autocomplete="off" spellcheck="false">

@@ -314,6 +314,15 @@
 	background: color-mix(in srgb, var(--vs-accent) 4%, transparent);
 }
 
+/* Rows whose access key differs from the predictable default key */
+.vpn-server .vpn-server-table tbody tr.is-custom-key td {
+	background: var(--vs-secure-surface);
+}
+
+.vpn-server .vpn-server-table tbody tr.is-custom-key:hover td {
+	background: color-mix(in srgb, var(--vs-ok) 12%, var(--vs-secure-surface));
+}
+
 .vpn-server .vpn-server-table .vpn-server-key {
 	width: 100%;
 	min-width: 220px;

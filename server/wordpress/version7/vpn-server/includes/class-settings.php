@@ -184,9 +184,8 @@ final class Settings {
 			self::OPTION,
 			self::normalize(
 				array(
-					// The same defaults as phpvpn.php and the client wizard. The settings screen and
-					// the status page show that this secret is insecure until it is replaced.
-					'secret'          => self::DEFAULT_SECRET,
+					// A random secret like Generate New Secret, the clients get the default keys of phpvpn.php.
+					'secret'          => self::random_hex( 32 ),
 					'access_keys'     => $keys,
 					'endpoint'        => self::DEFAULT_ENDPOINT,
 					'storage'         => $storage,
