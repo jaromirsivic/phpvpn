@@ -8,13 +8,15 @@ Stable tag: 1.0.1
 License: MIT
 License URI: https://opensource.org/license/mit
 
-Runs a PHP VPN relay server on your site. PHP VPN clients for Windows and Linux connect their devices into one private network through it.
+Runs a VPN server on this site, enabling individuals and small businesses to quickly set up a lightweight virtual private network.
 
 == Description ==
 
-VPN Server turns a WordPress site into the relay server of PHP VPN. PHP VPN connects your own computers and servers into one private IPv4 network (10.99.99.0/24) over ordinary HTTPS, so it works wherever a web page can be opened, even behind NAT and firewalls that allow nothing else.
+This is an implementation of PHPVPN (Packet Handoff Protocol VPN) for WordPress. To connect, please install the PHPVPN client for Windows, macOS, or Linux.
 
-The plugin does not route your devices to the internet and does not hide your public IP address. It only relays traffic between your own PHP VPN clients.
+VPN Server turns a WordPress site into the relay server of PHPVPN. PHPVPN connects your own computers and servers into one private IPv4 network (10.99.99.0/24) over ordinary HTTPS, so it works wherever a web page can be opened, even behind NAT and firewalls that allow nothing else.
+
+The plugin does not route your devices to the internet and does not hide your public IP address. It only relays traffic between your own PHPVPN clients.
 
 **How it works**
 
@@ -31,14 +33,14 @@ The plugin does not route your devices to the internet and does not hide your pu
 * Fast: relay requests are answered right after the plugins load, before the theme. The optional fast route answers them even before other plugins load.
 * No external services, no tracking, no ads. All cryptography runs in plain PHP without extensions.
 
-The PHP VPN clients and the protocol specification are available from [www.pilandrome.com](https://www.pilandrome.com).
+The PHPVPN clients and the protocol specification are available from [www.pilandrome.com](https://www.pilandrome.com).
 
 == Installation ==
 
 1. Install and activate the plugin.
 2. Use pretty permalinks (Settings, Permalinks, anything except Plain). The Server URL does not work with plain permalinks.
 3. Open Settings, VPN Server, add a client for every device and download its config.json.
-4. Import config.json in the PHP VPN client, or copy Server URL, server secret, VPN address and access key into its Configuration Wizard.
+4. Import config.json in the PHPVPN client, or copy Server URL, server secret, VPN address and access key into its Configuration Wizard.
 5. Set up the communication contracts and payload keys between the clients in the clients themselves.
 6. On nginx add the rule shown under Storage protection, then press Run self test.
 
@@ -58,7 +60,7 @@ In a folder with a random name inside wp-content/uploads, protected by .htaccess
 
 = Why does the Server URL have no .php file name? =
 
-The PHP VPN client appends ?action=... to the Server URL itself, so the Server URL is a plain path such as https://example.com/vpn-relay/.
+The PHPVPN client appends ?action=... to the Server URL itself, so the Server URL is a plain path such as https://example.com/vpn-relay/.
 
 = Can a browser open the Server URL? =
 
@@ -77,7 +79,7 @@ The status page shows a visitor the request headers of their own request (withou
 == Changelog ==
 
 = 1.0.1 =
-* First release, PHP VPN protocol version 1.
+* First release, PHPVPN protocol version 1.
 
 == Upgrade Notice ==
 

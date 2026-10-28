@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-28T01:59:27+00:00\n"
+"POT-Creation-Date: 2026-10-28T08:01:12+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: vpn-server\n"
@@ -30,7 +30,7 @@ msgstr ""
 
 #. Description of the plugin
 #: vpn-server.php
-msgid "Runs a PHP VPN relay server on this site for the PHP VPN Windows and Linux clients."
+msgid "Runs a VPN server on this site, enabling individuals and small businesses to quickly set up a lightweight virtual private network. This is an implementation of PHPVPN (Packet Handoff Protocol VPN) for WordPress. To connect, please install the PHPVPN client for Windows, macOS, or Linux."
 msgstr ""
 
 #. Author of the plugin
@@ -47,7 +47,7 @@ msgid "Copied"
 msgstr ""
 
 #: includes/class-admin.php:124
-msgid "This site relays encrypted traffic between PHP VPN clients. The relay never sees the payload: clients encrypt it with keys that only they know."
+msgid "This site relays encrypted traffic between PHPVPN clients. The relay never sees the payload: clients encrypt it with keys that only they know."
 msgstr ""
 
 #: includes/class-admin.php:145
@@ -133,7 +133,7 @@ msgid "Copy"
 msgstr ""
 
 #: includes/class-admin.php:201
-msgid "Enter this address as Server URL in the PHP VPN client."
+msgid "Enter this address as Server URL in the PHPVPN client."
 msgstr ""
 
 #: includes/class-admin.php:205
@@ -242,7 +242,7 @@ msgid "Leave empty to generate a random key"
 msgstr ""
 
 #: includes/class-admin.php:317
-msgid "Enter an existing key only when you move a client from another PHP VPN server."
+msgid "Enter an existing key only when you move a client from another PHPVPN server."
 msgstr ""
 
 #: includes/class-admin.php:333
@@ -255,7 +255,7 @@ msgid "Shared by the server and all its clients. Changing it disconnects every c
 msgstr ""
 
 #: includes/class-admin.php:342
-msgid "Keep the generated value, or enter the secret of the PHP VPN server you move from."
+msgid "Keep the generated value, or enter the secret of the PHPVPN server you move from."
 msgstr ""
 
 #: includes/class-admin.php:347

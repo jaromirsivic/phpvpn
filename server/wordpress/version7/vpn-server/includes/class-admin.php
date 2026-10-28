@@ -21,7 +21,7 @@ final class Admin {
 	const NOTICE     = 'vpn-server-notice';
 	const SELF_TEST  = 'vpn_server_self_test';
 
-	/** Default request headers of the PHP VPN client, client/src/core/config/config.h. */
+	/** Default request headers of the PHPVPN client, client/src/core/config/config.h. */
 	const CLIENT_HTTP_HEADERS = "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0";
 
 	/** First path segments that belong to WordPress itself. */
@@ -121,7 +121,7 @@ final class Admin {
 		<div class="wrap vpn-server">
 			<h1><?php echo esc_html__( 'VPN Server', 'vpn-server' ); ?></h1>
 			<?php self::render_notice(); ?>
-			<p><?php echo esc_html__( 'This site relays encrypted traffic between PHP VPN clients. The relay never sees the payload: clients encrypt it with keys that only they know.', 'vpn-server' ); ?></p>
+			<p><?php echo esc_html__( 'This site relays encrypted traffic between PHPVPN clients. The relay never sees the payload: clients encrypt it with keys that only they know.', 'vpn-server' ); ?></p>
 			<?php
 			self::render_connection( $settings );
 			self::render_clients( $settings );
@@ -198,7 +198,7 @@ final class Admin {
 				<td>
 					<input type="text" class="large-text code" id="vpn-server-url" value="<?php echo esc_attr( $url ); ?>" readonly>
 					<button type="button" class="button" data-vpn-server-copy="vpn-server-url"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-					<p class="description"><?php echo esc_html__( 'Enter this address as Server URL in the PHP VPN client.', 'vpn-server' ); ?></p>
+					<p class="description"><?php echo esc_html__( 'Enter this address as Server URL in the PHPVPN client.', 'vpn-server' ); ?></p>
 				</td>
 			</tr>
 			<tr>
@@ -314,7 +314,7 @@ final class Admin {
 				<th scope="row"><label for="vpn-server-new-key"><?php echo esc_html__( 'Access key', 'vpn-server' ); ?></label></th>
 				<td>
 					<input type="text" id="vpn-server-new-key" name="access_key" class="large-text code" autocomplete="off" placeholder="<?php echo esc_attr__( 'Leave empty to generate a random key', 'vpn-server' ); ?>">
-					<p class="description"><?php echo esc_html__( 'Enter an existing key only when you move a client from another PHP VPN server.', 'vpn-server' ); ?></p>
+					<p class="description"><?php echo esc_html__( 'Enter an existing key only when you move a client from another PHPVPN server.', 'vpn-server' ); ?></p>
 				</td>
 			</tr>
 		</table>
@@ -339,7 +339,7 @@ final class Admin {
 				<td>
 					<input type="text" id="vpn-server-secret" name="secret" class="large-text code" autocomplete="off" value="<?php echo esc_attr( $settings['secret'] ); ?>">
 					<button type="button" class="button" data-vpn-server-copy="vpn-server-secret"><?php echo esc_html__( 'Copy', 'vpn-server' ); ?></button>
-					<p class="description"><?php echo esc_html__( 'Keep the generated value, or enter the secret of the PHP VPN server you move from.', 'vpn-server' ); ?></p>
+					<p class="description"><?php echo esc_html__( 'Keep the generated value, or enter the secret of the PHPVPN server you move from.', 'vpn-server' ); ?></p>
 				</td>
 			</tr>
 		</table>
@@ -634,7 +634,7 @@ final class Admin {
 	}
 
 	/**
-	 * Sends config.json for one client: the masterSetup part of the PHP VPN client configuration.
+	 * Sends config.json for one client: the masterSetup part of the PHPVPN client configuration.
 	 */
 	public static function handle_client_config(): void {
 		self::verify( 'client_config' );

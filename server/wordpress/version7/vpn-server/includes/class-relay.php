@@ -1,6 +1,6 @@
 <?php
 /**
- * Answers PHP VPN protocol requests on the relay endpoint.
+ * Answers PHPVPN protocol requests on the relay endpoint.
  *
  * Loaded on every request, so it stays small: the protocol core is required only when the
  * request targets the endpoint. The fast route mu-plugin calls maybe_serve() as well.
