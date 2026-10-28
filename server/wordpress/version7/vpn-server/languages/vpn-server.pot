@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-28T08:01:12+00:00\n"
+"POT-Creation-Date: 2026-10-28T20:24:26+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: vpn-server\n"
@@ -47,7 +47,7 @@ msgid "Copied"
 msgstr ""
 
 #: includes/class-admin.php:124
-msgid "This site relays encrypted traffic between PHPVPN clients. The relay never sees the payload: clients encrypt it with keys that only they know."
+msgid "This site forwards encrypted traffic between PHPVPN clients. The VPN server never sees the payload: clients encrypt it with keys that only they know."
 msgstr ""
 
 #: includes/class-admin.php:145
@@ -291,7 +291,7 @@ msgid "Fast route"
 msgstr ""
 
 #: includes/class-admin.php:379
-msgid "Clients poll the server several times per second. By default a relay request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated."
+msgid "Clients poll the server several times per second. By default a client request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated."
 msgstr ""
 
 #: includes/class-admin.php:383
@@ -347,7 +347,7 @@ msgid "PHP is 64-bit."
 msgstr ""
 
 #: includes/class-admin.php:446
-msgid "PHP is 32-bit. The relay requires 64-bit PHP."
+msgid "PHP is 32-bit. The VPN server requires 64-bit PHP."
 msgstr ""
 
 #: includes/class-admin.php:448
@@ -371,7 +371,7 @@ msgid "zlib.output_compression is enabled in PHP. Disable it for this site if th
 msgstr ""
 
 #: includes/class-admin.php:457
-msgid "A page or post uses the same address as the endpoint. Visitors get the relay instead of that content, choose another endpoint path."
+msgid "A page or post uses the same address as the endpoint. Visitors get the VPN server instead of that content, choose another endpoint path."
 msgstr ""
 
 #: includes/class-admin.php:460
@@ -455,5 +455,5 @@ msgid "VPN Server requires 64-bit PHP."
 msgstr ""
 
 #: includes/class-settings.php:138
-msgid "VPN Server cannot be network activated. Activate it on each site that should run a relay."
+msgid "VPN Server cannot be network activated. Activate it on each site that should run a VPN server."
 msgstr ""

@@ -1,6 +1,6 @@
 <?php
 /**
- * Optional fast route: a small must-use plugin that answers relay requests before the
+ * Optional fast route: a small must-use plugin that answers client requests before the
  * regular plugins load. An administrator turns it on explicitly in Settings, VPN Server.
  *
  * @package VpnServer
@@ -107,7 +107,7 @@ final class Fast_Route {
 		return '<?php' . "\n"
 			. "/**\n"
 			. " * Plugin Name: VPN Server fast route\n"
-			. " * Description: Answers VPN Server relay requests before the other plugins load. " . self::MARKER . " It is removed when VPN Server is deactivated.\n"
+			. " * Description: Answers VPN Server client requests before the other plugins load. " . self::MARKER . " It is removed when VPN Server is deactivated.\n"
 			. ' * Version: ' . VERSION . "\n"
 			. " *\n"
 			. " * @package VpnServer\n"
@@ -118,13 +118,13 @@ final class Fast_Route {
 			. "\tif ( ! in_array( " . var_export( $basename, true ) . ", \$active, true ) ) {\n" // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export -- builds a PHP string literal.
 			. "\t\treturn;\n"
 			. "\t}\n"
-			. "\t\$main  = WP_PLUGIN_DIR . '/' . " . var_export( $basename, true ) . ";\n" // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export -- builds a PHP string literal.
-			. "\t\$relay = dirname( \$main ) . '/includes/class-relay.php';\n"
-			. "\tif ( ! is_readable( \$main ) || ! is_readable( \$relay ) ) {\n"
+			. "\t\$main   = WP_PLUGIN_DIR . '/' . " . var_export( $basename, true ) . ";\n" // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_var_export -- builds a PHP string literal.
+			. "\t\$server = dirname( \$main ) . '/includes/class-server.php';\n"
+			. "\tif ( ! is_readable( \$main ) || ! is_readable( \$server ) ) {\n"
 			. "\t\treturn;\n"
 			. "\t}\n"
-			. "\trequire_once \$relay;\n"
-			. "\t\\Pilandrome\\VpnServer\\Relay::maybe_serve( \$main );\n"
+			. "\trequire_once \$server;\n"
+			. "\t\\Pilandrome\\VpnServer\\Server::maybe_serve( \$main );\n"
 			. "} )();\n";
 	}
 

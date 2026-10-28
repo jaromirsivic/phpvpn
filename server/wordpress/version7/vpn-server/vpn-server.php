@@ -26,11 +26,11 @@ const VERSION = '1.0.1';
 const PLUGIN_FILE = __FILE__;
 
 require_once __DIR__ . '/includes/class-settings.php';
-require_once __DIR__ . '/includes/class-relay.php';
+require_once __DIR__ . '/includes/class-server.php';
 require_once __DIR__ . '/includes/class-fast-route.php';
 
-// Relay requests are answered before the theme, init and the main query run.
-add_action( 'plugins_loaded', array( Relay::class, 'maybe_serve' ), PHP_INT_MIN );
+// Client requests are answered before the theme, init and the main query run.
+add_action( 'plugins_loaded', array( Server::class, 'maybe_serve' ), PHP_INT_MIN );
 
 register_activation_hook( __FILE__, array( Settings::class, 'activate' ) );
 register_deactivation_hook( __FILE__, array( Fast_Route::class, 'deactivate' ) );

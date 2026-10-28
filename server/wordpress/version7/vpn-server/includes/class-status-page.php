@@ -1,8 +1,8 @@
 <?php
 /**
- * Status page of the relay endpoint, protocol.md chapter 5.1.
+ * Status page of the VPN server endpoint, protocol.md chapter 5.1.
  *
- * The page is a standalone HTML document: relay requests end before the theme loads.
+ * The page is a standalone HTML document: client requests end before the theme loads.
  *
  * @package VpnServer
  */

@@ -1,5 +1,5 @@
 /**
- * Status page of the VPN Server relay: key generator and Show HTTP Headers dialog.
+ * Status page of the VPN Server: key generator and Show HTTP Headers dialog.
  */
 ( function () {
 	'use strict';

@@ -1,4 +1,4 @@
-"""Latency of empty data polls against one or more relay deployments.
+"""Latency of empty data polls against one or more VPN server deployments.
 
 Each argument is a deployment description JSON as used by tests-integration (baseUrl,
 serverSecret, accessKeys, bufferDirectory). The script runs warm-up polls first, then reports

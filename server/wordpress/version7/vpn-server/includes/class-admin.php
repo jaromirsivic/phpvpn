@@ -115,13 +115,13 @@ final class Admin {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
 			return;
 		}
-		require_once __DIR__ . '/relay-core.php';
+		require_once __DIR__ . '/server-core.php';
 		$settings = Settings::get();
 		?>
 		<div class="wrap vpn-server">
 			<h1><?php echo esc_html__( 'VPN Server', 'vpn-server' ); ?></h1>
 			<?php self::render_notice(); ?>
-			<p><?php echo esc_html__( 'This site relays encrypted traffic between PHPVPN clients. The relay never sees the payload: clients encrypt it with keys that only they know.', 'vpn-server' ); ?></p>
+			<p><?php echo esc_html__( 'This site forwards encrypted traffic between PHPVPN clients. The VPN server never sees the payload: clients encrypt it with keys that only they know.', 'vpn-server' ); ?></p>
 			<?php
 			self::render_connection( $settings );
 			self::render_clients( $settings );
@@ -376,7 +376,7 @@ final class Admin {
 		$installed = Fast_Route::is_installed();
 		?>
 		<h2><?php echo esc_html__( 'Fast route', 'vpn-server' ); ?></h2>
-		<p><?php echo esc_html__( 'Clients poll the server several times per second. By default a relay request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated.', 'vpn-server' ); ?></p>
+		<p><?php echo esc_html__( 'Clients poll the server several times per second. By default a client request is answered right after all plugins are loaded, before the theme. The fast route adds a small must-use plugin that answers it before the other plugins load, which helps on sites with many plugins. Other requests are not affected. It is removed when this plugin is deactivated.', 'vpn-server' ); ?></p>
 		<p>
 			<?php
 			if ( ! $installed ) {
@@ -443,7 +443,7 @@ final class Admin {
 		$checks   = array();
 		$checks[] = PHP_INT_SIZE >= 8
 			? array( 'ok', __( 'PHP is 64-bit.', 'vpn-server' ) )
-			: array( 'error', __( 'PHP is 32-bit. The relay requires 64-bit PHP.', 'vpn-server' ) );
+			: array( 'error', __( 'PHP is 32-bit. The VPN server requires 64-bit PHP.', 'vpn-server' ) );
 		$checks[] = '' !== (string) get_option( 'permalink_structure' )
 			? array( 'ok', __( 'Pretty permalinks are enabled.', 'vpn-server' ) )
 			: array( 'error', __( 'Plain permalinks are used. The Server URL works only with pretty permalinks: choose another structure in Settings, Permalinks.', 'vpn-server' ) );
@@ -454,7 +454,7 @@ final class Admin {
 			$checks[] = array( 'warning', __( 'zlib.output_compression is enabled in PHP. Disable it for this site if the clients report damaged responses.', 'vpn-server' ) );
 		}
 		if ( url_to_postid( Settings::endpoint_url( $settings ) ) > 0 ) {
-			$checks[] = array( 'warning', __( 'A page or post uses the same address as the endpoint. Visitors get the relay instead of that content, choose another endpoint path.', 'vpn-server' ) );
+			$checks[] = array( 'warning', __( 'A page or post uses the same address as the endpoint. Visitors get the VPN server instead of that content, choose another endpoint path.', 'vpn-server' ) );
 		}
 		if ( array() === $settings['access_keys'] ) {
 			$checks[] = array( 'warning', __( 'No client is configured yet.', 'vpn-server' ) );
@@ -532,7 +532,7 @@ final class Admin {
 			if ( is_multisite() && ! is_super_admin() && null === self::storage_url( array( 'storage' => $storage ) ) ) {
 				self::done( 'network_only' );
 			}
-			require_once __DIR__ . '/relay-core.php';
+			require_once __DIR__ . '/server-core.php';
 			$disk = new \PhpVpn\DiskStorage( $storage );
 			if ( ! $disk->isUsable() || ! wp_is_writable( $storage ) ) {
 				self::done( 'bad_storage' );
@@ -580,7 +580,7 @@ final class Admin {
 	 */
 	public static function handle_add_client(): void {
 		self::verify( 'add_client' );
-		require_once __DIR__ . '/relay-core.php';
+		require_once __DIR__ . '/server-core.php';
 		$settings = Settings::get();
 		$free     = self::free_addresses( $settings );
 		$address  = self::posted( 'address' );
@@ -638,7 +638,7 @@ final class Admin {
 	 */
 	public static function handle_client_config(): void {
 		self::verify( 'client_config' );
-		require_once __DIR__ . '/relay-core.php';
+		require_once __DIR__ . '/server-core.php';
 		$settings = Settings::get();
 		$address  = self::posted( 'address' );
 		if ( ! isset( $settings['access_keys'][ $address ] ) ) {
@@ -692,12 +692,12 @@ final class Admin {
 	 */
 	public static function handle_self_test(): void {
 		self::verify( 'self_test' );
-		require_once __DIR__ . '/relay-core.php';
+		require_once __DIR__ . '/server-core.php';
 		$settings = Settings::get();
 		$results  = array();
 		$url      = Settings::endpoint_url( $settings );
 
-		// An empty JSON body must reach the relay, which answers 400 bad_request with JSON.
+		// An empty JSON body must reach the VPN server, which answers 400 bad_request with JSON.
 		$response = wp_remote_post(
 			add_query_arg( 'action', 'health', $url ),
 			array(
@@ -832,7 +832,7 @@ final class Admin {
 	 * @return string[]
 	 */
 	private static function free_addresses( array $settings ): array {
-		require_once __DIR__ . '/relay-core.php';
+		require_once __DIR__ . '/server-core.php';
 		$free = array();
 		for ( $host = \PhpVpn\VPN_HOST_MIN; $host <= \PhpVpn\VPN_HOST_MAX; $host++ ) {
 			$address = \PhpVpn\VPN_ADDRESS_PREFIX . $host;

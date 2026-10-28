@@ -1,6 +1,6 @@
 <?php
 /**
- * Answers PHPVPN protocol requests on the relay endpoint.
+ * Answers PHPVPN protocol requests on the VPN server endpoint.
  *
  * Loaded on every request, so it stays small: the protocol core is required only when the
  * request targets the endpoint. The fast route mu-plugin calls maybe_serve() as well.
@@ -17,15 +17,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 require_once __DIR__ . '/class-settings.php';
 
 /**
- * Routing and request handling of the relay endpoint.
+ * Routing and request handling of the VPN server endpoint.
  */
-final class Relay {
+final class Server {
 
 	/** Actions of the wire protocol, protocol.md chapter 4. */
 	const ACTIONS = array( 'health', 'info', 'data' );
 
 	/**
-	 * Serves the request and exits when it targets the relay endpoint, otherwise returns at once.
+	 * Serves the request and exits when it targets the VPN server endpoint, otherwise returns at once.
 	 *
 	 * @param string $plugin_file Main plugin file. The fast route passes it because it runs before
 	 *                            the main file has been loaded. Empty means PLUGIN_FILE.
@@ -66,7 +66,7 @@ final class Relay {
 	 * @param string $plugin_file Main plugin file, used for asset URLs.
 	 */
 	private static function serve( array $settings, string $plugin_file ): void {
-		require_once __DIR__ . '/relay-core.php';
+		require_once __DIR__ . '/server-core.php';
 		require_once __DIR__ . '/class-status-page.php';
 
 		// A notice or warning printed into the body would break the HMAC protected response,
@@ -112,7 +112,7 @@ final class Relay {
 	}
 
 	/**
-	 * Error handler of a relay request: swallows the error, the response reports failures itself.
+	 * Error handler of a client request: swallows the error, the response reports failures itself.
 	 *
 	 * @return bool Always true, the PHP handler does not run.
 	 */

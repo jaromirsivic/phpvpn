@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin settings, stored in one autoloaded option so a relay request needs no extra query.
+ * Plugin settings, stored in one autoloaded option so a client request needs no extra query.
  *
  * @package VpnServer
  */
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Settings {
 
 	const OPTION           = 'vpn_server_settings';
-	const DEFAULT_ENDPOINT = 'vpn-relay';
+	const DEFAULT_ENDPOINT = 'vpn-server';
 
 	/** Storage folders the plugin creates itself, the only ones uninstall removes. */
 	const MANAGED_STORAGE_PATTERN = '/^vpn-server-[0-9a-f]{16}$/';
@@ -135,7 +135,7 @@ final class Settings {
 		}
 		if ( $network_wide ) {
 			deactivate_plugins( plugin_basename( PLUGIN_FILE ), true, true );
-			wp_die( esc_html__( 'VPN Server cannot be network activated. Activate it on each site that should run a relay.', 'vpn-server' ) );
+			wp_die( esc_html__( 'VPN Server cannot be network activated. Activate it on each site that should run a VPN server.', 'vpn-server' ) );
 		}
 		if ( false !== get_option( self::OPTION ) ) {
 			return;

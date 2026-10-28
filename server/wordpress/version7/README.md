@@ -5,9 +5,9 @@ WordPress.org SVN `trunk`. Everything else in this folder is for development onl
 
 Plan and decisions: [Plans/2026-10-28-02-30-52/plan-wordpress-v001.md](../../../Plans/2026-10-28-02-30-52/plan-wordpress-v001.md).
 
-## Relay core
+## Server core
 
-`vpn-server/includes/relay-core.php` is generated from `phpvpn.php`, never edited by hand:
+`vpn-server/includes/server-core.php` is generated from `phpvpn.php`, never edited by hand:
 
 ```
 python tools/build-wordpress-plugin.py            regenerate
@@ -26,7 +26,7 @@ access keys and storage folder to `Config::fromValues()` and calls
 
 ## Request flow
 
-1. `plugins_loaded` with priority `PHP_INT_MIN` (`Relay::maybe_serve`) compares the request path
+1. `plugins_loaded` with priority `PHP_INT_MIN` (`Server::maybe_serve`) compares the request path
    with `home_url( <endpoint> )`. Other requests pay one autoloaded `get_option()` and a string
    comparison.
 2. On a match the core answers and the request ends with `exit`: no theme, `init` or main query.
@@ -43,12 +43,12 @@ folder linked into `wp-content/plugins` and the Plugin Check plugin installed:
 
 ```
 D:\nginx_wordpress\tools\wp.bat plugin check vpn-server --include-experimental --require=D:/nginx_wordpress/html/wp-content/plugins/plugin-check/cli.php
-D:\nginx_wordpress\tools\wp.bat i18n make-pot <plugin> <plugin>/languages/vpn-server.pot --slug=vpn-server --domain=vpn-server --exclude=includes/relay-core.php
-uv run --no-project python -m pytest tests-integration -q --server-config work/wp-plugin-test/server.json --large-body-url http://127.0.0.1:5080/vpn-relay/
+D:\nginx_wordpress\tools\wp.bat i18n make-pot <plugin> <plugin>/languages/vpn-server.pot --slug=vpn-server --domain=vpn-server --exclude=includes/server-core.php
+uv run --no-project python -m pytest tests-integration -q --server-config work/wp-plugin-test/server.json --large-body-url http://127.0.0.1:5080/vpn-server/
 ```
 
 `work/wp-plugin-test/server.json` is a deployment description with `baseUrl`
-`http://127.0.0.1:5080/vpn-relay/` and the secret, keys and storage folder saved in the plugin
+`http://127.0.0.1:5080/vpn-server/` and the secret, keys and storage folder saved in the plugin
 settings.
 
 ## WordPress.org submission
