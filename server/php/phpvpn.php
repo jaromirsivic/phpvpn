@@ -1,5 +1,5 @@
 <?php
-// PHP VPN 1.0.1 (MIT License, Copyright (c) www.pilandrome.com)
+// PHP VPN 1.0.2 (MIT License, Copyright (c) www.pilandrome.com)
 
 /**
  * VPN Server
@@ -36,7 +36,7 @@ if (PHP_INT_SIZE < 8) {
 // ---------------------------------------------------------------------------
 
 /** Informative SemVer version of this server application. */
-const SERVER_VERSION = '1.0.1';
+const SERVER_VERSION = '1.0.2';
 
 // @wp-skip-begin The WordPress plugin keeps these four values in its settings.
 /**

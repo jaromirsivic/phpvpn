@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(phpvpn-client
-    VERSION 1.0.1
+    VERSION 1.0.2
     DESCRIPTION "phpvpn v1 native client"
     LANGUAGES CXX)
 

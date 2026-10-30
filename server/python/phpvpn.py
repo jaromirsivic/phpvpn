@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# PHP VPN 1.0.1 (MIT License, Copyright (c) www.pilandrome.com)
+# PHP VPN 1.0.2 (MIT License, Copyright (c) www.pilandrome.com)
 """PHPVPN v1 relay. Python 3.13, uvicorn and cryptography. MIT licensed.
 
 Run this file directly, one process and one worker for either storage driver.
@@ -8,7 +8,7 @@ The wire contract is protocol.md. Operational data is not portable to PHP.
 from __future__ import annotations
 
 # Configuration header. Administrators edit only this contiguous block.
-SERVER_VERSION = '1.0.1'
+SERVER_VERSION = '1.0.2'
 # Empty means the public default, not an absent secret. Replace before use.
 SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET'
 ACCESS_KEYS = {

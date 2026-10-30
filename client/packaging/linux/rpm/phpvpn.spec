@@ -14,7 +14,7 @@
 %global phpvpn_rel %{?phpvpn_release}%{!?phpvpn_release:1}
 
 Name:           phpvpn
-Version:        1.0.1
+Version:        1.0.2
 Release:        %{phpvpn_rel}
 Summary:        VPN client service and command line client
 License:        MIT
@@ -148,6 +148,9 @@ desktop-file-validate %{buildroot}%{_sysconfdir}/xdg/autostart/phpvpn-tray.deskt
 %endif
 
 %changelog
+* Fri Oct 30 2026 phpvpn maintainers <maintainers@phpvpn.invalid> - 1.0.2-1
+- Release 1.0.2.
+
 * Tue Oct 27 2026 phpvpn maintainers <maintainers@phpvpn.invalid> - 1.0.1-1
 - Release 1.0.1.
 

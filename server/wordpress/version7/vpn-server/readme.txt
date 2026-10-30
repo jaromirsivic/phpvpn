@@ -4,7 +4,7 @@ Tags: vpn, self-hosted, tunnel, private network, encryption
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: MIT
 License URI: https://opensource.org/license/mit
 

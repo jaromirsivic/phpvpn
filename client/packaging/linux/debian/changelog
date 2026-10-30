@@ -1,3 +1,9 @@
+phpvpn (1.0.2-1) unstable; urgency=medium
+
+  * Release 1.0.2.
+
+ -- phpvpn maintainers <maintainers@phpvpn.invalid>  Fri, 30 Oct 2026 15:15:57 +0000
+
 phpvpn (1.0.1-1) unstable; urgency=medium
 
   * Release 1.0.1.
