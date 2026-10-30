@@ -65,6 +65,10 @@ check_mode() {
     actual=$(mode_of "$2")
     if [ "$actual" = "$1" ]; then pass "$2 is $1"; else fail "$2 is '$actual', expected $1"; fi
 }
+check_owner_mode() {
+    actual=$(stat -f '%Lp %u' "$2" 2> /dev/null)
+    if [ "$actual" = "$1" ]; then pass "$2 is $1 (mode owner)"; else fail "$2 is '$actual', expected $1 (mode owner)"; fi
+}
 daemon_loaded() { launchctl print "system/$DAEMON_LABEL" > /dev/null 2>&1; }
 console_uid=$(stat -f %u /dev/console 2> /dev/null || echo 0)
 console_user=$(id -un "$console_uid" 2> /dev/null || echo root)
@@ -119,8 +123,11 @@ if [ "$mode" = install ]; then
     attempt=0
     while [ ! -S "$SOCKET" ] && [ "$attempt" -lt 60 ]; do attempt=$((attempt + 1)); sleep 0.5; done
     check "the control socket $SOCKET exists" test -S "$SOCKET"
-    check_mode "666 0:0" "$SOCKET"
-    check_mode "755 0:0" "$RUNTIME_DIR"
+    # The runtime directory inherits the group of /private/var/run (daemon, gid 1)
+    # as BSD directories do; the mode keeps the group read-only, so the owner and
+    # the mode are what matters.
+    check_owner_mode "666 0" "$SOCKET"
+    check_owner_mode "755 0" "$RUNTIME_DIR"
     check "phpvpn status answers as root" "$CLI" status
     "$CLI" status > "$work/status-root.json" 2>&1 || true
     check "the status is disconnected" grep -q '"state": *"disconnected"' "$work/status-root.json"
