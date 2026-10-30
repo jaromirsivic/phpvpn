@@ -139,6 +139,7 @@
 /* Fields */
 
 .vpn-server input[type="text"],
+.vpn-server input[type="url"],
 .vpn-server select {
 	min-height: var(--vs-height);
 	margin: 0;
@@ -155,6 +156,7 @@
 }
 
 .vpn-server input[type="text"]:focus,
+.vpn-server input[type="url"]:focus,
 .vpn-server select:focus,
 .vpn-server .vpn-server-group:focus-within {
 	border-color: var(--vs-accent);

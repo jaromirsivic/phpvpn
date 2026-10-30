@@ -42,7 +42,7 @@ test('status page: warning only for predictable secrets, HEAD without body, can 
     assert.equal(page.status, 200);
     assertHeaders(page);
     assert.equal(page.headers['content-type'], 'text/html; charset=utf-8');
-    assert.match(page.body.toString(), /<h1>PHPVPN server is running<\/h1>/);
+    assert.match(page.body.toString(), /<h1>VPN server is running<\/h1>/);
     assert.match(page.body.toString(), /<aside><b>Warning:<\/b>/);
     const head = await h.request(insecure.port, { method: 'HEAD' });
     assert.equal(head.status, 200);
@@ -55,7 +55,8 @@ test('status page: warning only for predictable secrets, HEAD without body, can 
     const secure = await start(t, { SERVER_SECRET: 'a real secret' });
     const clean = (await h.request(secure.port, { method: 'GET' })).body.toString();
     assert.doesNotMatch(clean, /<aside>/);
-    assert.match(clean, /Generate key/);
+    assert.doesNotMatch(clean, /<button id=g>/);
+    assert.doesNotMatch(clean, /<button id=c>/);
     const disabled = await start(t, { STATUS_PAGE_ENABLED: false });
     assertError(await h.request(disabled.port, { method: 'GET' }), 404, 'not_found');
     assertError(await h.request(disabled.port, { method: 'HEAD' }), 404, 'not_found');
@@ -63,9 +64,12 @@ test('status page: warning only for predictable secrets, HEAD without body, can 
     assert.equal(health.status, 200, 'the switch never restricts the API');
 });
 
-test('status page: embedded template matches the shared mockup', () => {
-    const mockup = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'assets', 'index.html'), 'utf8').replace(/\r?\n$/, '');
-    assert.equal(relay.STATUS_HTML, mockup);
+test('status page: embedded template matches the PHP reference with Node configuration instructions', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', '..', 'php', 'phpvpn.php'), 'utf8').replace(/\r\n/g, '\n');
+    const template = /<<<'STATUS_HTML'\n([^]*?)\nSTATUS_HTML;/.exec(source)[1]
+        .replace('The SERVER_SECRET variable in this script must be set', 'The SERVER_SECRET setting in the server script or its JSON configuration file must be set')
+        .replace('replace the value of SERVER_SECRET in the server script with this key', 'replace the value of SERVER_SECRET in the server script or its JSON configuration file with this key');
+    assert.equal(relay.STATUS_HTML, template);
 });
 
 test('status page: Show HTTP Headers lists the received headers for the Configuration Wizard', async (t) => {

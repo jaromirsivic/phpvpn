@@ -8,30 +8,43 @@
 		return document.getElementById( id );
 	}
 
-	function copy( field ) {
+	async function copy( field ) {
 		field.select();
-		if ( navigator.clipboard ) {
-			navigator.clipboard.writeText( field.value ).catch( function () {
-				document.execCommand( 'copy' );
-			} );
-		} else {
-			document.execCommand( 'copy' );
+		try {
+			if ( navigator.clipboard ) {
+				await navigator.clipboard.writeText( field.value );
+				return true;
+			}
+		} catch ( error ) {
+			// Fall back when clipboard permission is unavailable.
+		}
+		try {
+			field.select();
+			return document.execCommand( 'copy' );
+		} catch ( error ) {
+			return false;
 		}
 	}
 
-	byId( 'vpn-server-generate' ).addEventListener( 'click', function () {
-		var bytes = crypto.getRandomValues( new Uint8Array( 32 ) );
-		byId( 'vpn-server-key' ).value = Array.prototype.map
-			.call( bytes, function ( value ) {
-				return value.toString( 16 ).padStart( 2, '0' );
-			} )
-			.join( '' );
-		byId( 'vpn-server-row' ).hidden = false;
-	} );
+	byId( 'vpn-server-url' ).textContent = location.href;
 
-	byId( 'vpn-server-copy-key' ).addEventListener( 'click', function () {
-		copy( byId( 'vpn-server-key' ) );
-	} );
+	if ( byId( 'vpn-server-generate' ) ) {
+		byId( 'vpn-server-generate' ).addEventListener( 'click', function () {
+			var bytes = crypto.getRandomValues( new Uint8Array( 32 ) );
+			byId( 'vpn-server-key' ).value = Array.prototype.map
+				.call( bytes, function ( value ) {
+					return value.toString( 16 ).padStart( 2, '0' );
+				} )
+				.join( '' );
+			byId( 'vpn-server-row' ).hidden = false;
+		} );
+
+		byId( 'vpn-server-copy-key' ).addEventListener( 'click', async function () {
+			if ( await copy( byId( 'vpn-server-key' ) ) ) {
+				byId( 'vpn-server-key-dialog' ).showModal();
+			}
+		} );
+	}
 
 	byId( 'vpn-server-show' ).addEventListener( 'click', function () {
 		byId( 'vpn-server-dialog' ).showModal();

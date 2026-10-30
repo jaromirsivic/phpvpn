@@ -28,13 +28,20 @@ final class Settings {
 	/** Last octets of the clients created on activation, the ACCESS_KEYS of phpvpn.php. */
 	const DEFAULT_CLIENTS = array( 2, 15 );
 
+	/** Client download links shown on the public status page. */
+	const DEFAULT_CLIENT_DOWNLOAD_URLS = array(
+		'windows' => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-win-x64.zip',
+		'macos'   => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-macos.zip',
+		'linux'   => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-linux.zip',
+	);
+
 	/** Storage folders the plugin creates itself, the only ones uninstall removes. */
 	const MANAGED_STORAGE_PATTERN = '/^vpn-server-[0-9a-f]{16}$/';
 
 	/**
 	 * Current settings with defaults for missing or malformed members.
 	 *
-	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool}
+	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_download_urls: array<string, string>}
 	 */
 	public static function get(): array {
 		$stored = get_option( self::OPTION );
@@ -54,7 +61,7 @@ final class Settings {
 	 * Keeps only known members of the expected types.
 	 *
 	 * @param array<mixed, mixed> $values Raw option value.
-	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool}
+	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_download_urls: array<string, string>}
 	 */
 	public static function normalize( array $values ): array {
 		$keys = array();
@@ -65,15 +72,42 @@ final class Settings {
 				}
 			}
 		}
-		$endpoint = isset( $values['endpoint'] ) && is_string( $values['endpoint'] ) ? self::sanitize_endpoint( $values['endpoint'] ) : '';
+		$endpoint  = isset( $values['endpoint'] ) && is_string( $values['endpoint'] ) ? self::sanitize_endpoint( $values['endpoint'] ) : '';
+		$downloads = self::DEFAULT_CLIENT_DOWNLOAD_URLS;
+		if ( isset( $values['client_download_urls'] ) && is_array( $values['client_download_urls'] ) ) {
+			foreach ( $downloads as $platform => $default ) {
+				$value                  = $values['client_download_urls'][ $platform ] ?? '';
+				$url                    = is_string( $value ) ? self::sanitize_download_url( $value ) : '';
+				$downloads[ $platform ] = '' === $url ? $default : $url;
+			}
+		}
 		return array(
-			'secret'          => isset( $values['secret'] ) && is_string( $values['secret'] ) ? $values['secret'] : '',
-			'access_keys'     => $keys,
-			'endpoint'        => '' === $endpoint ? self::DEFAULT_ENDPOINT : $endpoint,
-			'storage'         => isset( $values['storage'] ) && is_string( $values['storage'] ) ? $values['storage'] : '',
-			'storage_managed' => ! empty( $values['storage_managed'] ),
-			'status_page'     => ! isset( $values['status_page'] ) || (bool) $values['status_page'],
+			'secret'               => isset( $values['secret'] ) && is_string( $values['secret'] ) ? $values['secret'] : '',
+			'access_keys'          => $keys,
+			'endpoint'             => '' === $endpoint ? self::DEFAULT_ENDPOINT : $endpoint,
+			'storage'              => isset( $values['storage'] ) && is_string( $values['storage'] ) ? $values['storage'] : '',
+			'storage_managed'      => ! empty( $values['storage_managed'] ),
+			'status_page'          => ! isset( $values['status_page'] ) || (bool) $values['status_page'],
+			'client_download_urls' => $downloads,
 		);
+	}
+
+	/**
+	 * Sanitizes an absolute HTTP(S) download link. The URL is never fetched by the server.
+	 *
+	 * @param string $value Raw input.
+	 */
+	public static function sanitize_download_url( string $value ): string {
+		if ( ! preg_match( '~^https?://~i', trim( $value ) ) ) {
+			return '';
+		}
+		$url   = sanitize_url( $value, array( 'http', 'https' ) );
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['host'] ) || ! isset( $parts['scheme'] )
+			|| ! in_array( strtolower( $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+			return '';
+		}
+		return $url;
 	}
 
 	/**

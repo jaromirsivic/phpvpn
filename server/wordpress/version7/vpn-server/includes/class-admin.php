@@ -30,6 +30,7 @@ final class Admin {
 	/** admin-post.php actions, without the vpn_server_ prefix, and their handlers. */
 	const ACTIONS = array(
 		'save'           => 'handle_save',
+		'downloads'      => 'handle_downloads',
 		'storage'        => 'handle_storage',
 		'add_client'     => 'handle_add_client',
 		'set_key'        => 'handle_set_key',
@@ -129,6 +130,7 @@ final class Admin {
 			<?php
 			self::render_connection( $settings );
 			self::render_clients( $settings );
+			self::render_downloads( $settings );
 			self::render_storage( $settings );
 			self::render_fast_route();
 			self::render_checks( $settings );
@@ -158,6 +160,7 @@ final class Admin {
 			'fast_route_off'     => array( 'success', __( 'The fast route is removed.', 'vpn-server' ) ),
 			'self_test'          => array( 'info', __( 'The self test finished, see Checks below.', 'vpn-server' ) ),
 			'bad_endpoint'       => array( 'error', __( 'The path of the Server URL is empty or reserved by WordPress.', 'vpn-server' ) ),
+			'bad_download_url'   => array( 'error', __( 'Each client download URL must be an absolute HTTP or HTTPS address.', 'vpn-server' ) ),
 			'bad_storage'        => array( 'error', __( 'The storage folder must be an absolute path to a dedicated folder that WordPress can create and write. It cannot be the site root, wp-content, the uploads folder itself, a folder that contains the site, or a folder inside the plugins, themes, wp-admin or wp-includes folders.', 'vpn-server' ) ),
 			'network_only'       => array( 'error', __( 'On a multisite network only a super admin can install the fast route or move the storage folder outside the uploads folder.', 'vpn-server' ) ),
 			'bad_secret'         => array( 'error', __( 'The server secret must have 16 to 256 printable ASCII characters without spaces.', 'vpn-server' ) ),
@@ -370,6 +373,34 @@ final class Admin {
 	}
 
 	/**
+	 * Client downloads, in a separate section below the complete client list.
+	 *
+	 * @param array<string, mixed> $settings Current settings.
+	 */
+	private static function render_downloads( array $settings ): void {
+		$platforms = array( 'windows' => 'Windows', 'macos' => 'macOS', 'linux' => 'Linux' );
+		?>
+		<section class="vpn-server-card">
+			<h2><?php echo esc_html__( 'Client downloads', 'vpn-server' ); ?></h2>
+			<p class="vpn-server-lead"><?php echo esc_html__( 'These links are shown on the public status page so that the client application can be downloaded for each operating system.', 'vpn-server' ); ?></p>
+			<?php self::form_start( 'downloads', 'vpn-server-track' ); ?>
+			<?php foreach ( $platforms as $platform => $label ) : ?>
+				<div class="vpn-server-field">
+					<label class="vpn-server-label" for="vpn-server-download-<?php echo esc_attr( $platform ); ?>"><?php echo esc_html( $label ); ?></label>
+					<div class="vpn-server-control">
+						<div class="vpn-server-line">
+							<input type="url" id="vpn-server-download-<?php echo esc_attr( $platform ); ?>" name="client_download_urls[<?php echo esc_attr( $platform ); ?>]" class="code vpn-server-wide" value="<?php echo esc_attr( $settings['client_download_urls'][ $platform ] ); ?>" spellcheck="false" required>
+						</div>
+					</div>
+				</div>
+			<?php endforeach; ?>
+			<p class="vpn-server-submit"><button type="submit" class="button button-primary"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button></p>
+			</form>
+		</section>
+		<?php
+	}
+
+	/**
 	 * Storage folder, its protection and the nginx rule.
 	 *
 	 * @param array<string, mixed> $settings Current settings.
@@ -571,6 +602,27 @@ final class Admin {
 		Settings::save( $settings );
 		delete_transient( self::SELF_TEST );
 		self::done( $reconnect ? 'reconnect' : 'saved' );
+	}
+
+	/**
+	 * Saves the public client download links without changing the connection or clients.
+	 */
+	public static function handle_downloads(): void {
+		self::verify( 'downloads' );
+		$settings  = Settings::get();
+		$downloads = array();
+		foreach ( Settings::DEFAULT_CLIENT_DOWNLOAD_URLS as $platform => $default ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- nonce checked above, URL sanitized below.
+			$value = isset( $_POST['client_download_urls'][ $platform ] ) && is_string( $_POST['client_download_urls'][ $platform ] ) ? wp_unslash( $_POST['client_download_urls'][ $platform ] ) : '';
+			$url   = Settings::sanitize_download_url( $value );
+			if ( '' === $url ) {
+				self::done( 'bad_download_url' );
+			}
+			$downloads[ $platform ] = $url;
+		}
+		$settings['client_download_urls'] = $downloads;
+		Settings::save( $settings );
+		self::done( 'saved' );
 	}
 
 	/**

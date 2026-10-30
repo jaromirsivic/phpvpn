@@ -509,3 +509,15 @@ msgstr ""
 #: includes/class-settings.php:171
 msgid "VPN Server cannot be network activated. Activate it on each site that should run a VPN server."
 msgstr ""
+
+#: includes/class-admin.php:163
+msgid "Each client download URL must be an absolute HTTP or HTTPS address."
+msgstr ""
+
+#: includes/class-admin.php:384
+msgid "Client downloads"
+msgstr ""
+
+#: includes/class-admin.php:385
+msgid "These links are shown on the public status page so that the client application can be downloaded for each operating system."
+msgstr ""

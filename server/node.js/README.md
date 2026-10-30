@@ -82,6 +82,7 @@ production use.
 | `ACCESS_KEYS` | `.2` to `.15` | VPN address mapped to exactly 64 lowercase hex characters. |
 | `BUFFER_DIRECTORY` | `./phpvpn_data` | A relative path is resolved against the folder of `phpvpn.js`, not against the working directory. |
 | `STATUS_PAGE_ENABLED` | `true` | `false` answers GET/HEAD with `404`, the API keeps working. |
+| `CLIENT_WINDOWS_DOWNLOAD_URL`, `CLIENT_MACOS_DOWNLOAD_URL`, `CLIENT_LINUX_DOWNLOAD_URL` | `https://www.pilandrome.com/downloads/phpvpn/client/1.x/` + `phpvpn-win-x64.zip`, `phpvpn-macos.zip`, `phpvpn-linux.zip` | Client download links on the status page. Set them in the header or the JSON configuration file. The setup screenshot is embedded in the script. |
 | `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX` | `10.99.99.`, 2, 254 | Address space. Must be the same on all clients. |
 | `LISTEN_HOST`, `LISTEN_PORT` | `127.0.0.1`, 8080 | Bind address. Direct remote HTTP traffic needs an explicit `0.0.0.0` or a specific address. |
 | `SERVER_PATH` | `/phpvpn.php` | Public path used by the client. Other paths answer `404`. |

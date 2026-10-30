@@ -111,10 +111,12 @@ const SWEEP_MAX_MILLISECONDS = 20;
 /** Create .htaccess, web.config and index.html guards inside the storage root. */
 const PROTECT_BUFFER_DIRECTORY = true;
 
+// @wp-skip-begin The WordPress plugin keeps client download URLs in its settings.
 /** Client download links shown on the status page. */
 const CLIENT_WINDOWS_DOWNLOAD_URL = 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-win-x64.zip';
 const CLIENT_MACOS_DOWNLOAD_URL = 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-macos.zip';
 const CLIENT_LINUX_DOWNLOAD_URL = 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-linux.zip';
+// @wp-skip-end
 
 // ---------------------------------------------------------------------------
 // 2. Runtime hardening

@@ -222,9 +222,10 @@ def test_body_limits(runtime, action, delta):
     assert response.status_code == (413 if delta > 0 else 200)
 
 
-def test_status_template_matches_the_shared_mockup():
-    mockup = (Path(__file__).resolve().parents[3] / 'assets/index.html').read_bytes().rstrip(b'\r\n')
-    assert s.STATUS_HTML == mockup
+def test_status_template_matches_the_php_reference():
+    source = (Path(__file__).resolve().parents[2] / 'php/phpvpn.php').read_text(encoding='utf-8')
+    template = re.search(r"<<<'STATUS_HTML'\n(.*?)\nSTATUS_HTML;", source, re.S).group(1)
+    assert s.STATUS_HTML == template.encode('utf-8')
 
 
 def test_status_page_shows_received_headers(tmp_path):
