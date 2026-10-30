@@ -55,15 +55,20 @@ provider before you run the plugin on shared hosting.
 
 The Server URL is a plain path such as `https://example.com/vpn-server/`, without a `.php` file
 name. The client appends `?action=...` itself. Opened in a browser, the Server URL shows a status
-page with client download links, setup instructions and the request headers that the Configuration
+page with a select box of client downloads, setup instructions and the request headers that the Configuration
 Wizard can reuse. A key generator is shown only when the server secret is predictable. An
 administrator must save the new secret in Settings, VPN Server. The page can be turned off in the settings.
 
-The separate **Client downloads** section below the complete Clients section contains the Windows,
-macOS and Linux download URLs. They are prefilled with `https://www.pilandrome.com/downloads/phpvpn/client/1.x/`
-and the files `phpvpn-win-x64.zip`, `phpvpn-macos.zip` and `phpvpn-linux.zip`, respectively. Enter
-absolute HTTP or HTTPS URLs and click **Save Changes** to update the public status page. Existing
-installations use these defaults until custom URLs are saved.
+The separate **Client downloads** section below the complete Clients section lists the entries of
+the select box on the status page, the `CLIENT_DOWNLOADS` of the standalone servers. Every row has a
+name, an absolute HTTP or HTTPS URL, the type File (Download button) or Link (Open button, new tab)
+and the operating system for which the status page preselects the entry. **Add Download** adds a
+row, the arrows move a row and **Remove** deletes it, at most 20 rows. Without JavaScript one spare
+row is shown and a row with an empty name and URL is not saved. Click **Save Changes** to update the
+public status page. The list is prefilled with `phpvpn-win.zip`, `phpvpn-macos.zip` and
+`phpvpn-linux.zip` from `https://www.pilandrome.com/downloads/phpvpn/client/1.x/` and the source code
+link `https://github.com/pilandrome/phpvpn`. Custom Windows, macOS and Linux URLs saved by an older
+version are kept, a saved empty list hides the select box.
 
 ## Storage protection
 

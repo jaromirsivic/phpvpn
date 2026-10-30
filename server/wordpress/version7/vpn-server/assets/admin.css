@@ -362,6 +362,24 @@
 	color: var(--vs-text);
 }
 
+/* Client downloads table */
+
+.vpn-server .vpn-server-downloads input,
+.vpn-server .vpn-server-downloads select {
+	width: 100%;
+	min-width: 120px;
+	min-height: var(--vs-height-small);
+}
+
+.vpn-server .vpn-server-downloads input[type="url"] {
+	min-width: 240px;
+	font-size: 12px;
+}
+
+.vpn-server .vpn-server-downloads .vpn-server-actions {
+	flex-wrap: nowrap;
+}
+
 /* Badges */
 
 .vpn-server .vpn-server-badge,
@@ -507,7 +525,10 @@
 		letter-spacing: 0.04em;
 	}
 
-	.vpn-server .vpn-server-table .vpn-server-key {
+	.vpn-server .vpn-server-table .vpn-server-key,
+	.vpn-server .vpn-server-downloads input,
+	.vpn-server .vpn-server-downloads select,
+	.vpn-server .vpn-server-downloads input[type="url"] {
 		min-width: 0;
 	}
 }

@@ -28,12 +28,47 @@ final class Settings {
 	/** Last octets of the clients created on activation, the ACCESS_KEYS of phpvpn.php. */
 	const DEFAULT_CLIENTS = array( 2, 15 );
 
-	/** Client download links shown on the public status page. */
-	const DEFAULT_CLIENT_DOWNLOAD_URLS = array(
-		'windows' => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-win-x64.zip',
-		'macos'   => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-macos.zip',
-		'linux'   => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-linux.zip',
+	/**
+	 * Entries of the client select box on the public status page, the CLIENT_DOWNLOADS of phpvpn.php.
+	 * A type 'file' entry shows a Download button, a 'link' entry an Open button that opens the URL in
+	 * a new tab. A non-empty os preselects the entry for the visitor's system.
+	 */
+	const DEFAULT_CLIENT_DOWNLOADS = array(
+		array(
+			'name' => 'Windows 10, 11+ (x64, arm64)',
+			'url'  => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-win.zip',
+			'type' => 'file',
+			'os'   => 'windows',
+		),
+		array(
+			'name' => 'macOS',
+			'url'  => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-macos.zip',
+			'type' => 'file',
+			'os'   => 'macos',
+		),
+		array(
+			'name' => 'Linux (DEB, RPM - x64, arm64)',
+			'url'  => 'https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-linux.zip',
+			'type' => 'file',
+			'os'   => 'linux',
+		),
+		array(
+			'name' => 'Source Code',
+			'url'  => 'https://github.com/pilandrome/phpvpn',
+			'type' => 'link',
+			'os'   => '',
+		),
 	);
+
+	/** Download types and the systems an entry can be preselected for. */
+	const DOWNLOAD_TYPES   = array( 'file', 'link' );
+	const DOWNLOAD_SYSTEMS = array( '', 'windows', 'macos', 'linux' );
+
+	/** Most entries of the client select box. */
+	const MAX_CLIENT_DOWNLOADS = 20;
+
+	/** Longest entry name in characters. */
+	const MAX_DOWNLOAD_NAME_LENGTH = 100;
 
 	/** Storage folders the plugin creates itself, the only ones uninstall removes. */
 	const MANAGED_STORAGE_PATTERN = '/^vpn-server-[0-9a-f]{16}$/';
@@ -41,7 +76,7 @@ final class Settings {
 	/**
 	 * Current settings with defaults for missing or malformed members.
 	 *
-	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_download_urls: array<string, string>}
+	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_downloads: list<array{name: string, url: string, type: string, os: string}>}
 	 */
 	public static function get(): array {
 		$stored = get_option( self::OPTION );
@@ -61,7 +96,7 @@ final class Settings {
 	 * Keeps only known members of the expected types.
 	 *
 	 * @param array<mixed, mixed> $values Raw option value.
-	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_download_urls: array<string, string>}
+	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_downloads: list<array{name: string, url: string, type: string, os: string}>}
 	 */
 	public static function normalize( array $values ): array {
 		$keys = array();
@@ -73,12 +108,27 @@ final class Settings {
 			}
 		}
 		$endpoint  = isset( $values['endpoint'] ) && is_string( $values['endpoint'] ) ? self::sanitize_endpoint( $values['endpoint'] ) : '';
-		$downloads = self::DEFAULT_CLIENT_DOWNLOAD_URLS;
-		if ( isset( $values['client_download_urls'] ) && is_array( $values['client_download_urls'] ) ) {
-			foreach ( $downloads as $platform => $default ) {
-				$value                  = $values['client_download_urls'][ $platform ] ?? '';
-				$url                    = is_string( $value ) ? self::sanitize_download_url( $value ) : '';
-				$downloads[ $platform ] = '' === $url ? $default : $url;
+		$downloads = array();
+		if ( isset( $values['client_downloads'] ) && is_array( $values['client_downloads'] ) ) {
+			// A saved empty list stays empty, it hides the select box on the status page.
+			foreach ( $values['client_downloads'] as $entry ) {
+				$download = is_array( $entry ) ? self::sanitize_download( $entry ) : null;
+				if ( null !== $download && count( $downloads ) < self::MAX_CLIENT_DOWNLOADS ) {
+					$downloads[] = $download;
+				}
+			}
+		} else {
+			$downloads = self::DEFAULT_CLIENT_DOWNLOADS;
+			// Settings of version 1.0.2 and older kept one URL per system, their custom URLs are kept.
+			if ( isset( $values['client_download_urls'] ) && is_array( $values['client_download_urls'] ) ) {
+				foreach ( $downloads as $index => $download ) {
+					$value = $values['client_download_urls'][ $download['os'] ] ?? '';
+					$url   = is_string( $value ) && '' !== $download['os'] ? self::sanitize_download_url( $value ) : '';
+					// The old default of Windows named the archive phpvpn-win-x64.zip, the new default replaces it.
+					if ( '' !== $url && ! str_ends_with( $url, '/phpvpn/client/1.x/phpvpn-win-x64.zip' ) ) {
+						$downloads[ $index ]['url'] = $url;
+					}
+				}
 			}
 		}
 		return array(
@@ -88,7 +138,30 @@ final class Settings {
 			'storage'              => isset( $values['storage'] ) && is_string( $values['storage'] ) ? $values['storage'] : '',
 			'storage_managed'      => ! empty( $values['storage_managed'] ),
 			'status_page'          => ! isset( $values['status_page'] ) || (bool) $values['status_page'],
-			'client_download_urls' => $downloads,
+			'client_downloads'     => $downloads,
+		);
+	}
+
+	/**
+	 * Sanitizes one entry of the client select box.
+	 *
+	 * @param array<mixed, mixed> $entry Raw entry with name, url, type and os.
+	 * @return array{name: string, url: string, type: string, os: string}|null Null for an invalid entry.
+	 */
+	public static function sanitize_download( array $entry ): ?array {
+		$name = isset( $entry['name'] ) && is_string( $entry['name'] ) ? sanitize_text_field( $entry['name'] ) : '';
+		$url  = isset( $entry['url'] ) && is_string( $entry['url'] ) ? self::sanitize_download_url( $entry['url'] ) : '';
+		$type = $entry['type'] ?? 'file';
+		$os   = $entry['os'] ?? '';
+		if ( '' === $name || mb_strlen( $name ) > self::MAX_DOWNLOAD_NAME_LENGTH || '' === $url
+			|| ! in_array( $type, self::DOWNLOAD_TYPES, true ) || ! in_array( $os, self::DOWNLOAD_SYSTEMS, true ) ) {
+			return null;
+		}
+		return array(
+			'name' => $name,
+			'url'  => $url,
+			'type' => $type,
+			'os'   => $os,
 		);
 	}
 

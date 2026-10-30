@@ -1,11 +1,15 @@
 /**
- * Settings, VPN Server: copy, open, generate and edit buttons, and confirmations of actions that
- * disconnect clients. Without JavaScript the fields stay editable and every form still works.
+ * Settings, VPN Server: copy, open, generate and edit buttons, the rows of the client downloads
+ * table, and confirmations of actions that disconnect clients. Without JavaScript the fields stay
+ * editable and every form still works.
  */
 ( function () {
 	'use strict';
 
 	var endpoint = document.getElementById( 'vpn-server-endpoint' );
+	var downloads = document.getElementById( 'vpn-server-downloads' );
+	// Rows added by Add Download get indexes after every row printed by the server.
+	var nextDownload = downloads ? downloads.rows.length : 0;
 
 	function changed( field ) {
 		return !! field && field.value !== field.defaultValue;
@@ -59,12 +63,22 @@
 		}
 	}
 
+	function selectChanged( field ) {
+		var initial = Array.prototype.filter.call( field.options, function ( option ) {
+			return option.defaultSelected;
+		} )[ 0 ] || field.options[ 0 ];
+		return field.selectedIndex !== initial.index;
+	}
+
 	// Save Changes and Change Folder stay disabled until a field of their form differs from the saved
-	// value. Without JavaScript they stay enabled.
+	// value or a client download row was added, removed or moved. Without JavaScript they stay enabled.
 	function trackChanges( form ) {
-		var dirty = Array.prototype.some.call( form.elements, function ( field ) {
+		var dirty = form.hasAttribute( 'data-vpn-server-changed' ) || Array.prototype.some.call( form.elements, function ( field ) {
 			if ( 'checkbox' === field.type ) {
 				return field.checked !== field.defaultChecked;
+			}
+			if ( 'select-one' === field.type ) {
+				return selectChanged( field );
 			}
 			return ( 'text' === field.type || 'url' === field.type ) && changed( field );
 		} );
@@ -88,6 +102,31 @@
 	// The browser may restore typed values on reload or from the back-forward cache.
 	window.addEventListener( 'pageshow', trackAll );
 	trackAll();
+
+	// Client downloads: the spare empty row printed for browsers without JavaScript is hidden and skipped.
+	function downloadRows() {
+		return Array.prototype.filter.call( downloads.rows, function ( row ) {
+			return ! row.classList.contains( 'hide-if-js' );
+		} );
+	}
+
+	function updateDownloads( form ) {
+		var rows = downloadRows();
+		document.querySelector( '[data-vpn-server-add-download]' ).disabled =
+			rows.length >= Number( downloads.getAttribute( 'data-vpn-server-max' ) );
+		rows.forEach( function ( row, index ) {
+			row.querySelector( '[data-vpn-server-move-download="-1"]' ).disabled = 0 === index;
+			row.querySelector( '[data-vpn-server-move-download="1"]' ).disabled = rows.length - 1 === index;
+		} );
+		if ( form ) {
+			form.setAttribute( 'data-vpn-server-changed', '' );
+			trackChanges( form );
+		}
+	}
+
+	if ( downloads ) {
+		updateDownloads( null );
+	}
 
 	// The secret card turns red for the default, an all zero or a short secret, as Settings::secret_weakness().
 	var secret = document.getElementById( 'vpn-server-secret' );
@@ -159,6 +198,37 @@
 		element = target.closest( '[data-vpn-server-cancel]' );
 		if ( element ) {
 			setEditing( document.getElementById( element.getAttribute( 'data-vpn-server-cancel' ) ), false );
+			return;
+		}
+
+		element = target.closest( '[data-vpn-server-add-download]' );
+		if ( element ) {
+			var template = document.getElementById( 'vpn-server-download-template' );
+			downloads.insertAdjacentHTML( 'beforeend', template.innerHTML.replace( /__index__/g, String( nextDownload++ ) ) );
+			updateDownloads( element.form );
+			downloads.lastElementChild.querySelector( 'input' ).focus();
+			return;
+		}
+
+		element = target.closest( '[data-vpn-server-remove-download]' );
+		if ( element ) {
+			var form = element.form;
+			element.closest( 'tr' ).remove();
+			updateDownloads( form );
+			return;
+		}
+
+		element = target.closest( '[data-vpn-server-move-download]' );
+		if ( element ) {
+			var rows = downloadRows();
+			var row = element.closest( 'tr' );
+			var other = rows[ rows.indexOf( row ) + Number( element.getAttribute( 'data-vpn-server-move-download' ) ) ];
+			if ( other ) {
+				// The posted list keeps the order of the rows in the document.
+				downloads.insertBefore( row, Number( element.getAttribute( 'data-vpn-server-move-download' ) ) < 0 ? other : other.nextSibling );
+				updateDownloads( element.form );
+				element.focus();
+			}
 			return;
 		}
 

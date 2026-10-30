@@ -29,7 +29,7 @@ The plugin does not route your devices to the internet and does not hide your pu
 
 * Settings, VPN Server: Server URL, clients with VPN addresses and access keys, server secret and storage folder.
 * Download a ready config.json for each client.
-* Client downloads: a separate section below Clients with editable Windows, macOS and Linux download URLs, prefilled with the PHPVPN download addresses.
+* Client downloads: a separate section below Clients with an editable list of the entries offered in the select box of the status page, prefilled with the PHPVPN downloads for Windows, macOS and Linux and the source code link.
 * Checks and a self test of the permalinks, HTTPS, the endpoint and the storage protection.
 * Fast: client requests are answered right after the plugins load, before the theme. The optional fast route answers them even before other plugins load.
 * No external services, no tracking, no ads. All cryptography runs in plain PHP without extensions.
@@ -66,11 +66,11 @@ The PHPVPN client appends ?action=... to the Server URL itself, so the Server UR
 
 = Can a browser open the Server URL? =
 
-Yes. It shows client download links and setup instructions, plus the request headers that the Configuration Wizard of the client can reuse. A key generator is shown only when the server secret is predictable. Generating or copying a key does not change the saved secret. An administrator must save the new value in Settings, VPN Server. You can turn the page off.
+Yes. It shows a select box with the client downloads and setup instructions, plus the request headers that the Configuration Wizard of the client can reuse. A key generator is shown only when the server secret is predictable. Generating or copying a key does not change the saved secret. An administrator must save the new value in Settings, VPN Server. You can turn the page off.
 
 = How can the client download links be changed? =
 
-In Settings, VPN Server, use the separate Client downloads section below Clients. The Windows, macOS and Linux URL fields are prefilled with https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-win-x64.zip, https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-macos.zip and https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-linux.zip. Enter absolute HTTP or HTTPS addresses and click Save Changes. The public status page uses the saved links. Existing installations receive these defaults automatically until custom links are saved.
+In Settings, VPN Server, use the separate Client downloads section below Clients. Every row is one entry of the select box on the status page, in this order: a name, an absolute HTTP or HTTPS URL, the type File (Download button) or Link (Open button, new tab) and the operating system for which the status page preselects the entry. Add Download adds a row, the arrows move a row and Remove deletes it. Click Save Changes to update the public status page. The list is prefilled with https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-win.zip, https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-macos.zip, https://www.pilandrome.com/downloads/phpvpn/client/1.x/phpvpn-linux.zip and the source code link https://github.com/pilandrome/phpvpn. Custom Windows, macOS and Linux URLs saved by an older version are kept.
 
 = What does the fast route do? =
 

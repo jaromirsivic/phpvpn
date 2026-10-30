@@ -113,14 +113,14 @@ dist-downloads/
   phpvpn/
     client/
       1.x/
-        phpvpn-win-x64.zip
+        phpvpn-win.zip
         phpvpn-macos.zip
         phpvpn-linux.zip
 ```
 
-`phpvpn-win-x64.zip` MUSÍ obsahovat úplný obsah ověřené složky `dist/client/Windows/x64`, `phpvpn-linux.zip` úplný obsah ověřené složky `dist/client/Linux/x64` a `phpvpn-macos.zip` úplný obsah ověřené složky `dist/client/macOS/arm64`. Soubory každé platformy budou přímo v kořeni jejího ZIPu, bez nadřazeného stromu `dist/client`. Archivy zachovají relativní cesty, podpisy, manifesty a u linuxových i macOS shellových skriptů POSIX executable atribut. MUSÍ pocházet ze stejného sestavení jako `dist` a jejich názvy zůstávají stabilní pro odkazy ze serverové stránky.
+`phpvpn-win.zip` MUSÍ obsahovat úplný obsah ověřené složky `dist/client/Windows`, `phpvpn-linux.zip` úplný obsah ověřené složky `dist/client/Linux` a `phpvpn-macos.zip` úplný obsah ověřené složky `dist/client/macOS`. Obsah platformní složky bude přímo v kořeni jejího ZIPu, bez nadřazeného stromu `dist/client`, takže nejvyšší úrovní archivu jsou architektonické složky (`x64/`, u macOS `arm64/`). Až distribuce dostane další architekturu (například `arm64/` pro Windows a Linux), přibude v archivu vedle stávající a název ani struktura archivu se nezmění. Archivy zachovají relativní cesty, podpisy, manifesty a u linuxových i macOS shellových skriptů POSIX executable atribut. MUSÍ pocházet ze stejného sestavení jako `dist` a jejich názvy zůstávají stabilní pro odkazy ze serverové stránky.
 
-**Placeholder pro macOS bez balíčku z CI:** macOS balíček nevzniká na Windows hostiteli, ale v GitHub Actions (oddíl macOS). Pokud sestavení distribuce žádný balíček nedostane, obsahuje `dist/client/macOS` pouze anglický `README.md`, který jasně uvádí, že klient není k dispozici, a `phpvpn-macos.zip` pak obsahuje jen tento `README.md`. Takový archiv se NESMÍ vydávat za funkční instalátor. Sestavovací vstup tento stav ohlásí varováním.
+**Placeholder pro macOS bez balíčku z CI:** macOS balíček nevzniká na Windows hostiteli, ale v GitHub Actions (oddíl macOS). Pokud sestavení distribuce žádný balíček nedostane, obsahuje `dist/client/macOS` pouze anglický `README.md`, který jasně uvádí, že klient není k dispozici, a `phpvpn-macos.zip` pak obsahuje jen tento `README.md` přímo v kořeni. Takový archiv se NESMÍ vydávat za funkční instalátor. Sestavovací vstup tento stav ohlásí varováním.
 
 Před zveřejněním se MUSÍ ověřit obsah všech tří ZIPů proti příslušným platformním složkám. Archivy vytváří a ověřuje (seznam souborů, SHA-256 a POSIX režimy) [tools/make-download-archives.ps1](tools/make-download-archives.ps1). Celkový vstup jej volá nad ověřeným stagingem ještě před publikací, takže chyba archivů ponechá `dist` i `dist-downloads` beze změny. Po úspěšné publikaci a ověření `dist` nahradí předchozí obsah `dist-downloads`. S `-StagingOnly` zůstanou archivy v `work/distribution-<id>/dist-downloads`. Samostatné spuštění jen znovu vytvoří archivy aktuálního `dist`. Publikace obsahu `dist-downloads` na web je samostatný krok.
 

@@ -44,7 +44,7 @@ installer. It re-runs itself through sudo when needed and asks for the
 administrator password.
 
 ```sh
-cd ~/Downloads/phpvpn-macos      # the unpacked folder
+cd ~/Downloads/phpvpn-macos/arm64  # the arm64 folder of the unpacked phpvpn-macos.zip
 sudo sh install.sh
 ```
 

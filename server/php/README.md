@@ -53,6 +53,7 @@ header is the implementation and is not meant to be edited.
 | `CLIENT_STATS_MIN_UPDATE_SECONDS` | 30 | Minimum age before the lastSeen marker of a client is refreshed. |
 | Maintenance | 5 s, 8, 256, 20 ms | `SWEEP_MIN_INTERVAL_SECONDS`, `SWEEP_MAX_DIRECTORIES`, `SWEEP_MAX_FILES`, `SWEEP_MAX_MILLISECONDS`: budget of the opportunistic cleanup. |
 | `PROTECT_BUFFER_DIRECTORY` | `true` | Writes best effort `.htaccess`, `web.config` and `index.html` guards into the storage root. |
+| `CLIENT_DOWNLOADS` | Windows, macOS and Linux archives from `https://www.pilandrome.com/downloads/phpvpn/client/1.x/` and the Source Code link `https://github.com/pilandrome/phpvpn` | Entries of the client select box on the status page, in this order. Each entry has a `name`, a `url`, a `type` of `file` (Download button) or `link` (Open button, new tab) and an optional `os` of `windows`, `macos` or `linux`, which preselects the entry for the visitor's system. An empty array hides the select box. |
 
 A broken limit invariant (for example a minimum poll interval above the maximum) does not stop
 the server. The status page keeps working and the API answers `503 server_misconfigured`.

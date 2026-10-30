@@ -160,7 +160,7 @@ final class Admin {
 			'fast_route_off'     => array( 'success', __( 'The fast route is removed.', 'vpn-server' ) ),
 			'self_test'          => array( 'info', __( 'The self test finished, see Checks below.', 'vpn-server' ) ),
 			'bad_endpoint'       => array( 'error', __( 'The path of the Server URL is empty or reserved by WordPress.', 'vpn-server' ) ),
-			'bad_download_url'   => array( 'error', __( 'Each client download URL must be an absolute HTTP or HTTPS address.', 'vpn-server' ) ),
+			'bad_download_url'   => array( 'error', __( 'Each client download needs a name of at most 100 characters, an absolute HTTP or HTTPS URL, a type and a system from the lists. At most 20 downloads can be saved.', 'vpn-server' ) ),
 			'bad_storage'        => array( 'error', __( 'The storage folder must be an absolute path to a dedicated folder that WordPress can create and write. It cannot be the site root, wp-content, the uploads folder itself, a folder that contains the site, or a folder inside the plugins, themes, wp-admin or wp-includes folders.', 'vpn-server' ) ),
 			'network_only'       => array( 'error', __( 'On a multisite network only a super admin can install the fast route or move the storage folder outside the uploads folder.', 'vpn-server' ) ),
 			'bad_secret'         => array( 'error', __( 'The server secret must have 16 to 256 printable ASCII characters without spaces.', 'vpn-server' ) ),
@@ -373,30 +373,108 @@ final class Admin {
 	}
 
 	/**
-	 * Client downloads, in a separate section below the complete client list.
+	 * Client downloads, in a separate section below the complete client list: the entries of the select
+	 * box on the status page, in this order. Add Download copies the template row; without JavaScript
+	 * one spare empty row is shown instead. A row with an empty name and URL is not saved.
 	 *
 	 * @param array<string, mixed> $settings Current settings.
 	 */
 	private static function render_downloads( array $settings ): void {
-		$platforms = array( 'windows' => 'Windows', 'macos' => 'macOS', 'linux' => 'Linux' );
+		$labels = array(
+			'name'    => __( 'Name', 'vpn-server' ),
+			'url'     => __( 'URL', 'vpn-server' ),
+			'type'    => __( 'Type', 'vpn-server' ),
+			'os'      => __( 'Preselected for', 'vpn-server' ),
+			'actions' => __( 'Actions', 'vpn-server' ),
+		);
+		$rows   = $settings['client_downloads'];
 		?>
 		<section class="vpn-server-card">
 			<h2><?php echo esc_html__( 'Client downloads', 'vpn-server' ); ?></h2>
-			<p class="vpn-server-lead"><?php echo esc_html__( 'These links are shown on the public status page so that the client application can be downloaded for each operating system.', 'vpn-server' ); ?></p>
+			<p class="vpn-server-lead"><?php echo esc_html__( 'These entries are offered in the select box of the public status page, in this order. A file shows a Download button, a link shows an Open button that opens the URL in a new tab. The status page preselects the entry for the operating system of the visitor. A row with an empty name and URL is not saved.', 'vpn-server' ); ?></p>
 			<?php self::form_start( 'downloads', 'vpn-server-track' ); ?>
-			<?php foreach ( $platforms as $platform => $label ) : ?>
-				<div class="vpn-server-field">
-					<label class="vpn-server-label" for="vpn-server-download-<?php echo esc_attr( $platform ); ?>"><?php echo esc_html( $label ); ?></label>
-					<div class="vpn-server-control">
-						<div class="vpn-server-line">
-							<input type="url" id="vpn-server-download-<?php echo esc_attr( $platform ); ?>" name="client_download_urls[<?php echo esc_attr( $platform ); ?>]" class="code vpn-server-wide" value="<?php echo esc_attr( $settings['client_download_urls'][ $platform ] ); ?>" spellcheck="false" required>
-						</div>
-					</div>
-				</div>
-			<?php endforeach; ?>
-			<p class="vpn-server-submit"><button type="submit" class="button button-primary"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button></p>
+			<div class="vpn-server-table-wrap">
+			<table class="vpn-server-table vpn-server-downloads">
+				<thead>
+					<tr>
+						<?php foreach ( $labels as $label ) : ?>
+							<th scope="col"><?php echo esc_html( $label ); ?></th>
+						<?php endforeach; ?>
+					</tr>
+				</thead>
+				<tbody id="vpn-server-downloads" data-vpn-server-max="<?php echo esc_attr( (string) Settings::MAX_CLIENT_DOWNLOADS ); ?>">
+				<?php
+				foreach ( $rows as $index => $download ) {
+					self::render_download_row( (string) $index, $download, $labels, '' );
+				}
+				if ( count( $rows ) < Settings::MAX_CLIENT_DOWNLOADS ) {
+					self::render_download_row( (string) count( $rows ), null, $labels, 'hide-if-js' );
+				}
+				?>
+				</tbody>
+			</table>
+			</div>
+			<template id="vpn-server-download-template"><?php self::render_download_row( '__index__', null, $labels, '' ); ?></template>
+			<p class="vpn-server-submit">
+				<button type="button" class="button hide-if-no-js" data-vpn-server-add-download><?php echo esc_html__( 'Add Download', 'vpn-server' ); ?></button>
+				<button type="submit" class="button button-primary"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button>
+			</p>
 			</form>
 		</section>
+		<?php
+	}
+
+	/**
+	 * One row of the client downloads table. Saved rows are required, an empty row is optional.
+	 *
+	 * @param string                                                          $index    Index of the row in the posted list.
+	 * @param array{name: string, url: string, type: string, os: string}|null $download Saved entry, null for an empty row.
+	 * @param array<string, string>                                           $labels   Column labels.
+	 * @param string                                                          $classes  CSS classes of the row.
+	 */
+	private static function render_download_row( string $index, ?array $download, array $labels, string $classes ): void {
+		$field    = 'client_downloads[' . $index . ']';
+		$required = null === $download ? '' : ' required';
+		$types    = array(
+			'file' => __( 'File (Download)', 'vpn-server' ),
+			'link' => __( 'Link (Open)', 'vpn-server' ),
+		);
+		$systems  = array(
+			''        => __( 'None', 'vpn-server' ),
+			'windows' => 'Windows',
+			'macos'   => 'macOS',
+			'linux'   => 'Linux',
+		);
+		?>
+		<tr<?php echo '' === $classes ? '' : ' class="' . esc_attr( $classes ) . '"'; ?>>
+			<td data-label="<?php echo esc_attr( $labels['name'] ); ?>">
+				<input type="text" name="<?php echo esc_attr( $field . '[name]' ); ?>" value="<?php echo esc_attr( $download['name'] ?? '' ); ?>" maxlength="<?php echo esc_attr( (string) Settings::MAX_DOWNLOAD_NAME_LENGTH ); ?>" aria-label="<?php echo esc_attr( $labels['name'] ); ?>"<?php echo $required; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- constant attribute. ?>>
+			</td>
+			<td data-label="<?php echo esc_attr( $labels['url'] ); ?>">
+				<input type="url" class="code" name="<?php echo esc_attr( $field . '[url]' ); ?>" value="<?php echo esc_attr( $download['url'] ?? '' ); ?>" aria-label="<?php echo esc_attr( $labels['url'] ); ?>" spellcheck="false"<?php echo $required; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- constant attribute. ?>>
+			</td>
+			<td data-label="<?php echo esc_attr( $labels['type'] ); ?>">
+				<select name="<?php echo esc_attr( $field . '[type]' ); ?>" aria-label="<?php echo esc_attr( $labels['type'] ); ?>">
+					<?php foreach ( $types as $value => $label ) : ?>
+						<option value="<?php echo esc_attr( $value ); ?>"<?php selected( $download['type'] ?? 'file', $value ); ?>><?php echo esc_html( $label ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</td>
+			<td data-label="<?php echo esc_attr( $labels['os'] ); ?>">
+				<select name="<?php echo esc_attr( $field . '[os]' ); ?>" aria-label="<?php echo esc_attr( $labels['os'] ); ?>">
+					<?php foreach ( $systems as $value => $label ) : ?>
+						<option value="<?php echo esc_attr( $value ); ?>"<?php selected( $download['os'] ?? '', $value ); ?>><?php echo esc_html( $label ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</td>
+			<td data-label="<?php echo esc_attr( $labels['actions'] ); ?>">
+				<div class="vpn-server-actions hide-if-no-js">
+					<button type="button" class="button button-small" data-vpn-server-move-download="-1" aria-label="<?php echo esc_attr__( 'Move up', 'vpn-server' ); ?>">&uarr;</button>
+					<button type="button" class="button button-small" data-vpn-server-move-download="1" aria-label="<?php echo esc_attr__( 'Move down', 'vpn-server' ); ?>">&darr;</button>
+					<button type="button" class="button button-small vpn-server-danger" data-vpn-server-remove-download><?php echo esc_html__( 'Remove', 'vpn-server' ); ?></button>
+				</div>
+			</td>
+		</tr>
 		<?php
 	}
 
@@ -611,16 +689,25 @@ final class Admin {
 		self::verify( 'downloads' );
 		$settings  = Settings::get();
 		$downloads = array();
-		foreach ( Settings::DEFAULT_CLIENT_DOWNLOAD_URLS as $platform => $default ) {
-			// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- nonce checked above, URL sanitized below.
-			$value = isset( $_POST['client_download_urls'][ $platform ] ) && is_string( $_POST['client_download_urls'][ $platform ] ) ? wp_unslash( $_POST['client_download_urls'][ $platform ] ) : '';
-			$url   = Settings::sanitize_download_url( $value );
-			if ( '' === $url ) {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- nonce checked above, every entry sanitized below.
+		$posted = isset( $_POST['client_downloads'] ) && is_array( $_POST['client_downloads'] ) ? wp_unslash( $_POST['client_downloads'] ) : array();
+		foreach ( $posted as $entry ) {
+			if ( ! is_array( $entry ) ) {
 				self::done( 'bad_download_url' );
 			}
-			$downloads[ $platform ] = $url;
+			// An empty row, the spare row without JavaScript or a cleared one, is not an entry.
+			$name = isset( $entry['name'] ) && is_string( $entry['name'] ) ? trim( $entry['name'] ) : '';
+			$url  = isset( $entry['url'] ) && is_string( $entry['url'] ) ? trim( $entry['url'] ) : '';
+			if ( '' === $name && '' === $url ) {
+				continue;
+			}
+			$download = Settings::sanitize_download( $entry );
+			if ( null === $download || count( $downloads ) >= Settings::MAX_CLIENT_DOWNLOADS ) {
+				self::done( 'bad_download_url' );
+			}
+			$downloads[] = $download;
 		}
-		$settings['client_download_urls'] = $downloads;
+		$settings['client_downloads'] = $downloads;
 		Settings::save( $settings );
 		self::done( 'saved' );
 	}

@@ -114,10 +114,14 @@ to `.15`.
 - `STATUS_PAGE_ENABLED` turns the public GET/HEAD page on. Turning it off does not restrict the
   API. A default, empty, zero or ASCII zero secret shows a warning panel. The Show HTTP Headers
   button lists the received headers for the Configuration Wizard (`protocol.md` §5.1).
-- `CLIENT_WINDOWS_DOWNLOAD_URL`, `CLIENT_MACOS_DOWNLOAD_URL` and `CLIENT_LINUX_DOWNLOAD_URL`
-  set the three client download links on the status page. By default they point to
-  `https://www.pilandrome.com/downloads/phpvpn/client/1.x/` with the files
-  `phpvpn-win-x64.zip`, `phpvpn-macos.zip` and `phpvpn-linux.zip`, respectively.
+- `CLIENT_DOWNLOADS` lists the entries of the client select box on the status page, in this
+  order. Each entry is a dict with a non-empty `name` and `url`, a `type` of `file` (Download
+  button) or `link` (Open button, new tab) and an optional `os` of `windows`, `macos` or
+  `linux`, which preselects the entry for the visitor's system. Any other key or value is a
+  configuration error, an empty list hides the select box. By default it offers `phpvpn-win.zip`,
+  `phpvpn-macos.zip` and `phpvpn-linux.zip` from
+  `https://www.pilandrome.com/downloads/phpvpn/client/1.x/` and the Source Code link
+  `https://github.com/pilandrome/phpvpn`.
   The setup screenshot is embedded in the script, so no separate assets are needed.
 - `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX`, all `MAX_*`, the TTLs, the
   authentication window, the polling and sweep constants mean what the protocol describes.
