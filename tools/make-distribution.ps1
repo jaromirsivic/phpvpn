@@ -1,5 +1,6 @@
 <# .SYNOPSIS
-Builds, verifies and publishes the entire dist tree and a separately verified ZIP.
+Builds, verifies and publishes the entire dist tree, a separately verified ZIP and the client
+download archives in dist-downloads (tools/make-download-archives.ps1).
 Client CMake configuration must already exist. The build is always refreshed.
 The Linux client comes from a package build of client/tools/linux/build-packages-in-container.sh
 (work/linux-packages/<id>) made from the same commit on a Linux build host.
@@ -165,40 +166,21 @@ if ($linuxManifest.sourceCommit -cne $provenance.sourceCommit -or $linuxManifest
     throw 'The staged Linux manifest does not record the checked package provenance.'
 }
 & (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $staging -IconResourceTest $iconTest -CertificateThumbprint $CertificateThumbprint
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [IO.Compression.ZipFile]::Open($archive, 'Create')
-try {
-    foreach ($directory in Get-ChildItem -LiteralPath $staging -Directory -Recurse) {
-        $name = $directory.FullName.Substring($staging.Length + 1).Replace('\','/') + '/'
-        $entry = $zip.CreateEntry($name)
-        $entry.ExternalAttributes = 1106051088 # POSIX directory 0755 plus DOS directory flag
-    }
-    foreach ($file in Get-ChildItem -LiteralPath $staging -File -Recurse) {
-        $name = $file.FullName.Substring($staging.Length + 1).Replace('\','/')
-        $entry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $name)
-        # Signed Int32 representation of regular file 0755 / 0644.
-        $entry.ExternalAttributes = if ($name.EndsWith('.sh')) { -2115174400 } else { -2119958528 }
-    }
-} finally { $zip.Dispose() }
-# Extraction on Windows drops POSIX modes, so check them in the archive itself.
-$zip = [IO.Compression.ZipFile]::OpenRead($archive)
-try {
-    foreach ($entry in $zip.Entries) {
-        $mode = ($entry.ExternalAttributes -shr 16) -band 0xFFFF
-        $expectedMode = if ($entry.FullName.EndsWith('/')) { 0x41ED } elseif ($entry.FullName.EndsWith('.sh')) { 0x81ED } else { 0x81A4 }
-        if ($mode -ne $expectedMode) { throw "ZIP entry has an incorrect POSIX mode: $($entry.FullName)" }
-    }
-    foreach ($name in @('client/Linux/x64/install.sh', 'client/Linux/x64/uninstall.sh', 'server/python/init.sh')) {
-        if ($null -eq $zip.GetEntry($name)) { throw "ZIP is missing the executable entry point $name" }
-    }
-} finally { $zip.Dispose() }
+Write-DistributionZip $staging $archive
+Assert-DistributionZipModes $archive @('client/Linux/x64/install.sh', 'client/Linux/x64/uninstall.sh', 'server/python/init.sh')
 [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
 & (Join-Path $PSScriptRoot 'verify-distribution.ps1') -DistributionDirectory $unpacked -IconResourceTest $iconTest -CertificateThumbprint $CertificateThumbprint
+# Client archives for the download page (distribution.md), made and checked from the verified
+# staging before anything is published, so a failure leaves dist and dist-downloads unchanged.
+$stagingDownloads = Join-Path $session 'dist-downloads'
+& (Join-Path $PSScriptRoot 'make-download-archives.ps1') -DistributionDirectory $staging -OutputDirectory $stagingDownloads
+$downloads = Assert-DistributionPath (Join-Path $repository 'dist-downloads') $repository -Tree
 
 if ($StagingOnly) {
     Write-Output "Staging only: $dist and $zipTarget were not changed."
     Write-Output "Verified staging: $staging"
     Write-Output "Verified archive: $archive"
+    Write-Output "Verified client downloads: $stagingDownloads"
     Write-Output "Verified archive extraction (for isolated runtime tests): $unpacked"
     if ($provenanceRecord) { Write-Warning "Linux provenance mismatch accepted for development only, recorded in $provenanceRecord" }
     return
@@ -211,8 +193,12 @@ $previous = Assert-DistributionPath (Join-Path $session 'previous-dist') $sessio
 $previousZip = Assert-DistributionPath (Join-Path $session 'previous-dist.zip') $session
 if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Recurse -Force }
 if (Test-Path -LiteralPath $previousZip) { Remove-Item -LiteralPath $previousZip -Force }
+# The published dist passed verification, so its download archives replace the previous ones.
+if (Test-Path -LiteralPath $downloads) { Remove-Item -LiteralPath $downloads -Recurse -Force }
+Move-Item -LiteralPath $stagingDownloads -Destination $downloads
 Write-Output "Distribution: $dist"
 Write-Output "Archive: $zipTarget"
+Write-Output "Client downloads: $downloads"
 Write-Output "Verified archive extraction (for isolated runtime tests): $unpacked"
 Write-Output "Build staging: $session (temporary rollback removed after verification)"
 if ($provenanceRecord) { Write-Warning "Linux provenance mismatch accepted for development only, recorded in $provenanceRecord" }

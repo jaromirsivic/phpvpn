@@ -158,6 +158,42 @@ function Assert-DistributionPath {
     return $full
 }
 
+# ZIP of the whole Source tree with POSIX modes: directories 0755, *.sh 0755, other files 0644.
+function Write-DistributionZip([string]$Source, [string]$Archive) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $root = [IO.Path]::GetFullPath($Source).TrimEnd('\','/')
+    $zip = [IO.Compression.ZipFile]::Open($Archive, 'Create')
+    try {
+        foreach ($directory in Get-ChildItem -LiteralPath $root -Directory -Recurse) {
+            $name = $directory.FullName.Substring($root.Length + 1).Replace('\','/') + '/'
+            $entry = $zip.CreateEntry($name)
+            $entry.ExternalAttributes = 1106051088 # POSIX directory 0755 plus DOS directory flag
+        }
+        foreach ($file in Get-ChildItem -LiteralPath $root -File -Recurse) {
+            $name = $file.FullName.Substring($root.Length + 1).Replace('\','/')
+            $entry = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $name)
+            # Signed Int32 representation of regular file 0755 / 0644.
+            $entry.ExternalAttributes = if ($name.EndsWith('.sh')) { -2115174400 } else { -2119958528 }
+        }
+    } finally { $zip.Dispose() }
+}
+
+# Extraction on Windows drops POSIX modes, so check them in the archive itself.
+function Assert-DistributionZipModes([string]$Archive, [string[]]$ExecutableEntries = @()) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $mode = ($entry.ExternalAttributes -shr 16) -band 0xFFFF
+            $expectedMode = if ($entry.FullName.EndsWith('/')) { 0x41ED } elseif ($entry.FullName.EndsWith('.sh')) { 0x81ED } else { 0x81A4 }
+            if ($mode -ne $expectedMode) { throw "ZIP entry has an incorrect POSIX mode: $($entry.FullName)" }
+        }
+        foreach ($name in $ExecutableEntries) {
+            if ($null -eq $zip.GetEntry($name)) { throw "ZIP is missing the executable entry point $name" }
+        }
+    } finally { $zip.Dispose() }
+}
+
 function Get-UnsupportedClientReadme([string]$Platform) {
     return "# PHP VPN client for $Platform`n`nNo distributable client implementation is available for this platform yet.`nThis directory does not claim platform support or completed validation.`n"
 }

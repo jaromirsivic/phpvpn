@@ -18,6 +18,7 @@ todo.txt
 
 *.obj
 dist.zip
+/dist-downloads/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/

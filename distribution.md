@@ -112,7 +112,7 @@ dist-downloads/
 
 **Dočasný placeholder pro macOS:** klient zatím není implementován. `phpvpn-macos.zip` proto zatím obsahuje pouze anglický `README.md` ze složky `dist/client/macOS`, který jasně uvádí, že klient ještě není dostupný. NESMÍ se vydávat za funkční instalátor. Až bude macOS klient implementován, MUSÍ se tento oddíl dokumentace aktualizovat a archiv na stejné cestě nahradit úplnou ověřenou distribucí macOS klienta.
 
-Před zveřejněním se MUSÍ ověřit obsah všech tří ZIPů proti příslušným platformním složkám. Publikace obsahu `dist-downloads` na web je samostatný krok.
+Před zveřejněním se MUSÍ ověřit obsah všech tří ZIPů proti příslušným platformním složkám. Archivy vytváří a ověřuje (seznam souborů, SHA-256 a POSIX režimy) [tools/make-download-archives.ps1](tools/make-download-archives.ps1). Celkový vstup jej volá nad ověřeným stagingem ještě před publikací, takže chyba archivů ponechá `dist` i `dist-downloads` beze změny. Po úspěšné publikaci a ověření `dist` nahradí předchozí obsah `dist-downloads`. S `-StagingOnly` zůstanou archivy v `work/distribution-<id>/dist-downloads`. Samostatné spuštění jen znovu vytvoří archivy aktuálního `dist`. Publikace obsahu `dist-downloads` na web je samostatný krok.
 
 ### Dokumentace
 

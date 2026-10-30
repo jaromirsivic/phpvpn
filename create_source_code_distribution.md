@@ -38,7 +38,7 @@ Zahrň alespoň:
 
 - Všechny vlastní zdrojové kódy klienta a serverů, hlavičky, potřebné prostředky, konfigurace sestavení, generátory, šablony, schémata a přenositelné ukázkové konfigurace.
 - Testy a bezpečná testovací data potřebná k ověření distribuovaného projektu.
-- Build, balicí, instalační a ověřovací skripty včetně všech helperů a šablon. Aktuálně mezi ně patří zejména `tools/make-distribution.ps1`, `tools/verify-distribution.ps1`, `tools/distribution-common.ps1`, `client/tools/` a `client/packaging/`. Podmínky zákazu binárek a kontroly lokálních vazeb platí i uvnitř těchto adresářů.
+- Build, balicí, instalační a ověřovací skripty včetně všech helperů a šablon. Aktuálně mezi ně patří zejména `tools/make-distribution.ps1`, `tools/verify-distribution.ps1`, `tools/make-download-archives.ps1`, `tools/distribution-common.ps1`, `client/tools/` a `client/packaging/`. Podmínky zákazu binárek a kontroly lokálních vazeb platí i uvnitř těchto adresářů.
 - Vstupy i lock soubory závislostí, například `server/python/requirements-server.in` a `server/python/requirements-server.txt`. Potřebné `.gitattributes`, `.gitignore` a další přenositelné skryté konfigurační soubory zachovej.
 - Tento dokument a návod pro vytvoření binární distribuce. Pokud projekt má automatizaci zdrojové distribuce, zahrň její zdrojový skript, helpery, pravidla výběru a validátor. Nesmějí existovat pouze na stroji původního autora nebo odkazovat na nedodaný lokální nástroj.
 - Dokumentaci sestavení, testování, získání externích závislostí a omezení podpory platforem.
