@@ -116,7 +116,7 @@ PHPVPN_TEST(logger, threshold_history_concurrent_lines_and_secondary_sink) {
         }
     }
     std::barrier start(4);
-    std::vector<std::jthread> workers;
+    std::vector<std::thread> workers;  // joined below; Apple libc++ has no std::jthread
     for (int worker = 0; worker < 4; ++worker) {
         workers.emplace_back([&, worker] {
             start.arrive_and_wait();

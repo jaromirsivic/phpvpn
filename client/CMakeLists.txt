@@ -93,6 +93,10 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(phpvpn-compile-options INTERFACE
             $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-U_FORTIFY_SOURCE>
             $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-D_FORTIFY_SOURCE=2>)
+        # The Homebrew OpenSSL bottle is built for the host macOS release, so
+        # every link against it would print one "built for newer macOS" warning
+        # per object file; linker errors are unaffected.
+        target_link_options(phpvpn-compile-options INTERFACE -Wl,-w)
     else()
         # _FORTIFY_SOURCE needs the optimizer and warns without it, so Debug stays
         # plain. Some distributions predefine a level, which is replaced explicitly.
