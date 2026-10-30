@@ -17,7 +17,9 @@ Error unreadable() {
 }
 
 bool validDirectory(const std::filesystem::path& directory) {
-    return directory.is_absolute() && directory == directory.lexically_normal() &&
+    // Native string comparison: path::operator== compares element-wise, so a
+    // doubled separator would otherwise count as normal.
+    return directory.is_absolute() && directory.native() == directory.lexically_normal().native() &&
         directory != directory.root_path() && !directory.native().ends_with('/') &&
         directory.native().find('\0') == std::string::npos;
 }
