@@ -1,11 +1,15 @@
+// memset_s of the Darwin libc is only declared when this macro precedes the
+// first inclusion of <string.h>, which the header below reaches transitively.
+#if defined(__APPLE__)
+#define __STDC_WANT_LIB_EXT1__ 1
+#include <string.h>
+#endif
+
 #include "core/base/secure_buffer.h"
 
 #if defined(_WIN32)
 #include <windows.h>
 #elif defined(__linux__)
-#include <string.h>
-#elif defined(__APPLE__)
-#define __STDC_WANT_LIB_EXT1__ 1
 #include <string.h>
 #endif
 

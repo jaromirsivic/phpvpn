@@ -29,6 +29,8 @@ jobs:
           set -eu
           brew list ninja > /dev/null 2>&1 || brew install ninja
           brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
+          # The macOS runner images no longer ship PHP; the relay fixtures need it.
+          command -v php > /dev/null 2>&1 || brew install php
           echo "PHPVPN_OPENSSL_ROOT=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           sw_vers
           xcodebuild -version
@@ -43,7 +45,9 @@ jobs:
 
       - name: Build
         working-directory: client
-        run: cmake --build --preset "$PRESET"
+        # -k 0 keeps compiling after the first error so one run shows every
+        # diagnostic of a port that is only compiled here.
+        run: cmake --build --preset "$PRESET" -- -k 0
 
       - name: Portable and macOS unit tests
         run: |
