@@ -479,7 +479,8 @@ final class Admin {
 	}
 
 	/**
-	 * Storage folder, its protection and the nginx rule.
+	 * Storage type, storage folder, its protection and the nginx rule. Disk is the only storage type so
+	 * far, the other types are listed disabled and the select box is not posted.
 	 *
 	 * @param array<string, mixed> $settings Current settings.
 	 */
@@ -487,8 +488,21 @@ final class Admin {
 		$location = self::storage_url_path( $settings );
 		?>
 		<section class="vpn-server-card">
-			<h2><?php echo esc_html__( 'Storage protection', 'vpn-server' ); ?></h2>
+			<h2><?php echo esc_html__( 'Storage configuration', 'vpn-server' ); ?></h2>
 			<?php self::form_start( 'storage', 'vpn-server-track' ); ?>
+			<div class="vpn-server-field">
+				<label class="vpn-server-label" for="vpn-server-storage-type"><?php echo esc_html__( 'Storage type', 'vpn-server' ); ?></label>
+				<div class="vpn-server-control">
+					<div class="vpn-server-line">
+						<select id="vpn-server-storage-type">
+							<option value="disk" selected><?php echo esc_html__( 'Disk, RAM disk', 'vpn-server' ); ?></option>
+							<option value="redis" disabled>Redis</option>
+							<option value="memcached" disabled>Memcached</option>
+							<option value="litespeed-cache" disabled>LiteSpeed Cache</option>
+						</select>
+					</div>
+				</div>
+			</div>
 			<div class="vpn-server-field">
 				<label class="vpn-server-label" for="vpn-server-storage"><?php echo esc_html__( 'Storage folder', 'vpn-server' ); ?></label>
 				<div class="vpn-server-control">
@@ -967,7 +981,7 @@ final class Admin {
 		);
 		$wp_filesystem->delete( $path );
 		if ( ! is_wp_error( $response ) && trim( (string) wp_remote_retrieve_body( $response ) ) === $content ) {
-			return array( 'error', __( 'The storage folder can be downloaded from the web. Add the web server rule shown under Storage protection, or move the folder outside the web root.', 'vpn-server' ) );
+			return array( 'error', __( 'The storage folder can be downloaded from the web. Add the web server rule shown under Storage configuration, or move the folder outside the web root.', 'vpn-server' ) );
 		}
 		return array( 'ok', __( 'The storage folder cannot be downloaded from the web.', 'vpn-server' ) );
 	}

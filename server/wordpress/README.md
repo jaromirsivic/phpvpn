@@ -50,7 +50,7 @@ provider before you run the plugin on shared hosting.
    Wizard.
 4. Set up the communication contracts and payload keys between the clients in the clients
    themselves. Payload keys never reach the server.
-5. On nginx add the rule shown under Storage protection in the settings, then press Run self
+5. On nginx add the rule shown under Storage configuration in the settings, then press Run self
    test.
 
 The Server URL is a plain path such as `https://example.com/vpn-server/`, without a `.php` file
