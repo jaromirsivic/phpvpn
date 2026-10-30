@@ -9,3 +9,4 @@ client/apps/tray-linux/** text eol=lf
 assets/phpvpn*.svg text eol=lf
 server/wordpress/** text eol=lf
 client/assets/linux/hicolor/scalable/** text eol=lf
+server/wordpress/**/*.png binary
