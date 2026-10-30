@@ -6,6 +6,8 @@ __pycache__/
 .tools/
 .runtime/
 .bootstrap.lock/
+/assets/android-cz/
+/assets/android-en/
 
 # Default storage root of the disk driver
 /phpvpn/
