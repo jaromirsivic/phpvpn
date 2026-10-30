@@ -63,7 +63,7 @@ const DEFAULT_CONFIG = Object.freeze({
     QUEUE_TTL_SECONDS: 60,
     LOCK_TIMEOUT_MS: 200,
     MIN_DATA_POLL_INTERVAL_MS: 50,
-    MAX_DATA_POLL_INTERVAL_MS: 3200,
+    MAX_DATA_POLL_INTERVAL_MS: 1800,
     CLIENT_STATS_MIN_UPDATE_SECONDS: 30,
     // Bounded opportunistic maintenance after data responses.
     SWEEP_MIN_INTERVAL_SECONDS: 5,

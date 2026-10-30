@@ -75,7 +75,7 @@ final class Settings {
 	 * of phpvpn.php. tools/build-wordpress-plugin.py copies them from phpvpn.php and checks them.
 	 */
 	const DEFAULT_MIN_DATA_POLL_INTERVAL_MS = 50;
-	const DEFAULT_MAX_DATA_POLL_INTERVAL_MS = 3200;
+	const DEFAULT_MAX_DATA_POLL_INTERVAL_MS = 1800;
 
 	/** Lowest and highest poll intervals in milliseconds that the settings accept. */
 	const MIN_DATA_POLL_INTERVAL_RANGE = array( 25, 500 );

@@ -247,4 +247,4 @@ def test_published_limits_match_the_specification_defaults(
     assert limits["maxQueueBytesPerClient"] == 16777216
     assert limits["queueTtlSeconds"] == 60
     assert limits["minDataPollIntervalMs"] == 50
-    assert limits["maxDataPollIntervalMs"] == 3200
+    assert limits["maxDataPollIntervalMs"] == 1800

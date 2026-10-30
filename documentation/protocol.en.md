@@ -340,7 +340,7 @@ The signed input has no trailing LF. The tag is canonical unpadded Base64URL HMA
 The server constructs one JSON object using `JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT`. Indentation and LF belong to the authenticated plaintext. Fields, their order and values remain the same. The following compact representation shows minimum contents, not exact serialized whitespace:
 
 ```json
-{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":983040,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":3200}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":983040,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":1800}}
 ```
 
 `generatedAt` is current server time exactly in `YYYY-MM-DDTHH:MM:SS.sssZ` format. `clients` contains only VPN addresses and approximate times of last successfully processed communication. It must contain no token, secret, physical IP, disk path or queue contents. A client without a valid statistics record may be omitted. `lastSeen` is UTC RFC 3339 exactly in `YYYY-MM-DDTHH:MM:SS.sssZ` format. Because of the 30-second update throttle and best-effort statistics, it is only approximate operational information, not an audit trail or authoritative proof of client availability.
@@ -650,7 +650,7 @@ Ordinary touch is strictly best effort and preserves stored JSON. Confirmed publ
 | `QUEUE_TTL_SECONDS` | 60 s | Maximum pending batch age. |
 | `LOCK_TIMEOUT_MS` | 200 ms | Maximum PHP worker wait for a storage lock. |
 | `MIN_DATA_POLL_INTERVAL_MS` | 50 ms | Recommended minimum interval between `data` calls. |
-| `MAX_DATA_POLL_INTERVAL_MS` | 3200 ms | Recommended maximum interval between `data` calls. |
+| `MAX_DATA_POLL_INTERVAL_MS` | 1800 ms | Recommended maximum interval between `data` calls. |
 
 Configuration invariants must ensure that `MAX_REQUEST_BODY_BYTES` accommodates the authentication line and maximum count of maximum-sized records, and that `MIN_DATA_POLL_INTERVAL_MS` is positive and no greater than `MAX_DATA_POLL_INTERVAL_MS`. PHP `post_max_size`, proxy and web server request limits must be strictly greater than `MAX_REQUEST_BODY_BYTES`. The web server and proxy must transfer a response containing the whole `MAX_QUEUE_BYTES_PER_CLIENT` queue plus `data-result` and final `data-mac` without pagination; otherwise diagnostics must report misconfiguration.
 
@@ -665,7 +665,7 @@ Recommended client defaults:
 - connect timeout 5 s;
 - total request timeout 15 s;
 - exponential backoff after a network error or `503`, starting at 250 ms, capped at 30 s, always with jitter;
-- the client may bound `data` intervals using active `minDataPollIntervalMs` and `maxDataPollIntervalMs` from `info`; the recommended default range is 50 to 3,200 ms.
+- the client may bound `data` intervals using active `minDataPollIntervalMs` and `maxDataPollIntervalMs` from `info`; the recommended default range is 50 to 1,800 ms.
 
 The total timeout is a single absolute monotonic deadline from request start, covering DNS, connection, TLS, sending, headers and the entire response body. Partial transfer or a phase change does not renew it. The stated 15 s is a general recommendation. The native client under `client.md` has its own normative configurable default `responseTimeoutSeconds=30`. Time-unit conversions and addition to monotonic time must be checked. Unrepresentable values and failure to set a timeout must not result in a negative, infinite or silently changed timeout. Expiry triggers safe cancellation with a short finite cleanup period and confirmed terminal state before replacing the request or releasing resources. The result remains timeout, not late success.
 

@@ -54,7 +54,7 @@ Technically yes, the plugin needs only 64-bit PHP 8.2 and a writable folder. Man
 
 = Why do the clients poll so often? =
 
-PHP cannot keep connections open on most hosts, so the clients ask for new messages every 50 to 3200 milliseconds by default. Each poll is a short request. The Min Data Poll Interval (25 to 500 ms) and the Max Data Poll Interval (500 to 5000 ms) under Main Configuration change this range. Use the fast route on sites with many plugins and a PHP opcode cache for best response times.
+PHP cannot keep connections open on most hosts, so the clients ask for new messages every 50 to 1800 milliseconds by default. Each poll is a short request. The Min Data Poll Interval (25 to 500 ms) and the Max Data Poll Interval (500 to 5000 ms) under Main Configuration change this range. Use the fast route on sites with many plugins and a PHP opcode cache for best response times.
 
 = Where are the messages stored? =
 

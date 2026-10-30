@@ -248,7 +248,7 @@ test('info: standard is metadata only, extended publication and privacy rules', 
     assert.ok(plain.value.clients.every((client) => Object.keys(client).join() === 'address,lastSeen'));
     assert.ok(plain.text.startsWith(`{\n    "serverVersion": "${h.relay.DEFAULT_CONFIG.SERVER_VERSION}",\n    "generatedAt": `));
     assert.deepEqual(plain.value.limits, { maxDataRecordsPerRequest: 16, maxRequestBodyBytes: 983040,
-        maxQueueBytesPerClient: 16777216, queueTtlSeconds: 60, minDataPollIntervalMs: 50, maxDataPollIntervalMs: 3200 });
+        maxQueueBytesPerClient: 16777216, queueTtlSeconds: 60, minDataPollIntervalMs: 50, maxDataPollIntervalMs: 1800 });
     assert.equal(fs.existsSync(path.join(buffer, '10_99_99_9')), false, 'info creates no directories for other clients');
     // Presence of false or [] still requires full authentication; auth-full without extension is invalid.
     const semiWithFalse = JSON.parse(h.semiBody().body);

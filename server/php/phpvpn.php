@@ -97,7 +97,7 @@ const AUTH_TIMESTAMP_SKEW_SECONDS = 60;
 const QUEUE_TTL_SECONDS = 60;
 const LOCK_TIMEOUT_MS = 200;
 const MIN_DATA_POLL_INTERVAL_MS = 50;
-const MAX_DATA_POLL_INTERVAL_MS = 3200;
+const MAX_DATA_POLL_INTERVAL_MS = 1800;
 
 /** Best effort lastSeen marker is refreshed only when it is older than this. */
 const CLIENT_STATS_MIN_UPDATE_SECONDS = 30;

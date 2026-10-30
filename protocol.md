@@ -340,7 +340,7 @@ Podpis nemá koncový LF. Tag je canonical unpadded Base64URL HMAC-SHA-256 s `fu
 Server sestaví jeden JSON objekt pomocí `JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT`. Odsazení a LF jsou součástí autentizovaného plaintextu. Pole, jejich pořadí a hodnoty zůstávají stejné. Následující kompaktní zápis ukazuje minimální obsah, nikoli přesné serializované whitespace:
 
 ```json
-{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":983040,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":3200}}
+{"serverVersion":"1.0.0","generatedAt":"2026-08-09T20:15:30.123Z","clients":[{"address":"10.99.99.2","lastSeen":"2026-08-09T20:14:52.000Z"}],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":983040,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":50,"maxDataPollIntervalMs":1800}}
 ```
 
 `generatedAt` je aktuální čas serveru přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`. `clients` obsahuje pouze VPN adresu a přibližný čas poslední úspěšně zpracované komunikace. Nesmí obsahovat token, secret, fyzickou IP, cestu na disku ani obsah fronty. Klient, který ještě nemá platný statistický záznam, může být vynechán. `lastSeen` je UTC RFC 3339 přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`. Kvůli 30sekundovému omezení aktualizací a best-effort povaze statistik jde pouze o přibližný provozní údaj, nikoli o auditní stopu ani autoritativní důkaz dostupnosti klienta.
@@ -650,7 +650,7 @@ Soubor `info.json` NESMÍ být přímo dostupný přes HTTP ani HTTPS. `BUFFER_D
 | `QUEUE_TTL_SECONDS` | 60 s | Nejvyšší věk čekající dávky. |
 | `LOCK_TIMEOUT_MS` | 200 ms | Nejvyšší čekání PHP workeru na storage zámek. |
 | `MIN_DATA_POLL_INTERVAL_MS` | 50 ms | Doporučený nejkratší interval mezi voláními `data`. |
-| `MAX_DATA_POLL_INTERVAL_MS` | 3200 ms | Doporučený nejdelší interval mezi voláními `data`. |
+| `MAX_DATA_POLL_INTERVAL_MS` | 1800 ms | Doporučený nejdelší interval mezi voláními `data`. |
 
 Konfigurační invarianty musí zajistit, že `MAX_REQUEST_BODY_BYTES` pojme autentizační řádek a maximální počet maximálních záznamů a že `MIN_DATA_POLL_INTERVAL_MS` je kladné a není větší než `MAX_DATA_POLL_INTERVAL_MS`. PHP `post_max_size`, limity proxy a webserveru pro požadavek musí být přísně vyšší než `MAX_REQUEST_BODY_BYTES`. Webserver a proxy musí umět bez stránkování přenést odpověď obsahující celou frontu o velikosti `MAX_QUEUE_BYTES_PER_CLIENT` plus `data-result` a závěrečný `data-mac`; jinak server musí při diagnostice hlásit chybnou konfiguraci.
 
@@ -665,7 +665,7 @@ Doporučené výchozí hodnoty klienta:
 - connect timeout 5 s;
 - celkový timeout requestu 15 s;
 - exponenciální backoff po síťové chybě nebo `503`, počínaje 250 ms, nejvýše 30 s, vždy s jitterem;
-- interval mezi voláními `data` může klient omezit podle aktivních hodnot `minDataPollIntervalMs` a `maxDataPollIntervalMs` z odpovědi `info`; výchozí doporučené rozmezí je 50 až 3 200 ms.
+- interval mezi voláními `data` může klient omezit podle aktivních hodnot `minDataPollIntervalMs` a `maxDataPollIntervalMs` z odpovědi `info`; výchozí doporučené rozmezí je 50 až 1 800 ms.
 
 Celkový timeout je jediný absolutní monotónní deadline od zahájení requestu zahrnující DNS, spojení, TLS, odeslání, hlavičky a celé tělo odpovědi. Dílčí přenos ani změna fáze jej neobnoví. Uvedených 15 s je obecné doporučení. Nativní klient podle `client.md` má vlastní normativní konfigurovatelný default `responseTimeoutSeconds=30`. Převody časových jednotek a součet s monotónním časem musí být kontrolované. Nereprezentovatelná hodnota ani selhání nastavení timeoutu nesmějí vést k zápornému, nekonečnému nebo tiše změněnému timeoutu. Expirace vyvolá bezpečné zrušení s krátkou konečnou dobou úklidu a potvrzeným terminálním stavem před nahrazením requestu nebo uvolněním prostředků. Výsledkem zůstane timeout, nikoli pozdní úspěch.
 
