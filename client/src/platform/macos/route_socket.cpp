@@ -7,7 +7,6 @@
 
 #include <fcntl.h>
 #include <net/route.h>
-#include <poll.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -83,6 +82,20 @@ Result<RouteMessage> RouteSocket::request(RouteRequest query) {
         return Error(ErrorCode::netconfig_apply_failed, "the routing request was written partially");
     }
 
+    // route_output() applies RTM_ADD and RTM_DELETE synchronously and reports a
+    // refusal as the errno of write(), so a complete write is the verdict. The
+    // echoed copy is not awaited: route(8) reads an answer for RTM_GET only, and
+    // the macOS 15 kernel did not deliver the RTM_ADD echo to the sender in CI.
+    if (query.type != RTM_GET) {
+        RouteMessage applied;
+        applied.errnoValue = 0;
+        applied.version = RTM_VERSION;
+        applied.type = query.type;
+        applied.sequence = query.sequence;
+        applied.pid = query.pid;
+        return applied;
+    }
+
     Bytes buffer(kReceiveBufferBytes);
     const auto deadline = std::chrono::steady_clock::now() + kAnswerTimeout;
     for (;;) {
@@ -91,19 +104,16 @@ Result<RouteMessage> RouteSocket::request(RouteRequest query) {
             return Error(ErrorCode::netconfig_apply_failed, "the routing answer timed out");
         }
         const auto remaining =
-            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-        pollfd entry{};
-        entry.fd = fd_.get();
-        entry.events = POLLIN;
-        // One extra millisecond so a sub-millisecond remainder does not spin.
-        const int ready = ::poll(&entry, 1, static_cast<int>(remaining) + 1);
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            return failure("the routing answer could not be awaited", errno);
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count() + 1;
+        // A blocking read bounded by SO_RCVTIMEO, the way route(8) reads its
+        // answer; poll() is deliberately not used on the routing socket.
+        timeval wait{};
+        wait.tv_sec = static_cast<time_t>(remaining / 1000);
+        wait.tv_usec = static_cast<suseconds_t>((remaining % 1000) * 1000);
+        if (::setsockopt(fd_.get(), SOL_SOCKET, SO_RCVTIMEO, &wait, sizeof(wait)) != 0) {
+            return failure("the routing answer timeout could not be set", errno);
         }
-        if (ready == 0) continue;
-
-        const ssize_t received = ::recv(fd_.get(), buffer.data(), buffer.size(), MSG_DONTWAIT);
+        const ssize_t received = ::recv(fd_.get(), buffer.data(), buffer.size(), 0);
         if (received < 0) {
             // ENOBUFS: the socket overflowed with foreign messages; the
             // answer may still follow, otherwise the deadline ends the wait.
