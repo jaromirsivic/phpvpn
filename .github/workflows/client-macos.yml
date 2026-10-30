@@ -88,6 +88,24 @@ jobs:
             mkdir -p work/macos-packages/ci
           fi
 
+      - name: Install test (.pkg with the system installer, root)
+        run: |
+          set -eu
+          sudo env "PATH=$PATH" sh client/tests/e2e/macos/run-install-test.sh install "$PWD/work/macos-packages/ci"
+
+      - name: Tray screenshots (console user)
+        run: sh client/tests/ui/macos/capture-tray.sh "$PWD/work/macos-packages/ci/screenshots"
+
+      - name: Uninstall test (root)
+        if: always()
+        run: |
+          set -eu
+          if pkgutil --pkg-info com.pilandrome.phpvpn > /dev/null 2>&1; then
+            sudo sh client/tests/e2e/macos/run-install-test.sh uninstall "$PWD/work/macos-packages/ci"
+          else
+            echo "the package was not installed, nothing to uninstall"
+          fi
+
       - name: Collect logs
         if: always()
         run: |

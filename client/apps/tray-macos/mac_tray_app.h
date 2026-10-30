@@ -119,6 +119,8 @@ private:
     void advanceExit();
     void showErrorText(std::string_view text);
     void installSignalHandlers();
+    void scheduleTestHooks();
+    void captureForTest(const std::string& directory, const std::string& prefix);
 
     TrayOptions options_;
     IpcEndpoint endpoint_;

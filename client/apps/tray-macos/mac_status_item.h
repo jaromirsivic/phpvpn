@@ -20,6 +20,8 @@ public:
     void update(const IndicatorView& view);
     void destroy();
     bool created() const { return item_ != nil; }
+    // The menu bar button, for the CI capture (macos_options.h); nil before create.
+    NSView* buttonView() const { return item_ ? item_.button : nil; }
 
 private:
     void publish(const IndicatorView& view);

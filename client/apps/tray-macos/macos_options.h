@@ -8,6 +8,12 @@
 //
 // TEST ONLY: PHPVPN_TRAY_TEST_SOCKET selects a private IPC socket (absolute path)
 // and PHPVPN_TRAY_TEST_SERVER_UID the uid the socket peer must run as (default 0).
+// PHPVPN_TRAY_TEST_OPEN_WINDOW opens one window after startup as if chosen from the
+// menu (control, wizard, contracts, edit, info, statistics) and
+// PHPVPN_TRAY_TEST_CAPTURE_DIR (absolute directory) makes the tray write a PNG of the
+// status item and of every visible window there a few seconds later and exit; CI
+// uses it for the screenshots of tests/ui/macos/capture-tray.sh, because
+// screencapture needs the Screen Recording permission a runner does not grant.
 // They exist for isolated tests and are never set by packaging or the LaunchAgent.
 // Production always uses kIpcSocketPath with a root peer.
 #pragma once
@@ -63,7 +69,16 @@ struct TrayOptions {
     std::string socketPath;  // empty: kIpcSocketPath
     uid_t expectedServerUid = 0;
     bool testEndpoint = false;
+    std::string testOpenWindow;        // empty: nothing opens automatically
+    std::string testCaptureDirectory;  // empty: no capture, the tray keeps running
 };
+
+inline bool isTestWindowName(std::string_view name) {
+    for (std::string_view known : {"control", "wizard", "contracts", "edit", "info", "statistics"}) {
+        if (name == known) return true;
+    }
+    return false;
+}
 
 // getenv-like lookup, injected for tests. Returns nullopt for an invalid test setting;
 // the tray then refuses to start instead of silently using another endpoint.
@@ -87,6 +102,16 @@ inline std::optional<TrayOptions> trayOptionsFromEnvironment(const std::function
         if (error != std::errc{} || end != text.data() + text.size() ||
             value > static_cast<unsigned long long>(static_cast<uid_t>(-1) - 1)) return std::nullopt;
         options.expectedServerUid = static_cast<uid_t>(value);
+    }
+    const char* window = lookup("PHPVPN_TRAY_TEST_OPEN_WINDOW");
+    if (window && *window) {
+        if (!isTestWindowName(window)) return std::nullopt;
+        options.testOpenWindow = window;
+    }
+    const char* capture = lookup("PHPVPN_TRAY_TEST_CAPTURE_DIR");
+    if (capture && *capture) {
+        if (capture[0] != '/') return std::nullopt;
+        options.testCaptureDirectory = capture;
     }
     return options;
 }

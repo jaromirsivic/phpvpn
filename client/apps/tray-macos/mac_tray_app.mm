@@ -60,7 +60,65 @@ bool TrayApp::start() {
     // Startup reads the global state first and never connects (client.md).
     statusReader_.request();
     started_ = true;
+    scheduleTestHooks();
     return true;
+}
+
+// --- CI hooks (macos_options.h, TEST ONLY) ----------------------------------------------
+// The window opens through the same path as its menu item, after the first
+// get-status had time to arrive; the capture follows a few seconds later so the
+// IPC of the window (get-config-state, get-server-info) has completed. The capture
+// renders the views the application owns and needs no Screen Recording permission.
+void TrayApp::scheduleTestHooks() {
+    if (options_.testOpenWindow.empty() && options_.testCaptureDirectory.empty()) return;
+    TrayApp* app = this;
+    const std::string window = options_.testOpenWindow;
+    const std::string directory = options_.testCaptureDirectory;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(1500 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        if (app->endingSession_) return;
+        if (window == "control") app->showControlWindow();
+        else if (window == "wizard") app->onMenuAction(MenuAction::wizard);
+        else if (window == "contracts") app->onMenuAction(MenuAction::contracts);
+        else if (window == "edit") app->onMenuAction(MenuAction::edit);
+        else if (window == "info") app->onMenuAction(MenuAction::info);
+        else if (window == "statistics") app->onMenuAction(MenuAction::statistics);
+    });
+    if (directory.empty()) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(6000 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        if (app->endingSession_) return;
+        app->captureForTest(directory, window.empty() ? "menubar" : window);
+        app->endSession(true);
+    });
+}
+
+void TrayApp::captureForTest(const std::string& directory, const std::string& prefix) {
+    NSString* base = [NSString stringWithUTF8String:directory.c_str()];
+    [[NSFileManager defaultManager] createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:nil];
+    auto writeView = [&](NSView* view, NSString* name) {
+        if (!view || view.bounds.size.width < 1 || view.bounds.size.height < 1) return;
+        NSBitmapImageRep* rep = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
+        if (!rep) return;
+        [view cacheDisplayInRect:view.bounds toBitmapImageRep:rep];
+        NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        [png writeToFile:[base stringByAppendingPathComponent:name] atomically:YES];
+    };
+    writeView(statusItem_.buttonView(), [NSString stringWithFormat:@"%s-status-item.png", prefix.c_str()]);
+    NSUInteger index = 0;
+    for (NSWindow* window in [NSApp windows]) {
+        if (!window.isVisible || !window.contentView) continue;
+        NSString* title = window.title.length ? window.title : @"window";
+        NSMutableString* safe = [NSMutableString string];
+        for (NSUInteger i = 0; i < title.length && safe.length < 40; ++i) {
+            const unichar character = [title characterAtIndex:i];
+            const bool plain = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+                               (character >= '0' && character <= '9');
+            [safe appendFormat:@"%C", plain ? character : static_cast<unichar>('-')];
+        }
+        writeView(window.contentView,
+                  [NSString stringWithFormat:@"%s-%lu-%@.png", prefix.c_str(), static_cast<unsigned long>(index++), safe]);
+    }
 }
 
 void TrayApp::handleLaunch(const LaunchRequest& request) {

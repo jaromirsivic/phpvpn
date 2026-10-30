@@ -78,6 +78,16 @@ PHPVPN_TEST(TrayMacos, TestEndpointSettingsAreValidated) {
                       .has_value());
     PHPVPN_CHECK(!optionsFor({{"PHPVPN_TRAY_TEST_SOCKET", "/tmp/a.sock"}, {"PHPVPN_TRAY_TEST_SERVER_UID", "-1"}})
                       .has_value());
+
+    // Screenshot hooks of the CI: only known window names, only absolute directories.
+    const auto capture = optionsFor({{"PHPVPN_TRAY_TEST_OPEN_WINDOW", "wizard"},
+                                     {"PHPVPN_TRAY_TEST_CAPTURE_DIR", "/private/tmp/shots"}});
+    PHPVPN_CHECK(capture.has_value());
+    PHPVPN_CHECK_EQ(capture->testOpenWindow, std::string("wizard"));
+    PHPVPN_CHECK_EQ(capture->testCaptureDirectory, std::string("/private/tmp/shots"));
+    PHPVPN_CHECK(!capture->testEndpoint);
+    PHPVPN_CHECK(!optionsFor({{"PHPVPN_TRAY_TEST_OPEN_WINDOW", "about"}}).has_value());
+    PHPVPN_CHECK(!optionsFor({{"PHPVPN_TRAY_TEST_CAPTURE_DIR", "shots"}}).has_value());
 }
 
 PHPVPN_TEST(TrayMacos, StatusItemFollowsTheWindowsIconRules) {
