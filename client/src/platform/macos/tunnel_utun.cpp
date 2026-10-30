@@ -554,6 +554,12 @@ public:
     }
 
     Result<std::shared_ptr<Tunnel>> startSession(std::uint32_t ringCapacity) override {
+        auto session = startSessionImpl(ringCapacity);
+        if (!session.ok()) PHPVPN_LOG_WARN(kComponent, "the session could not start: " + session.error().message());
+        return session;
+    }
+
+    Result<std::shared_ptr<Tunnel>> startSessionImpl(std::uint32_t ringCapacity) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!utunFd_.valid()) {
             return Error(ErrorCode::tunnel_adapter_failed, "no virtual adapter is open");

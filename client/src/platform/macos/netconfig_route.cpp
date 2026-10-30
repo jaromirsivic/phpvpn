@@ -46,6 +46,7 @@
 
 #include "core/base/utf8.h"
 #include "platform/macos/dns_snapshot.h"
+#include "core/base/logger.h"
 #include "platform/macos/interface_identity.h"
 #include "platform/macos/route_codec.h"
 #include "platform/macos/route_socket.h"
@@ -305,7 +306,22 @@ Status requireMarkAbsent(std::uint32_t tag) {
 
 class RouteNetConfig final : public NetConfig {
 public:
-    Result<NetworkSnapshot> snapshot() override {
+    // Every failure of a change or of the snapshot is logged once here (operation
+    // and message, never an address of the configuration), because the core maps
+    // the error to the public tunnel_start_failed without its detail.
+    template <typename T>
+    static T logged(const char* operation, T result) {
+        if (!result.ok()) {
+            PHPVPN_LOG_WARN("netconfig", std::string(operation) + " failed: " + result.error().message());
+        }
+        return result;
+    }
+    Result<NetworkSnapshot> snapshot() override { return logged("snapshot", snapshotImpl()); }
+    Status addUnicastAddress(const UnicastAddressEntry& entry) override { return logged("add address", addUnicastAddressImpl(entry)); }
+    Status removeUnicastAddress(const UnicastAddressEntry& entry) override { return logged("remove address", removeUnicastAddressImpl(entry)); }
+    Status addRoute(const RouteEntry& entry) override { return logged("add route", addRouteImpl(entry)); }
+    Status removeRoute(const RouteEntry& entry) override { return logged("remove route", removeRouteImpl(entry)); }
+    Result<NetworkSnapshot> snapshotImpl() {
         NetworkSnapshot result;
         TagCache tags;
 
@@ -396,7 +412,7 @@ public:
         return Status::success();
     }
 
-    Status addUnicastAddress(const UnicastAddressEntry& entry) override {
+    Status addUnicastAddressImpl(const UnicastAddressEntry& entry) {
         if (entry.prefixLength < 0 || entry.prefixLength > 32) {
             return Error(ErrorCode::invalid_argument, "the prefix length is out of range");
         }
@@ -440,7 +456,7 @@ public:
         return Error(ErrorCode::netconfig_apply_failed, "a conflicting tunnel address already exists");
     }
 
-    Status removeUnicastAddress(const UnicastAddressEntry& entry) override {
+    Status removeUnicastAddressImpl(const UnicastAddressEntry& entry) {
         if (entry.prefixLength < 0 || entry.prefixLength > 32) {
             return Error(ErrorCode::invalid_argument, "the prefix length is out of range");
         }
@@ -466,7 +482,7 @@ public:
         return applyFailed("the tunnel address could not be removed", error);
     }
 
-    Status addRoute(const RouteEntry& entry) override {
+    Status addRouteImpl(const RouteEntry& entry) {
         bool present = false;
         PHPVPN_TRY_ASSIGN(present, ownedInterfacePresent(entry.interfaceLuid));
         if (!present) {
@@ -490,7 +506,7 @@ public:
         return Error(ErrorCode::netconfig_apply_failed, "a conflicting tunnel route already exists");
     }
 
-    Status removeRoute(const RouteEntry& entry) override {
+    Status removeRouteImpl(const RouteEntry& entry) {
         bool present = false;
         PHPVPN_TRY_ASSIGN(present, ownedInterfacePresent(entry.interfaceLuid));
         // The kernel removed the route together with the owned interface.
