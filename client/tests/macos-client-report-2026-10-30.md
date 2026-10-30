@@ -16,9 +16,10 @@ hostu vývoje žádný macOS překladač není, takže tento report je jedinou e
 | `bf18e9e` | tray přeložen | AppKit tray (6 300 řádků ObjC++) bez jediné chyby překladu, model testy tray prošly. |
 | `b667a65` | e2e selhal při Connect | Unit, utun i kontraktní testy zelené; Connect skončil `tunnel_start_failed`, bez detailu v logu. |
 | `20c8e1c` | e2e selhal při Connect | Přidán log selhání síťových změn: `add route failed … the routing answer timed out`. |
-| `aaa3a0e` | viz níže | Úspěšný `write` RTM_ADD/RTM_DELETE se bere jako výsledek (kernel vrací odmítnutí jako errno zápisu, ozvěnu `route(8)` u ADD nečte); RTM_GET se čte blokujícím `recv` se `SO_RCVTIMEO`. |
+| `aaa3a0e` | e2e prošel (33/33), balení selhalo | Úspěšný `write` RTM_ADD/RTM_DELETE se bere jako výsledek (kernel vrací odmítnutí jako errno zápisu, ozvěnu `route(8)` u ADD nečte); RTM_GET se čte blokujícím `recv` se `SO_RCVTIMEO`. `productbuild` odmítl `--` uvnitř XML komentáře `distribution.xml`. |
+| `a0f0da6` | **zelený běh** | Komentář opraven; `client-macos` i `client-linux` úspěšné, artefakt `phpvpn-macos-arm64` (7,5 MB: `phpvpn-1.0.2-arm64.pkg`, `SHA256SUMS`, `build-provenance.json`, `install.sh`, `uninstall.sh`, `README.md`, logy), běh 41109110153. |
 
-## Stav podle kroků workflow (poslední zelený krok z běhu `20c8e1c`, pokud není uvedeno jinak)
+## Stav podle kroků workflow (běh `a0f0da6`, 41109110153)
 
 | Krok | Stav | Poznámka |
 |---|---|---|
@@ -29,8 +30,8 @@ hostu vývoje žádný macOS překladač není, takže tento report je jedinou e
 | `phpvpn-tray-macos-tests` | RUN, OK | |
 | `phpvpn-utun-tests` (root: utun, popis, MTU, `IFF_UP`, adresa, routa, send/receive, úklid) | RUN, OK | |
 | Kontraktní testy proti `php -S` (6 případů) | RUN, OK | |
-| E2E služby (foreground, Wizard IPC, set-config, connect, routy, disconnect, SIGTERM) | RUN, částečně | Do `aaa3a0e`: vše do `connect` OK, tunel nestartoval (viz výše). |
-| Balení `.pkg` | viz níže | |
+| E2E služby (33 kontrol: `--verify-tunnel`, foreground start, socket, status, Wizard IPC s commitem, soubor 0600/0700, set-config/get-config, connect do `connected`, `utun4` s 10.99.99.2, routa 10.99.99/24, `route get`, info, diagnostics, disconnect, úklid adresy, routy i rozhraní, singleton, SIGTERM exit 0, odstranění socketu, souborový log, nezměněná výchozí routa) | RUN, OK | Služba běží jako root z `/private/tmp` fixture, relay `php -S` lokálně. |
+| Balení `.pkg` (`cmake --install`, ad hoc `codesign`, `pkgbuild`, `productbuild`, SHA256SUMS, provenance) | RUN, OK | Artefakt `phpvpn-macos-arm64`. |
 
 ## Neověřeno
 
