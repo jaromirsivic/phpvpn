@@ -10,7 +10,7 @@
 # bridge like installed-service-check.sh. The peer connects and stays up until
 # stop. The installed service is not touched: the tester configures it through
 # the tray Wizard / Communication contracts with the printed values.
-# PHPVPN_SERVER_PYTHON is the interpreter with requirements-server.txt.
+# PHPVPN_SERVER_PYTHON is the interpreter with server/python/requirements-server.txt.
 set -euo pipefail
 
 action=${1:?usage: gui-acceptance-env.sh start|stop [build-dir]}
@@ -45,7 +45,7 @@ build=$(cd "${2:-$repository/work/build/linux-release}" && pwd)
 
 mkdir -m 0755 -p "$base/relay" "$base/b"
 sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = 18094|" \
-    "$repository/phpvpn.py" > "$base/relay/phpvpn.py"
+    "$repository/server/python/phpvpn.py" > "$base/relay/phpvpn.py"
 setsid "$python_server" -B "$base/relay/phpvpn.py" > "$base/relay/relay.log" 2>&1 < /dev/null &
 echo $! > "$base/relay.pid"
 for _ in $(seq 1 100); do

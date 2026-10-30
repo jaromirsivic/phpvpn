@@ -13,6 +13,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -30,14 +31,16 @@ struct TunnelWorkerCounters {
     std::atomic<std::uint64_t> writeFailures{0};
 };
 
-// Reads from the virtual interface into the outbound queue.
+// Reads from the virtual interface into the outbound queue. `onQueued` runs
+// after every admitted packet, so the network worker can shorten its wait.
 class TunnelInputWorker {
 public:
     TunnelInputWorker(ClientConfigPtr config,
                       std::shared_ptr<Tunnel> tunnel,
                       DirectionQueues& outbound,
                       DropCounters& drops,
-                      TunnelWorkerCounters& counters);
+                      TunnelWorkerCounters& counters,
+                      std::function<void()> onQueued = {});
     ~TunnelInputWorker();
 
     TunnelInputWorker(const TunnelInputWorker&) = delete;
@@ -54,6 +57,7 @@ private:
     DirectionQueues& outbound_;
     DropCounters& drops_;
     TunnelWorkerCounters& counters_;
+    std::function<void()> onQueued_;
     std::atomic<bool> running_{false};
     std::thread thread_;
 };

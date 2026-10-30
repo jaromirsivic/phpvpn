@@ -25,7 +25,7 @@
 # connection cleans up within 45 s, main namespace unchanged.
 #
 # build-dir defaults to work/build/linux-debug. PHPVPN_SERVER_PYTHON is the
-# interpreter with requirements-server.txt (default python3). Logs and
+# interpreter with server/python/requirements-server.txt (default python3). Logs and
 # artifacts stay in PHPVPN_E2E_WORK (default work/e2e-linux-<timestamp>).
 set -euo pipefail
 
@@ -113,7 +113,7 @@ mkdir -p "$work/relay"
 sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" \
     -e "s|^LISTEN_HOST = '127.0.0.1'|LISTEN_HOST = '$relay_ip'|" \
     -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = $relay_port|" \
-    "$repository/phpvpn.py" > "$work/relay/phpvpn.py"
+    "$repository/server/python/phpvpn.py" > "$work/relay/phpvpn.py"
 grep -q "^LISTEN_HOST = '$relay_ip'" "$work/relay/phpvpn.py" || die "relay listen host not patched"
 ip netns exec $ns_relay "$python_server" -B "$work/relay/phpvpn.py" > "$work/relay/relay.log" 2>&1 &
 relay_pid=$!

@@ -1,7 +1,8 @@
 PHPVPN - installation and startup
 
 - Package layout: client/ contains VPN clients, server/ contains alternative
-  relay servers, and documentation/ contains this guide and, when supplied,
+  relay servers (php, python, node.js and wordpress, each with its own
+  README.md), and documentation/ contains this guide and, when supplied,
   the English protocol specification. Choose one server implementation.
   Paths below are relative to the extracted distribution.
 
@@ -27,29 +28,37 @@ PHPVPN - installation and startup
 
 - macOS client: a version is being prepared. No installable client is included.
 
-- PHP server: copy server/PHP/phpvpn.php to a PHP 8.2+ web server's document
+- PHP server: copy server/php/phpvpn.php to a PHP 8.2+ web server's document
   root or chosen web directory. Edit its configuration header: replace
   SERVER_SECRET and ACCESS_KEYS, and set a writable BUFFER_DIRECTORY outside
   the document root. If it is inside, deny all direct web access to it.
   No Composer install or separate assets are needed. Open the deployed URL,
   for example https://vpn.example.org/phpvpn.php, and use that URL in clients.
+  See server/php/README.md.
 
-- Node.js server: install Node.js 24 LTS. Copy server/Node.js to a writable
+- Node.js server: install Node.js 24 LTS. Copy server/node.js to a writable
   deployment directory outside the web document root. No npm install or build
-  is needed. Create a private configuration JSON as described in server-node.md,
+  is needed. Create a private configuration JSON as described in its README.md,
   replacing SERVER_SECRET and ACCESS_KEYS and setting BUFFER_DIRECTORY.
   Run node phpvpn.js --check-config --config /path/to/server.json, then
   node phpvpn.js --config /path/to/server.json from the deployment directory.
   Default URL: http://127.0.0.1:8080/phpvpn.php. Stop with Ctrl+C.
 
-- Python server: copy the complete server/Python folder to a writable deployment
+- Python server: copy the complete server/python folder to a writable deployment
   directory outside the web document root. Edit the configuration at the top
   of phpvpn.py: replace SERVER_SECRET and ACCESS_KEYS and set BUFFER_DIRECTORY.
   On Windows run init.bat, then start.bat. On Linux/macOS run sh init.sh, then
   sh start.sh. Init requires Internet access and prepares uv, Python 3.13 and
   the locked dependencies in a local .venv. Default URL:
   http://127.0.0.1:8000/phpvpn.php. Stop with stop.bat or sh stop.sh.
-  Run one application process/worker. See server-python.md for configuration.
+  Run one application process/worker. See its README.md for configuration.
+
+- WordPress server: in WordPress 6.6+ on 64-bit PHP 8.2+ open Plugins, Add New
+  Plugin, Upload Plugin and install server/wordpress/vpn-server-X.Y.Z.zip.
+  Activate it, use pretty permalinks and open Settings, VPN Server. Replace
+  the default access keys, download config.json for each client and use the
+  Server URL shown there in clients. On nginx add the storage protection rule
+  shown in the settings. See server/wordpress/README.md.
 
 - Node.js and Python listen on loopback by default. Configure the listen
   address or a reverse proxy for remote clients. For HTTPS, use a reverse

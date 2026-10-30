@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import psutil
 import pytest
 
-spec = importlib.util.spec_from_file_location('server_control', Path(__file__).resolve().parents[1] / 'tools/server-python/server-control.py')
+spec = importlib.util.spec_from_file_location('server_control', Path(__file__).resolve().parents[1] / 'server-control.py')
 c = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(c)
 

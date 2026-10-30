@@ -7,7 +7,7 @@ Plan and decisions: [Plans/2026-10-28-02-30-52/plan-wordpress-v001.md](../../../
 
 ## Server core
 
-`vpn-server/includes/server-core.php` is generated from `phpvpn.php`, never edited by hand:
+`vpn-server/includes/server-core.php` is generated from `server/php/phpvpn.php`, never edited by hand:
 
 ```
 python tools/build-wordpress-plugin.py            regenerate
@@ -20,6 +20,9 @@ The build copies everything after `namespace PhpVpn;` except the regions between
 `StatusPageHandler`, `Request::fromGlobals` and the autorun). The plugin passes the secret,
 access keys and storage folder to `Config::fromValues()` and calls
 `Application::handleRoot()` and `Application::handleAction()`.
+
+The distribution (`tools/make-distribution.ps1`) checks the core and ships the plugin as
+`server/wordpress/vpn-server-X.Y.Z.zip` next to the user guide `server/wordpress/README.md`.
 
 `tools/bump-version.ps1` raises the plugin version together with the servers. Add a
 `== Changelog ==` entry to `readme.txt` by hand.

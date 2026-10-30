@@ -46,6 +46,13 @@ struct DataExchangeOutcome {
     std::int64_t completedAtMs = 0;
 };
 
+// Deadline of the next `data` request once a new outbound packet was queued at
+// `queuedAtMs`. A remaining wait longer than the short interval is cut to the
+// short interval counted from that moment; a shorter or equal one is kept, so a
+// later packet can never postpone an already planned request.
+std::int64_t shortenedPollDeadlineMs(std::int64_t deadlineMs, std::int64_t queuedAtMs,
+                                     std::int64_t shortIntervalMs) noexcept;
+
 class NetworkWorker {
     friend struct VpnEngineTestAccess;
 public:
@@ -90,6 +97,8 @@ public:
     // Milliseconds the worker should wait before the next `data` request, kept
     // inside the intersection of the local and the server bounds.
     std::int64_t nextPollDelayMs(const DataExchangeOutcome& exchange);
+    // The short polling interval, `minDataPollIntervalMs` within the local bounds.
+    std::int64_t minPollIntervalMs() const noexcept;
     void beginDataSession();
 
     // Discards the derived keys and the verified time.

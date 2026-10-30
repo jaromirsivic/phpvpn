@@ -33,8 +33,8 @@ if [ -n "$identity" ]; then set -- "$@" -i "$identity" -o IdentitiesOnly=yes; fi
 if [ -n "$known_hosts" ]; then set -- "$@" -o UserKnownHostsFile="$known_hosts"; fi
 if [ -n "${PHPVPN_SSH_CONFIG:-}" ]; then set -- "$@" -F "$PHPVPN_SSH_CONFIG"; fi
 cd "$root"
-git ls-files -z --cached --others --exclude-standard -- client phpvpn.py phpvpn.php \
-    requirements-server.txt requirements-server.in tools/server-python tests-integration assets \
+git ls-files -z --cached --others --exclude-standard -- client server/php/phpvpn.php \
+    server/python tests-integration assets \
     phpvpn.config.json tools/phpvpn_config.py \
     | xargs -0 -r ls -d 2>/dev/null \
     | tar -cf - -T - \

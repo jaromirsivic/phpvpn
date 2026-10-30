@@ -1,5 +1,5 @@
 <?php
-/** Isolated constant-boundary tests. Run: php tests-info-pretty-boundaries.php */
+/** Isolated constant-boundary tests. Run: php server/php/tests/tests-info-pretty-boundaries.php */
 declare(strict_types=1);
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
@@ -13,7 +13,7 @@ if (($argv[1] ?? '') === '--child') {
     // constants change, never the builder, its size loop or the crypto path.
     $limit = (int) $argv[2];
     $version = match ($argv[3]) { 'large' => str_repeat('x', 1500), 'invalid' => "\xff", default => '1.0.0' };
-    $source = file_get_contents(__DIR__ . '/phpvpn.php');
+    $source = file_get_contents(dirname(__DIR__) . '/phpvpn.php');
     $source = preg_replace('/const MAX_INFO_PLAINTEXT_BYTES = 262144;/', 'const MAX_INFO_PLAINTEXT_BYTES = ' . $limit . ';', $source, 1, $count);
     check($count === 1, 'production limit declaration changed');
     $source = preg_replace('/const SERVER_VERSION = [^;]+;/', 'const SERVER_VERSION = ' . var_export($version, true) . ';', $source, 1, $count);

@@ -27,12 +27,14 @@ TunnelInputWorker::TunnelInputWorker(ClientConfigPtr config,
                                      std::shared_ptr<Tunnel> tunnel,
                                      DirectionQueues& outbound,
                                      DropCounters& drops,
-                                     TunnelWorkerCounters& counters)
+                                     TunnelWorkerCounters& counters,
+                                     std::function<void()> onQueued)
     : config_(std::move(config)),
       tunnel_(std::move(tunnel)),
       outbound_(outbound),
       drops_(drops),
-      counters_(counters) {}
+      counters_(counters),
+      onQueued_(std::move(onQueued)) {}
 
 TunnelInputWorker::~TunnelInputWorker() {
     stop();
@@ -110,6 +112,8 @@ void TunnelInputWorker::run() {
         if (!*admitted) {
             counters_.packetsDropped.fetch_add(1);
             drops_.record(view.destination, reason);
+        } else if (onQueued_) {
+            onQueued_();
         }
     }
 

@@ -44,6 +44,12 @@ struct VpnEngineTestAccess {
         return worker.publishLimits(limits);
     }
     static std::int64_t pollInterval(VpnEngine& engine) { return engine.network_.currentPollIntervalMs_; }
+    static void setPollInterval(VpnEngine& engine, std::int64_t ms) { engine.network_.currentPollIntervalMs_ = ms; }
+    static void outboundPacketQueued(VpnEngine& engine) { engine.onOutboundPacketQueued(); }
+    static bool waitingForPoll(VpnEngine& engine) {
+        std::lock_guard<std::mutex> lock(engine.commandMutex_);
+        return engine.pollDeadlineMs_.has_value();
+    }
     static void enqueue(VpnEngine& engine, PacketBytes bytes) {
         DropReason reason{};
         PHPVPN_CHECK(engine.outbound_->tryEnqueue(*Ipv4Address::parse("10.99.99.3"), std::move(bytes), reason).valueOr(false));
@@ -1760,6 +1766,62 @@ PHPVPN_TEST(runtime, polling_historical_tx_does_not_pin_minimum) {
     PHPVPN_CHECK_EQ(observed, std::int64_t(160));
     PHPVPN_CHECK(waitedMs >= 140); // The real command wait uses the computed delay.
     PHPVPN_CHECK_EQ(fixture.engine.status().counters.ipv4PacketsSent, std::uint64_t(1));
+    fixture.engine.shutdown();
+}
+
+PHPVPN_TEST(runtime, queued_packet_shortens_only_a_longer_remaining_wait) {
+    // Three seconds left: the packet cuts the wait to the short interval.
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(3000, 0, 80), std::int64_t(80));
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(4000, 1000, 80), std::int64_t(1080));
+    // The remaining wait counts, not the length of the current interval.
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(3000, 2950, 80), std::int64_t(3000));
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(3000, 2920, 80), std::int64_t(3000));
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(3000, 2919, 80), std::int64_t(2999));
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(3000, 3000, 80), std::int64_t(3000));
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(3000, 3500, 80), std::int64_t(3000));
+    // Later packets never postpone an already planned request.
+    std::int64_t deadline = 3000;
+    for (std::int64_t at : {0, 10, 40, 79, 80, 200}) {
+        const std::int64_t next = shortenedPollDeadlineMs(deadline, at, 80);
+        PHPVPN_CHECK(next <= deadline);
+        deadline = next;
+    }
+    PHPVPN_CHECK_EQ(deadline, std::int64_t(80));
+    PHPVPN_CHECK_EQ(shortenedPollDeadlineMs(INT64_MAX, INT64_MIN, 80), INT64_MIN + 80);
+}
+
+PHPVPN_TEST(runtime, queued_packet_wakes_a_long_poll_wait_after_the_short_interval) {
+    EngineFixture fixture;
+    std::atomic<bool> idle{false}, queued{false};
+    std::atomic<std::int64_t> polledAfterMs{-1};
+    std::chrono::steady_clock::time_point queuedAt;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action != HttpAction::data) return {};
+        // Far from the last packet, so the interval stays at the server maximum.
+        if (call == 2) fixture.clock.now = 100000;
+        if (call == 3) {
+            VpnEngineTestAccess::setPollInterval(fixture.engine, 1000);
+            idle = true;
+        }
+        if (call == 4 && queued.load())
+            polledAfterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - queuedAt).count();
+        return {};
+    };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return idle.load() && VpnEngineTestAccess::waitingForPoll(fixture.engine); }));
+    VpnEngineTestAccess::enqueue(fixture.engine, packet(40, false));
+    queuedAt = std::chrono::steady_clock::now();
+    queued = true;
+    VpnEngineTestAccess::outboundPacketQueued(fixture.engine);
+    // Another packet inside the short window leaves the planned request alone.
+    VpnEngineTestAccess::outboundPacketQueued(fixture.engine);
+    PHPVPN_CHECK(eventually([&] { return polledAfterMs.load() >= 0; }));
+    std::cout << "remaining wait=1000 ms, short interval=80 ms, polled after=" << polledAfterMs.load() << " ms\n";
+    PHPVPN_CHECK(polledAfterMs.load() >= 60);
+    PHPVPN_CHECK(polledAfterMs.load() < 600);
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().counters.ipv4PacketsSent == 1; }));
     fixture.engine.shutdown();
 }
 

@@ -37,7 +37,7 @@ def request(url, method='GET', data=None):
     return response.status, response.read(), response.headers
 
 
-source = (ROOT / 'phpvpn.php').read_text(encoding='utf-8')
+source = (ROOT / 'server/php/phpvpn.php').read_text(encoding='utf-8')
 mockup = (ROOT / 'assets/index.html').read_text(encoding='utf-8').strip()
 for enabled, secret, custom in [(True, 'CHANGE_THIS_SERVER_SECRET', False),
                               (True, '', False), (True, 'secure-example', True),

@@ -107,11 +107,12 @@ def main():
     root.mkdir()
     report['deployment'] = str(root)
     if args.distribution:
-        shutil.copytree(args.distribution / 'server/Python', root, dirs_exist_ok=True)
+        shutil.copytree(args.distribution / 'server/python', root, dirs_exist_ok=True)
     else:
-        shutil.copytree(REPO / 'tools/server-python', root, dirs_exist_ok=True)
-        for name in ('phpvpn.py', 'requirements-server.txt', 'server-python.md'):
-            shutil.copy2(REPO / name, root / name)
+        # The distributed file set of server/python, without its tests and local state.
+        for name in ('phpvpn.py', 'requirements-server.txt', 'README.md', 'server-control.py', 'bootstrap.ps1',
+                     'init.bat', 'start.bat', 'stop.bat', 'init.sh', 'start.sh', 'stop.sh'):
+            shutil.copy2(REPO / 'server/python' / name, root / name)
     port = free_port()
     configure(root, LISTEN_PORT=port, BUFFER_DIRECTORY=str(root / 'buffer'))
     foreign_packages = sorted((d.metadata['Name'], d.version) for d in importlib.metadata.distributions())

@@ -18,8 +18,9 @@ Každá nová distribuce MUSÍ mít novou verzi PHP VPN. Před sestavením se v�
 - `VERSION` projektu v `client/CMakeLists.txt`, ze kterého ji přebírají tray, služba, CLI, Windows version resource i linuxové balíčky,
 - `Version:` RPM specu a nový záznam `X.Y.Z-1` v jeho `%changelog` i v `debian/changelog`,
 - hlavičky `.TH` manuálových stránek (verze a datum),
-- hlavičku na druhém řádku `phpvpn.php`, `phpvpn.py` a `phpvpn.js` ve tvaru `PHP VPN X.Y.Z (MIT License, Copyright (c) www.pilandrome.com)`,
-- `SERVER_VERSION` všech tří serverů, kterou server hlásí v odpovědích health a info.
+- hlavičku na druhém řádku `server/php/phpvpn.php`, `server/python/phpvpn.py` a `server/node.js/phpvpn.js` ve tvaru `PHP VPN X.Y.Z (MIT License, Copyright (c) www.pilandrome.com)`,
+- `SERVER_VERSION` všech tří serverů, kterou server hlásí v odpovědích health a info,
+- verzi WordPress pluginu v `server/wordpress/version7/vpn-server` (hlavička a `VERSION` v `vpn-server.php`, `Stable tag` v `readme.txt` a generované `includes/server-core.php`).
 
 Pokud místa nemají stejnou výchozí verzi, skript nic nezmění. Protože linuxové balíčky nesou verzi a sestavují se z commitu, změna verze se MUSÍ commitnout před linuxovým buildem (`-Commit` vytvoří commit `Version X.Y.Z` jen z přepsaných souborů). Výjimka pro necommitnuté změny z oddílu Kdy distribuci sestavit se na změnu verze nevztahuje. `tools/make-distribution.ps1` odmítne sestavení, pokud se některé místo verze liší od verze klienta, a odmítne publikaci, pokud verze není vyšší než `releaseVersion` aktuálně publikovaného `dist`. S `-StagingOnly` tuto druhou neshodu pouze vypíše jako varování.
 
@@ -27,7 +28,7 @@ Před obnovením obsahu se MUSÍ ověřit, že cílem je skutečně adresář `d
 
 ## Povinná struktura
 
-Cesty jsou relativní ke kořeni projektu. Velikost písmen platformních složek a označení architektury `x64` jsou závazné.
+Cesty jsou relativní ke kořeni projektu. Velikost písmen platformních složek a označení architektury `x64` jsou závazné. Hlavní složky `client`, `server` a `documentation` a serverové složky `php`, `python`, `node.js` a `wordpress` MUSÍ mít názvy malými písmeny. Starší varianty s velkými písmeny (`PHP`, `Python`, `Node.js`) se NESMĚJÍ používat.
 
 ```text
 dist/
@@ -35,15 +36,13 @@ dist/
     readme.txt
     protocol.md                 # volitelný úplný anglický překlad
   server/
-    PHP/
+    php/
       phpvpn.php
-    Node.js/
-      phpvpn.js
-      server-node.md
-    Python/
+      README.md
+    python/
       phpvpn.py
       requirements-server.txt
-      server-python.md
+      README.md
       init.bat
       start.bat
       stop.bat
@@ -52,6 +51,12 @@ dist/
       stop.sh
       bootstrap.ps1
       server-control.py
+    node.js/
+      phpvpn.js
+      README.md
+    wordpress/
+      vpn-server-<verze>.zip
+      README.md
   client/
     Windows/
       x64/
@@ -89,10 +94,30 @@ dist/
 
 Uvedené Windows a Linux soubory tvoří základ aktuální klientské distribuce. Seznam se MUSÍ doplnit o všechny další skripty, programy, knihovny, distribuovatelné konfigurace, šablony a podpůrné soubory, které aktuální implementace potřebuje pro instalaci a provoz. Testovací binárky, build cache, pracovní logy a obsah provozních front do distribuce nepatří.
 
+### Archivy klientů ke stažení
+
+Při každém sestavení distribuce se MUSÍ vedle `dist` vytvořit také samostatná složka `dist-downloads`. Nejde o podsložku `dist`. Obsah pro zveřejnění pod `https://www.pilandrome.com/downloads/` má tuto strukturu:
+
+```text
+dist-downloads/
+  phpvpn/
+    client/
+      1.x/
+        phpvpn-win-x64.zip
+        phpvpn-macos.zip
+        phpvpn-linux.zip
+```
+
+`phpvpn-win-x64.zip` MUSÍ obsahovat úplný obsah ověřené složky `dist/client/Windows/x64`, `phpvpn-linux.zip` úplný obsah ověřené složky `dist/client/Linux/x64`. Soubory každé platformy budou přímo v kořeni jejího ZIPu, bez nadřazeného stromu `dist/client`. Archivy zachovají relativní cesty, podpisy, manifesty a u linuxových shellových skriptů POSIX executable atribut. MUSÍ pocházet ze stejného sestavení jako `dist` a jejich názvy zůstávají stabilní pro odkazy ze serverové stránky.
+
+**Dočasný placeholder pro macOS:** klient zatím není implementován. `phpvpn-macos.zip` proto zatím obsahuje pouze anglický `README.md` ze složky `dist/client/macOS`, který jasně uvádí, že klient ještě není dostupný. NESMÍ se vydávat za funkční instalátor. Až bude macOS klient implementován, MUSÍ se tento oddíl dokumentace aktualizovat a archiv na stejné cestě nahradit úplnou ověřenou distribucí macOS klienta.
+
+Před zveřejněním se MUSÍ ověřit obsah všech tří ZIPů proti příslušným platformním složkám. Publikace obsahu `dist-downloads` na web je samostatný krok.
+
 ### Dokumentace
 
 Distribuce MUSÍ mít tři hlavní složky `client`, `server` a `documentation`.
-Kořenový [readme.txt](readme.txt), vedle `protocol.md` a `client.md`, je udržovaný zdroj stručného anglického instalačního návodu. Při KAŽDÉM sestavení se MUSÍ beze změny zkopírovat do `dist/documentation/readme.txt`. README je povinné, i když překlad protokolu chybí. Uvádí klientskou a serverovou část, skutečné postupy pro Windows a Linux, připravovaný macOS klient a nasazení PHP, Node.js a Python serveru.
+Kořenový [readme.txt](readme.txt), vedle `protocol.md` a `client.md`, je udržovaný zdroj stručného anglického instalačního návodu. Při KAŽDÉM sestavení se MUSÍ beze změny zkopírovat do `dist/documentation/readme.txt`. README je povinné, i když překlad protokolu chybí. Uvádí klientskou a serverovou část, skutečné postupy pro Windows a Linux, připravovaný macOS klient a nasazení PHP, Node.js a Python serveru a WordPress pluginu. Každá ze čtyř serverových složek MUSÍ obsahovat vlastní anglický `README.md`, jehož zdrojem je `README.md` ve stejnojmenné složce `server/<implementace>` repozitáře. Samostatné návody `server-node.md` a `server-python.md` README nahradilo a do distribuce už nepatří.
 
 Český [protocol.md](protocol.md) zůstává autoritativním zdrojem a NESMÍ se překladem přepsat. Úplný anglický překlad se udržuje mimo distribuci jako `documentation/protocol.en.md`. Aktualizovat jej podle celého aktuálního českého dokumentu se SMÍ pouze na výslovnou žádost uživatele o aktualizaci dokumentace při tvorbě distribuce. Nestačí shrnutí ani překlad změněných částí bez kontroly celého dokumentu. Překlad zachová normativní význam, identifikátory, vzorce, příklady a všechny kapitoly. Vedle něj se uchovává `documentation/protocol.en.source.sha256` s SHA-256 českého zdroje použitého pro poslední překlad. Tento záznam nepatří do distribuce a nevyžaduje se jeho shoda s budoucím českým zdrojem bez žádosti o aktualizaci.
 
@@ -100,11 +125,17 @@ Bez takové žádosti se nový překlad NESMÍ vytvářet ani automaticky aktual
 
 ### Server
 
-`dist/server/PHP/phpvpn.php` MUSÍ obsahovat nejaktuálnější distribuovatelnou verzi serveru v PHP. Aktuální zdrojový soubor v repozitáři se jmenuje [phpvpn.php](phpvpn.php). Při sestavení se jeho aktuální obsah zkopíruje do složky `dist/server/PHP` beze změny názvu jako `phpvpn.php`. Jeho obsah se při kopírování nemění.
+Zdrojovým umístěním každé serverové implementace je stejnojmenná složka repozitáře: [server/php](server/php), [server/python](server/python), [server/node.js](server/node.js) a [server/wordpress](server/wordpress). Při sestavení se z ní do `dist/server/<implementace>` kopíruje beze změny pouze distribuovaný výběr souborů podle `Get-DistributionSources` v `tools/distribution-common.ps1`. Testy implementace (`server/<implementace>/tests`) a vývojové soubory do distribuce nepatří.
 
-`dist/server/Python` MUSÍ obsahovat aktuální zdrojový `phpvpn.py`, zamčené runtime závislosti `requirements-server.txt`, provozní návod `server-python.md`, šest vstupů `init.bat`, `start.bat`, `stop.bat`, `init.sh`, `start.sh`, `stop.sh` a jejich helpery `bootstrap.ps1`, `server-control.py`. Vše se kopíruje beze změny. Zdrojem osmi provozních skriptů je `tools/server-python`. Python server je samostatně spustitelný podle tohoto návodu a implementuje stejné klientské zprávy jako PHP. Výchozí diskový a volitelný paměťový režim vyžadují jediný aplikační proces a worker. Distribuce NESMÍ obsahovat `.venv`, `.tools`, `.runtime`, `.bootstrap.lock`, uv cache, bytecode, logy, testovací konfiguraci, provozní fronty ani místní tajemství. Zdrojový `requirements-server.in` slouží k obnově locku ve vývojovém repozitáři, při nasazení se používá přibalený `.txt`.
+`dist/server/php` MUSÍ obsahovat nejaktuálnější distribuovatelnou verzi serveru v PHP a jeho anglický návod `README.md`. Zdrojem je [server/php/phpvpn.php](server/php/phpvpn.php), který se zkopíruje beze změny názvu i obsahu jako `phpvpn.php`.
 
-`dist/server/Node.js` MUSÍ obsahovat aktuální zdrojový [phpvpn.js](phpvpn.js) a provozní návod [server-node.md](server-node.md), oba kopírované beze změny. Node.js server je jediný soubor bez npm závislostí, build kroku a assets a implementuje stejné klientské zprávy jako PHP. Distribuce NESMÍ obsahovat `node_modules`, konfigurační JSON s tajemstvími, logy ani provozní frontu `phpvpn_data`. Server spuštěný přímo z `dist` si výchozí `phpvpn_data` vytvoří vedle skriptu. Při publikaci se tento lokální stav stejně jako `.venv` a `.runtime` Python části nepřesouvá, nepublikuje ani nemaže.
+`dist/server/python` MUSÍ obsahovat aktuální zdrojový `phpvpn.py`, zamčené runtime závislosti `requirements-server.txt`, anglický provozní návod `README.md`, šest vstupů `init.bat`, `start.bat`, `stop.bat`, `init.sh`, `start.sh`, `stop.sh` a jejich helpery `bootstrap.ps1`, `server-control.py`. Vše se kopíruje beze změny ze [server/python](server/python). Python server je samostatně spustitelný podle tohoto návodu a implementuje stejné klientské zprávy jako PHP. Výchozí diskový a volitelný paměťový režim vyžadují jediný aplikační proces a worker. Distribuce NESMÍ obsahovat `.venv`, `.tools`, `.runtime`, `.bootstrap.lock`, uv cache, bytecode, logy, testovací konfiguraci, provozní fronty ani místní tajemství. Zdrojový `requirements-server.in` slouží k obnově locku ve vývojovém repozitáři, při nasazení se používá přibalený `.txt`.
+
+`dist/server/node.js` MUSÍ obsahovat aktuální zdrojový [phpvpn.js](server/node.js/phpvpn.js) a anglický provozní návod [README.md](server/node.js/README.md), oba kopírované beze změny. Node.js server je jediný soubor bez npm závislostí, build kroku a assets a implementuje stejné klientské zprávy jako PHP. Distribuce NESMÍ obsahovat `node_modules`, konfigurační JSON s tajemstvími, logy ani provozní frontu `phpvpn_data`. Server spuštěný přímo z `dist` si výchozí `phpvpn_data` vytvoří vedle skriptu. Při publikaci se tento lokální stav stejně jako `.venv` a `.runtime` Python části nepřesouvá, nepublikuje ani nemaže.
+
+`dist/server/wordpress` MUSÍ obsahovat instalovatelný ZIP WordPress pluginu VPN Server `vpn-server-<verze>.zip` a anglický návod [README.md](server/wordpress/README.md). `<verze>` je verze pluginu z hlavičky `vpn-server.php`. ZIP obsahuje právě všechny soubory složky [server/wordpress/version7/vpn-server](server/wordpress/version7/vpn-server) bajtově beze změny, každý pod cestou `vpn-server/`. Serverové jádro pluginu `includes/server-core.php` se generuje z `server/php/phpvpn.php` nástrojem `tools/build-wordpress-plugin.py`. Sestavení distribuce MUSÍ odmítnout zastaralé jádro (`--check`).
+
+Publikace do existujícího `dist` přejmenuje složku, jejíž název se změnil jen velikostí písmen (například `server/Python` ze starší distribuce na `server/python`), protože Windows u existující složky původní velikost písmen zachovává. Lokální provozní stav Python a Node.js části se přitom přesune spolu se složkou. Pokud složku drží běžící server, publikace vypíše varování a složku je nutné přejmenovat ručně po zastavení serveru.
 
 Název distribučního souboru `phpvpn.php` odpovídá příkladům `/phpvpn.php` v protokolové dokumentaci. `serverUrl` klienta musí ukazovat na skutečnou URL tohoto souboru. Podpora jiného názvu skriptu a cesty se řídí [client.md](client.md). Distribuce NESMÍ přebírat starší nasazenou kopii nebo lokální provozní konfiguraci namísto aktuálního zdroje určeného k vydání.
 
@@ -142,10 +173,10 @@ V aktuální etapě jsou implementovanými cíli Windows x64 a Linux x64. Pro ma
 
 0. Spustit `./tools/bump-version.ps1` a novou verzi commitnout podle oddílu Verze.
 1. Určit aktuální zdrojový stav určený k vydání a provést kontroly odpovídající změnám. Zaznamenat použité zdroje, verzi, platformu a výsledky ověření. Neprovedené testy se NESMĚJÍ vykazovat jako úspěšné.
-2. Sestavit klientské programy z těchto zdrojů, na linuxovém build hostiteli z téhož commitu linuxové balíčky, a připravit aktuální PHP, Python a Node.js serverové soubory, Python lock a návody. Připravit kořenový anglický `readme.txt`. Jen při výslovné žádosti o aktualizaci dokumentace přeložit celý aktuální `protocol.md` a uchovat překlad i hash zdroje. Pracovní build adresáře zůstávají mimo výslednou distribuci.
+2. Sestavit klientské programy z těchto zdrojů, na linuxovém build hostiteli z téhož commitu linuxové balíčky, a připravit aktuální PHP, Python a Node.js serverové soubory, aktuální jádro WordPress pluginu, Python lock a anglická README všech čtyř serverových částí. Připravit kořenový anglický `readme.txt`. Jen při výslovné žádosti o aktualizaci dokumentace přeložit celý aktuální `protocol.md` a uchovat překlad i hash zdroje. Pracovní build adresáře zůstávají mimo výslednou distribuci.
 3. Znovu vytvořit obsah `dist` a celou povinnou strukturu. Naplnit serverovou část, platformní klientské složky a `documentation` podle pravidel výše. Vždy zahrnout `documentation/readme.txt`, volitelně uchovaný anglický `documentation/protocol.md`.
 4. Připravit úplný Windows x64 balíček a linuxovou složku x64, ověřit architekturu a závislosti, zahrnout licence a po dokončení obsahu vytvořit pro každou z nich odpovídající podepsaný manifest. Úroveň důvěry podpisu se uvede pravdivě, vývojový podpis se NESMÍ vydávat za veřejně důvěryhodný vydavatelský podpis.
-5. Ověřit hashovou shodu povinného README s kořenovým zdrojem a přítomného protokolu s uchovaným anglickým překladem. Ověřit hashovou shodu PHP souboru, všech jedenácti souborů Python části a obou souborů Node.js části s aktuálními zdroji, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu obou klientských balíčků včetně podpisu linuxového manifestu a provenance linuxových balíčků. Python část ověřit čistým prostředím mimo `dist`, inicializací distribuovanými skripty a spuštěním distribuovaného serveru. Ověřit health, info a data v obou režimech pomocí izolovaných konfiguračních kopií. Node.js část ověřit spuštěním distribuovaného `phpvpn.js` z rozbalené kopie s izolovanou konfigurací (`--config`, vlastní port a root) a výměnou health, info a data. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
+5. Ověřit hashovou shodu povinného README s kořenovým zdrojem a přítomného protokolu s uchovaným anglickým překladem. Ověřit hashovou shodu obou souborů PHP části, všech jedenácti souborů Python části, obou souborů Node.js části a README WordPress části s aktuálními zdroji, bajtovou shodu všech položek ZIP WordPress pluginu se složkou pluginu, všechny požadované cesty, úplnost souborů, relativní odkazy skriptů a integritu obou klientských balíčků včetně podpisu linuxového manifestu a provenance linuxových balíčků. Python část ověřit čistým prostředím mimo `dist`, inicializací distribuovanými skripty a spuštěním distribuovaného serveru. Ověřit health, info a data v obou režimech pomocí izolovaných konfiguračních kopií. Node.js část ověřit spuštěním distribuovaného `phpvpn.js` z rozbalené kopie s izolovanou konfigurací (`--config`, vlastní port a root) a výměnou health, info a data. Skutečné instalační, provozní a další testy předepsané v [client.md](client.md) se při vytváření distribuce provedou, pokud uživatel výslovně neurčí, že se provádět nemají. Při takovém výslovném pokynu se tyto testy neprovedou.
 6. Předat přesnou cestu k výsledku a stručný stav ověření. Pokud se vytváří ZIP, jeho obsah MUSÍ odpovídat ověřenému výsledku a zachovat příslušnou adresářovou strukturu. Archiv a pracovní reporty se ukládají mimo `dist`, aby se při dalším sestavení nemísily s jeho obsahem.
 
 Kanonický vstup pro **celou distribuci** je [tools/make-distribution.ps1](tools/make-distribution.ps1). Vyžaduje explicitní existující CMake build z tohoto checkoutu a složku linuxových balíčků ze stejného commitu. Vždy znovu spustí sestavení Windows klienta, takže nebalí pouze nalezené staré binárky.
@@ -184,7 +215,7 @@ Přepínač `-StagingOnly` skončí po ověřeném stagingu, ZIP a ověření ro
 
 Dílčí [client/tools/make-dist.ps1](client/tools/make-dist.ps1) a [client/tools/linux/make-linux-dist.ps1](client/tools/linux/make-linux-dist.ps1) vyžadují `-OutputDirectory <cesta>` pod `work` nebo `dist`. Kořenový `dist` není povoleným cílem těchto dílčích nástrojů. Serverovou část a ostatní platformní složky vytváří výhradně celkový vstup.
 
-Po sestavení spusť v odděleném vývojovém venv `python -B tools/test-server-scripts.py --distribution <rozbaleny-strom> --report <report.json>`. Runner vytváří vlastní kopie, porty a buffery, kontroluje Windows BAT nebo nativní POSIX SH vstupy, health/info/data, identitu, souběh, chyby, URL a nejméně třísekundové bannery. `tests-python/test_server_control.py` doplňuje deterministické případy recyklovaného PID, nedostupných oprávnění a timeoutu. Bootstrap bez uv a Pythonu se ověřuje zvlášť v čistém prostředí. Windows běh nenahrazuje Linux ani macOS, neprovedené platformy a ruční instalační testy se uvádějí v datovaném reportu.
+Po sestavení spusť v odděleném vývojovém venv `python -B tools/test-server-scripts.py --distribution <rozbaleny-strom> --report <report.json>`. Runner vytváří vlastní kopie, porty a buffery, kontroluje Windows BAT nebo nativní POSIX SH vstupy, health/info/data, identitu, souběh, chyby, URL a nejméně třísekundové bannery. `server/python/tests/test_server_control.py` doplňuje deterministické případy recyklovaného PID, nedostupných oprávnění a timeoutu. Bootstrap bez uv a Pythonu se ověřuje zvlášť v čistém prostředí. Windows běh nenahrazuje Linux ani macOS, neprovedené platformy a ruční instalační testy se uvádějí v datovaném reportu.
 
 Windows balíček se ověřuje také pomocí `client/tools/verify-package.ps1 -PackageDirectory <cesta>`. Tento read-only krok kontroluje shodu skriptů, povinnou přítomnost pěti EXE, manifest, podpisy, VerifyOnly a přesné vložené ICO resources všech pěti produkčních EXE včetně úrovní UAC. Vyžaduje sestavený `phpvpn-icon-resource-tests`, standardně z presetu `release` s `BUILD_TESTING=ON`. Jiný ověřovací build lze zadat přes `-IconResourceTest`. Čtyři zdrojové ICO se používají pouze při sestavení a ověřování, do provozního balíčku se samostatně nepřidávají.
 
@@ -200,7 +231,7 @@ sh tests/e2e/linux/package-install-container.sh ubuntu:24.04 <rozbalena-kopie>/c
 
 Test ověřuje `--verify-only`, odmítnutí upravených a nezapsaných souborů, instalaci, běžící službu, `phpvpn status`, upgrade na vyšší release se zachováním konfigurace, balíček tray a odinstalaci s daty i bez nich. `<slozka-release-2>` je složka téže verze s vyšším release (balíčky sestavené s `PHPVPN_PACKAGE_RELEASE=2`, složené `make-linux-dist.ps1` pod `work`). Slouží pouze k testu upgrade a do distribuce nepatří. Instalace do skutečného systému, grafický tray a AppIndicator na Fedora GNOME se ověřují podle [client.md](client.md), neprovedené platformy a testy se uvádějí v datovaném reportu.
 
-Status stránka je vložená přímo v `phpvpn.php`, `phpvpn.py` i `phpvpn.js`. Žádná serverová distribuce nepotřebuje `assets/index.html`. PHP, Python a Node.js nepoužívají vzájemně čitelný diskový formát, výměna implementace nad rozpracovanými frontami není podporovaná migrace.
+Status stránka je vložená přímo v `phpvpn.php`, `phpvpn.py`, `phpvpn.js` i v jádru WordPress pluginu. Žádná serverová distribuce nepotřebuje `assets/index.html`. PHP, Python a Node.js nepoužívají vzájemně čitelný diskový formát, výměna implementace nad rozpracovanými frontami není podporovaná migrace.
 
 ## distribuce zdrojových kódů do gitpilandrome
 

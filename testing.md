@@ -26,7 +26,7 @@ access keys serveru.
 
 1. Záloha původního souboru: `D:\nginx\html\phpvpn.php` ->
    `D:\nginx\html\phpvpn.php.before-testing-20261024.bak`.
-2. Kopie aktuálního `phpvpn.php` z repozitáře do `D:\nginx\html\`.
+2. Kopie aktuálního `server/php/phpvpn.php` z repozitáře do `D:\nginx\html\`.
 3. Start stacku `D:\nginx\start.bat` (nginx + php-cgi supervisor). Kontrolní
    skript `stack-control.ps1` hlásil chybějící marker stavové stránky, protože
    běžel ještě před výměnou souboru; procesy ale běžely a po výměně souboru

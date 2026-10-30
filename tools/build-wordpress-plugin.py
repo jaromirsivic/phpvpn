@@ -16,7 +16,7 @@ import sys
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'phpvpn.php'
+SOURCE = ROOT / 'server' / 'php' / 'phpvpn.php'
 PLUGIN = ROOT / 'server' / 'wordpress' / 'version7' / 'vpn-server'
 CORE = PLUGIN / 'includes' / 'server-core.php'
 SLUG = 'vpn-server'

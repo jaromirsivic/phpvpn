@@ -29,10 +29,11 @@ try {
         $dist = Join-Path $repository 'dist'
         [IO.Directory]::CreateDirectory((Join-Path $staging 'client')) | Out-Null
         [IO.Directory]::CreateDirectory((Join-Path $staging 'server')) | Out-Null
-        [IO.Directory]::CreateDirectory((Join-Path $staging 'server/Python')) | Out-Null
+        [IO.Directory]::CreateDirectory((Join-Path $staging 'server/python')) | Out-Null
         [IO.File]::WriteAllText((Join-Path $staging 'client/new.txt'), 'new client')
         [IO.File]::WriteAllText((Join-Path $staging 'server/new.txt'), 'new server')
         [IO.File]::WriteAllText($archive, 'new zip')
+        # An older distribution kept the Python server in server/Python.
         if ($scenario -ne 'fresh') {
             [IO.Directory]::CreateDirectory((Join-Path $dist 'client')) | Out-Null
             [IO.Directory]::CreateDirectory((Join-Path $dist 'server/Python/.runtime')) | Out-Null
@@ -66,6 +67,8 @@ try {
                 Check (-not (Test-Path -LiteralPath (Join-Path $session 'previous-dist/server/Python/.runtime'))) 'Runtime must not be moved to backup'
                 Check ((TextAt (Join-Path $session 'previous-dist.zip')) -ceq 'old zip') 'Backup lost ZIP'
             }
+            $names = @(Get-ChildItem -LiteralPath (Join-Path $dist 'server') -Directory | ForEach-Object Name)
+            Check ($names -ccontains 'python' -and $names -cnotcontains 'Python') 'Server folder keeps its old letter case'
         }
         Write-Output "PASS: distribution publication $scenario"
     }

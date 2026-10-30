@@ -4,8 +4,9 @@ $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $sandbox = Join-Path $repositoryRoot ('work\build\deploy-profile-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $sandbox 'tools'), (Join-Path $sandbox 'web') | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'tools\deploy-test.ps1') -Destination (Join-Path $sandbox 'tools\deploy-test.ps1')
-$source = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'phpvpn.php'))
-[IO.File]::WriteAllText((Join-Path $sandbox 'phpvpn.php'), $source)
+$source = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'server\php\phpvpn.php'))
+[IO.Directory]::CreateDirectory((Join-Path $sandbox 'server\php')) | Out-Null
+[IO.File]::WriteAllText((Join-Path $sandbox 'server\php\phpvpn.php'), $source)
 $deploy = Join-Path $sandbox 'tools\deploy-test.ps1'
 $fixture = Join-Path $sandbox 'fixture.json'
 # Explicit URLs keep the sandbox independent of the global configuration.
@@ -27,7 +28,7 @@ foreach ($mutation in 'secret', 'keys', 'buffer') {
     $invalid = if ($mutation -eq 'secret') { $source.Replace("const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';", "const SERVER_SECRET = 'unexpected';") }
                elseif ($mutation -eq 'buffer') { $source.Replace("const BUFFER_DIRECTORY = './phpvpn_data';", "const BUFFER_DIRECTORY = './unexpected';") }
                else { $source.Replace("'10.99.99.15' =>", "'10.99.99.16' =>") }
-    [IO.File]::WriteAllText((Join-Path $sandbox 'phpvpn.php'), $invalid)
+    [IO.File]::WriteAllText((Join-Path $sandbox 'server\php\phpvpn.php'), $invalid)
     $rejected = $false
     try { & $deploy -WebRoot (Join-Path $sandbox 'web') -BufferDirectory (Join-Path $sandbox 'buffer') -ConfigurationPath $fixture @urls }
     catch { $rejected = $true }

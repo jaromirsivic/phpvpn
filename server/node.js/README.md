@@ -1,37 +1,38 @@
-# Node.js server PHP-VPN
+# PHP VPN server for Node.js
 
-`phpvpn.js` je samostatná implementace relay protokolu z `protocol.md` pro
-Node.js. Stávající klient s ní komunikuje beze změny: stejné URL
-`/phpvpn.php`, stejné akce `health`, `info` a `data`, stejná kryptografie,
-limity i chyby. Jediným perzistentním úložištěm je lokální disk. Paměťový
-driver, Memcached ani Redis v této verzi nejsou.
+`phpvpn.js` is a standalone Node.js implementation of the relay protocol from `protocol.md`.
+The existing client talks to it without any change: the same URL `/phpvpn.php`, the same
+actions `health`, `info` and `data`, the same cryptography, limits and errors. The only
+persistent storage is the local disk. A memory driver, Memcached or Redis are not part of this
+version.
 
-## Co se nasazuje
+## What is deployed
 
-| Položka | Hodnota |
+| Item | Value |
 |---|---|
-| Aplikační soubory | právě jeden: `phpvpn.js` |
-| Závislosti | žádné. Jen vestavěné moduly Node.js (`node:http`, `node:crypto`, `node:fs`, `node:path`, `node:perf_hooks`). Žádné `npm install`, build ani assets. |
-| Runtime | Node.js 24 LTS (nejnovější opravené vydání řady). Jiné major verze nejsou deklarované jako podporované. |
-| Volitelně | konfigurační JSON soubor mimo skript, reverzní proxy pro HTTPS |
-| Provozní data | adresář `BUFFER_DIRECTORY`, výchozí `./phpvpn_data` vedle skriptu |
+| Application files | exactly one: `phpvpn.js` |
+| Dependencies | none. Only built-in Node.js modules (`node:http`, `node:crypto`, `node:fs`, `node:path`, `node:perf_hooks`). No `npm install`, build or assets. |
+| Runtime | Node.js 24 LTS (the latest patch release of the line). Other major versions are not declared as supported. |
+| Optional | a configuration JSON file outside the script, a reverse proxy for HTTPS |
+| Operational data | the `BUFFER_DIRECTORY` folder, by default `./phpvpn_data` next to the script |
 
-Stavová HTML stránka je vložená přímo ve skriptu, složka `assets` se
-nenasazuje. Tlačítko Show HTTP Headers na ní ukáže přijaté hlavičky pro
-Configuration Wizard (`protocol.md` §5.1).
+The HTML status page is embedded in the script, no `assets` folder is deployed. Its Show HTTP
+Headers button lists the received headers for the Configuration Wizard (`protocol.md` §5.1).
 
-## Spuštění
+Copy this folder to a writable deployment directory outside the web document root.
+
+## Running
 
 ```sh
 node phpvpn.js
 ```
 
-Server poslouchá na `http://127.0.0.1:8080/phpvpn.php`. Do stderr zapíše
-jediný řádek `listening http://127.0.0.1:8080/phpvpn.php`. Ukončuje se
-signálem SIGINT (Ctrl+C) nebo SIGTERM. Server přestane přijímat spojení,
-dokončí rozpracované požadavky a nejpozději po 10 sekundách skončí.
+The server listens on `http://127.0.0.1:8080/phpvpn.php` and writes the single line
+`listening http://127.0.0.1:8080/phpvpn.php` to stderr. It stops on SIGINT (Ctrl+C) or SIGTERM:
+it stops accepting connections, finishes the requests in progress and exits after 10 seconds at
+the latest.
 
-Další režimy:
+Other modes:
 
 ```sh
 node phpvpn.js --config /etc/phpvpn/server.json
@@ -39,32 +40,31 @@ node phpvpn.js --check-config --config /etc/phpvpn/server.json
 node phpvpn.js --offline-recovery --config /etc/phpvpn/server.json
 ```
 
-`--check-config` konfiguraci jen ověří a skončí kódem 0, chyba vrací kód 2.
-`--offline-recovery` popisuje kapitola Obnova po tvrdém pádu.
+`--check-config` only validates the configuration and exits with code 0, an error returns code 2.
+`--offline-recovery` is described in [Recovery after a hard crash](#recovery-after-a-hard-crash).
 
-Skript nezakládá OS službu. Pro systemd, NSSM nebo jiný správce procesů spouštěj
-přímo `node /cesta/phpvpn.js --config /cesta/server.json` pod vyhrazeným
-neprivilegovaným účtem. Na jednom stroji může běžet více instancí nad různými
-rooty. Více procesů nad stejným rootem je také podporováno, viz Souběh.
+The script does not create an OS service. For systemd, NSSM or another process manager run
+`node /path/phpvpn.js --config /path/server.json` directly under a dedicated unprivileged
+account. Several instances with different storage roots can run on one machine. Several
+processes over the same root are supported too, see [Concurrency](#concurrency).
 
-## Konfigurace
+## Configuration
 
-Konfigurace má dvě vrstvy. Výchozí hodnoty jsou v hlavičce `DEFAULT_CONFIG`
-na začátku `phpvpn.js`. Soubor předaný přes `--config` je JSON objekt se
-stejnými názvy klíčů a jeho hodnoty mají přednost. Doporučený postup je
-ponechat skript beze změny a tajemství držet v konfiguračním souboru čitelném
-jen pro provozní účet. Neznámý klíč, špatný typ nebo nečitelný JSON zastaví
-start s kódem 2. Server nečte proměnné prostředí a tajemství nepřijímá jako
-argument příkazové řádky.
+The configuration has two layers. The defaults are in the `DEFAULT_CONFIG` header at the
+beginning of `phpvpn.js`. The file passed with `--config` is a JSON object with the same key
+names and its values take precedence. The recommended setup keeps the script unchanged and holds
+the secrets in a configuration file readable only by the service account. An unknown key, a
+wrong type or unreadable JSON stops the start with code 2. The server reads no environment
+variables and never accepts secrets as command line arguments.
 
-Minimální produkční soubor:
+A minimal production file:
 
 ```json
 {
-    "SERVER_SECRET": "sem vlož dlouhou náhodnou hodnotu",
+    "SERVER_SECRET": "put a long random value here",
     "ACCESS_KEYS": {
-        "10.99.99.2": "64 malých hex znaků",
-        "10.99.99.3": "64 malých hex znaků"
+        "10.99.99.2": "64 lowercase hex characters",
+        "10.99.99.3": "64 lowercase hex characters"
     },
     "BUFFER_DIRECTORY": "/var/lib/phpvpn",
     "LISTEN_HOST": "127.0.0.1",
@@ -72,43 +72,43 @@ Minimální produkční soubor:
 }
 ```
 
-Hodnota `ACCESS_KEYS` v souboru nahrazuje celou výchozí mapu. Výchozí mapa
-obsahuje veřejně odvoditelné klíče `.2` až `.15` podle protokolu. Nejsou
-tajné a pro provoz se musí nahradit.
+`ACCESS_KEYS` in the file replaces the whole default map. The default map holds the publicly
+derivable keys `.2` to `.15` from the protocol. They are not secret and must be replaced for
+production use.
 
-| Klíč | Výchozí | Význam |
+| Key | Default | Meaning |
 |---|---|---|
-| `SERVER_SECRET` | `CHANGE_THIS_SERVER_SECRET` | Přesné UTF-8 bajty, bez trimování a bez hex dekódování. Jen prázdný řetězec se normalizuje na výchozí hodnotu. Předvídatelná hodnota zapne červené varování na stavové stránce, API ale funguje. |
-| `ACCESS_KEYS` | `.2` až `.15` | VPN adresa → přesně 64 malých hex znaků. |
-| `BUFFER_DIRECTORY` | `./phpvpn_data` | Relativní cesta se vyhodnocuje vůči adresáři souboru `phpvpn.js`, ne vůči pracovnímu adresáři. |
-| `STATUS_PAGE_ENABLED` | `true` | `false` vrací pro GET/HEAD `404`, API zůstává funkční. |
-| `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX` | `10.99.99.`, 2, 254 | Adresní prostor. Musí se shodovat u všech klientů. |
-| `LISTEN_HOST`, `LISTEN_PORT` | `127.0.0.1`, 8080 | Bind. Přímý vzdálený HTTP provoz vyžaduje explicitní `0.0.0.0` nebo konkrétní adresu. |
-| `SERVER_PATH` | `/phpvpn.php` | Veřejná cesta, kterou používá klient. Jiné cesty vracejí `404`. |
-| `REQUEST_TIMEOUT_SECONDS` | 30 | Nejdelší doba příjmu celého požadavku. Chrání před pomalými uploady. |
-| `SYNC_WRITES` | `false` | `true` přidá fsync před publikací dávky a kontraktů. |
-| Limity protokolu | podle `protocol.md` §11.1 | `MAX_DATA_RECORDS_PER_REQUEST`, `MAX_AUTH_RECORD_BYTES`, `MAX_REQUEST_BODY_BYTES`, `MAX_INFO_REQUEST_BODY_BYTES`, `MAX_MASKED_COMMUNICATION_CONTRACTS`, `MAX_INFO_PLAINTEXT_BYTES`, `MAX_QUEUE_BYTES_PER_CLIENT`, `AUTH_TIMESTAMP_SKEW_SECONDS`, `QUEUE_TTL_SECONDS`, `LOCK_TIMEOUT_MS`, `MIN_DATA_POLL_INTERVAL_MS`, `MAX_DATA_POLL_INTERVAL_MS`, `INFO_TEMP_TTL_SECONDS`, `CLIENT_STATS_MIN_UPDATE_SECONDS`. Aktivní hodnoty zveřejňuje `info`. |
-| Údržba | 5 s, 8, 256, 20 ms | `SWEEP_MIN_INTERVAL_SECONDS`, `SWEEP_MAX_DIRECTORIES`, `SWEEP_MAX_FILES`, `SWEEP_MAX_MILLISECONDS`: rozpočet oportunistického úklidu po odpovědi `data`. |
+| `SERVER_SECRET` | `CHANGE_THIS_SERVER_SECRET` | Exact UTF-8 bytes, no trimming and no hex decoding. Only an empty string is normalized to the default. A predictable value turns on a red warning on the status page, the API keeps working. |
+| `ACCESS_KEYS` | `.2` to `.15` | VPN address mapped to exactly 64 lowercase hex characters. |
+| `BUFFER_DIRECTORY` | `./phpvpn_data` | A relative path is resolved against the folder of `phpvpn.js`, not against the working directory. |
+| `STATUS_PAGE_ENABLED` | `true` | `false` answers GET/HEAD with `404`, the API keeps working. |
+| `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX` | `10.99.99.`, 2, 254 | Address space. Must be the same on all clients. |
+| `LISTEN_HOST`, `LISTEN_PORT` | `127.0.0.1`, 8080 | Bind address. Direct remote HTTP traffic needs an explicit `0.0.0.0` or a specific address. |
+| `SERVER_PATH` | `/phpvpn.php` | Public path used by the client. Other paths answer `404`. |
+| `REQUEST_TIMEOUT_SECONDS` | 30 | Longest time to receive a whole request. Protects against slow uploads. |
+| `SYNC_WRITES` | `false` | `true` adds an fsync before a batch or the contracts are published. |
+| Protocol limits | see `protocol.md` §11.1 | `MAX_DATA_RECORDS_PER_REQUEST`, `MAX_AUTH_RECORD_BYTES`, `MAX_REQUEST_BODY_BYTES`, `MAX_INFO_REQUEST_BODY_BYTES`, `MAX_MASKED_COMMUNICATION_CONTRACTS`, `MAX_INFO_PLAINTEXT_BYTES`, `MAX_QUEUE_BYTES_PER_CLIENT`, `AUTH_TIMESTAMP_SKEW_SECONDS`, `QUEUE_TTL_SECONDS`, `LOCK_TIMEOUT_MS`, `MIN_DATA_POLL_INTERVAL_MS`, `MAX_DATA_POLL_INTERVAL_MS`, `INFO_TEMP_TTL_SECONDS`, `CLIENT_STATS_MIN_UPDATE_SECONDS`. The active values are published by `info`. |
+| Maintenance | 5 s, 8, 256, 20 ms | `SWEEP_MIN_INTERVAL_SECONDS`, `SWEEP_MAX_DIRECTORIES`, `SWEEP_MAX_FILES`, `SWEEP_MAX_MILLISECONDS`: budget of the opportunistic cleanup after a `data` answer. |
 
-Porušený invariant limitů (například minimální poll interval větší než
-maximální) server nezastaví. Stavová stránka dál funguje a API vrací
-`503 server_misconfigured`, stejně jako PHP implementace.
+A broken limit invariant (for example a minimum poll interval above the maximum) does not stop
+the server. The status page keeps working and the API answers `503 server_misconfigured`, just
+like the PHP implementation.
 
-## HTTPS a reverzní proxy
+## HTTPS and reverse proxy
 
-Server sám mluví jen HTTP. HTTPS ukončuje reverzní proxy. Aplikační chování je
-přes HTTP i HTTPS stejné a server nečte `X-Forwarded-*` ani `Forwarded`.
+The server itself speaks HTTP only. HTTPS is terminated by a reverse proxy. The application
+behaves the same over HTTP and HTTPS and does not read `X-Forwarded-*` or `Forwarded`.
 
-Proxy musí:
+The proxy must:
 
-- předat tělo i odpověď bajtově beze změny, bez gzip nebo jiné transformace;
-- mít limit těla požadavku přísně vyšší než 983040 B, například 1 MiB;
-- umět vrátit odpověď až 16 MiB plus dva závěrečné řádky bez stránkování;
-- nepřesměrovávat a necacheovat;
-- zveřejnit jen cestu `/phpvpn.php`, nikoli adresář skriptu, konfiguraci ani
+- pass the request and response bodies byte for byte, without gzip or any other transformation;
+- have a request body limit strictly higher than 983040 bytes, for example 1 MiB;
+- be able to return a response of up to 16 MiB plus two final lines without paging;
+- not redirect and not cache;
+- publish only the path `/phpvpn.php`, never the script folder, the configuration or
   `BUFFER_DIRECTORY`.
 
-Ukázka nginx:
+nginx example:
 
 ```nginx
 upstream phpvpn_node {
@@ -140,138 +140,133 @@ server {
 }
 ```
 
-Bez `upstream` s `keepalive` otevírá nginx pro každý požadavek nové spojení.
-Při častém pollingu to na Windows vyčerpá efemérní porty (`10048`) a
-nginx začne vracet `502`.
+Without an `upstream` with `keepalive`, nginx opens a new connection for every request. With
+frequent polling this exhausts the ephemeral ports on Windows (`10048`) and nginx starts to
+answer `502`.
 
-Node server nemá žádný obecný handler statických souborů, takže storage přes
-něj dostupné není. Přesto drž `BUFFER_DIRECTORY` mimo jakýkoli document root
-webserveru.
+The Node server has no generic static file handler, so the storage is not reachable through it.
+Still keep `BUFFER_DIRECTORY` outside any web server document root.
 
-## Úložiště
+## Storage
 
-Formát je privátní pro Node server a **není kompatibilní** s `phpvpn.php` ani
-`phpvpn.py`. Při přechodu z PHP použij nový prázdný root a přepni klientům URL.
-Stará PHP fronta se nepřevádí ani nemigruje. Protože data ve frontě žijí
-nejvýše `QUEUE_TTL_SECONDS` (60 s), přepnutí znamená nejvýše ztrátu právě
-čekajících paketů.
+The format is private to the Node server and is **not compatible** with `phpvpn.php` or
+`phpvpn.py`. When moving from PHP, use a new empty root and switch the client URL. The old PHP
+queue is neither converted nor migrated. Queued data lives at most `QUEUE_TTL_SECONDS` (60 s),
+so the switch loses at most the packets waiting at that moment.
 
-Struktura:
+Layout:
 
 ```text
 BUFFER_DIRECTORY/
-  10_99_99_3/                     fronta cílové adresy 10.99.99.3
-    <expirace>_<bajty>_<src>_<uuid>.data       publikovaná dávka
-    <expirace>_<bajty>_<src>_<uuid>.receiving  rozepsaná, nikdy nepublikovaná
-    <expirace>_<bajty>_<src>_<uuid>.sending    převzatá, už se nevydá
-    info.json                     marker lastSeen a publikované kontrakty
-    .info-<uuid>.tmp              krátkodobý soubor publikace kontraktů
-    .lock/                        zámek fronty, existuje jen během zápisu nebo převzetí
+  10_99_99_3/                     queue of the target address 10.99.99.3
+    <expiry>_<bytes>_<src>_<uuid>.data       published batch
+    <expiry>_<bytes>_<src>_<uuid>.receiving  being written, never published
+    <expiry>_<bytes>_<src>_<uuid>.sending    taken over, never handed out again
+    info.json                     lastSeen marker and published contracts
+    .info-<uuid>.tmp              short lived file of a contract publication
+    .lock/                        queue lock, exists only during a write or a takeover
 ```
 
-Dávka začíná jedním řádkem privátní hlavičky
-`{"format":"phpvpn-node-1","bytes":N,"records":[[messageId,tag],...]}` a za ní
-jsou původní datové řádky. Při čtení se hlavička ověří proti řádkům.
+A batch starts with one line of a private header
+`{"format":"phpvpn-node-1","bytes":N,"records":[[messageId,tag],...]}` followed by the original
+data lines. The header is checked against the lines when the batch is read.
 
-Adresáře vznikají líně až z validované adresy. Root patří provoznímu účtu
-serveru, bez zápisu pro ostatní (POSIX například `0700`). Podporovaný je
-lokální filesystém s atomickým rename v rámci adresáře (NTFS, ext4, XFS, APFS).
-Sdílené NFS/SMB a souběžný přístup PHP nebo Python serveru do stejného rootu
-nejsou ověřeným režimem. Symlink nebo reparse point místo klientského adresáře
-server odmítne s `503 queue_unavailable`.
+Folders are created lazily, only from a validated address. The root belongs to the service
+account of the server, without write access for others (POSIX for example `0700`). Supported is
+a local filesystem with atomic rename within a folder (NTFS, ext4, XFS, APFS). Shared NFS/SMB and
+concurrent access of the PHP or Python server to the same root are not a verified mode. A
+symlink or reparse point in place of a client folder is rejected with `503 queue_unavailable`.
 
-Garance publikace pokrývá pád procesu: dávka je po pádu buď celá `.data`,
-nebo neexistuje. Ochrana proti výpadku napájení závisí na filesystému a na
-`SYNC_WRITES`.
+The publication guarantee covers a process crash: after a crash a batch is either a complete
+`.data` file or does not exist. Protection against a power failure depends on the filesystem and
+on `SYNC_WRITES`.
 
-## Souběh
+## Concurrency
 
-Nad jedním rootem smí běžet více Node procesů. Každá cílová fronta má zámek
-tvořený atomickým `mkdir` adresáře `.lock`. Zámek drží jen zápis dávky a
-převzetí dávek k odeslání. Čeká se nejvýše `LOCK_TIMEOUT_MS` (200 ms), pak
-server vrátí `503 queue_busy`. Jiná I/O chyba znamená `503 queue_unavailable`.
-Plná fronta není chyba. Odpověď je `200` a položky jsou v `deferredMessageIds`.
+Several Node processes may run over one root. Every target queue has a lock made by an atomic
+`mkdir` of the `.lock` folder. The lock is held only while a batch is written and while batches
+are taken over for sending. A request waits at most `LOCK_TIMEOUT_MS` (200 ms), then the server
+answers `503 queue_busy`. Any other I/O error means `503 queue_unavailable`. A full queue is not
+an error: the answer is `200` and the items are listed in `deferredMessageIds`.
 
-Převzetí dávky je přejmenování `.data` na `.sending` pod zámkem fronty. Na
-Windows totiž několik souběžných přejmenování stejného zdroje na stejný cíl
-uspěje současně, takže samotný rename exkluzivitu nezaručí.
+Taking a batch over is a rename of `.data` to `.sending` under the queue lock. On Windows several
+concurrent renames of the same source to the same target can succeed at the same time, so the
+rename alone does not guarantee exclusivity.
 
-## Obnova po tvrdém pádu
+## Recovery after a hard crash
 
-Běžný restart po SIGINT/SIGTERM nepotřebuje žádný zásah. Zámky se uvolňují ve
-`finally` a publikované nevydané dávky přežijí restart do svého TTL.
+A regular restart after SIGINT/SIGTERM needs no action. Locks are released in `finally` and
+published batches that were not handed out survive the restart until their TTL.
 
-Tvrdý pád (kill -9, pád stroje) uprostřed zápisu nebo převzetí může zanechat
-osiřelý adresář `.lock`. Server ho z bezpečnostních důvodů nikdy neodstraní
-sám podle stáří ani PID, protože nemůže ověřit, že jiný proces nad stejným
-rootem neběží. Postižená fronta pak vrací `503 queue_busy`. Ostatní fronty
-fungují dál.
+A hard crash (kill -9, machine failure) in the middle of a write or a takeover can leave an
+orphaned `.lock` folder. For safety the server never removes it by itself based on age or PID,
+because it cannot verify that no other process runs over the same root. The affected queue then
+answers `503 queue_busy`. The other queues keep working.
 
-Postup obnovy:
+Recovery:
 
-1. Zastav **všechny** procesy, které používají daný `BUFFER_DIRECTORY`.
-2. Ověř, že opravdu neběží (`ps`, `systemctl status`, Správce úloh).
-3. Spusť `node phpvpn.js --offline-recovery --config <tentýž soubor>`.
-   Odstraní jen adresáře `.lock` a zbytky `.receiving` a `.sending` v
-   klientských adresářích. Publikované `.data` a `info.json` ponechá. Do stderr
-   vypíše jen počty.
-4. Server znovu spusť.
+1. Stop **all** processes that use the given `BUFFER_DIRECTORY`.
+2. Verify that they really do not run (`ps`, `systemctl status`, Task Manager).
+3. Run `node phpvpn.js --offline-recovery --config <the same file>`. It removes only the `.lock`
+   folders and leftover `.receiving` and `.sending` files in the client folders. Published
+   `.data` and `info.json` stay. Only counts are written to stderr.
+4. Start the server again.
 
-Převzatá dávka (`.sending`) se po pádu už nikdy nevydá. To je vědomé
-at-most-once chování protokolu.
+A batch that was taken over (`.sending`) is never handed out after a crash. This is the
+deliberate at-most-once behaviour of the protocol.
 
-## Paměť a logy
+## Memory and logs
 
-Fronta je vždy na disku. Odpověď `data` ale před odesláním načte převzaté
-dávky volajícího do paměti, aby je mohla ze storage odstranit ještě před
-přenosem. Jeden souběžný `data` požadavek tak může dočasně držet až
-`MAX_QUEUE_BYTES_PER_CLIENT` (16 MiB) plus tělo požadavku (983040 B).
-Rozpočítej RAM jako přibližně 17 MiB × počet současně vydávaných plných front
-plus běžnou režii Node.js. Zápis odpovědi respektuje backpressure a při
-odpojení klienta se data uvolní.
+The queue always lives on disk. Before sending, a `data` answer loads the batches taken over for
+the caller into memory, so it can remove them from the storage before the transfer. One
+concurrent `data` request can therefore temporarily hold up to `MAX_QUEUE_BYTES_PER_CLIENT`
+(16 MiB) plus the request body (983040 bytes). Plan RAM as roughly 17 MiB times the number of
+full queues handed out at the same time, plus the usual Node.js overhead. Writing the answer
+respects backpressure and the data is released when the client disconnects.
 
-Naměřeno (Windows 11, Node.js v23.3.0, fronty po 16 267 040 B):
+Measured on Windows 11 with Node.js v23.3.0 and queues of 16 267 040 bytes:
 
-| Souběžně vydávané plné fronty | RSS před | RSS špička | Doba vydání |
+| Full queues handed out concurrently | RSS before | RSS peak | Hand-out time |
 |---:|---:|---:|---:|
 | 1 | 74.8 MiB | 90.9 MiB | 0.36 s |
 | 4 | 100.0 MiB | 154.2 MiB | 1.34 s |
 
-Log jde do stderr a obsahuje jen čas, kód události a případně kód systémové
-chyby, například `queue_unavailable EACCES`. Nikdy neobsahuje tajemství, tagy,
-ciphertext, požadavky ani interní cesty. Chybové odpovědi mají jen obecný kód.
+The log goes to stderr and holds only the time, an event code and, where relevant, the system
+error code, for example `queue_unavailable EACCES`. It never contains secrets, tags, ciphertext,
+requests or internal paths. Error answers carry only a generic code.
 
-## Testy
+## Known limitations
 
-Deterministické testy serveru, bez npm závislostí:
+- An orphaned lock after a hard crash needs a manual offline recovery.
+- The disk format is not compatible with the PHP or Python server and is not migrated.
+- NFS/SMB and sharing a root with another implementation are not verified.
+- HTTPS is provided only by a reverse proxy.
+- The target runtime is Node.js 24 LTS, but the first validation ran only on Node.js v23.3.0
+  (Windows 11). Linux and Node.js 24 are not validated yet.
+
+## Development
+
+In the source repository this folder is `server/node.js`. The deterministic server tests need no
+npm packages and run from the repository root:
 
 ```sh
-node --check phpvpn.js
-node --test "tests-node/*.test.js"
+node --check server/node.js/phpvpn.js
+node --test "server/node.js/tests/*.test.js"
 ```
 
-Společná integrační sada proti izolované kopii serveru (Python prostředí přes uv):
+The shared integration suite against an isolated copy of the server (Python environment through
+uv):
 
 ```powershell
 uv run --no-project --python 3.13 --with pytest --with requests --with cryptography --with psutil python tools/test-python-server.py --profiles node-disk --node "C:/Program Files/nodejs/node.exe" --report-dir reports/node-server -- -q
 ```
 
-Skutečný C++ klient proti Node serveru (binárka sestavená s
+The real C++ client against the Node server (a binary built with
 `PHPVPN_BUILD_CONTRACT_TESTS=ON`):
 
 ```powershell
 uv run --no-project --python 3.13 --with pytest --with requests --with cryptography python tools/test-python-server.py --profiles node-disk --contract-executable work/build/release/tests/phpvpn-contract-tests.exe --contract-only
 ```
 
-Runner zkopíruje `phpvpn.js` do dočasné složky, předá mu vlastní JSON
-konfiguraci s portem a rootem a po testech ukončí jen svůj proces.
-
-## Známá omezení
-
-- Osiřelý zámek po tvrdém pádu vyžaduje ruční offline obnovu.
-- Diskový formát není kompatibilní s PHP ani Python serverem a nemigruje se.
-- NFS/SMB a sdílení rootu s jinou implementací nejsou ověřené.
-- HTTPS poskytuje jen reverzní proxy.
-- Cílový runtime je Node.js 24 LTS, ale první ověření proběhlo jen na
-  Node.js v23.3.0 (Windows 11). Linux a Node 24 zatím ověřené nejsou, viz
-  `Reports/node-server/`.
+The runner copies `phpvpn.js` to a temporary folder, passes it its own JSON configuration with
+the port and the root and after the tests stops only its own process.

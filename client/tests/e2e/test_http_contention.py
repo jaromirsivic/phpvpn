@@ -45,7 +45,7 @@ def main() -> None:
     if not args.php:
         parser.error("PHP executable not found: pass --php, set tools.php in phpvpn.config.json or add php to PATH")
     fixture = Path(tempfile.mkdtemp(prefix="http-contention-", dir=ROOT / "work/build"))
-    source = (ROOT / "phpvpn.php").read_bytes()
+    source = (ROOT / "server/php/phpvpn.php").read_bytes()
     (fixture / "phpvpn.php").write_bytes(source)
     (fixture / "router.php").write_text('''<?php
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);

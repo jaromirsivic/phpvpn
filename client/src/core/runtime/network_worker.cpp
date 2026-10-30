@@ -27,6 +27,14 @@ std::int64_t clampToRange(std::int64_t value, std::int64_t low, std::int64_t hig
 
 }  // namespace
 
+std::int64_t shortenedPollDeadlineMs(std::int64_t deadlineMs, std::int64_t queuedAtMs,
+                                     std::int64_t shortIntervalMs) noexcept {
+    if (deadlineMs <= queuedAtMs) return deadlineMs;
+    const auto remaining = static_cast<std::uint64_t>(deadlineMs) - static_cast<std::uint64_t>(queuedAtMs);
+    if (shortIntervalMs < 0 || remaining <= static_cast<std::uint64_t>(shortIntervalMs)) return deadlineMs;
+    return queuedAtMs + shortIntervalMs;
+}
+
 NetworkWorker::NetworkWorker(CryptoProvider& crypto, Transport& transport, Clock& clock)
     : crypto_(crypto), transport_(transport), clock_(clock), keys_(crypto) {}
 
@@ -457,6 +465,10 @@ std::int64_t NetworkWorker::nextPollDelayMs(const DataExchangeOutcome& exchange)
     }
     currentPollIntervalMs_ = clampToRange(currentPollIntervalMs_, low, high);
     return currentPollIntervalMs_;
+}
+
+std::int64_t NetworkWorker::minPollIntervalMs() const noexcept {
+    return std::max<std::int64_t>(kMinPollIntervalMs, serverLimits_.minDataPollIntervalMs);
 }
 
 Result<InfoResponse> NetworkWorker::performExtendedInfo(const InfoRequestOptions& options, std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {

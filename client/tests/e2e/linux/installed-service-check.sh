@@ -82,7 +82,7 @@ trap cleanup EXIT
 mkdir -p "$work/relay" "$base"
 chmod 0755 "$base"
 sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = 18094|" \
-    "$repository/phpvpn.py" > "$work/relay/phpvpn.py"
+    "$repository/server/python/phpvpn.py" > "$work/relay/phpvpn.py"
 "$python_server" -B "$work/relay/phpvpn.py" > "$work/relay/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 60); do

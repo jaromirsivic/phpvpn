@@ -1,21 +1,21 @@
-# Python server PHP-VPN
+# PHP VPN server for Python
 
-`phpvpn.py` je samostatná implementace relay protokolu z `protocol.md`.
-Stávající klient používá stejné URL, autentizaci a zprávy jako s `phpvpn.php`.
-PHP soubor zůstává samostatně použitelný. Na jednom nasazení zvol jednu
-implementaci a jednu instanci. Disková data PHP a Pythonu nejsou zaměnitelná.
+`phpvpn.py` is a standalone implementation of the relay protocol from `protocol.md`. The
+existing client uses the same URL, authentication and messages as with `phpvpn.php`. The PHP
+file stays usable on its own. Choose one implementation and one instance per deployment. The
+disk data of PHP and Python are not interchangeable.
 
-## Instalace a spuštění
+## Installation and start
 
-Ověřený runtime je Python 3.13. Závislosti instaluj pomocí `uv` ze zamčeného
-`requirements-server.txt`. Server za běhu nic neinstaluje.
+The validated runtime is Python 3.13. Dependencies are installed with `uv` from the locked
+`requirements-server.txt`. The server installs nothing while it runs.
 
-V rozbalené distribuci otevři `server/Python`. Windows vyžaduje Windows
-PowerShell 5.1 a Linux/macOS POSIX shell a curl nebo wget. Init potřebuje přístup
-k oficiálním serverům Astral a registru balíčků. Administrátorská práva nejsou
-potřeba, nasazená složka musí být zapisovatelná provozním uživatelem.
+In the extracted distribution open `server/python`. Windows requires Windows PowerShell 5.1,
+Linux and macOS a POSIX shell and curl or wget. Init needs access to the official Astral servers
+and the package registry. Administrator rights are not needed, but the deployed folder must be
+writable by the service user.
 
-Na Windows:
+On Windows:
 
 ```powershell
 .\init.bat
@@ -23,7 +23,7 @@ Na Windows:
 .\stop.bat
 ```
 
-Na Linuxu a macOS:
+On Linux and macOS:
 
 ```sh
 sh init.sh
@@ -31,137 +31,135 @@ sh start.sh
 sh stop.sh
 ```
 
-Volání přes `sh` funguje i po rozbalení archivátorem, který nezachoval executable
-bit. Skripty lze volat absolutní cestou z jiné pracovní složky, venv se neaktivuje.
-`init` použije existující funkční uv z PATH, případně jej nainstaluje oficiálním
-[instalátorem Astral](https://docs.astral.sh/uv/getting-started/installation/)
-do `.tools/uv`. Nemění systémovou execution policy ani shellové profily.
-Stažený uv je použitelný hned, nový terminál není nutný. Připraví spravovaný
-CPython 3.13, vlastní `.venv` a synchronizuje přesný `requirements-server.txt`.
-Jiné aktivní virtuální prostředí neovlivní. Start a stop nic nestahují.
+Calling the scripts through `sh` works even after an archiver that did not keep the executable
+bit. The scripts can be called with an absolute path from another working directory, the venv is
+never activated. `init` uses a working uv from PATH, otherwise it installs uv with the official
+[Astral installer](https://docs.astral.sh/uv/getting-started/installation/) into `.tools/uv`. It
+changes neither the system execution policy nor shell profiles. The downloaded uv is usable at
+once, a new terminal is not needed. Init prepares a managed CPython 3.13 and its own `.venv` and
+synchronizes the exact `requirements-server.txt`. Another active virtual environment does not
+affect it. Start and stop download nothing.
 
-Init lze opakovat. Za běhu spravovaného serveru odmítne změnu prostředí. Poškozený
-nebo nekompatibilní `.venv` automaticky nemaže: nejprve zastav server, odlož tento
-adresář a spusť init znovu. Po přerušení instalace prověř, že neběží jiný init,
-a až poté odstraň prázdný zbylý `.bootstrap.lock` (případně stažený instalátor uv
-uvnitř). Potom init zopakuj. Síťové či jiné chyby vracejí nenulový kód.
+Init can be repeated. While the managed server runs, it refuses to change the environment. It
+does not delete a damaged or incompatible `.venv` automatically: stop the server first, move that
+folder aside and run init again. After an interrupted installation make sure that no other init
+runs, and only then remove the empty leftover `.bootstrap.lock` (and a downloaded uv installer
+inside it, if any). Then repeat init. Network and other errors return a nonzero exit code.
 
-Start spustí jeden odpojený aplikační proces, který přežije ukončení launcheru
-i zavření jeho terminálu. Do 30 sekund vyžaduje vlastní bind/startup, shodu
-procesní identity a kryptograficky ověřenou health odpověď na vypisované URL.
-Teprve potom zobrazí `Server started successfully.` a samostatný řádek
-`Open in your browser: ...`. Stop vyšle privátní adresovaný požadavek a čeká na
-graceful shutdown, dokončení aplikačního lifespan, skutečný konec původního
-procesu i uvolnění jeho zámku. HTTP shutdown má limit 30 sekund, celá stop
-kontrola 45 sekund. Žádný automatický hard kill se nepoužívá. Úspěšný stop
-ukáže `Server stopped successfully.` bez URL. Oba ASCII bannery zůstávají před
-normálním koncem skriptu viditelné nejméně tři sekundy. Stisk klávesy dobu nezkrátí.
+Start launches one detached application process that survives the end of the launcher and the
+closing of its terminal. Within 30 seconds it requires its own bind/startup, a matching process
+identity and a cryptographically verified health answer on the printed URL. Only then it shows
+`Server started successfully.` and a separate line `Open in your browser: ...`. Stop sends a
+private addressed request and waits for the graceful shutdown, the end of the application
+lifespan, the real end of the original process and the release of its lock. The HTTP shutdown
+is limited to 30 seconds, the whole stop check to 45 seconds. No automatic hard kill is used. A
+successful stop shows `Server stopped successfully.` without a URL. Both ASCII banners stay
+visible for at least three seconds before the script ends normally. A key press does not shorten
+that time.
 
-Kód 0 znamená úspěch nebo již neběžící server (`Server is not running.`, bez
-banneru). Druhý start vrací kód 1 a `Server is already running.`. Chyby mají
-nenulový kód bez úspěšného banneru. Timeout stopu ponechá proces a stav dostupné
-pro diagnostiku a další stop. Při pádu procesu se nedeklaruje úspěšný graceful stop.
+Exit code 0 means success or a server that is not running (`Server is not running.`, without a
+banner). A second start returns code 1 and `Server is already running.`. Errors have a nonzero
+code and no success banner. A stop timeout keeps the process and the state available for
+diagnosis and for another stop. When the process crashes, no successful graceful stop is
+claimed.
 
-Log je `.runtime/server.log`. `.runtime` obsahuje privátní stav, operační a
-životnostní OS zámky a adresovaný řídicí kanál, nikoli serverová tajemství.
-Na Windows se nastavuje ACL pro provozního uživatele, SYSTEM a administrátory,
-na POSIX 0700/0600. Symlink/reparse cesty se odmítají. Stejný OS uživatel je
-hranicí důvěry. Stav se nesmí přenášet mezi nasazeními. Poškozená či nesouhlasící
-metadata se ponechají k ruční kontrole, cizí PID se nikdy automaticky neukončuje.
-Za běhu nemaž `.runtime` ani soubory zámků. Nejasný stav při drženém zámku
-řeš podle logu a identity procesu, nikoli smazáním metadat a opětovným startem.
+The log is `.runtime/server.log`. `.runtime` holds private state, operation and lifetime OS locks
+and the addressed control channel, never the server secrets. On Windows the ACL grants access to
+the service user, SYSTEM and administrators, on POSIX the modes are 0700/0600. Symlink and
+reparse paths are rejected. The same OS user is the trust boundary. The state must not be moved
+between deployments. Damaged or mismatching metadata is kept for manual inspection, a foreign PID
+is never terminated automatically. Do not delete `.runtime` or the lock files while the server
+runs. Resolve an unclear state with a held lock from the log and the process identity, not by
+deleting the metadata and starting again.
 
-Pro přesun nasazení nejprve použij stop, pak v nové kopii obnov `.venv` přes init
-a nepřenášej `.runtime`. Skripty nevytvářejí OS službu ani automatický start po
-restartu stroje. Každé souběžné nasazení potřebuje vlastní port a vlastní buffer.
+To move a deployment, stop it first, then rebuild `.venv` in the new copy with init and do not
+carry `.runtime` over. The scripts create no OS service and no automatic start after a reboot.
+Every concurrent deployment needs its own port and its own buffer.
 
-Přímý běh v popředí je nadále dostupný: `.venv/Scripts/python.exe -B phpvpn.py`
-na Windows nebo `.venv/bin/python -B phpvpn.py` na POSIX. Ukončuje se Ctrl+C,
-nespravuje jej stop skript. Přímý běh nekombinuj se spravovanou instancí téhož
-nasazení. Ze zdrojového checkoutu lze prostředí připravit pomocí
-`uv venv --python 3.13` a `uv pip sync --python <venv-interpret> requirements-server.txt`.
+A direct foreground run is still available: `.venv/Scripts/python.exe -B phpvpn.py` on Windows
+or `.venv/bin/python -B phpvpn.py` on POSIX. It stops with Ctrl+C and is not managed by the stop
+script. Do not combine a direct run with a managed instance of the same deployment.
 
-Výchozí adresa je `http://127.0.0.1:8000/phpvpn.php`. Přípona HTTP cesty je
-záměrně `.php`, skutečný soubor se jmenuje **phpvpn.py**. Cestu nastavuje
-`SERVER_PATH`, bind `LISTEN_HOST` a `LISTEN_PORT`. Ostatní cesty vracejí obecnou
-404. Server neslouží statické soubory ze své složky.
+The default address is `http://127.0.0.1:8000/phpvpn.php`. The `.php` suffix of the HTTP path is
+deliberate, the real file is called **phpvpn.py**. `SERVER_PATH` sets the path, `LISTEN_HOST`
+and `LISTEN_PORT` the bind address. Other paths answer a generic 404. The server serves no
+static files from its folder.
 
-Banner používá skutečný port a URL kódovanou `SERVER_PATH`. Bind `0.0.0.0`
-se zobrazí jako `127.0.0.1`, `::` jako `[::1]`. IPv6 má hranaté závorky.
-Jde o ověřenou lokální HTTP URL, veřejnou HTTPS adresu určuje samostatně proxy.
-Při `STATUS_PAGE_ENABLED = False` je endpoint připraven přes health API,
-ale běžné otevření téže URL v prohlížeči záměrně vrátí 404.
+The banner uses the real port and the URL encoded `SERVER_PATH`. A bind to `0.0.0.0` is shown as
+`127.0.0.1`, `::` as `[::1]`. IPv6 addresses are in square brackets. It is a verified local HTTP
+URL, the public HTTPS address is set separately by the proxy. With
+`STATUS_PAGE_ENABLED = False` the endpoint is ready through the health API, but opening the same
+URL in a browser deliberately answers 404.
 
-Launcher předává instanci aplikace Uvicornu, nastavuje `workers=1`, vypíná reload,
-WebSockety, důvěru proxy hlavičkám a access log. Používá `asyncio` a `h11`.
-Proměnná `WEB_CONCURRENCY` toto explicitní nastavení nepřepíše.
-Nepoužívej externí multiprocess launcher ani několik replik. Import souboru
-nevytváří globální aplikaci a není podporován příkaz `uvicorn phpvpn:app`.
-Pomocná vlákna pro storage patří témuž procesu. Na Windows může interpret ve
-venv mít pomocný launcher a systémový `conhost`, nejde o další aplikační worker.
+The launcher passes the application instance to Uvicorn, sets `workers=1` and turns off reload,
+WebSockets, trust in proxy headers and the access log. It uses `asyncio` and `h11`. The
+`WEB_CONCURRENCY` variable does not override this explicit setting. Do not use an external
+multiprocess launcher or several replicas. Importing the file creates no global application and
+the command `uvicorn phpvpn:app` is not supported. The helper threads of the storage belong to
+the same process. On Windows the interpreter in the venv can have a helper launcher and a system
+`conhost`, neither is another application worker.
 
-## Konfigurace
+## Configuration
 
-Všechna administrátorská nastavení jsou v souvislém bloku nahoře v `phpvpn.py`.
-Odpovídající názvy a výchozí hodnoty jsou shodné s PHP, včetně čtrnácti
-výchozích `ACCESS_KEYS` pro adresy `.2` až `.15`.
+All administrator settings are in one block at the top of `phpvpn.py`. Their names and default
+values match the PHP server, including the fourteen default `ACCESS_KEYS` for the addresses `.2`
+to `.15`.
 
-- Změň `SERVER_SECRET` a `ACCESS_KEYS`. Hodnota přístupového klíče je přesně
-  64 malých hexadecimálních znaků. Secret je Python řetězec kódovaný UTF-8.
-  Pouze přesně prázdný řetězec se normalizuje na `CHANGE_THIS_SERVER_SECRET`.
-- `STORAGE_DRIVER = 'disk'` je výchozí, alternativou je `'memory'`.
-- `BUFFER_DIRECTORY = './phpvpn_data'` je relativní vůči umístění skriptu,
-  nikoli pracovní složce procesu. Použij vlastní adresář mimo webroot.
-- `STATUS_PAGE_ENABLED` zapíná veřejnou stránku GET/HEAD. Vypnutí neomezuje API.
-  Výchozí, prázdný, nulový a ASCII nulový secret zobrazí warning panel.
-  Tlačítko Show HTTP Headers ukáže přijaté hlavičky pro Configuration Wizard
-  (`protocol.md` §5.1).
-- `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX`, všechny `MAX_*`, TTL,
-  autentizační okno, polling a sweep konstanty mají význam popsaný v protokolu.
-- `PROTECT_BUFFER_DIRECTORY` vytváří best-effort diskové guards. Nenahrazují
-  správné nastavení reverzní proxy. `INFO_TEMP_TTL_SECONDS` se týká pouze
-  dočasných diskových publikací kontraktů.
+- Change `SERVER_SECRET` and `ACCESS_KEYS`. An access key is exactly 64 lowercase hexadecimal
+  characters. The secret is a Python string encoded as UTF-8. Only an exactly empty string is
+  normalized to `CHANGE_THIS_SERVER_SECRET`.
+- `STORAGE_DRIVER = 'disk'` is the default, the alternative is `'memory'`.
+- `BUFFER_DIRECTORY = './phpvpn_data'` is relative to the location of the script, not to the
+  working directory of the process. Use your own folder outside the web root.
+- `STATUS_PAGE_ENABLED` turns the public GET/HEAD page on. Turning it off does not restrict the
+  API. A default, empty, zero or ASCII zero secret shows a warning panel. The Show HTTP Headers
+  button lists the received headers for the Configuration Wizard (`protocol.md` §5.1).
+- `VPN_ADDRESS_PREFIX`, `VPN_HOST_MIN`, `VPN_HOST_MAX`, all `MAX_*`, the TTLs, the
+  authentication window, the polling and sweep constants mean what the protocol describes.
+- `PROTECT_BUFFER_DIRECTORY` creates best effort disk guards. They do not replace a correct
+  reverse proxy setup. `INFO_TEMP_TTL_SECONDS` concerns only temporary disk publications of
+  contracts.
 
-V memory se `BUFFER_DIRECTORY`, `PROTECT_BUFFER_DIRECTORY` a
-`INFO_TEMP_TTL_SECONDS` pro provozní storage nepoužívají. Import a validace
-konfigurace nic nevytvářejí. Neplatná konfigurace API vrací obecnou
-`503 server_misconfigured`, nesprávný driver se tiše nenahrazuje.
+With memory storage, `BUFFER_DIRECTORY`, `PROTECT_BUFFER_DIRECTORY` and `INFO_TEMP_TTL_SECONDS`
+are not used for operational storage. Importing the file and validating the configuration create
+nothing. With an invalid configuration the API answers a generic `503 server_misconfigured`, a
+wrong driver is never silently replaced.
 
-## Disk a paměť
+## Disk and memory
 
-Disk ukládá celé dávky v per-client adresářích přes atomické přechody
-`receiving → data → sending`. Index `phpvpn-python-1` je interní Python formát.
-Po úplném zápisu, flush a uzavření souboru se dávka publikuje přejmenováním.
-Neprovádí se fsync, takže se neslibuje dodatečná odolnost proti výpadku napájení.
-Po restartu přežijí živé `.data`, převzaté `.sending` se neobnovují. Opomenuté
-soubory uklidí omezená údržba po expiraci. Jeden buffer nesmí sdílet více procesů.
+The disk driver stores whole batches in per-client folders through atomic transitions
+`receiving → data → sending`. The `phpvpn-python-1` index is an internal Python format. A batch
+is published by a rename after it was completely written, flushed and closed. No fsync is done,
+so no extra resilience against a power failure is promised. Live `.data` files survive a
+restart, taken over `.sending` files are not restored. Forgotten files are removed by the
+bounded maintenance after they expire. One buffer must not be shared by several processes.
 
-Memory uchovává fronty, lastSeen, publikované kontrakty a stav údržby výhradně
-v paměti. Nevytváří buffer, journal, checkpoint, temp soubory ani spool.
-Po restartu celý tento stav zmizí. Parametr `-B` vypíná Python bytecode cache.
-Instalace balíčků a uv cache nejsou provozní storage. Režim memory nezakazuje OS swap.
+The memory driver keeps the queues, lastSeen, the published contracts and the maintenance state
+in memory only. It creates no buffer, journal, checkpoint, temporary files or spool. All of this
+state is gone after a restart. The `-B` option turns off the Python bytecode cache. Package
+installation and the uv cache are not operational storage. Memory mode does not prevent OS swap.
 
-Oba drivery mají stejnou kapacitu počítanou z původních datových řádků včetně LF.
-Přeplněná cílová skupina se celá odloží v úspěšné odpovědi, jiný cíl může být
-přijat. Poll přebírá celou nalezenou živou frontu bez stránkování. Žádný zámek
-se nedrží během síťového odesílání. Převzetí je nevratné i při odpojení klienta,
-proto protokol poskytuje at-most-once, nikoli potvrzené doručení.
+Both drivers have the same capacity, counted from the original data lines including LF. A target
+group that does not fit is deferred as a whole in a successful answer, another target can be
+accepted. A poll takes over the whole live queue found, without paging. No lock is held while
+sending over the network. A takeover cannot be undone, even when the client disconnects, so the
+protocol provides at-most-once delivery, not confirmed delivery.
 
-Limit fronty je na klienta, nikoli na celý proces. Pomalé odpovědi vlastní již
-převzaté dávky, zatímco do front mohou přibývat další. RAM proto může přesáhnout
-součet aktuálně zařazených dat. Dimenzuj ji podle počtu klientů, velikosti
-provozu a souběžných pomalých spojení. Přenos je po dávkách, netvoří jednu kopii
-celé odpovědi. Závěrečný MAC se při chybě čtení dávky neodešle.
+The queue limit applies per client, not per process. Slow answers own batches already taken
+over while new data can arrive in the queues. RAM can therefore exceed the sum of the data
+currently queued. Size it by the number of clients, the traffic and concurrent slow connections.
+The transfer goes batch by batch and never builds one copy of the whole answer. The final MAC is
+not sent when reading a batch fails.
 
-## HTTPS a reverzní proxy
+## HTTPS and reverse proxy
 
-HTTPS ukončuj před lokálně naslouchajícím procesem. Proxy musí zachovat metodu,
-query a přesné bajty těla. Nesmí přepisovat JSON, LF, dekomprimovat obsah na jiné
-bajty ani odpovědi cachovat. Limit requestu nastav **nad** `MAX_REQUEST_BODY_BYTES`,
-aby aplikační hranice vracela vlastní obecnou 413. Neomezuj odpověď na velikost
-jednoho requestu, může obsahovat celou 16MiB frontu.
+Terminate HTTPS in front of the process listening locally. The proxy must keep the method, the
+query and the exact body bytes. It must not rewrite JSON or LF, decompress content into other
+bytes or cache answers. Set the request limit **above** `MAX_REQUEST_BODY_BYTES`, so that the
+application boundary returns its own generic 413. Do not limit an answer to the size of one
+request, it can carry a whole 16 MiB queue.
 
-Příklad nginx lokace při výchozích hodnotách:
+An nginx location with the default values:
 
 ```nginx
 location = /phpvpn.php {
@@ -175,51 +173,58 @@ location = /phpvpn.php {
 }
 ```
 
-TLS certifikát a ostatní nastavení virtual hostu spravuje proxy. Zdrojový ani
-datový adresář nesmí být jejím statickým webrootem. Autorizace nikdy nevychází
-z TCP adresy, schématu, Host ani `Forwarded` či `X-Forwarded-*`.
+The TLS certificate and the other virtual host settings belong to the proxy. Neither the source
+nor the data folder may be its static web root. Authorization never depends on the TCP address,
+the scheme, `Host` or `Forwarded` and `X-Forwarded-*`.
 
-## Ověření ze zdrojového repozitáře
+## Development
 
-Testovací balíčky přidej do vývojového prostředí přes uv:
+In the source repository this folder is `server/python`, with the tests in
+`server/python/tests`. A development environment can be prepared with `uv venv --python 3.13`
+and `uv pip sync --python <venv interpreter> server/python/requirements-server.txt`. The lock is
+generated from `requirements-server.in`.
+
+Add the test packages to the development environment with uv and run from the repository root:
 
 ```powershell
 uv pip install pytest requests psutil
-uv run --no-project python -B -m pytest tests-python -q
+uv run --no-project python -B -m pytest server/python/tests -q
 uv run --no-project python tools/test-python-server.py --profiles python-disk python-memory -- -q
 uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --report-dir reports/python-server -- -q
 ```
 
-Poslední příkaz bere PHP z `--php`, jinak z `tools.php` globální konfigurace
-`phpvpn.config.json` nebo z PATH. Každý profil má vlastní port, kopii serveru,
-konfiguraci a úložiště mimo webroot. Původní server ani popis nasazení
-testovacího serveru se nepřepisují.
-Bez `-m "not slow"` běží i skutečná expirace. Memory přeskočí pouze čtyři
-testy fyzického diskového layoutu. Společné frontové assertions jsou stejné.
+The last command takes PHP from `--php`, otherwise from `tools.php` of the global configuration
+`phpvpn.config.json` or from PATH. Every profile has its own port, server copy, configuration
+and storage outside the web root. Neither the original server nor the deployment description of
+the test server is overwritten. Without `-m "not slow"` the real expiry runs too. Memory skips
+only four tests of the physical disk layout. The shared queue assertions are the same.
 
-`tests-python` pokrývá navíc přesné časy a limity, selhání storage, cancellation,
-restart skutečného procesu, HTTPS proxy s privátní testovací CA a jediný worker
-i při `WEB_CONCURRENCY=4`. Nemění systémové certifikáty ani provozní službu.
-Volitelný `--contract-executable <phpvpn-contract-tests.exe>` v runneru spustí
-skutečný C++/WinHTTP/CNG kontrakt nad stejnými izolovanými fixture. Přepínač
-`--contract-only` přeskočí HTTP pytest sadu.
+`server/python/tests` additionally covers exact times and limits, storage failures,
+cancellation, a restart of the real process, an HTTPS proxy with a private test CA and a single
+worker even with `WEB_CONCURRENCY=4`. It changes neither system certificates nor an operational
+service. The optional `--contract-executable <phpvpn-contract-tests.exe>` of the runner runs the
+real C++/WinHTTP/CNG contract over the same isolated fixtures. `--contract-only` skips the HTTP
+pytest suite.
 
-Volba `--measure-memory` vzorkuje RSS serverového procesu každých 10 ms a při
-`--report-dir` uloží počáteční, vrcholovou a konečnou hodnotu do JSON. Pro srovnání
-všech profilů použij stejné filtry testů, například `-- -q -m "not slow"`.
-Latence vypisují společné performance testy. RSS je měření konkrétního běhu,
-nikoli garantovaná mez spotřeby ani přesné zachycení každé krátké špičky.
+`--measure-memory` samples the RSS of the server process every 10 ms and with `--report-dir`
+stores the initial, peak and final value in JSON. To compare all profiles use the same test
+filters, for example `-- -q -m "not slow"`. Latencies are printed by the shared performance
+tests. RSS is a measurement of one run, not a guaranteed consumption limit nor an exact capture of
+every short peak.
 
-Souběžné nečtené odpovědi a nové plnění stejných front lze změřit odděleně:
+Concurrent unread answers and new filling of the same queues can be measured separately:
 
 ```powershell
 uv run --no-project python -B tools/measure-python-queue-lifetime.py --output reports/python-server/queue-lifetime.json
 ```
 
-Tento scénář pro disk i memory otevře tři odpovědi bez čtení těla, každou
-s přibližně 9,4 MiB dat, a stejné fronty znovu naplní. Poté ověří všechny
-původní i nově přijaté zprávy a jejich MAC. Měří pouze RSS serveru.
+For both disk and memory this scenario opens three answers without reading the body, each with
+about 9.4 MiB of data, and fills the same queues again. Then it verifies all original and newly
+accepted messages and their MACs. It measures only the RSS of the server.
 
-Protokol a jeho očekávání jsou společné. Interní diskové formáty a ztráta memory
-stavu po restartu se testují zvlášť. Podrobné výsledky a neprovedené scénáře
-patří do datovaného validačního reportu, nikoli do tvrzení o univerzálním výkonu.
+`tools/test-server-scripts.py` runs the start, stop and init scripts for real against an
+isolated copy of this folder, or of `server/python` of a distribution with `--distribution`.
+
+The protocol and its expectations are shared. The internal disk formats and the loss of the
+memory state after a restart are tested separately. Detailed results and scenarios that were not
+run belong to a dated validation report, not to a claim about universal performance.

@@ -12,7 +12,7 @@
 # an invalid file, a file over the 512 KiB limit and a non-ASCII file name.
 #
 # build-dir defaults to work/build/linux-debug. PHPVPN_SERVER_PYTHON is the
-# interpreter with requirements-server.txt. Logs stay in PHPVPN_E2E_WORK
+# interpreter with server/python/requirements-server.txt. Logs stay in PHPVPN_E2E_WORK
 # (default work/cli-smoke-<timestamp>).
 set -euo pipefail
 
@@ -117,7 +117,7 @@ ip netns add $ns
 ip -n $ns link set lo up
 mkdir -p "$work/relay"
 sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = 18096|" \
-    "$repository/phpvpn.py" > "$work/relay/phpvpn.py"
+    "$repository/server/python/phpvpn.py" > "$work/relay/phpvpn.py"
 ip netns exec $ns "$python_server" -B "$work/relay/phpvpn.py" > "$work/relay/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 60); do

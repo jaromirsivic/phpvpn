@@ -59,6 +59,36 @@
 		}
 	}
 
+	// Save Changes and Change Folder stay disabled until a field of their form differs from the saved
+	// value. Without JavaScript they stay enabled.
+	function trackChanges( form ) {
+		var dirty = Array.prototype.some.call( form.elements, function ( field ) {
+			if ( 'checkbox' === field.type ) {
+				return field.checked !== field.defaultChecked;
+			}
+			return 'text' === field.type && changed( field );
+		} );
+		form.querySelectorAll( '[type="submit"]' ).forEach( function ( button ) {
+			button.disabled = ! dirty;
+		} );
+	}
+
+	function trackAll() {
+		document.querySelectorAll( 'form.vpn-server-track' ).forEach( trackChanges );
+	}
+
+	[ 'input', 'change' ].forEach( function ( type ) {
+		document.addEventListener( type, function ( event ) {
+			var form = event.target.form;
+			if ( form && form.classList.contains( 'vpn-server-track' ) ) {
+				trackChanges( form );
+			}
+		} );
+	} );
+	// The browser may restore typed values on reload or from the back-forward cache.
+	window.addEventListener( 'pageshow', trackAll );
+	trackAll();
+
 	// The secret card turns red for the default, an all zero or a short secret, as Settings::secret_weakness().
 	var secret = document.getElementById( 'vpn-server-secret' );
 	if ( secret ) {

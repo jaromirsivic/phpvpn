@@ -31,6 +31,10 @@ foreach ($entry in $sources.GetEnumerator()) {
     $expected.Add($entry.Key)
     if ($entry.Key.EndsWith('.sh')) { Assert-ShellScript $copy }
 }
+$pluginZip = Get-WordPressPluginZipName $repository
+if (-not (Test-Path -LiteralPath (Join-Path $tree $pluginZip) -PathType Leaf)) { throw "Missing distribution file: $pluginZip" }
+Assert-WordPressPluginZip $repository (Join-Path $tree $pluginZip)
+$expected.Add($pluginZip)
 $protocolCopy = Join-Path $tree 'documentation/protocol.md'
 if (Test-Path -LiteralPath $protocolCopy -PathType Leaf) {
     $protocolSource = Get-DistributionProtocolSource $repository
@@ -91,7 +95,7 @@ $actual = @(Get-ChildItem -LiteralPath $tree -File -Recurse -Force | ForEach-Obj
     -not ($AllowLocalRuntime -and (Test-DistributionRuntimePath $_))
 })
 if (Compare-Object $expected.ToArray() $actual -CaseSensitive) { throw 'Distribution contains missing or unexpected files (including hidden runtime files).' }
-$directories = @('documentation','server','server/PHP','server/Python','server/Node.js','client','client/Windows','client/Windows/x64','client/macOS','client/Linux','client/Linux/x64')
+$directories = @('documentation','server') + (Get-DistributionServerFolders) + @('client','client/Windows','client/Windows/x64','client/macOS','client/Linux','client/Linux/x64')
 $actualDirs = @(Get-ChildItem -LiteralPath $tree -Directory -Recurse -Force | ForEach-Object {
     $_.FullName.Substring($tree.Length + 1).Replace('\','/')
 } | Where-Object {
@@ -155,5 +159,5 @@ if ($linuxManifest.sourceDirty) { Write-Warning "Linux packages were built from 
 
 & (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest -CertificateThumbprint $signingCertificate.Thumbprint
 Write-Output "Linux x64: release $($linuxManifest.releaseVersion)-$($linuxManifest.packageRelease), source $($linuxManifest.sourceCommit)$(if ($linuxManifest.sourceDirty) { ' (dirty)' }), signed by $thumbprint."
-Write-Output 'PASS: complete distribution allowlist, source hashes, required README, optional English protocol, LF shell scripts, Node.js server, macOS README, signed Linux folder and signed Windows package.'
+Write-Output 'PASS: complete distribution allowlist, source hashes, required README, server READMEs, optional English protocol, LF shell scripts, Node.js server, WordPress plugin ZIP, macOS README, signed Linux folder and signed Windows package.'
 if ($AllowLocalRuntime) { Write-Output 'Local Python .runtime and .venv are preserved and excluded from the distribution file set.' }

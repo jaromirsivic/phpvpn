@@ -129,7 +129,7 @@ def test_invalid_config(setting, value):
 
 
 def test_php_configuration_parity_and_path(tmp_path, monkeypatch):
-    php = (Path(s.__file__).parent / 'phpvpn.php').read_text(encoding='utf-8')
+    php = (Path(s.__file__).parents[1] / 'php' / 'phpvpn.php').read_text(encoding='utf-8')
     expected = set(re.findall(r'^const ([A-Z_]+) = ', php, re.M))
     assert expected == set(s._CONFIG_NAMES) - {'LISTEN_HOST', 'LISTEN_PORT', 'SERVER_PATH'}
     assert len(s.ACCESS_KEYS) == 14
@@ -223,7 +223,7 @@ def test_body_limits(runtime, action, delta):
 
 
 def test_status_template_matches_the_shared_mockup():
-    mockup = (Path(__file__).resolve().parents[1] / 'assets/index.html').read_bytes().rstrip(b'\r\n')
+    mockup = (Path(__file__).resolve().parents[3] / 'assets/index.html').read_bytes().rstrip(b'\r\n')
     assert s.STATUS_HTML == mockup
 
 

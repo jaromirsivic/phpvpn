@@ -1,6 +1,6 @@
 """Run the same HTTP suite against isolated PHP/disk, Python/disk, memory and Node/disk.
 
-Use the prepared uv environment (see server-python.md). Never edits live sources
+Use the prepared uv environment (see server/python/README.md). Never edits live sources
 or server.json. Temporary fixture directories and only owned processes are cleaned.
 """
 from __future__ import annotations
@@ -51,7 +51,8 @@ def fixture(profile: str, php: str | None = None, directory: Path | None = None,
         port = free_port()
         implementation, driver = profile.split("-")
         extension = {"php": "php", "python": "py", "node": "js"}[implementation]
-        source = (server_file or ROOT / f"phpvpn.{extension}").read_text(encoding="utf-8")
+        folder = {"php": "php", "python": "python", "node": "node.js"}[implementation]
+        source = (server_file or ROOT / "server" / folder / f"phpvpn.{extension}").read_text(encoding="utf-8")
         buffer = (root / "buffer").as_posix()
         runtime_paths = [p for p in sys.path if p]
         if implementation == "php":

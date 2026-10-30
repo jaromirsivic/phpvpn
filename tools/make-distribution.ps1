@@ -46,6 +46,10 @@ if (Test-Path -LiteralPath $publishedManifest -PathType Leaf) {
         Write-Warning "$message Accepted for -StagingOnly."
     }
 }
+# The plugin server core is generated from server/php/phpvpn.php and must not be stale.
+. (Join-Path $PSScriptRoot 'phpvpn-config.ps1')
+& (Resolve-PhpVpnTool 'python') (Join-Path $PSScriptRoot 'build-wordpress-plugin.py') --check
+if ($LASTEXITCODE -ne 0) { throw 'The VPN Server plugin is stale, run tools/build-wordpress-plugin.py and commit the result.' }
 # Check the Linux package build before the long client build: checksums, the complete
 # package set (phpvpn and phpvpn-tray for Fedora and Ubuntu) and the source provenance.
 $linuxPackages = (Resolve-Path -LiteralPath $LinuxPackagesDirectory).Path
@@ -133,12 +137,13 @@ if ($provenanceProblems.Count) {
     [IO.File]::WriteAllText($provenanceRecord, ("-AllowLinuxProvenanceMismatch (development only)`nPackages: $linuxPackages`n" +
         ($provenanceProblems -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
 }
-foreach ($directory in @('documentation','server/PHP','server/Python','server/Node.js','client/Windows/x64','client/macOS','client/Linux')) {
+foreach ($directory in @('documentation') + (Get-DistributionServerFolders) + @('client/Windows/x64','client/macOS','client/Linux')) {
     [IO.Directory]::CreateDirectory((Join-Path $staging $directory)) | Out-Null
 }
 foreach ($entry in (Get-DistributionSources).GetEnumerator()) {
     Copy-Item -LiteralPath (Join-Path $repository $entry.Value) -Destination (Join-Path $staging $entry.Key)
 }
+Write-WordPressPluginZip $repository (Join-Path $staging (Get-WordPressPluginZipName $repository))
 $protocolSource = Get-DistributionProtocolSource $repository
 if (-not $OmitProtocol -and $protocolSource) {
     Copy-Item -LiteralPath $protocolSource -Destination (Join-Path $staging 'documentation/protocol.md')
@@ -183,7 +188,7 @@ try {
         $expectedMode = if ($entry.FullName.EndsWith('/')) { 0x41ED } elseif ($entry.FullName.EndsWith('.sh')) { 0x81ED } else { 0x81A4 }
         if ($mode -ne $expectedMode) { throw "ZIP entry has an incorrect POSIX mode: $($entry.FullName)" }
     }
-    foreach ($name in @('client/Linux/x64/install.sh', 'client/Linux/x64/uninstall.sh', 'server/Python/init.sh')) {
+    foreach ($name in @('client/Linux/x64/install.sh', 'client/Linux/x64/uninstall.sh', 'server/python/init.sh')) {
         if ($null -eq $zip.GetEntry($name)) { throw "ZIP is missing the executable entry point $name" }
     }
 } finally { $zip.Dispose() }

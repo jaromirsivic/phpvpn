@@ -76,7 +76,7 @@ root_up() {
     sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" \
         -e "s|^LISTEN_HOST = '127.0.0.1'|LISTEN_HOST = '$relay_ip'|" \
         -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = $relay_port|" \
-        "$repository/phpvpn.py" > "$work/relay/phpvpn.py"
+        "$repository/server/python/phpvpn.py" > "$work/relay/phpvpn.py"
     sudo ip netns exec $ns_relay setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
         "$python_server" -B "$work/relay/phpvpn.py" > "$work/relay/relay.log" 2>&1 &
     echo $! > "$work/relay.pid"

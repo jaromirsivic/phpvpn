@@ -84,7 +84,7 @@ if ($argv[3] === 'sweep') {
 }
 }
 """, encoding="utf-8")
-        command = [args.php, str(script), str(repository / "phpvpn.php"), str(root / "buffer")]
+        command = [args.php, str(script), str(repository / "server/php/phpvpn.php"), str(root / "buffer")]
         subprocess.run(command + ["1", "1700000000"], check=True, capture_output=True)
         processes = [subprocess.Popen(command + ["250", str(base)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                      for base in (1700000100, 1700000500)]

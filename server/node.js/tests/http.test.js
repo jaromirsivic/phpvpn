@@ -64,7 +64,7 @@ test('status page: warning only for predictable secrets, HEAD without body, can 
 });
 
 test('status page: embedded template matches the shared mockup', () => {
-    const mockup = fs.readFileSync(path.join(__dirname, '..', 'assets', 'index.html'), 'utf8').replace(/\r?\n$/, '');
+    const mockup = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'assets', 'index.html'), 'utf8').replace(/\r?\n$/, '');
     assert.equal(relay.STATUS_HTML, mockup);
 });
 

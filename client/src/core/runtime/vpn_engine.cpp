@@ -131,6 +131,48 @@ VpnEngine::Command VpnEngine::takeCommand(std::int64_t waitMs) {
     return command;
 }
 
+VpnEngine::Command VpnEngine::waitForNextPoll(std::int64_t deadlineMs, std::int64_t shortIntervalMs) {
+    std::unique_lock<std::mutex> lock(commandMutex_);
+    if (outboundQueuedAtMs_) {
+        deadlineMs = shortenedPollDeadlineMs(deadlineMs, *outboundQueuedAtMs_, shortIntervalMs);
+        outboundQueuedAtMs_.reset();
+    }
+    pollDeadlineMs_ = deadlineMs;
+    pollShortIntervalMs_ = shortIntervalMs;
+    while (commands_.empty()) {
+        const std::int64_t deadline = *pollDeadlineMs_;
+        const std::int64_t now = clock_.monotonicMs();
+        if (deadline <= now) break;
+        // Each wait is bounded in real time, so only a shortened deadline
+        // starts another one.
+        const bool woken = commandSignal_.wait_for(lock, std::chrono::milliseconds(deadline - now),
+            [this, deadline] { return !commands_.empty() || *pollDeadlineMs_ != deadline; });
+        if (!woken) break;
+    }
+    pollDeadlineMs_.reset();
+    if (commands_.empty()) {
+        return Command::none;
+    }
+    const Command command = commands_.front();
+    commands_.pop_front();
+    return command;
+}
+
+void VpnEngine::onOutboundPacketQueued() {
+    {
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        const std::int64_t now = clock_.monotonicMs();
+        if (!pollDeadlineMs_) {
+            if (!outboundQueuedAtMs_) outboundQueuedAtMs_ = now;
+            return;
+        }
+        const std::int64_t shortened = shortenedPollDeadlineMs(*pollDeadlineMs_, now, pollShortIntervalMs_);
+        if (shortened == *pollDeadlineMs_) return;
+        pollDeadlineMs_ = shortened;
+    }
+    commandSignal_.notify_all();
+}
+
 Result<std::string> VpnEngine::storedConfigJson() const {
     auto snapshot = configStore_.read();
     if (!snapshot) return snapshot.error();
@@ -514,7 +556,8 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
 
     try {
         inputWorker_ = std::make_unique<TunnelInputWorker>(config, tunnelSession_.tunnel(), *outbound_,
-                                                           outboundDrops_, tunnelCounters_);
+                                                           outboundDrops_, tunnelCounters_,
+                                                           [this] { onOutboundPacketQueued(); });
         outputWorker_ = std::make_unique<TunnelOutputWorker>(tunnelSession_.tunnel(), *inbound_,
                                                              inboundDrops_, tunnelCounters_);
         inputWorker_->start();
@@ -532,6 +575,11 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
 }
 
 std::int64_t VpnEngine::runConnectedIteration() {
+    {
+        // This request plans every packet queued so far.
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        outboundQueuedAtMs_.reset();
+    }
     auto outcome = network_.exchangeData(*outbound_, *inbound_, outboundDrops_, inboundDrops_,
                                          /*allowSending=*/true);
     if (!outcome.ok()) {
@@ -813,7 +861,7 @@ void VpnEngine::runNetworkThread() {
                 duration, std::numeric_limits<std::int64_t>::max()));
             const std::int64_t remaining = delay > elapsed ? delay - elapsed : 0;
             if (remaining > 0) {
-                const Command queued = takeCommand(remaining);
+                const Command queued = waitForNextPoll(finished + remaining, network_.minPollIntervalMs());
                 if (queued == Command::stop) {
                     break;
                 }

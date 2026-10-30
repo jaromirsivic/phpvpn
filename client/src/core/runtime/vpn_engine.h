@@ -124,6 +124,10 @@ private:
     Status connectWithGeneration(std::uint64_t generation, std::optional<std::uint64_t> startupEpoch = {});
     void pushCommand(Command command);
     Command takeCommand(std::int64_t waitMs);
+    // Waits until the next `data` request is due, a command arrives first, or
+    // a newly queued outbound packet shortened the wait to the short interval.
+    Command waitForNextPoll(std::int64_t deadlineMs, std::int64_t shortIntervalMs);
+    void onOutboundPacketQueued();
 
     Status runConnectSequence(bool initialBootstrap, std::optional<HttpDiagnostic>* failedDiagnostic = nullptr,
         bool* rejectedResponse = nullptr);
@@ -215,6 +219,12 @@ private:
     mutable std::mutex commandMutex_;
     std::condition_variable commandSignal_;
     std::deque<Command> commands_;
+    // Guarded by commandMutex_. The deadline exists only while the network
+    // thread waits for the next poll; a packet queued while a request is in
+    // flight is remembered and applied once that wait begins.
+    std::optional<std::int64_t> pollDeadlineMs_;
+    std::int64_t pollShortIntervalMs_ = 0;
+    std::optional<std::int64_t> outboundQueuedAtMs_;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> connectRequested_{false};

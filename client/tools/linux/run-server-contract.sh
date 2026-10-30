@@ -8,7 +8,7 @@
 #
 # php (default) serves a fresh copy of phpvpn.php with the PHP built-in server,
 # exactly like the Windows fixture. python runs a fresh copy of phpvpn.py with
-# memory storage; it needs the locked requirements-server.txt environment, given
+# memory storage; it needs the locked server/python/requirements-server.txt environment, given
 # by PHPVPN_SERVER_PYTHON (default: python3). The relay listens on
 # 127.0.0.1:${PHPVPN_CONTRACT_PORT:-18093}, lives in a temporary directory under
 # work/ and is stopped and removed afterwards. An occupied port, an unavailable
@@ -52,7 +52,7 @@ if [ "$relay" = php ]; then
     # The shipped header already is the wizard-default profile; only the
     # buffer moves out of the web root.
     sed "s|^const BUFFER_DIRECTORY = './phpvpn_data';|const BUFFER_DIRECTORY = '$fixture/buffer';|" \
-        "$repository/phpvpn.php" > "$fixture/www/phpvpn.php"
+        "$repository/server/php/phpvpn.php" > "$fixture/www/phpvpn.php"
     grep -q "^const BUFFER_DIRECTORY = '$fixture/buffer';" "$fixture/www/phpvpn.php"
     grep -q "^const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';" "$fixture/www/phpvpn.php"
     PHP_CLI_SERVER_WORKERS=4 php -S "127.0.0.1:$port" -t "$fixture/www" > "$fixture/relay.log" 2>&1 &
@@ -61,7 +61,7 @@ else
     python=${PHPVPN_SERVER_PYTHON:-python3}
     sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" \
         -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = $port|" \
-        "$repository/phpvpn.py" > "$fixture/www/phpvpn.py"
+        "$repository/server/python/phpvpn.py" > "$fixture/www/phpvpn.py"
     grep -q "^LISTEN_PORT = $port" "$fixture/www/phpvpn.py"
     grep -q "^SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET'" "$fixture/www/phpvpn.py"
     "$python" -B "$fixture/www/phpvpn.py" > "$fixture/relay.log" 2>&1 &

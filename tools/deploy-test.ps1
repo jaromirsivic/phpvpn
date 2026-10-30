@@ -52,7 +52,7 @@ if ($Profile -eq 'wizard-default') {
     $keys = [ordered]@{}
     foreach ($octet in 2..15) { $keys["10.99.99.$octet"] = ('{0:x2}' -f $octet) * 32 }
 }
-$source = Join-Path $repository 'phpvpn.php'
+$source = Join-Path $repository 'server/php/phpvpn.php'
 $content = [System.IO.File]::ReadAllText($source).Replace("`r`n", "`n")
 function Replace-ExactlyOnce {
     param([string]$Text, [string]$Expected, [string]$Replacement, [string]$Label)

@@ -15,7 +15,7 @@
  *   node phpvpn.js --offline-recovery [...]  remove stale locks after a crash,
  *                                            only while every server is stopped
  *
- * Supported runtime: Node.js 24 LTS. See server-node.md.
+ * Supported runtime: Node.js 24 LTS. See README.md.
  */
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ const DEFAULT_CONFIG = Object.freeze({
     // true adds fsync before publication. Atomic publication survives a process
     // crash either way; fsync only adds protection against power loss.
     SYNC_WRITES: false,
-    // HTTP listener. Terminate HTTPS in a reverse proxy, see server-node.md.
+    // HTTP listener. Terminate HTTPS in a reverse proxy, see README.md.
     LISTEN_HOST: '127.0.0.1',
     LISTEN_PORT: 8080,
     SERVER_PATH: '/phpvpn.php',
@@ -759,7 +759,7 @@ class DiskStorage {
     /**
      * Cross-process per-destination lock: atomic mkdir of a dedicated directory,
      * single owner, released in finally. A lock is never stolen by age; a lock
-     * orphaned by a hard crash needs offline recovery (server-node.md).
+     * orphaned by a hard crash needs offline recovery (README.md).
      */
     async withQueueLock(address, directory, action) {
         const deadline = performance.now() + this.cfg.LOCK_TIMEOUT_MS;

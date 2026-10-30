@@ -39,7 +39,7 @@ Zahrň alespoň:
 - Všechny vlastní zdrojové kódy klienta a serverů, hlavičky, potřebné prostředky, konfigurace sestavení, generátory, šablony, schémata a přenositelné ukázkové konfigurace.
 - Testy a bezpečná testovací data potřebná k ověření distribuovaného projektu.
 - Build, balicí, instalační a ověřovací skripty včetně všech helperů a šablon. Aktuálně mezi ně patří zejména `tools/make-distribution.ps1`, `tools/verify-distribution.ps1`, `tools/distribution-common.ps1`, `client/tools/` a `client/packaging/`. Podmínky zákazu binárek a kontroly lokálních vazeb platí i uvnitř těchto adresářů.
-- Vstupy i lock soubory závislostí, například `requirements-server.in` a `requirements-server.txt`. Potřebné `.gitattributes`, `.gitignore` a další přenositelné skryté konfigurační soubory zachovej.
+- Vstupy i lock soubory závislostí, například `server/python/requirements-server.in` a `server/python/requirements-server.txt`. Potřebné `.gitattributes`, `.gitignore` a další přenositelné skryté konfigurační soubory zachovej.
 - Tento dokument a návod pro vytvoření binární distribuce. Pokud projekt má automatizaci zdrojové distribuce, zahrň její zdrojový skript, helpery, pravidla výběru a validátor. Nesmějí existovat pouze na stroji původního autora nebo odkazovat na nedodaný lokální nástroj.
 - Dokumentaci sestavení, testování, získání externích závislostí a omezení podpory platforem.
 
@@ -50,7 +50,7 @@ Zahrň alespoň:
 | `protocol.md` | Úplná aktuální specifikace protokolu. |
 | `client.md` | Úplný aktuální popis klienta. |
 | `tray_ux.md` | Logický název dokumentace tray UX. V aktuálním repozitáři se soubor jmenuje `tray_UX.md`. Zachovej skutečné psaní názvu i shodné odkazy, nevytvářej druhou kopii lišící se pouze velikostí písmen. |
-| Všechny serverové návody | Rekurzivně vyhledej bez rozlišení velikosti písmen alespoň `server.md`, `server-*.md` a `server_*.md`. Zahrň i další dokumenty popisující jednotlivé servery, pokud mají jiné názvy. Aktuálně sem patří `server-node.md` a `server-python.md`. |
+| Všechny serverové návody | Rekurzivně vyhledej bez rozlišení velikosti písmen alespoň `server.md`, `server-*.md` a `server_*.md`. Zahrň i další dokumenty popisující jednotlivé servery, pokud mají jiné názvy. Aktuálně sem patří anglická `README.md` ve složkách `server/php`, `server/python`, `server/node.js` a `server/wordpress` a vývojářský `server/wordpress/version7/README.md`. |
 | `readme.txt` | Povinný soubor v kořeni výsledku, který srozumitelně popisuje zdrojovou distribuci. |
 | `LICENSE` | Povinný kořenový soubor s úplným textem MIT licence pro vlastní projekt při splnění licenční kontroly níže. |
 

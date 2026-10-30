@@ -3,7 +3,7 @@
 /**
  * phpvpn v1 server test suite. CLI only, never deployed with the server.
  *
- * Usage: php tests.php
+ * Usage: php server/php/tests/tests.php
  */
 
 declare(strict_types=1);
@@ -31,7 +31,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 define('PHPVPN_NO_AUTORUN', true);
-require __DIR__ . '/phpvpn.php';
+require dirname(__DIR__) . '/phpvpn.php';
 
 // ---------------------------------------------------------------------------
 // Minimal test framework
@@ -634,7 +634,7 @@ $runner->run('Insecure secret warning', function (Runner $t): void {
 });
 
 $runner->run('Embedded status template and complete warning removal', function (Runner $t): void {
-    $mockup = trim((string) file_get_contents(__DIR__ . '/assets/index.html'));
+    $mockup = trim((string) file_get_contents(dirname(__DIR__, 3) . '/assets/index.html'));
     foreach ([true, false] as $insecure) {
         $writer = new BufferedResponseWriter();
         (new \PhpVpn\StatusPageHandler())->handle($writer, $insecure, []);

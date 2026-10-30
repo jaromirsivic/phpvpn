@@ -19,12 +19,12 @@ Python/memory. HTTP header names are compared case-insensitively, as required
 by HTTP. The optional fixture fields `implementation` and `storageDriver`
 default to `php` and `disk` for older deployment descriptions.
 
-Prepare a Python 3.13 uv environment with `requirements-server.txt`, then add
+Prepare a Python 3.13 uv environment with `server/python/requirements-server.txt`, then add
 `pytest`, `requests` and `psutil` using `uv pip install`. Run:
 
 ```powershell
 uv run --no-project python tools/test-python-server.py --profiles php-disk python-disk python-memory --report-dir reports/python-server -- -q
-uv run --no-project python -B -m pytest tests-python -q
+uv run --no-project python -B -m pytest server/python/tests -q
 ```
 
 The runner owns isolated copies, ports, processes and buffer directories. PHP
@@ -40,7 +40,7 @@ HTTP expectations. The contention test may skip when a healthy deployment
 never emits 503. Python's separate fault tests deterministically exercise
 queue_busy, queue_unavailable and server_misconfigured, including headers.
 
-`tests-python` additionally covers exact millisecond boundaries, predictable
+`server/python/tests` additionally covers exact millisecond boundaries, predictable
 and Unicode secrets, whole-group publication, filesystem failures, cancellation,
 Windows marker replacement, single-worker process launch, restart and HTTPS
 through a test TLS proxy. A private CA is passed only to the test HTTP session,
@@ -49,7 +49,7 @@ coverage gaps of the deployed-only suite described below.
 
 The real C++ client contract can run on the same fixtures using
 `--contract-executable work/build/release/tests/phpvpn-contract-tests.exe`.
-Use `--contract-only` to run it without pytest. See [the server guide](../server-python.md)
+Use `--contract-only` to run it without pytest. See [the Python server guide](../server/python/README.md)
 for supported deployment and memory limitations.
 
 ### Node.js disk fixture
@@ -64,9 +64,9 @@ uv run --no-project --python 3.13 --with pytest --with requests --with cryptogra
 ```
 
 The profile gets no memory skips. Its deterministic counterparts live in
-`tests-node` (`node --test "tests-node/*.test.js"`): known answers of the Node functions,
+`server/node.js/tests` (`node --test "server/node.js/tests/*.test.js"`): known answers of the Node functions,
 strict parsers, faults, queue_busy versus queue_unavailable, two processes on
-one root, hard kill and offline lock recovery. See [the Node guide](../server-node.md).
+one root, hard kill and offline lock recovery. See [the Node guide](../server/node.js/README.md).
 
 Python integration tests for the deployed phpvpn v1 relay. The suite talks to a
 running server over real HTTP and verifies the normative requirements of
@@ -118,7 +118,7 @@ anything other than exactly one expected secret, key-map and buffer block.
   `<testServer.directory>/conf`, so no file of the nginx installation is used.
   The stop script ends only the processes the start script recorded; other
   nginx or PHP processes of the machine stay untouched.
-- After changing `phpvpn.php`, redeploy with
+- After changing `server/php/phpvpn.php`, redeploy with
   `powershell -ExecutionPolicy Bypass -File tools\deploy-test.ps1`.
 - `curl.exe -s -i "http://127.0.0.1:18080/phpvpn.php"` (`testServer.nginxListen`)
   returns the HTML status page.
@@ -216,7 +216,7 @@ Run `uv run --python 3.13 python tools/test-status-variants.py` for four isolate
 `test_info_extensions.py` independently signs full-auth info extensions. It
 checks A/B/C/D privacy, include-only reads, empty publication, signed optional
 presence, wrong credentials/domain, replay-window semantics and body limits.
-`tests-info-extensions.php` runs with `tests.php` and checks duplicate JSON members,
+`server/php/tests/tests-info-extensions.php` runs with `server/php/tests/tests.php` and checks duplicate JSON members,
 stored corruption, 252/253 records and temp-file cleanup. Run real storage races
 and write/partial-write/flush fault injection, interrupted-writer cleanup and a
 forced Windows rename failure without changing a deployment:
@@ -232,4 +232,4 @@ rename succeeds. The HTTP handler reports failed publication as 503.
 
 ## Pretty info plaintext
 
-`decrypt_info_bytes` returns the exact AESGCM-authenticated bytes. Info size assertions measure these bytes and never recompact a DOM. Standard and extended replies check pretty whitespace. Run `php tests-info-pretty-boundaries.php` for isolated fresh-process exact-limit, one-byte overflow, deterministic trimming, oversized-base and serialization-failure checks against the production builder. Its reduced test constants do not modify the deployed source or production limit. Pass `--large-body-url` explicitly when using an isolated fixture.
+`decrypt_info_bytes` returns the exact AESGCM-authenticated bytes. Info size assertions measure these bytes and never recompact a DOM. Standard and extended replies check pretty whitespace. Run `php server/php/tests/tests-info-pretty-boundaries.php` for isolated fresh-process exact-limit, one-byte overflow, deterministic trimming, oversized-base and serialization-failure checks against the production builder. Its reduced test constants do not modify the deployed source or production limit. Pass `--large-body-url` explicitly when using an isolated fixture.

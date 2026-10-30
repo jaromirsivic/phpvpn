@@ -204,7 +204,7 @@ final class Admin {
 	private static function render_connection( array $settings ): void {
 		$url = Settings::endpoint_url( $settings );
 		?>
-		<?php self::form_start( 'save', 'vpn-server-settings' ); ?>
+		<?php self::form_start( 'save', 'vpn-server-settings vpn-server-track' ); ?>
 		<section class="vpn-server-card">
 			<h2><?php echo esc_html__( 'Connection', 'vpn-server' ); ?></h2>
 			<div class="vpn-server-field">
@@ -379,13 +379,13 @@ final class Admin {
 		?>
 		<section class="vpn-server-card">
 			<h2><?php echo esc_html__( 'Storage protection', 'vpn-server' ); ?></h2>
-			<?php self::form_start( 'storage' ); ?>
+			<?php self::form_start( 'storage', 'vpn-server-track' ); ?>
 			<div class="vpn-server-field">
 				<label class="vpn-server-label" for="vpn-server-storage"><?php echo esc_html__( 'Storage folder', 'vpn-server' ); ?></label>
 				<div class="vpn-server-control">
 					<div class="vpn-server-line">
 						<input type="text" id="vpn-server-storage" name="storage" class="code vpn-server-wide" spellcheck="false" value="<?php echo esc_attr( $settings['storage'] ); ?>">
-						<button type="submit" class="button" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Change Folder', 'vpn-server' ); ?></button>
+						<button type="submit" class="button button-primary" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Change Folder', 'vpn-server' ); ?></button>
 					</div>
 					<p class="description"><?php echo esc_html__( 'Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds.', 'vpn-server' ); ?></p>
 				</div>

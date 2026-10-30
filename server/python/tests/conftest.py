@@ -7,8 +7,9 @@ import sys
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+SERVER = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(SERVER))
 sys.path.insert(0, str(ROOT / 'tests-integration'))
 sys.path.insert(0, str(ROOT / 'tools'))
 
