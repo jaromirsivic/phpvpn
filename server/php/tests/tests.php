@@ -452,6 +452,27 @@ $runner->run('SERVER_SECRET normalization', function (Runner $t): void {
     $t->ok(!Config::fromConstants()->withSecret('real-secret')->isInsecureSecret(), 'real secret is secure');
 });
 
+$runner->run('Poll intervals of an embedding host reach info', function (Runner $t): void {
+    $defaults = Config::fromConstants();
+    $t->same(\PhpVpn\MIN_DATA_POLL_INTERVAL_MS, $defaults->minDataPollIntervalMs, 'standalone minimum from the constant');
+    $t->same(\PhpVpn\MAX_DATA_POLL_INTERVAL_MS, $defaults->maxDataPollIntervalMs, 'standalone maximum from the constant');
+    $config = Config::fromValues('a real secret', [], sys_get_temp_dir() . '/phpvpn-poll-unused', 30, 600)
+        ->withSecret('another secret')->withAccessKeys([])->withBufferDirectory(sys_get_temp_dir() . '/phpvpn-poll-other');
+    $t->same([30, 600], [$config->minDataPollIntervalMs, $config->maxDataPollIntervalMs], 'kept by the with methods');
+    $handler = new \PhpVpn\InfoHandler($config, new \PhpVpn\Clock(1789300800000), new \PhpVpn\DiskStorage($config->bufferDirectory));
+    $plain = (new \ReflectionMethod($handler, 'buildPlaintext'))->invoke($handler, null);
+    $limits = json_decode((string) $plain, true)['limits'];
+    $t->same([30, 600], [$limits['minDataPollIntervalMs'], $limits['maxDataPollIntervalMs']], 'published by info');
+    foreach ([[0, 600], [700, 600]] as [$min, $max]) {
+        try {
+            Config::fromValues('a real secret', [], sys_get_temp_dir(), $min, $max);
+            $t->ok(false, "rejects $min..$max");
+        } catch (\PhpVpn\ConfigException) {
+            $t->ok(true, "rejects $min..$max");
+        }
+    }
+});
+
 // --- 2. Wire format --------------------------------------------------------
 
 $runner->group('Wire format');

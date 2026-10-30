@@ -50,7 +50,7 @@ provider before you run the plugin on shared hosting.
    Wizard.
 4. Set up the communication contracts and payload keys between the clients in the clients
    themselves. Payload keys never reach the server.
-5. On nginx add the rule shown under Storage configuration in the settings, then press Run self
+5. On nginx add the rule shown under Main Configuration in the settings, then press Run self
    test.
 
 The Server URL is a plain path such as `https://example.com/vpn-server/`, without a `.php` file
@@ -59,7 +59,7 @@ page with a select box of client downloads, setup instructions and the request h
 Wizard can reuse. A key generator is shown only when the server secret is predictable. An
 administrator must save the new secret in Settings, VPN Server. The page can be turned off in the settings.
 
-The separate **Client downloads** section below the complete Clients section lists the entries of
+The separate **Client App Download Links** section below the complete Clients section lists the entries of
 the select box on the status page, the `CLIENT_DOWNLOADS` of the standalone servers. Every row has a
 name, an absolute HTTP or HTTPS URL, the type File (Download button) or Link (Open button, new tab)
 and the operating system for which the status page preselects the entry. **Add Download** adds a
@@ -76,6 +76,16 @@ Client messages are encrypted end to end between the clients and wait in the sto
 at most 60 seconds. The folder is protected by generated `.htaccess` and `web.config` files.
 nginx ignores them and needs the rule shown in the settings. The settings can also move the
 folder outside the web root.
+
+## Poll intervals
+
+The clients ask the Server URL for new messages in an interval between the minimum and the maximum
+that the server publishes in its `info` response. **Min Data Poll Interval** (25 to 500 ms) is
+used while packets flow, **Max Data Poll Interval** (500 to 5000 ms) is the longest wait of an idle
+client. Both are set under **Main Configuration** and saved with their own **Save Changes** button.
+The defaults are `MIN_DATA_POLL_INTERVAL_MS` and `MAX_DATA_POLL_INTERVAL_MS` of `phpvpn.php`;
+`tools/build-wordpress-plugin.py` copies them into `includes/class-settings.php`, and its `--check`
+fails when they differ or fall outside these ranges.
 
 ## Fast route
 

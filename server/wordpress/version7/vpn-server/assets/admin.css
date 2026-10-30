@@ -112,9 +112,10 @@
 	border-top: 1px solid var(--vs-line);
 }
 
+/* The first row under a heading or lead has no separator, also when a form with hidden fields wraps it. */
 .vpn-server .vpn-server-card h2 + .vpn-server-field,
 .vpn-server .vpn-server-lead + .vpn-server-field,
-.vpn-server form > .vpn-server-field:first-of-type {
+.vpn-server .vpn-server-card h2 + form > .vpn-server-field:first-of-type {
 	border-top: 0;
 	padding-top: 0;
 }
@@ -140,6 +141,7 @@
 
 .vpn-server input[type="text"],
 .vpn-server input[type="url"],
+.vpn-server input[type="number"],
 .vpn-server select {
 	min-height: var(--vs-height);
 	margin: 0;
@@ -157,6 +159,7 @@
 
 .vpn-server input[type="text"]:focus,
 .vpn-server input[type="url"]:focus,
+.vpn-server input[type="number"]:focus,
 .vpn-server select:focus,
 .vpn-server .vpn-server-group:focus-within {
 	border-color: var(--vs-accent);
@@ -173,6 +176,15 @@
 .vpn-server .vpn-server-group {
 	flex: 1 1 320px;
 	max-width: var(--vs-field-width);
+}
+
+/* Poll intervals: a short number field followed by its unit */
+.vpn-server .vpn-server-number {
+	width: 8em;
+}
+
+.vpn-server .vpn-server-unit {
+	color: var(--vs-muted);
 }
 
 .vpn-server .code {
@@ -266,6 +278,11 @@
 
 .vpn-server .vpn-server-submit {
 	margin: -4px 0 28px;
+}
+
+/* A button row that closes a card needs no space below it. */
+.vpn-server .vpn-server-card > form:last-child > .vpn-server-submit:last-child {
+	margin-bottom: 0;
 }
 
 .vpn-server form {
@@ -424,6 +441,10 @@
 	background: #1d2327;
 	border-radius: var(--vs-radius);
 	color: #f0f0f1;
+}
+
+.vpn-server .vpn-server-control .vpn-server-snippet {
+	margin-top: 6px;
 }
 
 .vpn-server .vpn-server-snippet code {

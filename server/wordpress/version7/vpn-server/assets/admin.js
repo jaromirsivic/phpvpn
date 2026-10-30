@@ -80,7 +80,7 @@
 			if ( 'select-one' === field.type ) {
 				return selectChanged( field );
 			}
-			return ( 'text' === field.type || 'url' === field.type ) && changed( field );
+			return ( 'text' === field.type || 'url' === field.type || 'number' === field.type ) && changed( field );
 		} );
 		form.querySelectorAll( '[type="submit"]' ).forEach( function ( button ) {
 			button.disabled = ! dirty;

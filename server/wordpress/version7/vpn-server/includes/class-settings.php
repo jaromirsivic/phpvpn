@@ -70,13 +70,24 @@ final class Settings {
 	/** Longest entry name in characters. */
 	const MAX_DOWNLOAD_NAME_LENGTH = 100;
 
+	/**
+	 * Default poll intervals in milliseconds, the MIN_DATA_POLL_INTERVAL_MS and MAX_DATA_POLL_INTERVAL_MS
+	 * of phpvpn.php. tools/build-wordpress-plugin.py copies them from phpvpn.php and checks them.
+	 */
+	const DEFAULT_MIN_DATA_POLL_INTERVAL_MS = 50;
+	const DEFAULT_MAX_DATA_POLL_INTERVAL_MS = 3200;
+
+	/** Lowest and highest poll intervals in milliseconds that the settings accept. */
+	const MIN_DATA_POLL_INTERVAL_RANGE = array( 25, 500 );
+	const MAX_DATA_POLL_INTERVAL_RANGE = array( 500, 5000 );
+
 	/** Storage folders the plugin creates itself, the only ones uninstall removes. */
 	const MANAGED_STORAGE_PATTERN = '/^vpn-server-[0-9a-f]{16}$/';
 
 	/**
 	 * Current settings with defaults for missing or malformed members.
 	 *
-	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_downloads: list<array{name: string, url: string, type: string, os: string}>}
+	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_downloads: list<array{name: string, url: string, type: string, os: string}>, min_data_poll_interval_ms: int, max_data_poll_interval_ms: int}
 	 */
 	public static function get(): array {
 		$stored = get_option( self::OPTION );
@@ -96,7 +107,7 @@ final class Settings {
 	 * Keeps only known members of the expected types.
 	 *
 	 * @param array<mixed, mixed> $values Raw option value.
-	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_downloads: list<array{name: string, url: string, type: string, os: string}>}
+	 * @return array{secret: string, access_keys: array<string, string>, endpoint: string, storage: string, storage_managed: bool, status_page: bool, client_downloads: list<array{name: string, url: string, type: string, os: string}>, min_data_poll_interval_ms: int, max_data_poll_interval_ms: int}
 	 */
 	public static function normalize( array $values ): array {
 		$keys = array();
@@ -132,14 +143,30 @@ final class Settings {
 			}
 		}
 		return array(
-			'secret'               => isset( $values['secret'] ) && is_string( $values['secret'] ) ? $values['secret'] : '',
-			'access_keys'          => $keys,
-			'endpoint'             => '' === $endpoint ? self::DEFAULT_ENDPOINT : $endpoint,
-			'storage'              => isset( $values['storage'] ) && is_string( $values['storage'] ) ? $values['storage'] : '',
-			'storage_managed'      => ! empty( $values['storage_managed'] ),
-			'status_page'          => ! isset( $values['status_page'] ) || (bool) $values['status_page'],
-			'client_downloads'     => $downloads,
+			'secret'                    => isset( $values['secret'] ) && is_string( $values['secret'] ) ? $values['secret'] : '',
+			'access_keys'               => $keys,
+			'endpoint'                  => '' === $endpoint ? self::DEFAULT_ENDPOINT : $endpoint,
+			'storage'                   => isset( $values['storage'] ) && is_string( $values['storage'] ) ? $values['storage'] : '',
+			'storage_managed'           => ! empty( $values['storage_managed'] ),
+			'status_page'               => ! isset( $values['status_page'] ) || (bool) $values['status_page'],
+			'client_downloads'          => $downloads,
+			'min_data_poll_interval_ms' => self::poll_interval( $values['min_data_poll_interval_ms'] ?? null, self::MIN_DATA_POLL_INTERVAL_RANGE ) ?? self::DEFAULT_MIN_DATA_POLL_INTERVAL_MS,
+			'max_data_poll_interval_ms' => self::poll_interval( $values['max_data_poll_interval_ms'] ?? null, self::MAX_DATA_POLL_INTERVAL_RANGE ) ?? self::DEFAULT_MAX_DATA_POLL_INTERVAL_MS,
 		);
+	}
+
+	/**
+	 * Validates a poll interval in milliseconds.
+	 *
+	 * @param mixed $value Integer or string of decimal digits.
+	 * @param int[] $range Lowest and highest accepted value.
+	 * @return int|null Null when the value is not a whole number inside the range.
+	 */
+	public static function poll_interval( $value, array $range ): ?int {
+		if ( is_string( $value ) && preg_match( '/^[0-9]{1,9}$/', trim( $value ) ) ) {
+			$value = (int) trim( $value );
+		}
+		return is_int( $value ) && $value >= $range[0] && $value <= $range[1] ? $value : null;
 	}
 
 	/**

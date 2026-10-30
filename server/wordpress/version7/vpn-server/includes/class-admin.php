@@ -32,6 +32,7 @@ final class Admin {
 		'save'           => 'handle_save',
 		'downloads'      => 'handle_downloads',
 		'storage'        => 'handle_storage',
+		'poll'           => 'handle_poll',
 		'add_client'     => 'handle_add_client',
 		'set_key'        => 'handle_set_key',
 		'default_key'    => 'handle_default_key',
@@ -160,6 +161,17 @@ final class Admin {
 			'fast_route_off'     => array( 'success', __( 'The fast route is removed.', 'vpn-server' ) ),
 			'self_test'          => array( 'info', __( 'The self test finished, see Checks below.', 'vpn-server' ) ),
 			'bad_endpoint'       => array( 'error', __( 'The path of the Server URL is empty or reserved by WordPress.', 'vpn-server' ) ),
+			'bad_poll_interval'  => array(
+				'error',
+				sprintf(
+					/* translators: 1: lowest, 2: highest Min Data Poll Interval, 3: lowest, 4: highest Max Data Poll Interval, all in milliseconds. */
+					__( 'The Min Data Poll Interval must be a whole number from %1$d to %2$d ms and the Max Data Poll Interval from %3$d to %4$d ms.', 'vpn-server' ),
+					Settings::MIN_DATA_POLL_INTERVAL_RANGE[0],
+					Settings::MIN_DATA_POLL_INTERVAL_RANGE[1],
+					Settings::MAX_DATA_POLL_INTERVAL_RANGE[0],
+					Settings::MAX_DATA_POLL_INTERVAL_RANGE[1]
+				),
+			),
 			'bad_download_url'   => array( 'error', __( 'Each client download needs a name of at most 100 characters, an absolute HTTP or HTTPS URL, a type and a system from the lists. At most 20 downloads can be saved.', 'vpn-server' ) ),
 			'bad_storage'        => array( 'error', __( 'The storage folder must be an absolute path to a dedicated folder that WordPress can create and write. It cannot be the site root, wp-content, the uploads folder itself, a folder that contains the site, or a folder inside the plugins, themes, wp-admin or wp-includes folders.', 'vpn-server' ) ),
 			'network_only'       => array( 'error', __( 'On a multisite network only a super admin can install the fast route or move the storage folder outside the uploads folder.', 'vpn-server' ) ),
@@ -256,7 +268,7 @@ final class Admin {
 			</div>
 		</section>
 		<p class="vpn-server-submit">
-			<button type="submit" class="button button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'The Server URL or the server secret changed. All clients stop working until they get the new value. Save the changes?', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button>
+			<button type="submit" class="button button-primary" data-vpn-server-confirm-change="<?php echo esc_attr__( 'The server URL or server secret has changed. All clients will stop working until they are updated with the new value. Do you want to save these changes?', 'vpn-server' ); ?>"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button>
 		</p>
 		</form>
 		<?php
@@ -373,7 +385,7 @@ final class Admin {
 	}
 
 	/**
-	 * Client downloads, in a separate section below the complete client list: the entries of the select
+	 * Client App Download Links, in a separate section below the complete client list: the entries of the select
 	 * box on the status page, in this order. Add Download copies the template row; without JavaScript
 	 * one spare empty row is shown instead. A row with an empty name and URL is not saved.
 	 *
@@ -390,7 +402,7 @@ final class Admin {
 		$rows   = $settings['client_downloads'];
 		?>
 		<section class="vpn-server-card">
-			<h2><?php echo esc_html__( 'Client downloads', 'vpn-server' ); ?></h2>
+			<h2><?php echo esc_html__( 'Client App Download Links', 'vpn-server' ); ?></h2>
 			<p class="vpn-server-lead"><?php echo esc_html__( 'These entries are offered in the select box of the public status page, in this order. A file shows a Download button, a link shows an Open button that opens the URL in a new tab. The status page preselects the entry for the operating system of the visitor. A row with an empty name and URL is not saved.', 'vpn-server' ); ?></p>
 			<?php self::form_start( 'downloads', 'vpn-server-track' ); ?>
 			<div class="vpn-server-table-wrap">
@@ -479,8 +491,9 @@ final class Admin {
 	}
 
 	/**
-	 * Storage type, storage folder, its protection and the nginx rule. Disk is the only storage type so
-	 * far, the other types are listed disabled and the select box is not posted.
+	 * Main Configuration: storage type, storage folder with its protection and the nginx rule, and the
+	 * poll intervals. Disk is the only storage type so far, the other types are listed disabled and the
+	 * select box is not posted. The folder and the poll intervals are saved by separate forms.
 	 *
 	 * @param array<string, mixed> $settings Current settings.
 	 */
@@ -488,7 +501,7 @@ final class Admin {
 		$location = self::storage_url_path( $settings );
 		?>
 		<section class="vpn-server-card">
-			<h2><?php echo esc_html__( 'Storage configuration', 'vpn-server' ); ?></h2>
+			<h2><?php echo esc_html__( 'Main Configuration', 'vpn-server' ); ?></h2>
 			<?php self::form_start( 'storage', 'vpn-server-track' ); ?>
 			<div class="vpn-server-field">
 				<label class="vpn-server-label" for="vpn-server-storage-type"><?php echo esc_html__( 'Storage type', 'vpn-server' ); ?></label>
@@ -511,16 +524,62 @@ final class Admin {
 						<button type="submit" class="button button-primary" data-vpn-server-confirm="<?php echo esc_attr__( 'Change the storage folder? Queued messages are not moved, and the folder that the plugin created is deleted.', 'vpn-server' ); ?>"><?php echo esc_html__( 'Change Folder', 'vpn-server' ); ?></button>
 					</div>
 					<p class="description"><?php echo esc_html__( 'Absolute path of the message queues. A folder outside the web root is the safest choice. Queued messages are not moved when the folder changes, they expire within 60 seconds.', 'vpn-server' ); ?></p>
+					<?php if ( null === $location ) : ?>
+						<p class="description"><?php echo esc_html__( 'The storage folder is outside the uploads folder. Make sure the web server does not serve it.', 'vpn-server' ); ?></p>
+					<?php else : ?>
+						<p class="description"><?php echo esc_html__( 'The storage folder is inside the uploads folder. Apache and IIS are protected by the .htaccess and web.config files that the plugin writes there. On nginx add this rule to the server block and reload nginx:', 'vpn-server' ); ?></p>
+						<pre class="vpn-server-snippet"><code><?php echo esc_html( 'location ^~ ' . $location . ' { deny all; return 404; }' ); ?></code></pre>
+					<?php endif; ?>
 				</div>
 			</div>
 			</form>
-			<?php if ( null === $location ) : ?>
-				<p class="vpn-server-lead"><?php echo esc_html__( 'The storage folder is outside the uploads folder. Make sure the web server does not serve it.', 'vpn-server' ); ?></p>
-			<?php else : ?>
-				<p class="vpn-server-lead"><?php echo esc_html__( 'The storage folder is inside the uploads folder. Apache and IIS are protected by the .htaccess and web.config files that the plugin writes there. On nginx add this rule to the server block and reload nginx:', 'vpn-server' ); ?></p>
-				<pre class="vpn-server-snippet"><code><?php echo esc_html( 'location ^~ ' . $location . ' { deny all; return 404; }' ); ?></code></pre>
-			<?php endif; ?>
+			<?php self::form_start( 'poll', 'vpn-server-track' ); ?>
+			<?php
+			self::render_poll_field(
+				'min_data_poll_interval_ms',
+				__( 'Min Data Poll Interval', 'vpn-server' ),
+				$settings['min_data_poll_interval_ms'],
+				Settings::MIN_DATA_POLL_INTERVAL_RANGE,
+				/* translators: 1: lowest, 2: highest accepted value, both in milliseconds. */
+				__( 'Shortest interval between two data requests of a client while packets flow, the MIN_DATA_POLL_INTERVAL_MS of the protocol. %1$d to %2$d ms.', 'vpn-server' )
+			);
+			self::render_poll_field(
+				'max_data_poll_interval_ms',
+				__( 'Max Data Poll Interval', 'vpn-server' ),
+				$settings['max_data_poll_interval_ms'],
+				Settings::MAX_DATA_POLL_INTERVAL_RANGE,
+				/* translators: 1: lowest, 2: highest accepted value, both in milliseconds. */
+				__( 'Longest interval between two data requests of an idle client, the MAX_DATA_POLL_INTERVAL_MS of the protocol. %1$d to %2$d ms.', 'vpn-server' )
+			);
+			?>
+			<p class="vpn-server-submit"><button type="submit" class="button button-primary"><?php echo esc_html__( 'Save Changes', 'vpn-server' ); ?></button></p>
+			</form>
 		</section>
+		<?php
+	}
+
+	/**
+	 * One poll interval field of the Main Configuration section.
+	 *
+	 * @param string $name        Setting and field name.
+	 * @param string $label       Field label.
+	 * @param int    $value       Saved value in milliseconds.
+	 * @param int[]  $range       Lowest and highest accepted value.
+	 * @param string $description Description with the placeholders %1$d and %2$d for the range.
+	 */
+	private static function render_poll_field( string $name, string $label, int $value, array $range, string $description ): void {
+		$id = 'vpn-server-' . str_replace( '_', '-', $name );
+		?>
+		<div class="vpn-server-field">
+			<label class="vpn-server-label" for="<?php echo esc_attr( $id ); ?>"><?php echo esc_html( $label ); ?></label>
+			<div class="vpn-server-control">
+				<div class="vpn-server-line">
+					<input type="number" id="<?php echo esc_attr( $id ); ?>" name="<?php echo esc_attr( $name ); ?>" class="vpn-server-number" value="<?php echo esc_attr( (string) $value ); ?>" min="<?php echo esc_attr( (string) $range[0] ); ?>" max="<?php echo esc_attr( (string) $range[1] ); ?>" step="1" required>
+					<span class="vpn-server-unit">ms</span>
+				</div>
+				<p class="description"><?php echo esc_html( sprintf( $description, $range[0], $range[1] ) ); ?></p>
+			</div>
+		</div>
 		<?php
 	}
 
@@ -761,6 +820,26 @@ final class Admin {
 	}
 
 	/**
+	 * Saves the poll intervals that info publishes to the clients.
+	 */
+	public static function handle_poll(): void {
+		self::verify( 'poll' );
+		$settings = Settings::get();
+		$min      = Settings::poll_interval( self::posted( 'min_data_poll_interval_ms' ), Settings::MIN_DATA_POLL_INTERVAL_RANGE );
+		$max      = Settings::poll_interval( self::posted( 'max_data_poll_interval_ms' ), Settings::MAX_DATA_POLL_INTERVAL_RANGE );
+		if ( null === $min || null === $max ) {
+			self::done( 'bad_poll_interval' );
+		}
+		if ( $min === $settings['min_data_poll_interval_ms'] && $max === $settings['max_data_poll_interval_ms'] ) {
+			self::done( 'unchanged' );
+		}
+		$settings['min_data_poll_interval_ms'] = $min;
+		$settings['max_data_poll_interval_ms'] = $max;
+		Settings::save( $settings );
+		self::done( 'saved' );
+	}
+
+	/**
 	 * Adds a client with the chosen or the next free address and its default access key.
 	 */
 	public static function handle_add_client(): void {
@@ -981,7 +1060,7 @@ final class Admin {
 		);
 		$wp_filesystem->delete( $path );
 		if ( ! is_wp_error( $response ) && trim( (string) wp_remote_retrieve_body( $response ) ) === $content ) {
-			return array( 'error', __( 'The storage folder can be downloaded from the web. Add the web server rule shown under Storage configuration, or move the folder outside the web root.', 'vpn-server' ) );
+			return array( 'error', __( 'The storage folder can be downloaded from the web. Add the web server rule shown under Main Configuration, or move the folder outside the web root.', 'vpn-server' ) );
 		}
 		return array( 'ok', __( 'The storage folder cannot be downloaded from the web.', 'vpn-server' ) );
 	}

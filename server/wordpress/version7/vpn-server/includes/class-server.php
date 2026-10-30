@@ -93,7 +93,13 @@ final class Server {
 						if ( '' === $settings['storage'] ) {
 							throw new \PhpVpn\ConfigException( 'storage' );
 						}
-						return \PhpVpn\Config::fromValues( $settings['secret'], $settings['access_keys'], $settings['storage'] );
+						return \PhpVpn\Config::fromValues(
+							$settings['secret'],
+							$settings['access_keys'],
+							$settings['storage'],
+							$settings['min_data_poll_interval_ms'],
+							$settings['max_data_poll_interval_ms']
+						);
 					}
 				);
 			}

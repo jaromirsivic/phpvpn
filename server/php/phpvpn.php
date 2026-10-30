@@ -1221,6 +1221,8 @@ final class Config
         public readonly string $serverSecret,
         public readonly array $accessKeys,
         public readonly string $bufferDirectory,
+        public readonly int $minDataPollIntervalMs,
+        public readonly int $maxDataPollIntervalMs,
     ) {
     }
 
@@ -1233,12 +1235,18 @@ final class Config
 
     /**
      * Validates one configuration. Embedding hosts, for example the WordPress plugin, call it directly.
+     * The poll intervals published by info default to MIN_DATA_POLL_INTERVAL_MS and MAX_DATA_POLL_INTERVAL_MS.
      *
      * @param array<mixed,mixed> $hexAccessKeys address to 64 lowercase hexadecimal characters
      * @param string $bufferDirectory absolute storage root
      */
-    public static function fromValues(string $configured, array $hexAccessKeys, string $bufferDirectory): self
-    {
+    public static function fromValues(
+        string $configured,
+        array $hexAccessKeys,
+        string $bufferDirectory,
+        int $minDataPollIntervalMs = MIN_DATA_POLL_INTERVAL_MS,
+        int $maxDataPollIntervalMs = MAX_DATA_POLL_INTERVAL_MS,
+    ): self {
         // Chapter 3.2, only an exactly empty string is normalized.
         $secret = $configured;
         if ($secret === '') {
@@ -1251,7 +1259,7 @@ final class Config
         if (STORAGE_DRIVER !== 'disk') {
             throw new ConfigException('storage driver');
         }
-        if (MIN_DATA_POLL_INTERVAL_MS <= 0 || MIN_DATA_POLL_INTERVAL_MS > MAX_DATA_POLL_INTERVAL_MS) {
+        if ($minDataPollIntervalMs <= 0 || $minDataPollIntervalMs > $maxDataPollIntervalMs) {
             throw new ConfigException('poll interval');
         }
         if (QUEUE_TTL_SECONDS <= 0 || AUTH_TIMESTAMP_SKEW_SECONDS <= 0 || LOCK_TIMEOUT_MS <= 0) {
@@ -1279,18 +1287,20 @@ final class Config
             $keys[$address] = (string) hex2bin($hex);
         }
 
-        return new self($configured, $secret, $keys, rtrim($bufferDirectory, '\\/'));
+        return new self($configured, $secret, $keys, rtrim($bufferDirectory, '\\/'), $minDataPollIntervalMs, $maxDataPollIntervalMs);
     }
 
     public function withBufferDirectory(string $directory): self
     {
-        return new self($this->configuredSecret, $this->serverSecret, $this->accessKeys, $directory);
+        return new self($this->configuredSecret, $this->serverSecret, $this->accessKeys, $directory,
+            $this->minDataPollIntervalMs, $this->maxDataPollIntervalMs);
     }
 
     public function withSecret(string $configured): self
     {
         $secret = $configured === '' ? 'CHANGE_THIS_SERVER_SECRET' : $configured;
-        return new self($configured, $secret, $this->accessKeys, $this->bufferDirectory);
+        return new self($configured, $secret, $this->accessKeys, $this->bufferDirectory,
+            $this->minDataPollIntervalMs, $this->maxDataPollIntervalMs);
     }
 
     /** @param array<string,string> $hexKeys */
@@ -1300,7 +1310,8 @@ final class Config
         foreach ($hexKeys as $address => $hex) {
             $keys[$address] = (string) hex2bin($hex);
         }
-        return new self($this->configuredSecret, $this->serverSecret, $keys, $this->bufferDirectory);
+        return new self($this->configuredSecret, $this->serverSecret, $keys, $this->bufferDirectory,
+            $this->minDataPollIntervalMs, $this->maxDataPollIntervalMs);
     }
 
     public function accessKey(string $address): ?string
@@ -2376,8 +2387,8 @@ final class InfoHandler
             'maxRequestBodyBytes' => MAX_REQUEST_BODY_BYTES,
             'maxQueueBytesPerClient' => MAX_QUEUE_BYTES_PER_CLIENT,
             'queueTtlSeconds' => QUEUE_TTL_SECONDS,
-            'minDataPollIntervalMs' => MIN_DATA_POLL_INTERVAL_MS,
-            'maxDataPollIntervalMs' => MAX_DATA_POLL_INTERVAL_MS,
+            'minDataPollIntervalMs' => $this->config->minDataPollIntervalMs,
+            'maxDataPollIntervalMs' => $this->config->maxDataPollIntervalMs,
         ];
 
         while (true) {

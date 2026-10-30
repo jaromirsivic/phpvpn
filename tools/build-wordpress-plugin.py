@@ -4,6 +4,8 @@ phpvpn.php stays the single source of the wire protocol. Everything after `names
 is copied into server/wordpress/version7/vpn-server/includes/server-core.php, except the
 regions between `// @wp-skip-begin` and `// @wp-skip-end`, which belong to the standalone
 file only (configuration header, process wide runtime settings, status page and autorun).
+The defaults of the settings that the plugin keeps itself (the poll intervals) are copied from
+phpvpn.php into includes/class-settings.php.
 
     python tools/build-wordpress-plugin.py            regenerate server-core.php
     python tools/build-wordpress-plugin.py --check    fail when server-core.php or a version is stale
@@ -19,6 +21,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'server' / 'php' / 'phpvpn.php'
 PLUGIN = ROOT / 'server' / 'wordpress' / 'version7' / 'vpn-server'
 CORE = PLUGIN / 'includes' / 'server-core.php'
+SETTINGS = PLUGIN / 'includes' / 'class-settings.php'
+# phpvpn.php constants whose values are the defaults of plugin settings, and the range constant
+# of class-settings.php that every default must fit.
+SETTING_DEFAULTS = {
+    'MIN_DATA_POLL_INTERVAL_MS': 'MIN_DATA_POLL_INTERVAL_RANGE',
+    'MAX_DATA_POLL_INTERVAL_MS': 'MAX_DATA_POLL_INTERVAL_RANGE',
+}
 SLUG = 'vpn-server'
 
 SKIP_BEGIN = '// @wp-skip-begin'
@@ -96,6 +105,38 @@ def build_core(source: str) -> str:
     return HEADER.format(version=server_version(source)) + '\n' + body + '\n'
 
 
+def php_integer(source: str, name: str, pattern: str, path: pathlib.Path) -> int:
+    match = re.search(pattern.format(name=re.escape(name)), source, re.MULTILINE)
+    if not match:
+        raise SystemExit(f'{path.relative_to(ROOT)}: {name} not found')
+    return int(match.group(1))
+
+
+def settings_with_defaults(source: str, settings: str) -> str:
+    """class-settings.php with the DEFAULT_ constants set to the values of phpvpn.php."""
+    for name in SETTING_DEFAULTS:
+        value = php_integer(source, name, r'^const {name} = (\d+);$', SOURCE)
+        settings, count = re.subn(rf'^(\tconst DEFAULT_{name} = )\d+;$', rf'\g<1>{value};', settings, flags=re.MULTILINE)
+        if count != 1:
+            raise SystemExit(f'{SETTINGS.relative_to(ROOT)}: DEFAULT_{name} not found')
+    return settings
+
+
+def default_problems(source: str) -> list[str]:
+    problems = []
+    settings = read_text(SETTINGS)
+    for name, range_name in SETTING_DEFAULTS.items():
+        value = php_integer(source, name, r'^const {name} = (\d+);$', SOURCE)
+        match = re.search(rf'^\tconst {range_name} = array\( (\d+), (\d+) \);$', settings, re.MULTILINE)
+        if not match:
+            raise SystemExit(f'{SETTINGS.relative_to(ROOT)}: {range_name} not found')
+        if not int(match.group(1)) <= value <= int(match.group(2)):
+            problems.append(f'phpvpn.php: {name} {value} is outside {range_name} of the plugin settings')
+    if settings_with_defaults(source, settings) != settings:
+        problems.append(f'{SETTINGS.relative_to(ROOT)}: setting defaults differ from phpvpn.php, run tools/build-wordpress-plugin.py')
+    return problems
+
+
 def version_problems(version: str) -> list[str]:
     problems = []
     checks = [
@@ -131,7 +172,7 @@ def main() -> int:
     core = build_core(source)
 
     if options.check:
-        problems = version_problems(version)
+        problems = version_problems(version) + default_problems(source)
         if not CORE.is_file() or read_text(CORE) != core:
             problems.insert(0, f'{CORE.relative_to(ROOT)} is stale, run tools/build-wordpress-plugin.py')
         for problem in problems:
@@ -145,7 +186,13 @@ def main() -> int:
     with CORE.open('w', encoding='utf-8', newline='\n') as handle:
         handle.write(core)
     print(f'Wrote {CORE.relative_to(ROOT)} from phpvpn.php {version}.')
-    problems = version_problems(version)
+    settings = read_text(SETTINGS)
+    updated = settings_with_defaults(source, settings)
+    if updated != settings:
+        with SETTINGS.open('w', encoding='utf-8', newline='\n') as handle:
+            handle.write(updated)
+        print(f'Wrote the setting defaults of {SETTINGS.relative_to(ROOT)} from phpvpn.php.')
+    problems = version_problems(version) + default_problems(source)
     for problem in problems:
         print(problem, file=sys.stderr)
     if options.zip:
