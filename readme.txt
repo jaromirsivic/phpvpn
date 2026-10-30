@@ -70,7 +70,7 @@ PHPVPN - installation and startup
   Activate it, use pretty permalinks and open Settings, VPN Server. Replace
   the default access keys, download config.json for each client and use the
   Server URL shown there in clients. On nginx add the storage protection rule
-  shown in the settings. See server/wordpress/README.md.
+  shown under Main Configuration. See server/wordpress/README.md.
 
 - Node.js and Python listen on loopback by default. Configure the listen
   address or a reverse proxy for remote clients. For HTTPS, use a reverse

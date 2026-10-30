@@ -46,7 +46,12 @@ Other distributions, other architectures, Flatpak and Snap are not supported.
 ## Installation
 
 Unpack the folder, then run the installer from it. The installer re-runs
-itself through sudo when needed.
+itself through sudo when needed. In the unpacked `phpvpn-linux.zip` the
+installer is in the `x64` folder:
+
+```sh
+cd ~/Downloads/phpvpn-linux/x64  # the x64 folder of the unpacked phpvpn-linux.zip
+```
 
 Headless server or a system without a graphical target:
 

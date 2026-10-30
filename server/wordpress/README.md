@@ -77,6 +77,10 @@ at most 60 seconds. The folder is protected by generated `.htaccess` and `web.co
 nginx ignores them and needs the rule shown in the settings. The settings can also move the
 folder outside the web root.
 
+Storage type and Storage folder are set under **Main Configuration**. The only storage type so
+far is the disk folder (**Disk, RAM disk**): a folder on a RAM disk works the same way. Redis,
+Memcached and LiteSpeed Cache are listed but cannot be selected yet.
+
 ## Poll intervals
 
 The clients ask the Server URL for new messages in an interval between the minimum and the maximum

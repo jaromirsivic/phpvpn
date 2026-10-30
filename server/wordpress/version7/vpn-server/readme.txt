@@ -58,7 +58,7 @@ PHP cannot keep connections open on most hosts, so the clients ask for new messa
 
 = Where are the messages stored? =
 
-In a folder with a random name inside wp-content/uploads, protected by .htaccess and web.config files. nginx needs the rule shown in the settings. You can move the folder outside the web root in the settings.
+In a folder with a random name inside wp-content/uploads, protected by .htaccess and web.config files. nginx needs the rule shown in the settings. You can move the folder outside the web root under Main Configuration. The disk folder is the only storage type so far, a folder on a RAM disk works the same way. Redis, Memcached and LiteSpeed Cache are listed but cannot be selected yet.
 
 = Why does the Server URL have no .php file name? =
 
