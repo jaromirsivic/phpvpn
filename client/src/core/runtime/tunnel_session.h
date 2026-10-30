@@ -46,6 +46,13 @@ struct TunnelSessionSettings {
     std::wstring tunnelType = L"PHPVPN";
     // Stable adapter GUID so a restart reuses the same interface identity.
     std::wstring requestedGuid = L"{7d1b4d2f-1f34-4d0e-9a3e-2f6c9b5a41d8}";
+#elif defined(__APPLE__)
+    // macOS: the kernel names a utun interface itself (utunN), so this is the
+    // logical name recorded in the journal and the log; the GUID becomes the
+    // ownership mark in the interface description.
+    std::wstring adapterName = L"phpvpn";
+    std::wstring tunnelType = L"utun";
+    std::wstring requestedGuid = L"{a1c4e7b2-6d3f-4a8e-9b0c-5e2d7f1a3c64}";
 #else
     // Linux uses the interface name required by client.md and a GUID of its
     // own, which becomes the ownership mark of the TUN interface.

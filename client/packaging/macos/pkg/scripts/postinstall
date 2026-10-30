@@ -1,0 +1,150 @@
+#!/bin/sh
+# postinstall of the phpvpn macOS package (plan-macos-v001 step 8), run by the
+# macOS installer as root after the payload was written:
+#
+#   1. the directories the daemon and launchd need, root:wheel, created only
+#      when missing (an existing config.json is never touched):
+#        /private/var/log/phpvpn                  0755 (launchd.log, service log)
+#        /private/var/db/phpvpn                   0700 (interface ownership record)
+#        /Library/Application Support/phpvpn      0700 (configuration)
+#      The daemon creates /private/var/run/phpvpn itself,
+#   2. launchctl bootstrap system /Library/LaunchDaemons/com.pilandrome.phpvpn.plist
+#      (RunAtLoad starts the daemon); a daemon that is still loaded is
+#      restarted with launchctl kickstart -k,
+#   3. the control socket /private/var/run/phpvpn/control-v1.sock within 30
+#      seconds and phpvpn status,
+#   4. the tray launch agent in the session of the console user:
+#      launchctl bootstrap gui/<uid> and launchctl kickstart. Skipped when no
+#      user is logged in at the console, when the package holds no tray, and
+#      for a headless installation (PHPVPN_INSTALL_TRAY=0 from the environment
+#      or from the marker file written by install.sh --headless). A headless
+#      installation also removes the launch agent plist, so the tray does not
+#      start at the next login either; the application stays in /Applications.
+#
+# The script fails (and with it the installation) only when the daemon did not
+# come up. Output goes to /var/log/install.log. $3 is the target volume; only
+# the running system "/" is managed.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 022
+
+DAEMON_LABEL=com.pilandrome.phpvpn
+AGENT_LABEL=com.pilandrome.phpvpn-tray
+DAEMON_PLIST=/Library/LaunchDaemons/$DAEMON_LABEL.plist
+AGENT_PLIST=/Library/LaunchAgents/$AGENT_LABEL.plist
+TRAY_APP="/Applications/phpvpn Tray.app"
+CLI=/usr/local/bin/phpvpn
+LOG_DIR=/private/var/log/phpvpn
+STATE_DIR=/private/var/db/phpvpn
+CONFIG_DIR="/Library/Application Support/phpvpn"
+RUNTIME_DIR=/private/var/run/phpvpn
+SOCKET=$RUNTIME_DIR/control-v1.sock
+SOCKET_TIMEOUT=30
+# Written by install.sh --headless; the installer does not pass the
+# environment of its caller to package scripts reliably.
+OPTIONS_MARKER=$STATE_DIR/pending-install-options
+
+say() {
+    echo "phpvpn postinstall: $*"
+}
+failed() {
+    echo "phpvpn postinstall: error: $*" >&2
+    exit 1
+}
+
+target=${3:-/}
+if [ "$target" != / ]; then
+    say "target volume $target is not the running system, the service is not started"
+    exit 0
+fi
+
+# ------------------------------------------------------ 1. directories
+make_directory() {
+    if [ ! -d "$2" ]; then
+        mkdir -p "$2" || failed "$2 could not be created"
+        chown root:wheel "$2" || failed "the owner of $2 could not be set"
+        chmod "$1" "$2" || failed "the mode of $2 could not be set"
+        say "created $2"
+    fi
+}
+make_directory 0755 "$LOG_DIR"
+make_directory 0700 "$STATE_DIR"
+make_directory 0700 "$CONFIG_DIR"
+chown root:wheel "$DAEMON_PLIST" && chmod 0644 "$DAEMON_PLIST" || failed "$DAEMON_PLIST is missing"
+
+install_tray=${PHPVPN_INSTALL_TRAY:-1}
+if [ -f "$OPTIONS_MARKER" ] && [ ! -L "$OPTIONS_MARKER" ]; then
+    if grep -qx 'PHPVPN_INSTALL_TRAY=0' "$OPTIONS_MARKER"; then install_tray=0; fi
+fi
+rm -f "$OPTIONS_MARKER"
+
+# ---------------------------------------------------------- 2. daemon
+loaded() {
+    launchctl print "$1" > /dev/null 2>&1
+}
+if loaded "system/$DAEMON_LABEL"; then
+    # preinstall could not stop it: restart it with the new binary.
+    launchctl kickstart -k "system/$DAEMON_LABEL" || failed "launchctl kickstart -k system/$DAEMON_LABEL failed"
+    say "service restarted"
+else
+    # The old daemon is gone, so a socket file left behind is stale.
+    rm -f "$SOCKET"
+    attempt=0
+    until launchctl bootstrap system "$DAEMON_PLIST"; do
+        # A bootout that just finished can still hold the label for a moment.
+        attempt=$((attempt + 1))
+        if loaded "system/$DAEMON_LABEL"; then break; fi
+        [ "$attempt" -lt 10 ] || failed "launchctl bootstrap system $DAEMON_PLIST failed"
+        sleep 1
+    done
+    launchctl kickstart "system/$DAEMON_LABEL" > /dev/null 2>&1 || true
+    say "service registered"
+fi
+
+# ---------------------------------------------------------- 3. socket
+waited=0
+until [ -S "$SOCKET" ]; do
+    if [ "$waited" -ge "$SOCKET_TIMEOUT" ]; then
+        failed "the service did not create $SOCKET within $SOCKET_TIMEOUT seconds ($LOG_DIR/phpvpn-service.log, $LOG_DIR/launchd.log)"
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
+# The socket exists before the service accepts; give it a few attempts.
+attempt=0
+until "$CLI" status; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 5 ] || failed "phpvpn status did not answer ($LOG_DIR/phpvpn-service.log)"
+    sleep 1
+done
+
+# ------------------------------------------------------------ 4. tray
+if [ ! -d "$TRAY_APP" ] || [ ! -f "$AGENT_PLIST" ]; then
+    say "the package holds no tray"
+    exit 0
+fi
+if [ "$install_tray" = 0 ]; then
+    rm -f "$AGENT_PLIST"
+    say "headless installation: the tray is not started at login (open \"$TRAY_APP\" starts it by hand)"
+    exit 0
+fi
+chown root:wheel "$AGENT_PLIST" && chmod 0644 "$AGENT_PLIST" || true
+
+console_uid=$(stat -f %u /dev/console 2> /dev/null) || console_uid=
+case $console_uid in
+    ''|0|*[!0-9]*)
+        say "no user is logged in at the console, the tray starts at the next login"
+        exit 0
+        ;;
+esac
+if loaded "gui/$console_uid/$AGENT_LABEL" ||
+   launchctl bootstrap "gui/$console_uid" "$AGENT_PLIST" > /dev/null 2>&1; then
+    if launchctl kickstart "gui/$console_uid/$AGENT_LABEL" > /dev/null 2>&1; then
+        say "tray started for uid $console_uid"
+    else
+        say "warning: the tray could not be started for uid $console_uid, it starts at the next login"
+    fi
+else
+    say "warning: the tray agent could not be registered for uid $console_uid, it starts at the next login"
+fi
+exit 0

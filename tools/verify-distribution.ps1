@@ -43,11 +43,15 @@ if (Test-Path -LiteralPath $protocolCopy -PathType Leaf) {
     }
     $expected.Add('documentation/protocol.md')
 }
-$name = 'client/macOS/README.md'
-if ([IO.File]::ReadAllText((Join-Path $tree $name)) -cne (Get-UnsupportedClientReadme 'macOS')) {
-    throw 'Incorrect unsupported-platform README: macOS'
+# macOS: either the placeholder README alone or the staged arm64 client folder, never a mix.
+$macosState = Get-MacosDistributionState $tree
+if ($macosState -eq 'placeholder') {
+    $name = 'client/macOS/README.md'
+    if ([IO.File]::ReadAllText((Join-Path $tree $name)) -cne (Get-UnsupportedClientReadme 'macOS')) {
+        throw 'Incorrect unsupported-platform README: macOS'
+    }
+    $expected.Add($name)
 }
-$expected.Add($name)
 $client = Join-Path $tree 'client/Windows/x64'
 $clientNames = @('phpvpn-service.exe','phpvpn-tray.exe','phpvpn.exe','install-phpvpn.exe','uninstall-phpvpn.exe',
     'wintun.dll','LICENSE-wintun.txt',
@@ -89,6 +93,36 @@ foreach ($kind in $linuxPatterns.Keys) {
 foreach ($name in $linuxNames) { $expected.Add("client/Linux/x64/$name") }
 foreach ($name in @('release-manifest.json','release-manifest.sig','release-signing.cer')) { $expected.Add("client/Linux/x64/$name") }
 
+# macOS arm64 (staged only): unchanged uninstaller and README, the installer with the pinned key,
+# exactly one product archive of the client version and the signed release manifest.
+$macosNames = New-Object 'Collections.Generic.List[string]'
+if ($macosState -eq 'staged') {
+    $macosFolder = Get-MacosClientFolder
+    $macos = Join-Path $tree $macosFolder
+    foreach ($entry in (Get-MacosClientSources).GetEnumerator()) {
+        $copy = Join-Path $macos $entry.Key
+        if (-not (Test-Path -LiteralPath $copy -PathType Leaf)) { throw "Missing distribution file: $macosFolder/$($entry.Key)" }
+        if ($entry.Key -eq 'install.sh') {
+            Assert-PinnedInstaller -Source (Join-Path $repository $entry.Value) -Copy $copy -Platform macOS -Certificate $signingCertificate
+        } elseif ((Get-FileHash -LiteralPath (Join-Path $repository $entry.Value)).Hash -ne (Get-FileHash -LiteralPath $copy).Hash) {
+            throw "Stale distribution source: $macosFolder/$($entry.Key)"
+        }
+        if ($entry.Key.EndsWith('.sh')) { Assert-ShellScript $copy }
+        $macosNames.Add($entry.Key)
+    }
+    $matched = @(Get-ChildItem -LiteralPath $macos -File -Force | Where-Object { $_.Name -cmatch (Get-MacosPackagePattern) })
+    if ($matched.Count -ne 1) { throw "macOS client requires exactly one installer package, found $($matched.Count)." }
+    $null = $matched[0].Name -cmatch (Get-MacosPackagePattern)
+    if ($Matches[1] -ne $clientVersion) { throw "macOS package $($matched[0].Name) is not client version $clientVersion." }
+    # xar archive magic of a product archive.
+    $stream = [IO.File]::OpenRead($matched[0].FullName)
+    try { $head = New-Object byte[] 4; $read = $stream.Read($head, 0, 4) } finally { $stream.Dispose() }
+    if ($read -ne 4 -or [Text.Encoding]::ASCII.GetString($head) -cne 'xar!') { throw "macOS package has an invalid format: $($matched[0].Name)" }
+    $macosNames.Add($matched[0].Name)
+    foreach ($name in $macosNames) { $expected.Add("$macosFolder/$name") }
+    foreach ($name in @('release-manifest.json','release-manifest.sig','release-signing.cer')) { $expected.Add("$macosFolder/$name") }
+}
+
 $actual = @(Get-ChildItem -LiteralPath $tree -File -Recurse -Force | ForEach-Object {
     $_.FullName.Substring($tree.Length + 1).Replace('\','/')
 } | Where-Object {
@@ -96,6 +130,7 @@ $actual = @(Get-ChildItem -LiteralPath $tree -File -Recurse -Force | ForEach-Obj
 })
 if (Compare-Object $expected.ToArray() $actual -CaseSensitive) { throw 'Distribution contains missing or unexpected files (including hidden runtime files).' }
 $directories = @('documentation','server') + (Get-DistributionServerFolders) + @('client','client/Windows','client/Windows/x64','client/macOS','client/Linux','client/Linux/x64')
+if ($macosState -eq 'staged') { $directories += @(Get-MacosClientFolder) }
 $actualDirs = @(Get-ChildItem -LiteralPath $tree -Directory -Recurse -Force | ForEach-Object {
     $_.FullName.Substring($tree.Length + 1).Replace('\','/')
 } | Where-Object {
@@ -157,7 +192,60 @@ try {
 } finally { $linuxCertificate.Dispose() }
 if ($linuxManifest.sourceDirty) { Write-Warning "Linux packages were built from a modified source tree ($($linuxManifest.sourceCommit)); not a release build." }
 
+# macOS manifest and signature (staged only), the same checks as for the Linux folder.
+$macosManifest = $null
+if ($macosState -eq 'staged') {
+    $macosManifestBytes = [IO.File]::ReadAllBytes((Join-Path $macos 'release-manifest.json'))
+    if (($macosManifestBytes.Length -ge 3 -and $macosManifestBytes[0] -eq 0xEF) -or
+        $macosManifestBytes -contains 10 -or $macosManifestBytes -contains 13) { throw 'macOS manifest is not in its canonical single-line form.' }
+    $macosManifest = [Text.Encoding]::UTF8.GetString($macosManifestBytes) | ConvertFrom-Json
+    if ($macosManifest.manifestVersion -ne 1 -or $macosManifest.product -cne 'phpvpn-client' -or
+        $macosManifest.platform -cne 'macos' -or $macosManifest.architecture -cne 'arm64') { throw 'macOS manifest is not an arm64 macOS phpvpn client manifest.' }
+    if ($macosManifest.releaseVersion -cne $clientVersion -or $macosManifest.releaseVersion -cne $manifest.releaseVersion) {
+        throw 'macOS manifest release version differs from the client and the Windows package.'
+    }
+    if ($macosManifest.ipcVersion -ne $manifest.ipcVersion) { throw 'macOS and Windows packages declare different IPC versions.' }
+    if ($macosManifest.minimumOsVersion -cne (Get-MacosMinimumOsVersion)) { throw "macOS manifest must name the minimum macOS $(Get-MacosMinimumOsVersion)." }
+    if ($macosManifest.sourceCommit -notmatch '^[0-9a-f]{40}$' -or $macosManifest.sourceDirty -isnot [bool]) {
+        throw 'macOS manifest has no valid source commit and dirty flag.'
+    }
+    if ($macosManifest.builtOn -isnot [string] -or $macosManifest.builtOn -eq '' -or
+        $macosManifest.xcode -isnot [string] -or $macosManifest.xcode -eq '') { throw 'macOS manifest does not record the build system (builtOn, xcode).' }
+    $listed = @($macosManifest.files | ForEach-Object { $_.path })
+    if (Compare-Object $macosNames.ToArray() $listed -CaseSensitive) { throw 'macOS client file set differs from its manifest.' }
+    foreach ($entry in $macosManifest.files) {
+        $path = Join-Path $macos $entry.path
+        if ((Get-Item -LiteralPath $path).Length -ne $entry.bytes -or
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $entry.sha256) { throw "macOS manifest mismatch: $($entry.path)" }
+    }
+    $macosCertificateBytes = [IO.File]::ReadAllBytes((Join-Path $macos 'release-signing.cer'))
+    if (-not (Test-ByteArrayEqual $macosCertificateBytes $windowsCertificateBytes)) { throw 'macOS manifest is not signed with the certificate of the Windows package.' }
+    $macosCertificate = New-Object Security.Cryptography.X509Certificates.X509Certificate2 (, $macosCertificateBytes)
+    try {
+        $macosThumbprint = $macosCertificate.Thumbprint.ToUpperInvariant()
+        $detached = [IO.File]::ReadAllText((Join-Path $macos 'release-manifest.sig')) | ConvertFrom-Json
+        if ($detached.algorithm -cne 'RSA-PKCS1-SHA256') { throw "macOS signature algorithm $($detached.algorithm) is not supported." }
+        if ($detached.thumbprint.ToUpperInvariant() -ne $macosThumbprint -or $macosManifest.signingIdentity.ToUpperInvariant() -ne $macosThumbprint -or
+            $manifest.signingIdentity.ToUpperInvariant() -ne $macosThumbprint) { throw 'macOS signature or manifest names another signing identity.' }
+        $pinned = [regex]::Match([IO.File]::ReadAllText((Join-Path $macos 'install.sh')), '(?m)^PINNED_SPKI_SHA256=([0-9a-f]{64})$')
+        if (-not $pinned.Success) { throw 'macOS install.sh holds no pinned signing key.' }
+        if ((Get-SubjectPublicKeyInfoSha256 $macosCertificateBytes) -cne $pinned.Groups[1].Value) { throw 'macOS signing key is not the key pinned in install.sh.' }
+        $publicKey = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($macosCertificate)
+        try {
+            $verified = $publicKey.VerifyData($macosManifestBytes, [Convert]::FromBase64String($detached.signature),
+                [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        } finally { $publicKey.Dispose() }
+        if (-not $verified) { throw 'macOS manifest signature did not verify.' }
+    } finally { $macosCertificate.Dispose() }
+    if ($macosManifest.sourceDirty) { Write-Warning "The macOS package was built from a modified source tree ($($macosManifest.sourceCommit)); not a release build." }
+}
+
 & (Join-Path $repository 'client/tools/verify-package.ps1') -PackageDirectory $client -IconResourceTest $IconResourceTest -CertificateThumbprint $signingCertificate.Thumbprint
 Write-Output "Linux x64: release $($linuxManifest.releaseVersion)-$($linuxManifest.packageRelease), source $($linuxManifest.sourceCommit)$(if ($linuxManifest.sourceDirty) { ' (dirty)' }), signed by $thumbprint."
-Write-Output 'PASS: complete distribution allowlist, source hashes, required README, server READMEs, optional English protocol, LF shell scripts, Node.js server, WordPress plugin ZIP, macOS README, signed Linux folder and signed Windows package.'
+if ($macosManifest) {
+    Write-Output "macOS arm64: release $($macosManifest.releaseVersion), built on macOS $($macosManifest.builtOn), source $($macosManifest.sourceCommit)$(if ($macosManifest.sourceDirty) { ' (dirty)' }), signed by $thumbprint."
+    Write-Output 'PASS: complete distribution allowlist, source hashes, required README, server READMEs, optional English protocol, LF shell scripts, Node.js server, WordPress plugin ZIP, signed macOS folder, signed Linux folder and signed Windows package.'
+} else {
+    Write-Output 'PASS: complete distribution allowlist, source hashes, required README, server READMEs, optional English protocol, LF shell scripts, Node.js server, WordPress plugin ZIP, macOS README, signed Linux folder and signed Windows package.'
+}
 if ($AllowLocalRuntime) { Write-Output 'Local Python .runtime and .venv are preserved and excluded from the distribution file set.' }

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd daemon of the phpvpn service (plan-macos-v001 step 6), installed as
+  /Library/LaunchDaemons/com.pilandrome.phpvpn.plist (root:wheel 0644) and
+  registered by the package with
+  launchctl bootstrap system /Library/LaunchDaemons/com.pilandrome.phpvpn.plist.
+
+  KeepAlive/SuccessfulExit=false restarts the daemon only after a failure; an
+  ordered stop (SIGTERM, exit 0) stays stopped. launchd sends SIGTERM on
+  bootout and SIGKILL after ExitTimeOut seconds, the counterpart of
+  TimeoutStopSec=45s of the systemd unit. The daemon writes its own rotating log
+  /private/var/log/phpvpn/phpvpn-service.log; launchd.log only receives what the
+  process prints to stdout or stderr outside the log (start failures).
+
+  ProcessType Standard (no launchd resource policy) on purpose: Background
+  applies the darwin background policy (low CPU priority, I/O and network
+  throttling, timer coalescing) to the process that forwards every tunnel
+  packet, and Interactive is reserved for jobs the user interface depends on.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.pilandrome.phpvpn</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Library/PrivilegedHelperTools/phpvpn-service</string>
+		<string>--launchd</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>ExitTimeOut</key>
+	<integer>45</integer>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>Nice</key>
+	<integer>0</integer>
+	<key>StandardOutPath</key>
+	<string>/private/var/log/phpvpn/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/private/var/log/phpvpn/launchd.log</string>
+</dict>
+</plist>

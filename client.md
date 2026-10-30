@@ -6,7 +6,7 @@ Tento dokument je normativní návrh nativního klienta pro protokol phpvpn v1, 
 
 Klient MUSÍ být **thread-safe**. Používá tři VPN pracovní role, každou ve vlastním vlákně, která bezpečně sdílejí zdroje bez datových závodů a souběžných kolizí. Engine obsluhuje chyby vrácené bootstrapem a provozní výměnou `data`. U přechodné chyby provozní výměny `data` nejprve provede soft recovery bez uvolnění tunelu; u ostatních obnovitelných chyb a po vyčerpání jejího rozpočtu provede teardown a opakuje připojení podle části Stavový automat připojení. Neobnovitelná chyba vede do `error` a vyžaduje zásah uživatele. Obecná obnova po pádu či nezachycené výjimce libovolné pracovní role není poskytována.
 
-Primárním cílem je Windows. Návrh současně odděluje platformně nezávislé jádro od síťového rozhraní a integrace operačního systému, aby jej bylo možné přenést na další platformy. Linuxový port je dodaný podle části [Linux](#linux), macOS zůstává budoucím portem. Windows část používá C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové knihovny třetí strany. Přenosné modely neobsahují HWND, HANDLE, Win32 zprávy ani závislost na tray procesu.
+Primárním cílem je Windows. Návrh současně odděluje platformně nezávislé jádro od síťového rozhraní a integrace operačního systému, aby jej bylo možné přenést na další platformy. Linuxový port je dodaný podle části [Linux](#linux), port pro macOS podle části [macOS](#macos). Windows část používá C++20, MSVC, CMake/Ninja, Win32, WinHTTP a CNG bez nové knihovny třetí strany. Přenosné modely neobsahují HWND, HANDLE, Win32 zprávy ani závislost na tray procesu.
 
 Server nezná payload klíče ani IP obsah. Klient zajišťuje výběr klíče, AES-256-GCM ochranu payloadu, validaci a předání paketů virtuálnímu L3 rozhraní.
 
@@ -27,7 +27,7 @@ Jádro klienta nesmí záviset na API konkrétní platformy. Je rozděleno do t�
 
 `core/config/contracts_document.*` vlastní původní validní DOM, preserving patch a úplnou validaci kandidáta. `core/presentation/contracts_model.*` a `password_key_model.*` tvoří samostatné objekty existující statické knihovny `phpvpn-core`. Nepřidávají knihovnu ani závislost třetí strany. Používají sdílené IPv4 helpery, JSON a `CryptoProvider`, bez Windows hlaviček nebo typů. Service a CLI nepřitahují nepoužité modelové objekty. Nativní pohled, focus, scroll a okna patří do `apps/tray`. `ContractsWindow` a `PasswordShaWindow` používají přenosné modely, `ContractsSaveController` řídí ukládání a jeho transportní lifecycle.
 
-Současná Windows vrstva poskytuje implementaci rozhraní `Tunnel` pomocí Wintun, HTTP/HTTPS transport přes WinHTTP a kryptografický `CryptoProvider` přes Windows CNG. Zajišťuje také lokální IPC, hodiny, souborové operace, cesty a síťovou konfiguraci přes IP Helper. Integrace služby a nativního tray patří do příslušných aplikací. Linuxová vrstva v `client/src/platform/linux` používá TUN, rtnetlink, libcurl, OpenSSL 3 a libsystemd podle části [Linux](#linux). Tyto knihovny nejsou závislostí Windows klienta, pro macOS jsou jiné transportní a kryptografické adaptéry budoucí možností. Požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
+Současná Windows vrstva poskytuje implementaci rozhraní `Tunnel` pomocí Wintun, HTTP/HTTPS transport přes WinHTTP a kryptografický `CryptoProvider` přes Windows CNG. Zajišťuje také lokální IPC, hodiny, souborové operace, cesty a síťovou konfiguraci přes IP Helper. Integrace služby a nativního tray patří do příslušných aplikací. Linuxová vrstva v `client/src/platform/linux` používá TUN, rtnetlink, libcurl, OpenSSL 3 a libsystemd podle části [Linux](#linux). Tyto knihovny nejsou závislostí Windows klienta. Vrstva macOS v `client/src/platform/macos` používá `utun`, `PF_ROUTE`, SystemConfiguration a sdílené POSIX soubory z `client/src/platform/posix` se stejným libcurl transportem a OpenSSL providerem podle části [macOS](#macos). Požadavek čistého PHP AES-GCM z protokolu se týká PHP implementací, nikoli nativního klienta.
 
 Zdrojové soubory jsou rozděleny do `client/src/core` pro přenosné jádro ve statické knihovně `phpvpn-core`, `client/src/platform` pro rozhraní a Windows nebo linuxové adaptéry ve statické knihovně `phpvpn-platform` a `client/apps` pro samostatné vstupy service, CLI a tray. Služba vlastní VPN provoz, CLI a tray ji ovládají přes lokální IPC. Nativní Win32 okna a jejich obsluha jsou součástí `apps/tray`, linuxová GTK okna součástí `apps/tray-linux`, nikoli přenosných modelů.
 
@@ -855,7 +855,7 @@ Tato část stanoví testovací povinnosti, nikoli výsledky nového běhu. Prov
 
 ## Sestavení klienta
 
-Současný klient se sestavuje pro Windows AMD64 (x64) v C++20 pomocí MSVC (`cl.exe`), CMake nejméně 3.28 a generátoru Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) vyžaduje C++20 bez jazykových rozšíření a statický MSVC CRT, v Debug `/MTd`, v ostatních konfiguracích `/MT`. Linuxové sestavení popisuje část [Linux](#linux). Konfigurace na jiném operačním systému skončí chybou, macOS adaptér zatím neexistuje.
+Současný klient se sestavuje pro Windows AMD64 (x64) v C++20 pomocí MSVC (`cl.exe`), CMake nejméně 3.28 a generátoru Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) vyžaduje C++20 bez jazykových rozšíření a statický MSVC CRT, v Debug `/MTd`, v ostatních konfiguracích `/MT`. Linuxové sestavení popisuje část [Linux](#linux), sestavení pro macOS část [macOS](#macos). Konfigurace na jiném operačním systému skončí chybou.
 
 [Aplikační targety](client/apps/CMakeLists.txt) vytvářejí tři oddělené programy:
 
@@ -885,7 +885,7 @@ Skript [tools/deploy-test.ps1](tools/deploy-test.ps1) odděluje dva testovací p
 
 ### Windows
 
-Cílem Windows části je pouze Windows AMD64 (x64). Windows x86 (32bit) a ARM64 jsou mimo rozsah, stejně jako implementace macOS. Linuxovou implementaci popisuje samostatná část [Linux](#linux). Windows je primární platforma. Klient MUSÍ používat výhradně Wintun jako L3 TUN pro IPv4. NESMÍ používat TAP, vlastní kernelový ovladač ani automaticky přejít na jiný tunelový backend, chybí-li nebo selže-li Wintun. Instalace, vytvoření či konfigurace adaptéru a změny rout vyžadují administrátorská oprávnění; samotný běh těchto operací patří výhradně Windows Service.
+Cílem Windows části je pouze Windows AMD64 (x64). Windows x86 (32bit) a ARM64 jsou mimo rozsah. Linuxovou implementaci popisuje samostatná část [Linux](#linux), implementaci macOS část [macOS](#macos). Windows je primární platforma. Klient MUSÍ používat výhradně Wintun jako L3 TUN pro IPv4. NESMÍ používat TAP, vlastní kernelový ovladač ani automaticky přejít na jiný tunelový backend, chybí-li nebo selže-li Wintun. Instalace, vytvoření či konfigurace adaptéru a změny rout vyžadují administrátorská oprávnění; samotný běh těchto operací patří výhradně Windows Service.
 
 Službový režim je určený pro dlouhodobý běh a automatické obnovení. Konzolová aplikace zůstane lokálním klientem služby pro diagnostiku a podporované řídicí operace; sama nespouští VPN běh. Verze v1 používá výhradně split tunnel. Po úspěšném bootstrapu služba přidá lokální `virtualIp` s prefixem z `vpnCidr` a právě jednu explicitní routu přesného prefixu `vpnCidr` přes vlastní adaptér. Nepřidává výchozí routu, nemění DNS a nezavádí kill switch. Full tunnel, změny DNS a kill switch jsou mimo v1 a vyžadují budoucí samostatnou specifikaci. Relay server na nakonfigurované URL MUSÍ před změnou i po ní zůstat dosažitelný existující síťovou cestou mimo tunel phpvpn.
 
@@ -1147,11 +1147,124 @@ Každé podporované vydání a architektura MUSÍ před publikací projít ales
 
 ### macOS
 
-V macOS je doporučené použít nativní síťový mechanismus podporovaný systémem, typicky Network Extension s packet tunnel providerem. Ten vyžaduje správné podepisování, entitlementy a uživatelské schválení. Společné C++ jádro zůstává stejné; malý host/provider obstará čtení a zápis paketů a předá je přes stabilní C nebo C++ rozhraní.
+Klient pro macOS je třetí platforma nad stejným přenosným jádrem `phpvpn-core`, stejnou smlouvou IPC v1 a stejným rozdělením na službu, CLI a tray jako Windows a [Linux](#linux). Pravidla jádra, konfigurace, Wizardu, IPC, bezpečnostního modelu a tray UX z ostatních částí tohoto dokumentu a z [tray_UX.md](tray_UX.md#macos-appkit) platí beze změny, pokud tato část výslovně neuvádí odchylku macOS. Platí také split tunnel v1: služba přidá pouze `virtualIp` s prefixem z `vpnCidr` a jedinou explicitní routu přesného prefixu `vpnCidr` přes vlastní rozhraní, výchozí routu ani DNS NESMÍ měnit a kill switch nezavádí. Platformní vrstva je ve sdílené složce `client/src/platform/posix/` a v `client/src/platform/macos/`, vstupy aplikací v `client/apps/service/service_main_macos.cpp`, `client/apps/cli/main.cpp` a `client/apps/tray-macos/`, instalační soubory v `client/packaging/macos/`. Návrh vznikl podle [plan-macos-v001.md](Plans/2026-10-30-18-08-06/plan-macos-v001.md). Port vzniká na Windows bez fyzického Macu; překlad, testy a balení běží v GitHub Actions (`.github/workflows/client-macos.yml`, runner `macos-15`, Apple Silicon). Existence implementace ani jednotlivý běh CI nejsou tvrzením o úplné akceptaci, výsledky ověření patří do datovaných reportů v `client/tests/`.
 
-`NEPacketTunnelFlow` může předávat dávky paketů v callbacku. Provider je předá vstupnímu pracovníkovi v pořadí dávky. Výstupní pracovník může zapisovat dávky v pořadí určeném DRR, aniž by změnil FIFO uvnitř sub-bucketů.
+#### Sestavení a instalované součásti
 
-Alternativy založené na `/dev/tun` nejsou na moderním macOS obecně přenositelné ani doporučené pro distribuovaný produkt. Je nutné počítat s pravidly sandboxingu, životním cyklem rozšíření a omezeními distribuce.
+macOS se sestavuje v C++20 bez jazykových rozšíření Apple clangem z Xcode, CMake nejméně 3.28 a generátorem Ninja pro architekturu **arm64** s minimálním systémem **macOS 14**. [Kořenový CMake soubor](client/CMakeLists.txt) přijímá Windows, Linux a macOS (`PHPVPN_PLATFORM` `macos`). Pro Apple clang zapíná `-Wall -Wextra -Wpedantic -Werror`, `-fstack-protector-strong`, PIE a `_FORTIFY_SOURCE=2` v optimalizovaných konfiguracích; volby GNU ld (`relro`, `now`, `noexecstack`) na Darwinu neexistují. Služba a CLI vyžadují OpenSSL 3 (`libcrypto`) linkovanou **staticky** z prefixu `PHPVPN_OPENSSL_ROOT` (typicky Homebrew `openssl@3`) a libcurl nejméně 8.4 **z macOS SDK** (systémová `libcurl.4.dylib`, žádná přibalená knihovna). Tray vyžaduje jen systémové frameworky AppKit, Foundation a UserNotifications. Volba `PHPVPN_BUILD_TRAY=OFF` sestaví službu a CLI bez tray. Skript `client/tools/macos/build.sh <preset>` provede configure, build a neprivilegované ctest.
+
+| Preset | Konfigurace | Význam |
+|---|---|---|
+| `macos-debug` | `Debug` | clang s `BUILD_TESTING=ON`. |
+| `macos-release` | `RelWithDebInfo` | Optimalizované sestavení s ladicími informacemi; používá CI a balení. |
+| `macos-asan` | `Debug` | AddressSanitizer a UndefinedBehaviorSanitizer (`PHPVPN_ENABLE_ASAN=ON`). |
+| `macos-headless` | `RelWithDebInfo` | Bez tray (`PHPVPN_BUILD_TRAY=OFF`). |
+
+Všechny macOS presety mají `BUILD_TESTING=ON`, `CMAKE_OSX_DEPLOYMENT_TARGET` 14.0, `CMAKE_OSX_ARCHITECTURES` arm64 a samostatný adresář `work/build/<preset>`. Univerzální binárka s x86_64 není součástí této etapy: vyžaduje druhé statické sestavení OpenSSL pro x86_64 a `lipo`. Instalační pravidla cílí na kořen svazku (`cmake --install` s `DESTDIR` do stagingu balíčku):
+
+| Soubor | Úloha |
+|---|---|
+| `/Library/PrivilegedHelperTools/phpvpn-service` | Daemon. Jediný vlastník konfigurace, rozhraní `utun`, adresy, routy, tří VPN pracovních rolí, globálních čítačů a stavu VPN. |
+| `/usr/local/bin/phpvpn` | CLI, čistý IPC klient. Nepotřebuje root ani grafickou relaci. |
+| `/Applications/phpvpn Tray.app` | Menu bar aplikace v AppKit (`LSUIElement`, bez ikony v Docku), čistý IPC klient. |
+| `/Library/LaunchDaemons/com.pilandrome.phpvpn.plist` | Registrace daemonu v launchd. |
+| `/Library/LaunchAgents/com.pilandrome.phpvpn-tray.plist` | Autostart tray po přihlášení každého uživatele (obdoba HKLM Run a XDG autostartu). |
+
+Tray, CLI ani jiná aplikace NESMĚJÍ otevírat `utun`, měnit adresy, routy nebo rozhraní ani číst a zapisovat konfigurační soubor. Službu ovládají výhradně přes IPC. Instalace, odinstalace, registrace, spuštění a zastavení daemonu nejsou operacemi IPC; registraci provádí instalační balíček a ovládání `launchctl`. Služba nemá přepínače `--install` ani `--uninstall`.
+
+#### Balíček, instalace a odinstalace
+
+Klient se dodává jako instalační balíček `phpvpn-<verze>-arm64.pkg` (`pkgbuild` + `productbuild`, identifikátor `com.pilandrome.phpvpn`) s `preinstall` a `postinstall` skripty. Binárky i bundle tray jsou podepsané **ad hoc** (`codesign -s -`) a balíček není podepsaný Developer ID ani notarizovaný. Jde o vědomě dokumentované omezení stejné povahy jako vývojový certifikát Windows balíčku: Gatekeeper dvojklik na stažený `.pkg` zablokuje, instalace přes `sudo installer -pkg … -target /` z terminálu nebo přes dodaný `install.sh` proběhne. Složení distribuční složky `client/macOS` stanoví [distribution.md](distribution.md#macos), návod pro uživatele je přibalený [README.md](client/packaging/macos/dist/README.md). Balíček nevlastní `/Library/Application Support/phpvpn`, `config.json` zapisuje služba; upgrade i odebrání balíčku konfiguraci zachovají.
+
+Instalační vstup je [install.sh](client/packaging/macos/dist/install.sh) (`sudo sh install.sh [--headless] [--verify-only]`). Je fail closed a nic nezmění, dokud neprojdou všechna ověření v tomto pořadí: root (jednou přes `sudo`), macOS nejméně 14 a arm64 (`sw_vers`, `uname -m`), podpis manifestu (SHA-256 veřejného klíče z `release-signing.cer` MUSÍ odpovídat pinu v `install.sh` a `release-manifest.sig` MUSÍ ověřit kanonický `release-manifest.json` stejným mechanismem RSA PKCS#1 v1.5 SHA-256 jako na Linuxu, ověřuje systémové `openssl`), velikost a SHA-256 každého souboru z manifestu na soukromé kopii vlastněné rootem, `installer -pkg`, `postinstall` (`launchctl bootstrap system` daemonu, `kickstart`, čekání nejvýše 30 s na socket, registrace tray LaunchAgentu v `gui/<uid>` přihlášeného uživatele, pokud není `--headless`) a `phpvpn status`. `--verify-only` skončí po kontrole hashů bez roota. [uninstall.sh](client/packaging/macos/dist/uninstall.sh) (`sudo sh uninstall.sh [--remove-data]`) nejprve best effort požádá o `phpvpn disconnect`, provede `launchctl bootout` agenta i daemonu, odstraní soubory balíčku podle `pkgutil --files` a `pkgutil --forget`. Konfigurace, stav a logy zůstanou zachované, odstraní je jen `--remove-data`.
+
+#### Cesty a oprávnění
+
+Produkční cesty jsou pevné konstanty ([paths_macos.h](client/src/platform/macos/paths_macos.h), sdílená logika v [paths_posix.h](client/src/platform/posix/paths_posix.h)). Neodvozují se z prostředí, konfigurace ani IPC. Protože důvěryhodný průchod adresářem otevírá každou komponentu s `O_NOFOLLOW` a `/var` i `/etc` jsou na macOS symbolické odkazy do `/private`, používají se kanonické cesty `/private/var/…`. `/Library` má sticky bit a je zapisovatelný skupinou `admin`, což sdílené pravidlo připouští.
+
+| Cesta | Vlastník a režim | Obsah |
+|---|---|---|
+| `/Library/Application Support/phpvpn/` | `root:wheel`, `0700` | Konfigurační adresář. |
+| `/Library/Application Support/phpvpn/config.json` | `root:wheel`, `0600` | Konfigurace. Publikační soubory `config.publish-journal`, `config.previous` a `config.stage.<uuid>.tmp` leží ve stejném adresáři, režim `0600`. |
+| `/private/var/db/phpvpn/` | `root:wheel`, `0700` | Stav služby, `ownership.json` (`0600`). |
+| `/private/var/run/phpvpn/` | `root:wheel`, `0755` | Runtime adresář, vytváří daemon při každém startu. |
+| `/private/var/run/phpvpn/control-v1.sock` | `root:wheel`, `0666` | Veřejný řídicí socket IPC v1. |
+| `/private/var/run/phpvpn/service.lock` | `root:wheel`, `0600` | Singleton zámek služby. |
+| `/private/var/log/phpvpn/` | `root:wheel`, `0755` | `phpvpn-service.log` s rotací 8 MiB a pěti historickými soubory, `launchd.log` se stdout/stderr daemonu. |
+
+Služba při každém startu normalizuje své adresáře stejně jako na Linuxu: chybějící adresář vytvoří, vyžaduje vlastníka root a nastaví přesný režim, každý předek musí patřit rootovi a nesmí být zapisovatelný skupinou ani ostatními bez sticky bitu. Symbolický odkaz, cizí vlastník nebo nebezpečný předek znamenají fail closed s `config_directory_security_invalid`. Nepoužitelný konfigurační nebo stavový adresář službu nezastaví, IPC hlásí bezpečnou konfigurační chybu; nepoužitelný runtime adresář, log adresář nebo nezískaný singleton zámek start ukončí. Skryté přepínače služby `--config-dir`, `--state-dir`, `--runtime-dir`, `--log-dir` a `--adapter-name`, přepínač CLI `--socket` a proměnné tray `PHPVPN_TRAY_TEST_SOCKET` a `PHPVPN_TRAY_TEST_SERVER_UID` slouží pouze izolovaným testům.
+
+#### Služba a launchd
+
+[service_main_macos.cpp](client/apps/service/service_main_macos.cpp) sdílí s Windows a Linuxem přenositelnou kompozici [service_runtime](client/apps/service/service_runtime.h). Služba MUSÍ běžet s efektivním uid 0. Režimy:
+
+| Přepínač | Chování |
+|---|---|
+| `--launchd` | Výchozí, je-li rodičem launchd (`getppid() == 1`) nebo je nastaveno `XPC_SERVICE_NAME`. Log do souboru `/private/var/log/phpvpn/phpvpn-service.log` s rotací jako na Windows. Změna stavu VPN se loguje; launchd nemá obdobu `STATUS=`. |
+| `--foreground`, `--console` | Výchozí jinak. Běh v terminálu s logem na stdout do SIGINT nebo SIGTERM. |
+| `--verify-tunnel` | Ověří kernel control `com.apple.net.utun_control` (`CTLIOCGINFO`) bez vytvoření rozhraní a vypíše verzi jádra. Vyžaduje root. |
+
+SIGTERM a SIGINT jsou nastavené na `SIG_IGN` a přijímají se přes `kqueue` s `EVFILT_SIGNAL`, SIGHUP a SIGPIPE jsou ignorované. Stop provede sdílený uspořádaný teardown `ServiceRuntime::stop`. Nejvýše jednu instanci zajišťuje výlučný neblokující `flock` na `service.lock`. Automatický Connect podle `autoConnectOnStartup` se spouští až po startu IPC serveru, jako obdoba SCM RUNNING a `READY=1`.
+
+Plist [com.pilandrome.phpvpn.plist](client/packaging/macos/launchd/com.pilandrome.phpvpn.plist) spouští `/Library/PrivilegedHelperTools/phpvpn-service --launchd` s `RunAtLoad`, `KeepAlive` `SuccessfulExit=false` a `ThrottleInterval` 5. launchd restartuje jen po neúspěšném konci a nejdříve po 10 s; trojstupňová řada 5/17/60 s ze systemd a Windows nemá v launchd obdobu. `ExitTimeOut` 45 s omezuje ukončení. launchd nenabízí sandbox systemd (capabilities, `ProtectSystem`, syscall filtr); daemon běží jako root bez dalšího omezení, což je přijaté omezení platformy.
+
+#### Veřejné lokální IPC přes Unix socket
+
+macOS používá stejný `SOCK_STREAM` Unix socket, rámec `u32` big-endian + JSON, limit 4 MiB, 32 slotů, deadline 5000 ms, tick 250 ms, executory a `busy` odpověď jako Linux, se sdílenou implementací [ipc_unix.h](client/src/platform/posix/ipc_unix.h). Pevná cesta je `/private/var/run/phpvpn/control-v1.sock` (`kIpcSocketPath`). Rozdíly jsou jen v systémových primitivech ([event_wait.h](client/src/platform/posix/event_wait.h)): `kqueue` s `EVFILT_READ`, `EVFILT_WRITE` a `EVFILT_TIMER` místo `epoll` a `timerfd`, `pipe` místo `eventfd`, `accept` s `fcntl` místo `accept4`, `SO_NOSIGPIPE` místo `MSG_NOSIGNAL`. Klient MUSÍ před odesláním jakéhokoli bajtu ověřit přes `getpeereid` (obdoba `SO_PEERCRED`), že protistrana běží s uid 0. Model přístupu, chybové kódy, `hint:` řádky CLI a klasifikace uložení jsou shodné s Linuxem; macOS hint pro neběžící službu uvádí `sudo launchctl bootstrap system /Library/LaunchDaemons/com.pilandrome.phpvpn.plist`.
+
+#### Konfigurační soubor na disku
+
+Sdílená implementace [config_files_posix.cpp](client/src/platform/posix/config_files_posix.cpp) zachovává sémantiku, názvy souborů, journal `PHPVPN-CONFIG-1`, stavy recovery a pořadí publikace z části [Linux](#konfigurační-soubor-na-disku). Odchylky macOS: vytvoření chybějícího souboru používá `renameatx_np(RENAME_EXCL)` místo `renameat2(RENAME_NOREPLACE)`; synchronizace journalu a publikace používá `fcntl(F_FULLFSYNC)` s návratem k `fsync`; souborový systém se posuzuje podle `statfs.f_fstypename` a síťové a FUSE systémy (`nfs`, `smbfs`, `afpfs`, `webdav`, `cifs`, `osxfuse`, `macfuse`, `fuse`, `ftp`) se odmítnou chybou `not_supported`. Záznam vlastnictví `ownership.json` se zapisuje trvanlivě přes sdílený `durableReplaceFile` s `F_FULLFSYNC`.
+
+#### Rozhraní utun a vlastnictví
+
+Tunel používá výhradně kernel control `utun` jádra macOS ([tunnel_utun.cpp](client/src/platform/macos/tunnel_utun.cpp)): `socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL)`, `CTLIOCGINFO` pro `com.apple.net.utun_control` a `connect` na `sockaddr_ctl`. Klient NESMÍ používat kext, TAP, Network Extension ani jiný backend; Network Extension zůstává cestou pro iOS a případnou App Store distribuci. `loadAndVerify` ověří dostupnost kernel controlu a nic nevytváří. Rozhraní vzniká až po úspěšném bootstrapu a preflightu.
+
+Jméno `utunN` přiděluje jádro a nelze je zvolit. Konfigurované `adapterName` `phpvpn` je logické jméno zapsané do journalu a logu, skutečné jméno se loguje při vytvoření. Značka vlastnictví `phpvpn-owner:<GUID>` (GUID `{a1c4e7b2-6d3f-4a8e-9b0c-5e2d7f1a3c64}`) se ukládá do **popisu rozhraní** (`SIOCSIFDESC`, obdoba linuxového `ifalias`) a identita rozhraní je `(ownerTag << 32) | ifindex` podle [interface_identity.h](client/src/platform/macos/interface_identity.h) se stejnou ochranou proti recyklaci indexu jako na Linuxu. Hned po vytvoření služba nastaví popis, MTU **1500** a `IFF_UP` a vše ověří. IPv6 adresa se nekonfiguruje, čerstvému `utun` jádro žádnou nepřiděluje.
+
+`utun` je datagramové rozhraní se 4bajtovou hlavičkou rodiny protokolu před každým paketem. Vstupní pracovník čte `recvmsg` do bufferu volajícího, paket delší než buffer poznaný přes `MSG_TRUNC` se započítá do `oversizedReceiveCount` a nedoručí se, paket jiné rodiny než `AF_INET` se zahodí a započítá. Výstupní pracovník zapisuje jeden paket jedním `writev` s hlavičkou. Plná fronta vede k omezenému přerušitelnému čekání 200 × 5 ms přes `poll` a potom k `busy`. Obě čekání zahrnují stop pipe. `endSession` ponechá deskriptor, aby jádro klienta odstranilo routu a adresu ze živého rozhraní, `closeAdapter` deskriptor zavře a čeká nejvýše 2 s na zmizení rozhraní. Při pádu nebo zabití služby odstraní jádro macOS rozhraní samo, což je hlavní bezpečnostní vlastnost recovery. Persistentní `utun` neexistuje: `removeOwnedPhantomInterface` je úspěch jen při nepřítomnosti identity, živé rozhraní se značkou je `journal_ambiguous`. `runningDriverVersion` vrací 0.
+
+#### Síťová konfigurace přes PF_ROUTE
+
+[netconfig_route.cpp](client/src/platform/macos/netconfig_route.cpp) je vlastní malý klient routovacího socketu bez další knihovny: `socket(PF_ROUTE, SOCK_RAW, AF_INET)`, sekvenční čísla a PID pro korelaci odpovědí, timeout 2 s. Kódování a dekódování `rt_msghdr` se zarovnanými `sockaddr` je v čistém [route_codec](client/src/platform/macos/route_codec.h) testovatelném bez privilegií. Chybové texty obsahují jen číslo `errno`.
+
+Adresa se přidává `SIOCAIFADDR` na point-to-point rozhraní s `ifra_addr` i cílem rovným `virtualIp` a maskou z `vpnCidr`. Routa se přidává zprávou `RTM_ADD` s `RTF_UP|RTF_STATIC`, cílem a maskou z `vpnCidr` a bránou `sockaddr_dl` vlastního rozhraní (routa typu `-interface`); next hop různý od 0.0.0.0 používá `RTF_GATEWAY`. macOS routy nemají metriku: `routeMetric` ze společného jádra se do systému nezapisuje, snímek uvádí metriku 0 a shoda existující routy se posuzuje podle cíle, masky, rozhraní a brány. Již existující adresa nebo routa je úspěch pouze při přesné shodě. Odstranění z již neexistujícího vlastního rozhraní je úspěch. Před každou změnou služba ověří, že rozhraní s daným indexem stále nese značku v popisu, cizí rozhraní neupraví.
+
+`snapshot()` obsahuje IPv4 adresy všech rozhraní (`getifaddrs`), IPv4 unicast routy z `sysctl(NET_RT_DUMP)` bez klonovaných a ARP záznamů, výchozí routu `0.0.0.0/0` a DNS servery ze SystemConfiguration (`State:/Network/Global/DNS`, `ServerAddresses`, jen IPv4, seřazené bez duplicit, [dns_snapshot.h](client/src/platform/macos/dns_snapshot.h)). Chybějící klíč znamená žádný server, nedostupný dynamic store je chyba snapshotu a fail closed. `isHostReachableOutsideInterface` používá `getaddrinfo` a `RTM_GET`; společné jádro ji zatím nevolá.
+
+#### HTTP transport, kryptografie a hodiny
+
+Transport je sdílený [transport_curl.cpp](client/src/platform/linux/transport_curl.cpp) nad libcurl z macOS SDK se stejným chováním jako WinHTTP adaptér (jeden deadline, limit těla, bez přesměrování, bez proxy, bez cookies, HTTP/1.1, TLS nejméně 1.2, `trustAnyTlsCertificate`). Systémová libcurl používá TLS backend Apple (SecureTransport nebo LibreSSL podle verze systému); `trustAnyTlsCertificate=true` vypíná ověření certifikátu i jména hostitele stejně jako na Linuxu. Wire hodnota `"winhttp"` v diagnostice Wizardu zůstává. Kryptografický `CryptoProvider` je sdílený [crypto_openssl.cpp](client/src/platform/linux/crypto_openssl.cpp) nad staticky linkovanou OpenSSL 3; `SecureBuffer` maže přes `memset_s`. Hodiny ([clock_macos.cpp](client/src/platform/macos/clock_macos.cpp)) mapují `monotonicMs` na `CLOCK_UPTIME_RAW` (zastaví se ve spánku, obdoba linuxového `CLOCK_MONOTONIC`), `leaseMonotonicMs` na darwinský `CLOCK_MONOTONIC` (běží i ve spánku, obdoba `CLOCK_BOOTTIME` a `GetTickCount64`) a `systemUtcMs` na `CLOCK_REALTIME`.
+
+#### Tray v AppKit
+
+Tray pro macOS je nativní AppKit aplikace v Objective-C++ (`NSStatusItem` v menu baru, `NSWindow` okna) bez Qt, Electronu, WebView a bez knihovny třetí strany. Používá přenositelné modely, texty, barvy a IPC timeouty sdílené s Windows a Linuxem a je čistým IPC klientem. Exit, odhlášení, ukončení ani pád tray NESMĚJÍ odpojit VPN. V každé relaci běží nejvýše jedna instance (bundle `com.pilandrome.phpvpn-tray`), druhé spuštění předá `--show-window` nebo `--installation-complete` primární instanci a skončí. Autostart zajišťuje LaunchAgent, installation notice se zobrazuje přes UserNotifications. Tray implementuje všechna okna Windows tray; mapování UX, menu, ikon a odchylek stanoví [tray_UX.md, macOS (AppKit)](tray_UX.md#macos-appkit). Chybové texty konfigurace uvádějí cestu `/Library/Application Support/phpvpn/config.json`.
+
+#### Testy a CI
+
+Neprivilegované testy `phpvpn-macos-tests` (label `macos`) pokrývají sdílené POSIX testy hodin, konfiguračního souboru, kryptografie, transportu a IPC a macOS testy cest, kodeku routovacího socketu, identity rozhraní a DNS snapshotu. Privilegované testy `phpvpn-utun-tests` (label `privileged`, root) vytvoří `utun`, ověří značku, MTU, `IFF_UP`, adresu, routu, odeslání a příjem paketu, zastavení a úklid. Kontraktní testy proti lokálnímu `php -S` spouští `client/tools/macos/run-server-contract.sh`, end-to-end běh služby jako root s lokálním relay `client/tests/e2e/macos/run-service-e2e.sh`. Workflow `client-macos` tyto kroky provádí při každém push do větví `macos` a `main`, balí `.pkg` a publikuje artefakt `phpvpn-macos-arm64`; workflow `client-linux` hlídá, že sdílené POSIX soubory nezměnily linuxový klient. Co CI neověří: dvojklik na `.pkg` pod Gatekeeperem, chování na Intel Macu, skutečný provoz peer-to-peer mezi dvěma počítači a ruční práci s tray. Tyto body patří do ručních testů s datovaným reportem.
+
+#### Rozdíly oproti Windows a Linuxu
+
+| Oblast | Windows | Linux | macOS | Důvod |
+|---|---|---|---|---|
+| Správa služby | SCM | systemd unit | LaunchDaemon `com.pilandrome.phpvpn` | Zvyklost platformy. |
+| Tunel | Wintun | `/dev/net/tun`, jméno `phpvpn` | `utun`, jméno `utunN` přiděluje jádro | Nativní mechanismus bez kextu a bez Network Extension. |
+| Značka vlastnictví | GUID adaptéru | `ifalias` | popis rozhraní (`SIOCSIFDESC`) | macOS nemá `ifalias`. |
+| Síťová konfigurace | IP Helper | rtnetlink | `PF_ROUTE`, `SIOCAIFADDR`, SystemConfiguration | Nativní API. |
+| Metrika routy | Ano | `RTA_PRIORITY` | Není, snímek uvádí 0 | macOS routy metriku nemají. |
+| Kryptografie | CNG | OpenSSL 3 sdílená | OpenSSL 3 statická | Bez veřejného AES-GCM v CommonCrypto. |
+| Transport | WinHTTP | libcurl distribuce | libcurl z macOS SDK | Systémová knihovna bez přibalení. |
+| IPC | Named pipe | Unix socket, `SO_PEERCRED` | Unix socket, `getpeereid`, `kqueue` | Zachování veřejného IPC. |
+| Konfigurace | `%ProgramData%\phpvpn` | `/etc/phpvpn` | `/Library/Application Support/phpvpn` | Zvyklost platformy. |
+| Logy | Soubor s rotací | journald | Soubor s rotací v `/private/var/log/phpvpn` | macOS nemá journald, `os_log` by nezachoval obsah logu pro `diagnostics`. |
+| Restart po pádu | 5/15/60 s | 5/17/60 s | `KeepAlive` po neúspěšném konci, nejdříve po 10 s | Omezení launchd. |
+| Sandbox služby | Není | systemd hardening | Není | launchd sandbox nenabízí. |
+| Architektura | x64 | x86_64 | arm64 | Statická OpenSSL jen pro arm64 v této etapě. |
+| Podpis | Vývojový certifikát | Podepsaný manifest | Ad hoc podpis, podepsaný manifest, nepodepsaný `.pkg` | Bez Developer ID. |
+| Tray | Win32 | GTK 3 a AppIndicator | AppKit `NSStatusItem` | Nativní menu bar. |
+| Autostart tray | HKLM Run | XDG autostart | LaunchAgent | Zvyklost platformy. |
+| Ověření | Ručně a testy na Windows | VM a kontejnery | Výhradně GitHub Actions | Vývoj bez fyzického Macu. |
 
 ### Linux
 
@@ -1159,7 +1272,7 @@ Linuxový klient je dodaný pro x86_64 jako druhá platforma nad stejným přeno
 
 #### Sestavení a instalované součásti
 
-Linux se sestavuje v C++20 bez jazykových rozšíření kompilátorem GCC nebo Clang, CMake nejméně 3.28 a generátorem Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) přijímá pouze Windows a Linux. Pro GCC a Clang zapíná `-Wall -Wextra -Wpedantic`, `-fstack-protector-strong`, PIE, `-fcf-protection` na x86_64, `_FORTIFY_SOURCE=3` v optimalizovaných konfiguracích a `-Wl,-z,relro,-z,now,-z,noexecstack`. Služba a CLI vyžadují OpenSSL 3 (`libcrypto`), libcurl nejméně 8.5 a libsystemd. Tray navíc vyžaduje GTK 3 (`gtk+-3.0`) a `ayatana-appindicator3-0.1`. Volba `PHPVPN_BUILD_TRAY=OFF` sestaví službu a CLI bez grafických hlaviček. Skript `client/tools/linux/build.sh <preset>` provede configure, build a ctest.
+Linux se sestavuje v C++20 bez jazykových rozšíření kompilátorem GCC nebo Clang, CMake nejméně 3.28 a generátorem Ninja. [Kořenový CMake soubor](client/CMakeLists.txt) přijímá Windows, Linux a macOS. Pro GCC a Clang zapíná `-Wall -Wextra -Wpedantic`, `-fstack-protector-strong`, PIE, `-fcf-protection` na x86_64, `_FORTIFY_SOURCE=3` v optimalizovaných konfiguracích a `-Wl,-z,relro,-z,now,-z,noexecstack`. Služba a CLI vyžadují OpenSSL 3 (`libcrypto`), libcurl nejméně 8.5 a libsystemd. Tray navíc vyžaduje GTK 3 (`gtk+-3.0`) a `ayatana-appindicator3-0.1`. Volba `PHPVPN_BUILD_TRAY=OFF` sestaví službu a CLI bez grafických hlaviček. Skript `client/tools/linux/build.sh <preset>` provede configure, build a ctest.
 
 | Preset | Konfigurace | Význam |
 |---|---|---|
@@ -1370,7 +1483,7 @@ Současné Windows jádro, WinHTTP/CNG adaptéry, tři VPN role, fronty, agregov
 
 1. Při změně dodaných částí ověřit příslušný kontrakt existujícími cílenými testy. Skutečné Windows a linuxové I/O, služba, VPN, instalace a vizuální/runtime akceptace mají samostatné prostředí a datovanou evidenci RUN/NOT RUN podle výše uvedených testovacích oddílů a [UX14](tray_UX.md#ux14-ověření-a-velikost).
 2. Budoucí pre-poll admission backpressure zůstává nedodané. Jeho požadavek v části Příjem dat se smí označit za dodaný až po implementaci a odpovídajícím ověření. Odložené rozhodnutí R04 o integritě a síťovém vlastnictví Wintun zůstává otevřené, nyní bez realizace a nových testů, viz [T08](Plans/2026-09-12-02-29-09/T08.md).
-3. Budoucí port může doplnit macOS Network Extension a potřebné transportní, kryptografické a systémové adaptéry. Jeho návrh v části [macOS](#macos) není tvrzením o dodaném portu ani ověřené distribuci. Linux už budoucím portem není, jeho další změny se řídí částí [Linux](#linux) a ověřují se datovanými reporty.
+3. Port pro macOS podle části [macOS](#macos) se ověřuje výhradně v GitHub Actions; ruční akceptace na fyzickém Macu, Intel architektura a univerzální binárka zůstávají otevřené a patří do datovaných reportů. Dalším portem je iOS podle výhledu v [plan-macos-v001.md](Plans/2026-10-30-18-08-06/plan-macos-v001.md): `NEPacketTunnelProvider` nad stejným jádrem, NSURLSession transport, CryptoKit nebo statická OpenSSL a SwiftUI aplikace. Linux ani macOS už budoucím portem nejsou, jejich další změny se řídí příslušnými částmi a ověřují se datovanými reporty.
 
 Agregovaný payload není kompatibilní se starším pravidlem jednoho IPv4 paketu v ciphertextu. Kompatibilní klienti a server musí používat shodný formát podle [protocol.md](protocol.md).
 

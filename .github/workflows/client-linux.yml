@@ -1,0 +1,51 @@
+# Linux client: build and the unprivileged test suites on Ubuntu 24.04. Guards
+# the POSIX files shared with macOS (plan-macos-v001 step 1): a refactor that
+# breaks the Linux service, CLI or tray fails here.
+name: client-linux
+
+on:
+  push:
+    branches: [macos, main, linux]
+  pull_request:
+    branches: [main, macos, linux]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (x86_64, GCC)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PRESET: linux-release
+      BUILD_DIR: work/build/linux-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Packages
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config g++ \
+            libcurl4-openssl-dev libssl-dev libsystemd-dev \
+            libgtk-3-dev libayatana-appindicator3-dev
+          cmake --version | head -n 1
+          g++ --version | head -n 1
+          curl-config --version
+
+      - name: Configure
+        working-directory: client
+        run: cmake --preset "$PRESET" -DPHPVPN_BUILD_PRIVILEGED_TESTS=OFF
+
+      - name: Build
+        working-directory: client
+        run: cmake --build --preset "$PRESET"
+
+      - name: Unprivileged tests
+        run: |
+          set -eu
+          ctest --test-dir "$BUILD_DIR" --output-on-failure -L "portable|linux"
+          ctest --test-dir "$BUILD_DIR" --output-on-failure -R "phpvpn-logger-tests"

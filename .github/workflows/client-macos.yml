@@ -1,0 +1,114 @@
+# macOS client: build, tests and the .pkg on a GitHub macOS runner
+# (plan-macos-v001 steps 0 and 11). The repository is developed on Windows, so
+# this workflow is the only macOS compiler and test bed of the client.
+name: client-macos
+
+on:
+  push:
+    branches: [macos, main]
+  pull_request:
+    branches: [main, macos]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test and package (arm64)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      PRESET: macos-release
+      BUILD_DIR: work/build/macos-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          set -eu
+          brew list ninja > /dev/null 2>&1 || brew install ninja
+          brew list openssl@3 > /dev/null 2>&1 || brew install openssl@3
+          echo "PHPVPN_OPENSSL_ROOT=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          sw_vers
+          xcodebuild -version
+          cmake --version | head -n 1
+          ninja --version
+          php --version | head -n 1
+          echo "OpenSSL: $(brew --prefix openssl@3)"
+
+      - name: Configure
+        working-directory: client
+        run: cmake --preset "$PRESET" -DPHPVPN_BUILD_CONTRACT_TESTS=ON
+
+      - name: Build
+        working-directory: client
+        run: cmake --build --preset "$PRESET"
+
+      - name: Portable and macOS unit tests
+        run: |
+          set -eu
+          ctest --test-dir "$BUILD_DIR" --output-on-failure -L "portable|macos"
+          ctest --test-dir "$BUILD_DIR" --output-on-failure -R "phpvpn-logger-tests"
+
+      - name: Privileged utun tests (root)
+        run: sudo ctest --test-dir "$BUILD_DIR" --output-on-failure -L privileged
+
+      - name: Relay contract tests (php -S)
+        run: |
+          set -eu
+          if [ -f client/tools/macos/run-server-contract.sh ]; then
+            PHPVPN_BUILD_DIR="$PWD/$BUILD_DIR" PHPVPN_CONTRACT_PRESET="$PRESET" \
+              sh client/tools/macos/run-server-contract.sh php
+          else
+            echo "::warning::client/tools/macos/run-server-contract.sh is missing, contract tests skipped"
+          fi
+
+      - name: Service end-to-end (root, local relay)
+        run: |
+          set -eu
+          if [ -f client/tests/e2e/macos/run-service-e2e.sh ]; then
+            sudo env PHPVPN_BUILD_DIR="$PWD/$BUILD_DIR" sh client/tests/e2e/macos/run-service-e2e.sh
+          else
+            echo "::warning::client/tests/e2e/macos/run-service-e2e.sh is missing, end-to-end test skipped"
+          fi
+
+      - name: Package (.pkg, ad hoc signed)
+        run: |
+          set -eu
+          if [ -f client/tools/macos/package-pkg.sh ]; then
+            sh client/tools/macos/package-pkg.sh "$PWD/$BUILD_DIR" "$PWD/work/macos-packages/ci"
+            ls -la work/macos-packages/ci
+          else
+            echo "::warning::client/tools/macos/package-pkg.sh is missing, no package produced"
+            mkdir -p work/macos-packages/ci
+          fi
+
+      - name: Collect logs
+        if: always()
+        run: |
+          set -eu
+          mkdir -p work/macos-packages/ci/logs
+          cp "$BUILD_DIR"/Testing/Temporary/LastTest*.log work/macos-packages/ci/logs/ 2>/dev/null || true
+          cp -R work/e2e-macos work/macos-packages/ci/logs/e2e 2>/dev/null || true
+          {
+            echo "## macOS client build"
+            echo
+            echo "- runner: $(sw_vers -productVersion) $(uname -m)"
+            echo "- preset: $PRESET"
+            if [ -f work/macos-packages/ci/SHA256SUMS ]; then
+              echo
+              echo '```'
+              cat work/macos-packages/ci/SHA256SUMS
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload package and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phpvpn-macos-arm64
+          path: work/macos-packages/ci
+          if-no-files-found: warn
+          retention-days: 30

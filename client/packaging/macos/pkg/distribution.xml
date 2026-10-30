@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Product archive definition of the phpvpn macOS client (plan-macos-v001 step 8),
+  used by client/tools/macos/package-pkg.sh:
+
+    productbuild --distribution distribution.xml --package-path <dir>
+                 --resources <dir> phpvpn-<version>-arm64.pkg
+
+  It holds the single component package phpvpn-component.pkg (identifier
+  com.pilandrome.phpvpn) built by pkgbuild. package-pkg.sh replaces the
+  version placeholder with the client version of client/CMakeLists.txt and
+  checks that the file name below matches the component it builds.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>phpvpn</title>
+    <welcome file="welcome.txt" mime-type="text/plain"/>
+    <options customize="never" hostArchitectures="arm64" allow-external-scripts="false"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <allowed-os-versions>
+        <os-version min="14.0"/>
+    </allowed-os-versions>
+    <choices-outline>
+        <line choice="com.pilandrome.phpvpn"/>
+    </choices-outline>
+    <choice id="com.pilandrome.phpvpn" title="phpvpn" visible="false">
+        <pkg-ref id="com.pilandrome.phpvpn"/>
+    </choice>
+    <pkg-ref id="com.pilandrome.phpvpn" version="@PHPVPN_VERSION@" onConclusion="none">phpvpn-component.pkg</pkg-ref>
+</installer-gui-script>

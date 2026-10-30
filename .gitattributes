@@ -10,3 +10,9 @@ assets/phpvpn*.svg text eol=lf
 server/wordpress/** text eol=lf
 client/assets/linux/hicolor/scalable/** text eol=lf
 server/wordpress/**/*.png binary
+client/tools/macos/** text eol=lf
+client/packaging/macos/** text eol=lf
+client/tests/macos/** text eol=lf
+client/tests/e2e/macos/** text eol=lf
+client/apps/tray-macos/** text eol=lf
+.github/** text eol=lf

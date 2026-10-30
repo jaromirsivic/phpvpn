@@ -1,4 +1,4 @@
-#include "platform/linux/paths_linux.h"
+#include "platform/posix/paths_posix.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -26,6 +26,12 @@ bool validDirectory(const std::filesystem::path& directory) {
 // entries. A sticky directory only lets owners rename their own entries.
 bool trustedComponent(const struct stat& info, uid_t expectedOwner) {
     if (!S_ISDIR(info.st_mode) || (info.st_uid != 0 && info.st_uid != expectedOwner)) return false;
+#if defined(__APPLE__)
+    // macOS ships /private/var/run as root:daemon 0775. The groups wheel (0)
+    // and daemon (1) have root as their only member, so a root owned component
+    // writable by one of them is as safe as a 0755 one. Others never may write.
+    if (info.st_uid == 0 && (info.st_mode & S_IWOTH) == 0 && (info.st_gid == 0 || info.st_gid == 1)) return true;
+#endif
     return (info.st_mode & (S_IWGRP | S_IWOTH)) == 0 || (info.st_mode & S_ISVTX) != 0;
 }
 
@@ -40,30 +46,36 @@ Result<UniqueFd> openComponent(int parent, const char* name) {
 
 }  // namespace
 
-Result<LinuxDirectories> resolveLinuxDirectories(const LinuxDirectoryOverrides& overrides) {
-    LinuxDirectories result;
+Result<PosixDirectories> resolvePosixDirectories(const PosixDirectoryOverrides& overrides) {
+    PosixDirectories result;
     if (!overrides.configDirectory.empty()) result.config = overrides.configDirectory;
     if (!overrides.stateDirectory.empty()) result.state = overrides.stateDirectory;
     if (!overrides.runtimeDirectory.empty()) result.runtime = overrides.runtimeDirectory;
-    if (!validDirectory(result.config) || !validDirectory(result.state) || !validDirectory(result.runtime))
+    if (!overrides.logDirectory.empty()) result.logs = overrides.logDirectory;
+    if (!validDirectory(result.config) || !validDirectory(result.state) || !validDirectory(result.runtime) ||
+        !validDirectory(result.logs))
         return Error(ErrorCode::invalid_argument, "a phpvpn directory override is not an absolute normal path");
     return result;
 }
 
-std::filesystem::path configFilePath(const LinuxDirectories& directories) {
+std::filesystem::path configFilePath(const PosixDirectories& directories) {
     return directories.config / "config.json";
 }
 
-std::filesystem::path journalFilePath(const LinuxDirectories& directories) {
+std::filesystem::path journalFilePath(const PosixDirectories& directories) {
     return directories.state / "ownership.json";
 }
 
-std::filesystem::path controlSocketPath(const LinuxDirectories& directories) {
+std::filesystem::path controlSocketPath(const PosixDirectories& directories) {
     return directories.runtime / "control-v1.sock";
 }
 
-std::filesystem::path serviceLockPath(const LinuxDirectories& directories) {
+std::filesystem::path serviceLockPath(const PosixDirectories& directories) {
     return directories.runtime / "service.lock";
+}
+
+std::filesystem::path logDirectoryPath(const PosixDirectories& directories) {
+    return directories.logs;
 }
 
 Result<UniqueFd> openTrustedDirectory(const std::filesystem::path& directory, uid_t expectedOwner) {
@@ -108,10 +120,10 @@ Status secureServiceDirectory(const std::filesystem::path& directory, mode_t mod
     return ok();
 }
 
-Status secureServiceDirectories(const LinuxDirectories& directories, uid_t expectedOwner) {
-    PHPVPN_TRY(secureServiceDirectory(directories.config, kLinuxConfigDirectoryMode, expectedOwner));
-    PHPVPN_TRY(secureServiceDirectory(directories.state, kLinuxStateDirectoryMode, expectedOwner));
-    return secureServiceDirectory(directories.runtime, kLinuxRuntimeDirectoryMode, expectedOwner);
+Status secureServiceDirectories(const PosixDirectories& directories, uid_t expectedOwner) {
+    PHPVPN_TRY(secureServiceDirectory(directories.config, kPosixConfigDirectoryMode, expectedOwner));
+    PHPVPN_TRY(secureServiceDirectory(directories.state, kPosixStateDirectoryMode, expectedOwner));
+    return secureServiceDirectory(directories.runtime, kPosixRuntimeDirectoryMode, expectedOwner);
 }
 
 }  // namespace phpvpn

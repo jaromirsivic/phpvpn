@@ -5,6 +5,7 @@
 #include "harness.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -48,6 +49,27 @@ using SteadyClock = std::chrono::steady_clock;
     signal(SIGPIPE, SIG_IGN);
     return true;
 }();
+
+// macOS (this file is shared with the macOS suite) has neither SOCK_CLOEXEC,
+// accept4 nor MSG_NOSIGNAL. The flag is set afterwards there, and SIGPIPE is
+// ignored process wide above.
+#if defined(__APPLE__)
+constexpr int kSendFlags = 0;
+int cloexecSocket(int domain, int type) {
+    const int fd = socket(domain, type, 0);
+    if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    return fd;
+}
+int cloexecAccept(int listener) {
+    const int fd = accept(listener, nullptr, nullptr);
+    if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    return fd;
+}
+#else
+constexpr int kSendFlags = MSG_NOSIGNAL;
+int cloexecSocket(int domain, int type) { return socket(domain, type | SOCK_CLOEXEC, 0); }
+int cloexecAccept(int listener) { return accept4(listener, nullptr, nullptr, SOCK_CLOEXEC); }
+#endif
 
 std::string lower(std::string text) {
     for (char& c : text) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
@@ -119,7 +141,7 @@ public:
         if (!handshake()) return false;
         while (!data.empty()) {
             const long sent = ssl_ ? SSL_write(ssl_, data.data(), static_cast<int>(std::min<std::size_t>(data.size(), 1 << 20)))
-                                   : ::send(fd_, data.data(), data.size(), MSG_NOSIGNAL);
+                                   : ::send(fd_, data.data(), data.size(), kSendFlags);
             if (sent <= 0) return false;
             data.remove_prefix(static_cast<std::size_t>(sent));
         }
@@ -158,7 +180,7 @@ public:
     using Handler = std::function<void(Peer&, LoopbackServer&)>;
     explicit LoopbackServer(Handler handler, bool tls = false) : handler_(std::move(handler)) {
         if (tls) tls_ = std::make_unique<TlsContext>();
-        listener_ = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        listener_ = cloexecSocket(AF_INET, SOCK_STREAM);
         const int one = 1;
         setsockopt(listener_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
         sockaddr_in address{};
@@ -175,6 +197,21 @@ public:
         release();
         stopping_ = true;
         shutdown(listener_, SHUT_RDWR);
+#if defined(__APPLE__)
+        // shutdown() does not wake a blocked accept() on macOS. A throwaway
+        // connection does; serve() sees stopping_ and returns.
+        {
+            const int wake = cloexecSocket(AF_INET, SOCK_STREAM);
+            sockaddr_in address{};
+            address.sin_family = AF_INET;
+            address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            address.sin_port = htons(port_);
+            if (wake >= 0) {
+                connect(wake, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+                close(wake);
+            }
+        }
+#endif
         if (worker_.joinable()) worker_.join();
         close(listener_);
     }
@@ -219,7 +256,7 @@ public:
 private:
     void serve() {
         for (;;) {
-            const int fd = accept4(listener_, nullptr, nullptr, SOCK_CLOEXEC);
+            const int fd = cloexecAccept(listener_);
             if (fd < 0) {
                 if (errno == EINTR) continue;
                 return;
@@ -357,7 +394,7 @@ long long elapsedMs(SteadyClock::time_point since) {
 class FullBacklogListener {
 public:
     FullBacklogListener() {
-        listener_ = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        listener_ = cloexecSocket(AF_INET, SOCK_STREAM);
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -366,7 +403,7 @@ public:
             listen(listener_, 0) != 0 || getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &length) != 0)
             throw std::runtime_error("loopback listen failed");
         port_ = ntohs(address.sin_port);
-        filler_ = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        filler_ = cloexecSocket(AF_INET, SOCK_STREAM);
         if (filler_ < 0 || connect(filler_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
             throw std::runtime_error("backlog filler failed");
     }

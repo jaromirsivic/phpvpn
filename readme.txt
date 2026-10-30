@@ -26,7 +26,19 @@ PHPVPN - installation and startup
   phpvpn connect. Check phpvpn status. Configuration is /etc/phpvpn/config.json.
   See client/Linux/x64/README.md for tray startup, GNOME and uninstall details.
 
-- macOS client: a version is being prepared. No installable client is included.
+- macOS client (Apple Silicon, macOS 14+): copy the complete
+  client/macOS/arm64 folder to the Mac, open Terminal there and run
+  sh install.sh --verify-only, then sudo sh install.sh (--headless skips
+  the menu bar tray autostart). The installer verifies the signed package,
+  installs phpvpn-<version>-arm64.pkg and starts the launchd service and the
+  tray. The programs carry only an ad hoc signature and the .pkg is not
+  signed by an Apple Developer ID: install from Terminal as shown, because
+  Gatekeeper blocks a double-click on the downloaded .pkg. Use the tray's
+  Configuration Wizard, or phpvpn set-config ./config.json followed by
+  phpvpn connect. Configuration is /Library/Application Support/phpvpn/
+  config.json, logs are in /private/var/log/phpvpn. Uninstall with
+  sudo sh uninstall.sh. If client/macOS holds only a README.md, this
+  distribution was built without the macOS package.
 
 - PHP server: copy server/php/phpvpn.php to a PHP 8.2+ web server's document
   root or chosen web directory. Edit its configuration header: replace

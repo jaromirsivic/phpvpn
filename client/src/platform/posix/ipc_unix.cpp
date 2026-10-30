@@ -1,12 +1,10 @@
-#include "platform/linux/ipc_unix.h"
+#include "platform/posix/ipc_unix.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/timerfd.h>
 #include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -24,7 +22,8 @@
 
 #include "core/ipc/ipc_protocol.h"
 #include "platform/iface/ipc_executors.h"
-#include "platform/linux/fd.h"
+#include "platform/posix/event_wait.h"
+#include "platform/posix/fd.h"
 
 namespace phpvpn {
 namespace {
@@ -36,6 +35,14 @@ constexpr std::int64_t kConnectRetryMs = 10;
 constexpr std::int64_t kMaxClientTimeoutMs = std::numeric_limits<std::int32_t>::max();
 constexpr mode_t kSocketMode = 0666;
 static_assert(kIpcMaxMessageBytes <= std::numeric_limits<std::uint32_t>::max());
+
+// A peer that closed must not raise SIGPIPE: Linux asks per send, macOS has no
+// usable MSG_NOSIGNAL and sets SO_NOSIGPIPE on every socket instead.
+#if defined(__APPLE__)
+constexpr int kSendFlags = MSG_DONTWAIT;
+#else
+constexpr int kSendFlags = MSG_NOSIGNAL | MSG_DONTWAIT;
+#endif
 
 std::int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -53,7 +60,11 @@ socklen_t socketAddress(const std::string& path, sockaddr_un& address) {
     std::memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     std::memcpy(address.sun_path, path.data(), path.size());
-    return static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + path.size() + 1);
+    const auto length = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + path.size() + 1);
+#if defined(__APPLE__)
+    address.sun_len = static_cast<unsigned char>(length);  // BSD sockaddr length byte
+#endif
+    return length;
 }
 void encodeLength(std::size_t length, unsigned char* out) {
     const auto value = static_cast<std::uint32_t>(length);
@@ -66,13 +77,52 @@ std::uint32_t decodeLength(const unsigned char* in) {
     return (std::uint32_t(in[0]) << 24) | (std::uint32_t(in[1]) << 16) |
         (std::uint32_t(in[2]) << 8) | std::uint32_t(in[3]);
 }
-void signal(int eventFd) {
-    const std::uint64_t one = 1;
-    if (::write(eventFd, &one, sizeof(one)) < 0) {}  // Saturated counter still wakes.
+#if defined(__APPLE__)
+// What SOCK_CLOEXEC|SOCK_NONBLOCK and MSG_NOSIGNAL do on Linux.
+bool configureSocket(int fd) {
+    if (::fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) return false;
+    const int flags = ::fcntl(fd, F_GETFL);
+    if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) return false;
+    const int one = 1;
+    return ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) == 0;
 }
-void drain(int fd) {
-    std::uint64_t value = 0;
-    if (::read(fd, &value, sizeof(value)) < 0) {}
+#endif
+// Non-blocking close-on-exec Unix stream socket, -1 on failure.
+int openStreamSocket() {
+#if defined(__APPLE__)
+    UniqueFd fd(::socket(AF_UNIX, SOCK_STREAM, 0));
+    if (!fd || !configureSocket(fd.get())) return -1;
+    return fd.release();
+#else
+    return ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+#endif
+}
+// Non-blocking close-on-exec accepted connection, -1 with errno on failure.
+int acceptConnection(int listener) {
+#if defined(__APPLE__)
+    UniqueFd fd(::accept(listener, nullptr, nullptr));
+    if (!fd) return -1;
+    if (!configureSocket(fd.get())) {
+        errno = ECONNABORTED;  // Dropped like a connection aborted before accept.
+        return -1;
+    }
+    return fd.release();
+#else
+    return ::accept4(listener, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+#endif
+}
+// True when the peer of a connected socket runs as `expected`.
+bool peerHasUid(int fd, uid_t expected) {
+#if defined(__APPLE__)
+    uid_t uid = 0;
+    gid_t gid = 0;
+    return ::getpeereid(fd, &uid, &gid) == 0 && uid == expected;
+#else
+    ucred peer{};
+    socklen_t peerSize = sizeof(peer);
+    return getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &peerSize) == 0 && peerSize == sizeof(peer) &&
+        peer.uid == expected;
+#endif
 }
 }  // namespace
 
@@ -90,17 +140,18 @@ struct IpcSocketServer::Impl {
         std::size_t written = 0; // Of header plus response.
         std::int64_t deadline = 0;
     };
-    // epoll tags beyond the slot indexes.
+    // Poller tags beyond the slot indexes. The tick is reported by the poller.
     static constexpr std::uint64_t kListenerTag = kSlots;
-    static constexpr std::uint64_t kTimerTag = kSlots + 1;
-    static constexpr std::uint64_t kStopTag = kSlots + 2;
-    static constexpr std::uint64_t kCompletedTag = kSlots + 3;
+    static constexpr std::uint64_t kStopTag = kSlots + 1;
+    static constexpr std::uint64_t kCompletedTag = kSlots + 2;
 
     IpcSocketServerOptions options;
     std::string path;
     std::mutex lifecycle;
     std::atomic<bool> running{false};
-    UniqueFd epoll, timer, stopEvent, completedEvent, listener;
+    Poller poller;
+    Notifier stopEvent, completedEvent;
+    UniqueFd listener;
     bool listenerWatched = false;
     std::int64_t listenerRetryAt = 0;
     bool socketBound = false;
@@ -117,27 +168,24 @@ struct IpcSocketServer::Impl {
           path(options.socketPath.empty() ? kIpcSocketPath : options.socketPath),
           // No fixed per-connection reservation exists here, so only the size bound applies.
           executors(std::move(h), options, std::numeric_limits<std::size_t>::max(),
-                    [this] { signal(completedEvent.get()); }) {}
+                    [this] { completedEvent.signal(); }) {}
 
-    bool watch(int fd, std::uint64_t tag, std::uint32_t events, bool& watched) {
-        epoll_event event{};
-        event.events = events;
-        event.data.u64 = tag;
-        if (epoll_ctl(epoll.get(), watched ? EPOLL_CTL_MOD : EPOLL_CTL_ADD, fd, &event) != 0) return false;
+    bool watch(int fd, std::uint64_t tag, std::uint32_t interest, bool& watched) {
+        if (!(watched ? poller.modify(fd, tag, interest) : poller.add(fd, tag, interest))) return false;
         watched = true;
         return true;
     }
     void unwatch(int fd, bool& watched) {
-        if (watched) epoll_ctl(epoll.get(), EPOLL_CTL_DEL, fd, nullptr);
+        if (watched) poller.remove(fd);
         watched = false;
     }
     std::size_t index(const Slot& slot) const { return static_cast<std::size_t>(&slot - slots.data()); }
-    bool watchSlot(Slot& slot, std::uint32_t events) {
-        return watch(slot.fd.get(), index(slot), events, slot.watched);
+    bool watchSlot(Slot& slot, std::uint32_t interest) {
+        return watch(slot.fd.get(), index(slot), interest, slot.watched);
     }
     void armListener() {
         if (listenerWatched || !listener) return;
-        if (!watch(listener.get(), kListenerTag, EPOLLIN, listenerWatched)) listenerRetryAt = nowMs() + kTickMs;
+        if (!watch(listener.get(), kListenerTag, kPollReadable, listenerWatched)) listenerRetryAt = nowMs() + kTickMs;
     }
     void recycle(Slot& slot) {
         unwatch(slot.fd.get(), slot.watched);
@@ -161,7 +209,7 @@ struct IpcSocketServer::Impl {
         for (std::size_t attempt = 0; attempt < kSlots; ++attempt) {
             Slot* slot = freeSlot();
             if (!slot) break;
-            const int fd = accept4(listener.get(), nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+            const int fd = acceptConnection(listener.get());
             if (fd < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) return;
                 if (errno == EINTR || errno == ECONNABORTED) continue;
@@ -173,7 +221,7 @@ struct IpcSocketServer::Impl {
             slot->fd.reset(fd);
             slot->phase = Phase::reading;
             slot->deadline = nowMs() + options.ioDeadlineMs;
-            if (!watchSlot(*slot, EPOLLIN)) recycle(*slot);
+            if (!watchSlot(*slot, kPollReadable)) recycle(*slot);
         }
         // All 32 slots are busy. Further clients wait in the listen backlog, as a
         // Windows client waits for a free pipe instance.
@@ -226,7 +274,7 @@ struct IpcSocketServer::Impl {
         slot.written = 0;
         slot.phase = Phase::writing;
         slot.deadline = nowMs() + options.ioDeadlineMs;
-        if (!watchSlot(slot, EPOLLOUT)) { recycle(slot); return; }
+        if (!watchSlot(slot, kPollWritable)) { recycle(slot); return; }
         write(slot);
     }
     void write(Slot& slot) {
@@ -243,7 +291,7 @@ struct IpcSocketServer::Impl {
         msghdr message{};
         message.msg_iov = parts;
         message.msg_iovlen = static_cast<decltype(message.msg_iovlen)>(count);
-        const ssize_t sent = sendmsg(slot.fd.get(), &message, MSG_NOSIGNAL | MSG_DONTWAIT);
+        const ssize_t sent = sendmsg(slot.fd.get(), &message, kSendFlags);
         if (sent < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return;
             recycle(slot);
@@ -256,13 +304,13 @@ struct IpcSocketServer::Impl {
         slot.job.reset();
         shutdown(slot.fd.get(), SHUT_WR);
         slot.phase = Phase::awaitingClose;
-        if (!watchSlot(slot, EPOLLIN)) recycle(slot);
+        if (!watchSlot(slot, kPollReadable)) recycle(slot);
     }
-    void advance(Slot& slot, std::uint32_t events) {
+    void advance(Slot& slot, std::uint32_t flags) {
         switch (slot.phase) {
         case Phase::reading: read(slot); break;
         case Phase::writing:
-            if (events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) write(slot);
+            if (flags & (kPollWritable | kPollError | kPollHangup)) write(slot);
             break;
         case Phase::awaitingClose: {
             char byte = 0;
@@ -276,7 +324,7 @@ struct IpcSocketServer::Impl {
         }
     }
     void completions() {
-        drain(completedEvent.get());
+        completedEvent.drain();
         for (auto& slot : slots) {
             if (slot.phase != Phase::executing || !slot.job ||
                 !slot.job->done.load(std::memory_order_acquire)) continue;
@@ -285,7 +333,7 @@ struct IpcSocketServer::Impl {
         }
     }
     void runLoop() {
-        std::array<epoll_event, kSlots + 4> events{};
+        std::array<PollEvent, kSlots + 4> events{};
         while (running.load(std::memory_order_acquire)) {
             const std::int64_t now = nowMs();
             std::int64_t wake = -1;
@@ -300,20 +348,17 @@ struct IpcSocketServer::Impl {
                 listenerRetryAt = 0;
                 if (freeSlot()) armListener();
             }
-            const int timeout = wake < 0 ? -1 : static_cast<int>(std::min<std::int64_t>(wake - now, kTickMs));
-            const int ready = epoll_wait(epoll.get(), events.data(), static_cast<int>(events.size()), timeout);
-            if (ready < 0) {
-                if (errno == EINTR) continue;
+            const std::int64_t timeout = wake < 0 ? -1 : std::min<std::int64_t>(wake - now, kTickMs);
+            const PollWait ready = poller.wait(events, timeout);
+            if (ready.error != 0) {
+                if (ready.error == EINTR) continue;
                 break;
             }
-            for (int i = 0; i < ready; ++i) {
-                const auto tag = events[static_cast<std::size_t>(i)].data.u64;
-                const auto flags = events[static_cast<std::size_t>(i)].events;
+            for (std::size_t i = 0; i < ready.count; ++i) {
+                const auto tag = events[i].tag;
+                const auto flags = events[i].flags;
                 if (tag == kStopTag) return;
-                if (tag == kTimerTag) {
-                    drain(timer.get());
-                    if (options.onTick) { try { options.onTick(); } catch (...) {} }
-                } else if (tag == kCompletedTag) {
+                if (tag == kCompletedTag) {
                     completions();
                 } else if (tag == kListenerTag) {
                     if (listenerWatched) accept();
@@ -323,6 +368,7 @@ struct IpcSocketServer::Impl {
                     try { advance(slot, flags); } catch (...) { recycle(slot); }
                 }
             }
+            if (ready.tick && options.onTick) { try { options.onTick(); } catch (...) {} }
         }
     }
     Status prepareDirectory() {
@@ -349,14 +395,16 @@ struct IpcSocketServer::Impl {
         return Status::success();
     }
     Status openEndpoint() {
-        epoll.reset(epoll_create1(EPOLL_CLOEXEC));
-        timer.reset(timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK));
-        stopEvent.reset(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
-        completedEvent.reset(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
-        if (!epoll || !timer || !stopEvent || !completedEvent) return Error(ErrorCode::ipc_unavailable);
+        auto createdPoller = Poller::create();
+        auto createdStop = Notifier::create();
+        auto createdCompleted = Notifier::create();
+        if (!createdPoller || !createdStop || !createdCompleted) return Error(ErrorCode::ipc_unavailable);
+        poller = std::move(createdPoller).value();
+        stopEvent = std::move(createdStop).value();
+        completedEvent = std::move(createdCompleted).value();
         auto prepared = prepareDirectory();
         if (!prepared) return prepared;
-        listener.reset(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
+        listener.reset(openStreamSocket());
         if (!listener) return Error(ErrorCode::ipc_unavailable);
         sockaddr_un address{};
         const socklen_t length = socketAddress(path, address);
@@ -370,20 +418,16 @@ struct IpcSocketServer::Impl {
         // Public IPC (client.md): every local process may connect.
         if (chmod(path.c_str(), kSocketMode) != 0 || listen(listener.get(), static_cast<int>(kSlots)) != 0)
             return Error(ErrorCode::ipc_unavailable, "the local socket could not be opened");
-        bool timerWatched = false, stopWatched = false, completedWatched = false;
-        if (!watch(timer.get(), kTimerTag, EPOLLIN, timerWatched) ||
-            !watch(stopEvent.get(), kStopTag, EPOLLIN, stopWatched) ||
-            !watch(completedEvent.get(), kCompletedTag, EPOLLIN, completedWatched))
+        bool stopWatched = false, completedWatched = false;
+        if (!watch(stopEvent.fd(), kStopTag, kPollReadable, stopWatched) ||
+            !watch(completedEvent.fd(), kCompletedTag, kPollReadable, completedWatched))
             return Error(ErrorCode::ipc_unavailable);
         listenerWatched = false;
         listenerRetryAt = 0;
         armListener();
         if (!listenerWatched) return Error(ErrorCode::ipc_unavailable);
         // First maintenance immediately, then every 250 ms.
-        itimerspec period{};
-        period.it_value.tv_nsec = 1;
-        period.it_interval.tv_nsec = kTickMs * 1000 * 1000;
-        if (timerfd_settime(timer.get(), 0, &period, nullptr) != 0) return Error(ErrorCode::ipc_unavailable);
+        if (!poller.startTick(kTickMs)) return Error(ErrorCode::ipc_unavailable);
         return Status::success();
     }
     Status start() {
@@ -426,15 +470,14 @@ struct IpcSocketServer::Impl {
             socketBound = false;
         }
         allocatedSlots.store(0);
-        timer.reset();
-        stopEvent.reset();
-        completedEvent.reset();
-        epoll.reset();
+        stopEvent = Notifier{};
+        completedEvent = Notifier{};
+        poller = Poller{};
     }
     void stopLocked() {
         const bool wasRunning = running.exchange(false, std::memory_order_acq_rel);
         executors.closeAdmission();
-        if (stopEvent) signal(stopEvent.get());
+        stopEvent.signal();
         // cancelHandlers once, then the executors finish their queues.
         executors.shutdown(wasRunning);
         if (loop.joinable()) loop.join();
@@ -512,7 +555,7 @@ Result<std::string> IpcSocketClient::exchange(std::string_view request, std::int
     if (request.size() > kIpcMaxMessageBytes)
         return fail(IpcSocketFailure::requestTooLarge, ErrorCode::ipc_message_too_large);
     const std::int64_t deadline = nowMs() + timeoutMs;
-    UniqueFd fd(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
+    UniqueFd fd(openStreamSocket());
     if (!fd) return fail(IpcSocketFailure::connectionClosed, ErrorCode::ipc_unavailable);
     sockaddr_un address{};
     const socklen_t addressLength = socketAddress(path, address);
@@ -543,10 +586,7 @@ Result<std::string> IpcSocketClient::exchange(std::string_view request, std::int
         return fail(IpcSocketFailure::connectionClosed, ErrorCode::ipc_unavailable);
     }
     // Nothing, in particular no secret, is sent to a peer that is not the service.
-    ucred peer{};
-    socklen_t peerSize = sizeof(peer);
-    if (getsockopt(fd.get(), SOL_SOCKET, SO_PEERCRED, &peer, &peerSize) != 0 || peerSize != sizeof(peer) ||
-        peer.uid != options_.expectedServerUid)
+    if (!peerHasUid(fd.get(), options_.expectedServerUid))
         return fail(IpcSocketFailure::invalidPeer, ErrorCode::ipc_unavailable,
                     "the socket peer is not the phpvpn service");
 
@@ -567,7 +607,7 @@ Result<std::string> IpcSocketClient::exchange(std::string_view request, std::int
         msghdr message{};
         message.msg_iov = parts;
         message.msg_iovlen = static_cast<decltype(message.msg_iovlen)>(count);
-        const ssize_t sent = sendmsg(fd.get(), &message, MSG_NOSIGNAL | MSG_DONTWAIT);
+        const ssize_t sent = sendmsg(fd.get(), &message, kSendFlags);
         if (sent >= 0) { written += static_cast<std::size_t>(sent); continue; }
         if (errno == EINTR) continue;
         if (errno != EAGAIN && errno != EWOULDBLOCK)

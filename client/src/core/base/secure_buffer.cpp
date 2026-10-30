@@ -4,6 +4,9 @@
 #include <windows.h>
 #elif defined(__linux__)
 #include <string.h>
+#elif defined(__APPLE__)
+#define __STDC_WANT_LIB_EXT1__ 1
+#include <string.h>
 #endif
 
 namespace phpvpn {
@@ -17,6 +20,9 @@ void secureWipe(void* data, std::size_t size) noexcept {
 #elif defined(__linux__)
     // glibc and musl guarantee that the compiler never elides this store.
     ::explicit_bzero(data, size);
+#elif defined(__APPLE__)
+    // C11 Annex K memset_s of the Darwin libc is never elided.
+    (void)::memset_s(data, size, 0, size);
 #else
     volatile unsigned char* p = static_cast<volatile unsigned char*>(data);
     while (size-- > 0) {

@@ -1,11 +1,13 @@
 // Linux platform tests owned by WP05 (plan-v001 section 9.4): Unix-socket IPC
 // framing, deadlines, slots, shared executors, socket directory policy and the
-// client's peer verification and failure classification.
+// client's peer verification and failure classification. Shared with macOS
+// (plan-macos-v001 step 2); the platform differences are guarded below.
 #include "harness.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdlib.h>
-#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -28,8 +30,9 @@
 #include <vector>
 
 #include "core/ipc/ipc_protocol.h"
-#include "platform/linux/fd.h"
-#include "platform/linux/ipc_unix.h"
+#include "platform/posix/event_wait.h"
+#include "platform/posix/fd.h"
+#include "platform/posix/ipc_unix.h"
 
 namespace phpvpn {
 namespace {
@@ -97,10 +100,39 @@ sockaddr_un address(const std::string& path) {
     std::memcpy(result.sun_path, path.c_str(), path.size() + 1);
     return result;
 }
+// Close-on-exec Unix stream socket. macOS has no SOCK_CLOEXEC, SOCK_NONBLOCK or
+// MSG_NOSIGNAL: the flags are set with fcntl and SIGPIPE is off per socket.
+#if defined(__APPLE__)
+constexpr int kTestSendFlags = 0;
+bool configureTestSocket(int fd, bool nonBlocking) {
+    const int one = 1;
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0 ||
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) != 0) return false;
+    return !nonBlocking || fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == 0;
+}
+UniqueFd streamSocket(bool nonBlocking = false) {
+    UniqueFd fd(socket(AF_UNIX, SOCK_STREAM, 0));
+    if (fd && !configureTestSocket(fd.get(), nonBlocking)) fd.reset();
+    return fd;
+}
+UniqueFd acceptBlocking(int listener) {
+    UniqueFd fd(accept(listener, nullptr, nullptr));
+    if (fd && !configureTestSocket(fd.get(), false)) fd.reset();
+    return fd;
+}
+#else
+constexpr int kTestSendFlags = MSG_NOSIGNAL;
+UniqueFd streamSocket(bool nonBlocking = false) {
+    return UniqueFd(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | (nonBlocking ? static_cast<int>(SOCK_NONBLOCK) : 0), 0));
+}
+UniqueFd acceptBlocking(int listener) {
+    return UniqueFd(accept4(listener, nullptr, nullptr, SOCK_CLOEXEC));
+}
+#endif
 bool sendAll(int fd, std::string_view bytes) {
     std::size_t sent = 0;
     while (sent < bytes.size()) {
-        const ssize_t count = send(fd, bytes.data() + sent, bytes.size() - sent, MSG_NOSIGNAL);
+        const ssize_t count = send(fd, bytes.data() + sent, bytes.size() - sent, kTestSendFlags);
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) return false;
         sent += static_cast<std::size_t>(count);
@@ -133,7 +165,7 @@ std::optional<std::string> readFrame(int fd, int timeoutMs = 2000) {
 // Blocking client that speaks raw bytes, for incomplete, slow and oversized frames.
 class RawClient {
 public:
-    explicit RawClient(const std::string& path) : fd_(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) {
+    explicit RawClient(const std::string& path) : fd_(streamSocket()) {
         const auto target = address(path);
         if (!fd_ || connect(fd_.get(), reinterpret_cast<const sockaddr*>(&target), sizeof(target)) != 0)
             fd_.reset();
@@ -163,14 +195,14 @@ private:
 class FakeServer {
 public:
     FakeServer(const std::string& path, std::function<void(int)> answer)
-        : path_(path), listener_(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) {
+        : path_(path), listener_(streamSocket()) {
         const auto target = address(path);
         if (!listener_ || bind(listener_.get(), reinterpret_cast<const sockaddr*>(&target), sizeof(target)) != 0 ||
             listen(listener_.get(), 4) != 0) throw std::runtime_error("fake server could not listen");
         thread_ = std::thread([this, answer = std::move(answer)] {
             pollfd entry{listener_.get(), POLLIN, 0};
             if (poll(&entry, 1, 3000) <= 0) return;
-            UniqueFd connection(accept4(listener_.get(), nullptr, nullptr, SOCK_CLOEXEC));
+            UniqueFd connection = acceptBlocking(listener_.get());
             if (!connection) return;
             if (readFrame(connection.get())) answer(connection.get());
             // Let the client read everything before the close.
@@ -356,20 +388,33 @@ PHPVPN_TEST(ipc_unix, thirty_two_slots_and_the_thirty_third_connection_waits) {
     std::vector<UniqueFd> backlog;
     const auto target = address(dir.socket());
     for (unsigned i = 0; i < 256; ++i) {
-        UniqueFd pending(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0));
+        UniqueFd pending = streamSocket(true);
         if (connect(pending.get(), reinterpret_cast<const sockaddr*>(&target), sizeof(target)) != 0) {
             const int error = errno;
+#if defined(__APPLE__)
+            // The macOS kernel refuses a connection beyond the backlog.
+            PHPVPN_CHECK_EQ(error, ECONNREFUSED);
+#else
             PHPVPN_CHECK_EQ(error, EAGAIN);
+#endif
             break;
         }
         backlog.push_back(std::move(pending));
     }
     PHPVPN_CHECK(backlog.size() < 256);
+#if defined(__APPLE__)
+    // A refused connection cannot be told apart from a stale socket, so the
+    // macOS client reports the service as not running (ipc_unix.h).
+    PHPVPN_REQUIRE_ERROR(client(dir).exchange("status", 300, -1, &outcome), ErrorCode::ipc_unavailable);
+    PHPVPN_CHECK(outcome.failure == IpcSocketFailure::serviceNotRunning);
+    PHPVPN_CHECK(!outcome.requestSent);
+#else
     const auto full = Clock::now();
     PHPVPN_REQUIRE_ERROR(client(dir).exchange("status", 300, -1, &outcome), ErrorCode::timeout);
     PHPVPN_CHECK(outcome.failure == IpcSocketFailure::timeout);
     PHPVPN_CHECK(!outcome.requestSent);
     PHPVPN_CHECK(elapsedMs(full) >= 250);
+#endif
     backlog.clear();
     idle.clear();
     PHPVPN_CHECK(waitUntil([&] { return client(dir).exchange("status", 200).ok(); }, 2000));
@@ -441,7 +486,7 @@ PHPVPN_TEST(ipc_unix, socket_directory_policy_and_stale_socket) {
     const auto handler = [](std::string_view) { return std::string("ok"); };
     // A stale socket of the expected owner is replaced.
     {
-        UniqueFd stale(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+        UniqueFd stale = streamSocket();
         const auto target = address(dir.socket());
         PHPVPN_CHECK(bind(stale.get(), reinterpret_cast<const sockaddr*>(&target), sizeof(target)) == 0);
     }
@@ -558,7 +603,7 @@ PHPVPN_TEST(ipc_unix, client_reports_service_not_running_access_denied_and_cance
     PHPVPN_CHECK(!outcome.requestSent);
     // A stale socket nobody listens on.
     {
-        UniqueFd stale(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+        UniqueFd stale = streamSocket();
         const auto target = address(dir.socket());
         PHPVPN_CHECK(bind(stale.get(), reinterpret_cast<const sockaddr*>(&target), sizeof(target)) == 0);
     }
@@ -567,7 +612,7 @@ PHPVPN_TEST(ipc_unix, client_reports_service_not_running_access_denied_and_cance
     unlink(dir.socket().c_str());
     // Access denied needs an unprivileged caller; root bypasses the socket mode.
     if (geteuid() != 0) {
-        UniqueFd listener(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+        UniqueFd listener = streamSocket();
         const auto target = address(dir.socket());
         PHPVPN_CHECK(bind(listener.get(), reinterpret_cast<const sockaddr*>(&target), sizeof(target)) == 0);
         PHPVPN_CHECK(listen(listener.get(), 1) == 0);
@@ -582,15 +627,15 @@ PHPVPN_TEST(ipc_unix, client_reports_service_not_running_access_denied_and_cance
     options.cancelHandlers = [&] { gate.release(); };
     IpcSocketServer server([&](std::string_view) { gate.wait(); return std::string("late"); }, options);
     PHPVPN_REQUIRE_OK(server.start());
-    UniqueFd cancel(eventfd(0, EFD_CLOEXEC));
+    auto cancel = Notifier::create();
+    PHPVPN_REQUIRE_OK(cancel);
     auto cancelled = std::async(std::launch::async, [&] {
         IpcExchangeOutcome local;
-        auto result = client(dir).exchange("slow", 5000, cancel.get(), &local);
+        auto result = client(dir).exchange("slow", 5000, cancel->fd(), &local);
         return std::make_pair(result.code(), local);
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    const std::uint64_t one = 1;
-    PHPVPN_CHECK(write(cancel.get(), &one, sizeof(one)) == sizeof(one));
+    cancel->signal();
     const auto [code, local] = cancelled.get();
     PHPVPN_CHECK(code == ErrorCode::cancelled);
     PHPVPN_CHECK(local.failure == IpcSocketFailure::cancelled);

@@ -2,6 +2,7 @@
 Creates the client archives for the download page (distribution.md, client download archives).
 From a verified distribution tree it writes <OutputDirectory>/phpvpn/client/<major>.x/ with
 phpvpn-win-x64.zip, phpvpn-macos.zip and phpvpn-linux.zip, each holding its platform folder
+(client/Windows/x64, client/macOS/arm64 or the placeholder client/macOS, client/Linux/x64)
 directly in the ZIP root. Every archive is checked against its folder (file set, SHA-256,
 POSIX modes) before the previous output is replaced. tools/make-distribution.ps1 calls it
 after publishing dist; run it alone only to recreate the archives of the current dist.
@@ -22,12 +23,16 @@ $output = Assert-DistributionPath $OutputDirectory $repository -Tree
 $pending = Assert-DistributionPath ($output + '.new') $repository -Tree
 # The download path carries only the major version, so links stay stable within 1.x.
 $major = (Get-ClientVersion $repository).Split('.')[0]
+# phpvpn-macos.zip holds the staged client/macOS/arm64 folder, or the placeholder client/macOS
+# (README.md only) when the distribution was built without a macOS package.
+$macosStaged = (Get-MacosDistributionState $distribution) -eq 'staged'
 $archives = [ordered]@{
     'phpvpn-win-x64.zip' = 'client/Windows/x64'
-    'phpvpn-macos.zip' = 'client/macOS'
+    'phpvpn-macos.zip' = $(if ($macosStaged) { Get-MacosClientFolder } else { 'client/macOS' })
     'phpvpn-linux.zip' = 'client/Linux/x64'
 }
 $executables = @{ 'phpvpn-linux.zip' = @('install.sh', 'uninstall.sh') }
+if ($macosStaged) { $executables['phpvpn-macos.zip'] = @('install.sh', 'uninstall.sh') }
 
 if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Recurse -Force }
 $target = Join-Path $pending "phpvpn/client/$major.x"

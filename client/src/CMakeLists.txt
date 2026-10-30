@@ -12,8 +12,8 @@ set(PHPVPN_PLATFORM_SHARED_SOURCES
 # core <-> platform link order.
 if(WIN32)
     list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/windows/durable_file_win.cpp)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/linux/durable_file_linux.cpp)
+elseif(PHPVPN_PLATFORM STREQUAL "linux" OR PHPVPN_PLATFORM STREQUAL "macos")
+    list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/posix/durable_file_posix.cpp)
 endif()
 
 add_library(phpvpn-core STATIC
@@ -111,17 +111,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     pkg_check_modules(PHPVPN_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
     find_package(Threads REQUIRED)
 
+    # The POSIX files (platform/posix) are shared with macOS: fixed-path
+    # configuration files, trusted directories, the Unix-socket IPC with its
+    # epoll/kqueue poller and the durable file replacement.
     add_library(phpvpn-platform STATIC
         platform/linux/clock_linux.cpp
-        platform/linux/config_files_linux.cpp
+        platform/posix/config_files_posix.cpp
         platform/linux/crypto_openssl.cpp
         platform/linux/dns_snapshot.cpp
         platform/linux/interface_identity.cpp
-        platform/linux/ipc_unix.cpp
+        platform/posix/event_wait.cpp
+        platform/posix/ipc_unix.cpp
         platform/linux/netconfig_netlink.cpp
         platform/linux/netlink_codec.cpp
         platform/linux/netlink_socket.cpp
-        platform/linux/paths_linux.cpp
+        platform/posix/paths_posix.cpp
         platform/linux/transport_curl.cpp
         platform/linux/tunnel_tun.cpp
     )
@@ -131,5 +135,41 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(phpvpn-platform
         PUBLIC phpvpn-core phpvpn-compile-options Threads::Threads
         PRIVATE OpenSSL::Crypto CURL::libcurl PkgConfig::PHPVPN_SYSTEMD
+    )
+endif()
+if(PHPVPN_PLATFORM STREQUAL "macos")
+    # macOS (plan-macos-v001): utun tunnel, PF_ROUTE network configuration,
+    # SystemConfiguration DNS snapshot, the libcurl transport and the OpenSSL
+    # crypto provider shared with Linux (OpenSSL 3 linked statically, libcurl
+    # from the macOS SDK), and the shared POSIX files.
+    set(OPENSSL_USE_STATIC_LIBS ON)
+    find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
+    find_package(CURL 8.4 REQUIRED)
+    find_package(Threads REQUIRED)
+    find_library(PHPVPN_SYSTEMCONFIGURATION SystemConfiguration REQUIRED)
+    find_library(PHPVPN_COREFOUNDATION CoreFoundation REQUIRED)
+
+    add_library(phpvpn-platform STATIC
+        platform/macos/clock_macos.cpp
+        platform/posix/config_files_posix.cpp
+        platform/linux/crypto_openssl.cpp
+        platform/macos/dns_snapshot.cpp
+        platform/macos/interface_identity.cpp
+        platform/posix/event_wait.cpp
+        platform/posix/ipc_unix.cpp
+        platform/macos/netconfig_route.cpp
+        platform/macos/route_codec.cpp
+        platform/macos/route_socket.cpp
+        platform/posix/paths_posix.cpp
+        platform/linux/transport_curl.cpp
+        platform/macos/tunnel_utun.cpp
+    )
+
+    target_include_directories(phpvpn-platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+    target_link_libraries(phpvpn-platform
+        PUBLIC phpvpn-core phpvpn-compile-options Threads::Threads
+        PRIVATE OpenSSL::Crypto CURL::libcurl
+                ${PHPVPN_SYSTEMCONFIGURATION} ${PHPVPN_COREFOUNDATION}
     )
 endif()

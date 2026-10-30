@@ -1,6 +1,8 @@
 // Linux platform tests owned by WP02 (plan-v001 section 9.4): the POSIX
 // ConfigFiles backend, durableReplaceFile and the service directory policy.
-// Everything runs without privileges; the expected owner is geteuid().
+// Everything runs without privileges; the expected owner is geteuid(). Shared
+// with macOS (plan-macos-v001 step 1): the statfs policy and the production
+// paths are platform specific, macOS paths are in tests/macos/unit.
 #include "harness.h"
 
 #include <fcntl.h>
@@ -46,12 +48,14 @@ void makeRemovable(const std::filesystem::path& path) {
 }
 
 // Private directory created by mkdtemp under the system temporary directory.
+// The path is canonical: the trusted walk refuses symbolic link ancestors, and
+// the macOS TMPDIR lies below the /var link.
 struct TempDirectory {
     std::filesystem::path path;
     TempDirectory() {
         std::string pattern = (std::filesystem::temp_directory_path() / "phpvpn-wp02-XXXXXX").string();
         if (::mkdtemp(pattern.data()) == nullptr) throw std::runtime_error("mkdtemp failed");
-        path = pattern;
+        path = std::filesystem::canonical(pattern);
     }
     ~TempDirectory() {
         makeRemovable(path);
@@ -151,6 +155,7 @@ PHPVPN_TEST(config_files_linux, factory_rejects_invalid_paths_and_unsafe_directo
     PHPVPN_CHECK(names(real).empty());
 }
 
+#if defined(__linux__)
 PHPVPN_TEST(config_files_linux, filesystem_policy_refuses_network_and_fuse) {
     for (const std::uint32_t refused : {0x6969u, 0x517Bu, 0xFF534D42u, 0xFE534D42u, 0x65735546u, 0x01021997u})
         PHPVPN_CHECK(!linuxConfigFilesystemSupported(refused));
@@ -158,6 +163,19 @@ PHPVPN_TEST(config_files_linux, filesystem_policy_refuses_network_and_fuse) {
     for (const std::uint32_t local : {0x01021994u, 0xEF53u, 0x58465342u, 0x9123683Eu, 0x794C7630u})
         PHPVPN_CHECK(linuxConfigFilesystemSupported(local));
 }
+#endif
+
+#if defined(__APPLE__)
+PHPVPN_TEST(config_files_macos, filesystem_policy_refuses_network_and_fuse_by_type_name) {
+    for (const char* refused : {"nfs", "smbfs", "afpfs", "webdav", "cifs", "osxfuse", "macfuse", "fuse", "ftp",
+                                "NFS", "SMBfs", "MacFUSE"})
+        PHPVPN_CHECK(!macosConfigFilesystemSupported(refused));
+    // apfs, hfs, msdos, exfat and the empty name are allowed; only the listed
+    // names are refused, not their prefixes.
+    for (const char* local : {"apfs", "hfs", "msdos", "exfat", "", "nfsx", "fus"})
+        PHPVPN_CHECK(macosConfigFilesystemSupported(local));
+}
+#endif
 
 PHPVPN_TEST(config_files_linux, bounded_read_exact_hash_and_replace_create_only) {
     TempDirectory fixture;
@@ -791,6 +809,7 @@ PHPVPN_TEST(durable_file_linux, failures_are_config_write_failed_without_tempora
     PHPVPN_CHECK(!std::filesystem::exists(target));
 }
 
+#if defined(__linux__)
 PHPVPN_TEST(paths_linux, fixed_production_paths_and_overrides) {
     auto production = resolveLinuxDirectories();
     PHPVPN_REQUIRE_OK(production);
@@ -813,10 +832,12 @@ PHPVPN_TEST(paths_linux, fixed_production_paths_and_overrides) {
         PHPVPN_REQUIRE_ERROR(resolveLinuxDirectories(bad), ErrorCode::invalid_argument);
     }
 }
+#endif
 
 PHPVPN_TEST(paths_linux, service_directories_are_created_and_repaired_to_exact_modes) {
     TempDirectory fixture;
-    LinuxDirectoryOverrides overrides{fixture.path / "etc", fixture.path / "state", fixture.path / "run"};
+    LinuxDirectoryOverrides overrides{fixture.path / "etc", fixture.path / "state", fixture.path / "run",
+                                      fixture.path / "log"};
     auto directories = resolveLinuxDirectories(overrides);
     PHPVPN_REQUIRE_OK(directories);
     const mode_t previous = ::umask(077);

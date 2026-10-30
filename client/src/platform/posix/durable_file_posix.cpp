@@ -1,8 +1,10 @@
-// Linux durable whole file replacement, plan-v001 section 4.2 point 10.
+// POSIX durable whole file replacement for Linux and macOS, plan-v001 section
+// 4.2 point 10 and plan-macos-v001 step 1.
 //
 // The temporary file is created exclusively next to the target, synced, renamed
 // over the target and the directory is synced, so after a power loss the target
-// holds either the previous or the complete new content.
+// holds either the previous or the complete new content. On macOS fsync leaves
+// the data in the drive cache, so both syncs use F_FULLFSYNC there.
 #include "platform/iface/durable_file.h"
 
 #include <errno.h>
@@ -13,13 +15,23 @@
 #include <algorithm>
 #include <string>
 
-#include "platform/linux/fd.h"
+#include "platform/posix/fd.h"
 
 namespace phpvpn {
 namespace {
 
 Error writeFailed() { return Error(ErrorCode::config_write_failed, "the ownership journal could not be written"); }
 Error replaceFailed() { return Error(ErrorCode::config_write_failed, "the ownership journal could not be replaced"); }
+
+// Linux fsync reaches stable storage. macOS fsync only hands the data to the
+// drive; F_FULLFSYNC also flushes the drive cache. Filesystems without
+// F_FULLFSYNC fall back to fsync.
+int fullSync(int fd) {
+#if defined(__APPLE__)
+    if (::fcntl(fd, F_FULLFSYNC) == 0) return 0;
+#endif
+    return ::fsync(fd);
+}
 
 // Like std::filesystem::create_directories on Windows, but new directories are
 // private. Errors surface when the directory is opened.
@@ -67,13 +79,13 @@ Status durableReplaceFile(const std::filesystem::path& path, std::string_view by
         ::unlinkat(directory.get(), temporary.c_str(), 0);
         return error;
     };
-    if (!writeAll(file.get(), bytes) || ::fsync(file.get()) != 0) return discard(writeFailed());
+    if (!writeAll(file.get(), bytes) || fullSync(file.get()) != 0) return discard(writeFailed());
     if (::close(file.release()) != 0) return discard(writeFailed());
     if (::renameat(directory.get(), temporary.c_str(), directory.get(), name.c_str()) != 0)
         return discard(replaceFailed());
     // The new content is in place. Report a failed directory sync anyway, the
     // replacement may not survive a power loss.
-    if (::fsync(directory.get()) != 0) return replaceFailed();
+    if (fullSync(directory.get()) != 0) return replaceFailed();
     return ok();
 }
 

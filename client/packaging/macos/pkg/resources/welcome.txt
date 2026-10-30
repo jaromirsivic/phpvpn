@@ -1,0 +1,15 @@
+phpvpn client for macOS (Apple Silicon, macOS 14 or newer)
+
+This package installs the phpvpn system service (a launchd daemon), the
+command line client /usr/local/bin/phpvpn and, unless the package was built
+without it, the menu bar application "phpvpn Tray". After the installation
+the service runs and the tray starts for the logged in user.
+
+The programs carry an ad hoc code signature and the package is not signed
+with an Apple Developer ID. The verifying installer of the distribution
+folder (sudo sh install.sh) checks the signed release manifest before it
+installs this package.
+
+Configure the connection with the Configuration Wizard of the tray, or with
+"phpvpn set-config <file>" followed by "phpvpn connect" in Terminal. The
+configuration is stored in /Library/Application Support/phpvpn/config.json.

@@ -56,7 +56,8 @@ set(PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES
 add_executable(phpvpn-core-tests unit/harness.cpp ${PHPVPN_PORTABLE_TEST_SOURCES})
 target_include_directories(phpvpn-core-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
 target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-core phpvpn-compile-options)
-# PHPVPN_LINUX_CRYPTO_READY was switched on by WP02 with the OpenSSL provider.
+# PHPVPN_LINUX_CRYPTO_READY was switched on by WP02 with the OpenSSL provider;
+# macOS shares that provider.
 set(PHPVPN_LINUX_CRYPTO_READY ON)
 if(TARGET phpvpn-platform AND (WIN32 OR PHPVPN_LINUX_CRYPTO_READY))
     target_sources(phpvpn-core-tests PRIVATE ${PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES})
@@ -91,6 +92,54 @@ if(PHPVPN_BUILD_CONTRACT_TESTS)
         RUN_SERIAL TRUE
         RESOURCE_LOCK phpvpn_default_relay
         TIMEOUT 180)
+endif()
+
+if(PHPVPN_PLATFORM STREQUAL "macos")
+    # macOS platform layer tests that need no privileges (plan-macos-v001
+    # step 7). The clock, configuration file, crypto, transport and IPC tests
+    # are the portable POSIX tests of the Linux suite.
+    add_executable(phpvpn-macos-tests
+        unit/harness.cpp
+        linux/unit/test_clock_linux.cpp
+        linux/unit/test_config_files_linux.cpp
+        linux/unit/test_crypto_openssl.cpp
+        linux/unit/test_transport_curl.cpp
+        linux/unit/test_ipc_unix.cpp
+        macos/unit/test_paths_macos.cpp
+        macos/unit/test_route_codec.cpp
+        macos/unit/test_interface_identity_macos.cpp
+        macos/unit/test_dns_snapshot_macos.cpp
+    )
+    target_include_directories(phpvpn-macos-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    # The transport test hosts its own TLS server, so it needs libssl of the
+    # same static OpenSSL.
+    find_package(OpenSSL 3 REQUIRED COMPONENTS SSL Crypto)
+    target_link_libraries(phpvpn-macos-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options
+        OpenSSL::SSL OpenSSL::Crypto)
+    add_test(NAME phpvpn-macos-tests COMMAND phpvpn-macos-tests)
+    set_tests_properties(phpvpn-macos-tests PROPERTIES LABELS "macos" TIMEOUT 300)
+
+    # Root only: creates a utun interface, assigns the address and the route,
+    # exchanges packets and verifies the cleanup. CI runs it with sudo.
+    option(PHPVPN_BUILD_PRIVILEGED_TESTS "Build macOS utun tests (root required)" ON)
+    if(PHPVPN_BUILD_PRIVILEGED_TESTS)
+        add_executable(phpvpn-utun-tests
+            unit/harness.cpp
+            macos/privileged/test_tunnel_utun.cpp
+        )
+        target_include_directories(phpvpn-utun-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+        target_link_libraries(phpvpn-utun-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+        add_test(NAME phpvpn-utun-tests COMMAND phpvpn-utun-tests)
+        set_tests_properties(phpvpn-utun-tests PROPERTIES LABELS "privileged" TIMEOUT 300)
+    endif()
+
+    # Helper of the root-only service end-to-end script tests/e2e/macos, shared
+    # with Linux through the forwarding IPC header.
+    option(PHPVPN_BUILD_MACOS_E2E "Build the macOS service end-to-end test helpers" ON)
+    if(PHPVPN_BUILD_MACOS_E2E)
+        add_executable(phpvpn-wizard-ipc-probe e2e/linux/wizard_ipc_probe.cpp)
+        target_link_libraries(phpvpn-wizard-ipc-probe PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -1,0 +1,56 @@
+#!/bin/sh
+# preinstall of the phpvpn macOS package (plan-macos-v001 step 8), run by the
+# macOS installer as root before the payload is written. It stops a running
+# installation so the payload can replace it:
+#
+#   1. phpvpn disconnect (best effort, the service tears the tunnel down),
+#   2. launchctl bootout of the tray agent in the session of the console user,
+#   3. launchctl bootout system/com.pilandrome.phpvpn (waits for the daemon to
+#      exit, at most its ExitTimeOut).
+#
+# Every step is best effort: on a first installation nothing is loaded. The
+# script never fails the installation. Output goes to /var/log/install.log.
+# $3 is the target volume; only the running system "/" is managed.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+DAEMON_LABEL=com.pilandrome.phpvpn
+AGENT_LABEL=com.pilandrome.phpvpn-tray
+CLI=/usr/local/bin/phpvpn
+
+target=${3:-/}
+if [ "$target" != / ]; then
+    echo "phpvpn preinstall: target volume $target is not the running system, nothing to stop"
+    exit 0
+fi
+
+# ------------------------------------------------------- 1. disconnect
+if [ -x "$CLI" ] && launchctl print "system/$DAEMON_LABEL" > /dev/null 2>&1; then
+    if "$CLI" disconnect > /dev/null 2>&1; then
+        echo "phpvpn preinstall: disconnect requested"
+    else
+        echo "phpvpn preinstall: disconnect skipped (the service did not answer)"
+    fi
+fi
+
+# ---------------------------------------------------- 2. tray agent
+console_uid=$(stat -f %u /dev/console 2> /dev/null) || console_uid=
+case $console_uid in
+    ''|0|*[!0-9]*) ;;
+    *)
+        if launchctl print "gui/$console_uid/$AGENT_LABEL" > /dev/null 2>&1; then
+            launchctl bootout "gui/$console_uid/$AGENT_LABEL" > /dev/null 2>&1 &&
+                echo "phpvpn preinstall: tray agent stopped for uid $console_uid"
+        fi
+        ;;
+esac
+
+# --------------------------------------------------------- 3. daemon
+if launchctl print "system/$DAEMON_LABEL" > /dev/null 2>&1; then
+    if launchctl bootout "system/$DAEMON_LABEL" > /dev/null 2>&1; then
+        echo "phpvpn preinstall: service stopped"
+    else
+        echo "phpvpn preinstall: warning: launchctl bootout system/$DAEMON_LABEL failed"
+    fi
+fi
+exit 0

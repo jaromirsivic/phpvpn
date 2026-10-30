@@ -44,6 +44,36 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     return()
 endif()
 
+if(PHPVPN_PLATFORM STREQUAL "macos")
+    # macOS (plan-macos-v001 step 6): the launchd daemon, the CLI and the AppKit
+    # menu bar tray. install() targets the .pkg staging root
+    # (cmake --install with DESTDIR and prefix /), see tools/macos/package-pkg.sh.
+    add_executable(phpvpn-service
+        service/service_main_macos.cpp
+        service/service_runtime.cpp
+        service/startup_connect.cpp
+    )
+    target_link_libraries(phpvpn-service PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    set_target_properties(phpvpn-service PROPERTIES OUTPUT_NAME "phpvpn-service")
+
+    add_executable(phpvpn-cli
+        cli/main.cpp
+    )
+    target_link_libraries(phpvpn-cli PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    set_target_properties(phpvpn-cli PROPERTIES OUTPUT_NAME "phpvpn")
+
+    set(PHPVPN_MACOS_PACKAGING "${CMAKE_SOURCE_DIR}/packaging/macos")
+    install(TARGETS phpvpn-service RUNTIME DESTINATION "Library/PrivilegedHelperTools")
+    install(TARGETS phpvpn-cli RUNTIME DESTINATION "usr/local/bin")
+    install(FILES "${PHPVPN_MACOS_PACKAGING}/launchd/com.pilandrome.phpvpn.plist"
+        DESTINATION "Library/LaunchDaemons")
+
+    if(PHPVPN_BUILD_TRAY AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tray-macos/CMakeLists.txt")
+        add_subdirectory(tray-macos)
+    endif()
+    return()
+endif()
+
 # Everything below is the Windows application set: Win32 resources, manifests, the tray,
 # the package GUI and the Wintun copy.
 if(NOT WIN32)

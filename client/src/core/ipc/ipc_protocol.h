@@ -28,6 +28,11 @@ inline constexpr int kIpcVersion = 1;
 #if defined(_WIN32)
 inline constexpr const char* kIpcPipeName = R"(\\.\pipe\phpvpn-control-v1)";
 inline constexpr wchar_t const* kIpcPipeNameW = LR"(\\.\pipe\phpvpn-control-v1)";
+#elif defined(__APPLE__)
+// Unix domain socket in the root owned runtime directory of the launchd daemon.
+// The canonical /private path avoids the /var symbolic link, which the trusted
+// directory walk refuses to follow.
+inline constexpr const char* kIpcSocketPath = "/private/var/run/phpvpn/control-v1.sock";
 #else
 // Unix domain socket in the root owned runtime directory of the service.
 inline constexpr const char* kIpcSocketPath = "/run/phpvpn/control-v1.sock";

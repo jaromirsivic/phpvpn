@@ -125,6 +125,60 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "PHPVPN_BUILD_TRAY": "OFF"
       }
+    },
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../work/build/${presetName}",
+      "installDir": "${sourceDir}/../work/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "14.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "OPENSSL_USE_STATIC_LIBS": "ON",
+        "OPENSSL_ROOT_DIR": "$env{PHPVPN_OPENSSL_ROOT}",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "inherits": "macos-base",
+      "displayName": "macOS clang Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "macos-release",
+      "inherits": "macos-base",
+      "displayName": "macOS clang Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "macos-asan",
+      "inherits": "macos-base",
+      "displayName": "macOS clang AddressSanitizer and UBSan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PHPVPN_ENABLE_ASAN": "ON"
+      }
+    },
+    {
+      "name": "macos-headless",
+      "inherits": "macos-base",
+      "displayName": "macOS clang Release without tray",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "PHPVPN_BUILD_TRAY": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -136,7 +190,11 @@
     { "name": "linux-release", "configurePreset": "linux-release" },
     { "name": "linux-asan", "configurePreset": "linux-asan" },
     { "name": "linux-clang", "configurePreset": "linux-clang" },
-    { "name": "linux-headless", "configurePreset": "linux-headless" }
+    { "name": "linux-headless", "configurePreset": "linux-headless" },
+    { "name": "macos-debug", "configurePreset": "macos-debug" },
+    { "name": "macos-release", "configurePreset": "macos-release" },
+    { "name": "macos-asan", "configurePreset": "macos-asan" },
+    { "name": "macos-headless", "configurePreset": "macos-headless" }
   ],
   "testPresets": [
     {
@@ -181,6 +239,30 @@
     {
       "name": "linux-headless",
       "configurePreset": "linux-headless",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-asan",
+      "configurePreset": "macos-asan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "ASAN_OPTIONS": "abort_on_error=0:detect_stack_use_after_return=1:strict_string_checks=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+      }
+    },
+    {
+      "name": "macos-headless",
+      "configurePreset": "macos-headless",
       "output": { "outputOnFailure": true }
     }
   ]

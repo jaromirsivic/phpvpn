@@ -1,11 +1,19 @@
-#include "platform/linux/config_files_linux.h"
+#include "platform/posix/config_files_posix.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
-#include <sys/statfs.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+// sys/param.h first, as the statfs manual page orders them.
+#include <sys/param.h>
+#include <sys/mount.h>
+#else
+#include <sys/statfs.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -20,8 +28,8 @@
 #include "core/config/config_document.h"
 #include "core/crypto/crypto_provider.h"
 #include "core/protocol/uuid.h"
-#include "platform/linux/fd.h"
-#include "platform/linux/paths_linux.h"
+#include "platform/posix/fd.h"
+#include "platform/posix/paths_posix.h"
 
 namespace phpvpn {
 namespace {
@@ -36,9 +44,47 @@ Error readError() { return Error(ErrorCode::config_unreadable, "the configuratio
 Error writeError() { return Error(ErrorCode::config_write_failed, "the configuration publication could not be completed"); }
 Error insecureDirectory() { return Error(ErrorCode::config_directory_security_invalid); }
 Error crashed() { return Error(ErrorCode::internal, "simulated crash"); }
+Error remoteFilesystem() {
+    return Error(ErrorCode::not_supported, "the configuration directory is not on a local filesystem");
+}
 
 ConfigFileIdentity identityOf(const struct stat& info) {
     return ConfigFileIdentity{static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino)};
+}
+
+// Linux fsync reaches stable storage. macOS fsync only hands the data to the
+// drive; F_FULLFSYNC also flushes the drive cache, so the journal, the stage
+// and the directory are durable before the next step. Filesystems without
+// F_FULLFSYNC fall back to fsync.
+int fullSync(int fd) {
+#if defined(__APPLE__)
+    if (::fcntl(fd, F_FULLFSYNC) == 0) return 0;
+#endif
+    return ::fsync(fd);
+}
+
+// Atomic rename that fails with EEXIST instead of replacing an existing target.
+int renameNoReplace(int directory, const char* from, const char* to) {
+#if defined(__APPLE__)
+    return ::renameatx_np(directory, from, directory, to, RENAME_EXCL);
+#else
+    return ::renameat2(directory, from, directory, to, RENAME_NOREPLACE);
+#endif
+}
+
+// False when statfs fails. Otherwise `supported` tells whether the
+// configuration may live on that filesystem.
+bool readFilesystem(int fd, bool& supported) {
+    struct statfs filesystem {};
+    if (::fstatfs(fd, &filesystem) != 0) return false;
+#if defined(__APPLE__)
+    const char* name = filesystem.f_fstypename;
+    supported = macosConfigFilesystemSupported(
+        std::string_view(name, ::strnlen(name, sizeof(filesystem.f_fstypename))));
+#else
+    supported = linuxConfigFilesystemSupported(static_cast<std::uint32_t>(filesystem.f_type));
+#endif
+    return true;
 }
 
 bool writeAll(int fd, std::string_view bytes) {
@@ -96,9 +142,9 @@ Result<Journal> parseJournal(std::string_view bytes) {
 
 std::string stageName(const std::string& uuid) { return "config.stage." + uuid + ".tmp"; }
 
-class LinuxConfigFiles final : public ConfigFiles {
+class PosixConfigFiles final : public ConfigFiles {
 public:
-    LinuxConfigFiles(std::filesystem::path fixed, LinuxConfigFilePolicy policy,
+    PosixConfigFiles(std::filesystem::path fixed, PosixConfigFilePolicy policy,
         std::unique_ptr<CryptoProvider> crypto, UniqueFd directory)
         : path_(std::move(fixed)), policy_(std::move(policy)), crypto_(std::move(crypto)),
           directory_(std::move(directory)) {}
@@ -181,10 +227,10 @@ public:
             removeKnown(stage.c_str(), record.staged);
             return writeError();
         }
-        switch (at(LinuxConfigFileStage::stageCreated)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: removeKnown(stage.c_str(), record.staged); return writeError();
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::stageCreated)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: removeKnown(stage.c_str(), record.staged); return writeError();
+        case PosixConfigFileAction::proceed: break;
         }
 
         // Journal precedes secret bytes. A crash before this point can leave
@@ -204,27 +250,27 @@ public:
             ::fstat(journal.get(), &info) != 0 || !freshlyCreated(info) ||
             !writeAll(journal.get(), serialize(record)))
             return discard();
-        switch (at(LinuxConfigFileStage::beforeJournalFlush)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return discard();
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::beforeJournalFlush)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return discard();
+        case PosixConfigFileAction::proceed: break;
         }
         // The directory sync makes both new names durable before the secret.
-        if (::fsync(journal.get()) != 0 || ::fsync(directory_.get()) != 0) return discard();
-        switch (at(LinuxConfigFileStage::journalFlushed)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return discard();
-        case LinuxConfigFileAction::proceed: break;
+        if (fullSync(journal.get()) != 0 || fullSync(directory_.get()) != 0) return discard();
+        switch (at(PosixConfigFileStage::journalFlushed)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return discard();
+        case PosixConfigFileAction::proceed: break;
         }
         if (!writeAll(stageFile.get(), bytes)) return discard();
-        for (const auto point : {LinuxConfigFileStage::stageWritten, LinuxConfigFileStage::beforeStageFlush}) {
+        for (const auto point : {PosixConfigFileStage::stageWritten, PosixConfigFileStage::beforeStageFlush}) {
             switch (at(point)) {
-            case LinuxConfigFileAction::crash: return crashed();
-            case LinuxConfigFileAction::fail: return discard();
-            case LinuxConfigFileAction::proceed: break;
+            case PosixConfigFileAction::crash: return crashed();
+            case PosixConfigFileAction::fail: return discard();
+            case PosixConfigFileAction::proceed: break;
             }
         }
-        if (::fsync(stageFile.get()) != 0) return discard();
+        if (fullSync(stageFile.get()) != 0) return discard();
 
         // Drop write access before publication and reopen through the pinned
         // directory. Verify both identity and the exact hash of what will be
@@ -238,10 +284,10 @@ public:
         auto stagedHash = hash(stagedBytes.value());
         if (!stagedHash || stagedHash.value() != record.hash) return unknown(record);
         stageFile.reset();
-        switch (at(LinuxConfigFileStage::stageVerified)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return unknown(record);
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::stageVerified)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return unknown(record);
+        case PosixConfigFileAction::proceed: break;
         }
         if (record.original) {
             if (::linkat(directory_.get(), kTarget, directory_.get(), kBackup, 0) != 0)
@@ -251,16 +297,16 @@ public:
             UniqueFd backup = openEntry(kBackup);
             if (!backup || !inspect(backup.get(), info) || identityOf(info) != record.original.value())
                 return unknown(record);
-            switch (at(LinuxConfigFileStage::backupLinked)) {
-            case LinuxConfigFileAction::crash: return crashed();
-            case LinuxConfigFileAction::fail: return failBeforePublish(record, stage, journalId);
-            case LinuxConfigFileAction::proceed: break;
+            switch (at(PosixConfigFileStage::backupLinked)) {
+            case PosixConfigFileAction::crash: return crashed();
+            case PosixConfigFileAction::fail: return failBeforePublish(record, stage, journalId);
+            case PosixConfigFileAction::proceed: break;
             }
         }
-        switch (at(LinuxConfigFileStage::beforePublish)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return failBeforePublish(record, stage, journalId);
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::beforePublish)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return failBeforePublish(record, stage, journalId);
+        case PosixConfigFileAction::proceed: break;
         }
         // Revalidate the final name. The rename replaces the directory entry,
         // it never writes through a substituted symlink.
@@ -271,7 +317,7 @@ public:
         }
         const int renamed = mode == ConfigPublishMode::replace ?
             ::renameat(directory_.get(), stage.c_str(), directory_.get(), kTarget) :
-            ::renameat2(directory_.get(), stage.c_str(), directory_.get(), kTarget, RENAME_NOREPLACE);
+            renameNoReplace(directory_.get(), stage.c_str(), kTarget);
         const int renameError = renamed == 0 ? 0 : errno;
         if (renamed != 0) {
             auto failure = failBeforePublish(record, stage, journalId);
@@ -279,30 +325,30 @@ public:
                 return ConfigFilePublication{ConfigPublishState::alreadyExists, std::string(commitId), {}, {}};
             return failure;
         }
-        switch (at(LinuxConfigFileStage::afterPublish)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return unknown(record);
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::afterPublish)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return unknown(record);
+        case PosixConfigFileAction::proceed: break;
         }
-        if (::fsync(directory_.get()) != 0) return unknown(record);
-        switch (at(LinuxConfigFileStage::afterDirectorySync)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return unknown(record);
-        case LinuxConfigFileAction::proceed: break;
+        if (fullSync(directory_.get()) != 0) return unknown(record);
+        switch (at(PosixConfigFileStage::afterDirectorySync)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return unknown(record);
+        case PosixConfigFileAction::proceed: break;
         }
         {
             UniqueFd published = openEntry(kTarget);
             if (!published || !inspect(published.get(), info) || identityOf(info) != record.staged)
                 return unknown(record);
         }
-        switch (at(LinuxConfigFileStage::beforeConfirm)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return unknown(record);
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::beforeConfirm)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return unknown(record);
+        case PosixConfigFileAction::proceed: break;
         }
         // Persist the historical outcome. Later external edits or deletion must
         // not invalidate this receipt or impose an old-content revision guard.
-        if (!writeAll(journal.get(), "CONFIRMED\n") || ::fsync(journal.get()) != 0)
+        if (!writeAll(journal.get(), "CONFIRMED\n") || fullSync(journal.get()) != 0)
             return unknown(record);
         // Journal and one backup remain until recovery or the next publication.
         // A later external overwrite cannot turn an ambiguous result into success.
@@ -310,25 +356,24 @@ public:
     }
 
     Status checkDirectorySecurity() {
-        return checkLinuxDirectory(directory_.get(), path_, policy_);
+        return checkDirectory(directory_.get(), path_, policy_);
     }
 
-    static Status checkLinuxDirectory(int directory, const std::filesystem::path& fixed,
-                                      const LinuxConfigFilePolicy& policy) {
+    static Status checkDirectory(int directory, const std::filesystem::path& fixed,
+                                 const PosixConfigFilePolicy& policy) {
         // Exercise the actual fstat failure path with an invalid descriptor when
         // the test barrier injects a failed read. Production has no hook.
         if (policy.hook) {
-            switch (policy.hook(LinuxConfigFileStage::beforeDirectorySecurityRead)) {
-            case LinuxConfigFileAction::crash: return crashed();
-            case LinuxConfigFileAction::fail: directory = -1; break;
-            case LinuxConfigFileAction::proceed: break;
+            switch (policy.hook(PosixConfigFileStage::beforeDirectorySecurityRead)) {
+            case PosixConfigFileAction::crash: return crashed();
+            case PosixConfigFileAction::fail: directory = -1; break;
+            case PosixConfigFileAction::proceed: break;
             }
         }
         struct stat info {};
-        struct statfs filesystem {};
-        if (::fstat(directory, &info) != 0 || ::fstatfs(directory, &filesystem) != 0) return readError();
-        if (!linuxConfigFilesystemSupported(static_cast<std::uint32_t>(filesystem.f_type)))
-            return Error(ErrorCode::not_supported, "the configuration directory is not on a local filesystem");
+        bool supported = false;
+        if (::fstat(directory, &info) != 0 || !readFilesystem(directory, supported)) return readError();
+        if (!supported) return remoteFilesystem();
         if (!S_ISDIR(info.st_mode) || info.st_uid != policy.expectedOwner ||
             (info.st_mode & (S_IWGRP | S_IWOTH)) != 0)
             return insecureDirectory();
@@ -343,8 +388,8 @@ public:
     }
 
 private:
-    LinuxConfigFileAction at(LinuxConfigFileStage stage) const {
-        return policy_.hook ? policy_.hook(stage) : LinuxConfigFileAction::proceed;
+    PosixConfigFileAction at(PosixConfigFileStage stage) const {
+        return policy_.hook ? policy_.hook(stage) : PosixConfigFileAction::proceed;
     }
     UniqueFd openEntry(const char* name) const {
         // O_NONBLOCK keeps a planted FIFO from blocking the open, the type check
@@ -394,10 +439,10 @@ private:
             bytes.append(block.data(), static_cast<std::size_t>(count));
             if (bytes.size() > limit) return Error(ErrorCode::config_too_large);
             if (hooked) {
-                switch (at(LinuxConfigFileStage::readChunk)) {
-                case LinuxConfigFileAction::crash: return crashed();
-                case LinuxConfigFileAction::fail: return readError();
-                case LinuxConfigFileAction::proceed: break;
+                switch (at(PosixConfigFileStage::readChunk)) {
+                case PosixConfigFileAction::crash: return crashed();
+                case PosixConfigFileAction::fail: return readError();
+                case PosixConfigFileAction::proceed: break;
                 }
             }
         }
@@ -426,7 +471,7 @@ private:
         // This branch is reached only when our rename did not happen.
         if (record.original && !removeKnown(kBackup, record.original.value())) return unknown(record);
         if (!removeKnown(stage.c_str(), record.staged) || !removeKnown(kJournal, journal)) return unknown(record);
-        ::fsync(directory_.get());
+        fullSync(directory_.get());
         return writeError();
     }
     Result<ConfigFileRecovery> recoverLocked() {
@@ -470,10 +515,10 @@ private:
             // consumed it, regardless of a concurrent external target change.
             result.state = ConfigRecoveryState::notPublished;
         }
-        switch (at(LinuxConfigFileStage::beforeRecoveryCleanup)) {
-        case LinuxConfigFileAction::crash: return crashed();
-        case LinuxConfigFileAction::fail: return result;
-        case LinuxConfigFileAction::proceed: break;
+        switch (at(PosixConfigFileStage::beforeRecoveryCleanup)) {
+        case PosixConfigFileAction::crash: return crashed();
+        case PosixConfigFileAction::fail: return result;
+        case PosixConfigFileAction::proceed: break;
         }
         if (record.original && !removeKnown(kBackup, record.original.value())) {
             if (result.state != ConfigRecoveryState::confirmed) result.state = ConfigRecoveryState::unknown;
@@ -484,17 +529,18 @@ private:
             return result;
         }
         // A cleanup lost to a power failure is repeated by the next recovery.
-        ::fsync(directory_.get());
+        fullSync(directory_.get());
         return result;
     }
     std::filesystem::path path_;
-    LinuxConfigFilePolicy policy_;
+    PosixConfigFilePolicy policy_;
     std::unique_ptr<CryptoProvider> crypto_;
     UniqueFd directory_;
     std::mutex mutex_;
 };
 }  // namespace
 
+#if defined(__linux__)
 bool linuxConfigFilesystemSupported(std::uint32_t magic) noexcept {
     // Values of <linux/magic.h> and fs/smb, spelled out so the policy does not
     // depend on the kernel header version of the build host.
@@ -512,22 +558,40 @@ bool linuxConfigFilesystemSupported(std::uint32_t magic) noexcept {
     };
     return std::find(std::begin(refused), std::end(refused), magic) == std::end(refused);
 }
+#endif
 
-Result<std::unique_ptr<ConfigFiles>> createLinuxConfigFiles(
-    const std::filesystem::path& fixedPath, LinuxConfigFilePolicy policy) {
+#if defined(__APPLE__)
+bool macosConfigFilesystemSupported(std::string_view fstypename) noexcept {
+    // Network filesystems and the FUSE implementations, by their statfs
+    // f_fstypename. ASCII case is ignored.
+    constexpr std::string_view refused[] = {
+        "nfs", "smbfs", "afpfs", "webdav", "cifs", "osxfuse", "macfuse", "fuse", "ftp",
+    };
+    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    for (const std::string_view name : refused) {
+        if (name.size() == fstypename.size() &&
+            std::equal(name.begin(), name.end(), fstypename.begin(),
+                       [&](char expected, char actual) { return expected == lower(actual); }))
+            return false;
+    }
+    return true;
+}
+#endif
+
+Result<std::unique_ptr<ConfigFiles>> createPosixConfigFiles(
+    const std::filesystem::path& fixedPath, PosixConfigFilePolicy policy) {
     if (!fixedPath.is_absolute() || fixedPath.filename() != kTarget ||
         fixedPath != fixedPath.lexically_normal() || fixedPath.native().find('\0') != std::string::npos)
         return Error(ErrorCode::invalid_argument);
     auto directory = openTrustedDirectory(fixedPath.parent_path(), policy.expectedOwner);
     if (!directory) return directory.error();
-    struct statfs filesystem {};
-    if (::fstatfs(directory->get(), &filesystem) != 0) return readError();
-    if (!linuxConfigFilesystemSupported(static_cast<std::uint32_t>(filesystem.f_type)))
-        return Error(ErrorCode::not_supported, "the configuration directory is not on a local filesystem");
-    PHPVPN_TRY(LinuxConfigFiles::checkLinuxDirectory(directory->get(), fixedPath, policy));
+    bool supported = false;
+    if (!readFilesystem(directory->get(), supported)) return readError();
+    if (!supported) return remoteFilesystem();
+    PHPVPN_TRY(PosixConfigFiles::checkDirectory(directory->get(), fixedPath, policy));
     auto crypto = createPlatformCryptoProvider();
     if (!crypto) return crypto.error();
-    return std::unique_ptr<ConfigFiles>(new LinuxConfigFiles(fixedPath,
+    return std::unique_ptr<ConfigFiles>(new PosixConfigFiles(fixedPath,
         std::move(policy), std::move(crypto).value(), std::move(directory).value()));
 }
 }  // namespace phpvpn

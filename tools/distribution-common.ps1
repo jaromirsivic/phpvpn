@@ -17,7 +17,7 @@ function Get-DistributionSigningCertificate {
 }
 
 function Get-PinnedInstallerText {
-    param([string]$Source, [ValidateSet('Windows','Linux')][string]$Platform,
+    param([string]$Source, [ValidateSet('Windows','Linux','macOS')][string]$Platform,
         [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
     $text = [IO.File]::ReadAllText($Source)
     if ($Platform -eq 'Windows') {
@@ -34,14 +34,14 @@ function Get-PinnedInstallerText {
 }
 
 function Write-PinnedInstaller {
-    param([string]$Source, [string]$Destination, [ValidateSet('Windows','Linux')][string]$Platform,
+    param([string]$Source, [string]$Destination, [ValidateSet('Windows','Linux','macOS')][string]$Platform,
         [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
     $text = Get-PinnedInstallerText -Source $Source -Platform $Platform -Certificate $Certificate
     [IO.File]::WriteAllText($Destination, $text, [Text.UTF8Encoding]::new($false))
 }
 
 function Assert-PinnedInstaller {
-    param([string]$Source, [string]$Copy, [ValidateSet('Windows','Linux')][string]$Platform,
+    param([string]$Source, [string]$Copy, [ValidateSet('Windows','Linux','macOS')][string]$Platform,
         [Security.Cryptography.X509Certificates.X509Certificate2]$Certificate)
     $expected = [Text.Encoding]::UTF8.GetBytes((Get-PinnedInstallerText -Source $Source -Platform $Platform -Certificate $Certificate))
     if (-not (Test-ByteArrayEqual $expected ([IO.File]::ReadAllBytes($Copy)))) {
@@ -215,6 +215,107 @@ function Get-LinuxClientSources {
         'install.sh' = 'client/packaging/linux/dist/install.sh'
         'uninstall.sh' = 'client/packaging/linux/dist/uninstall.sh'
         'README.md' = 'client/packaging/linux/dist/README.md'
+    }
+}
+
+# macOS client folder client/macOS/arm64, staged by client/tools/macos/make-macos-dist.ps1 from a
+# package build of client/tools/macos/package-pkg.sh (the GitHub Actions artifact phpvpn-macos-arm64,
+# by convention copied to work/macos-packages/latest). Without a package build client/macOS holds
+# only the placeholder README of Get-UnsupportedClientReadme.
+function Get-MacosClientFolder { return 'client/macOS/arm64' }
+
+function Get-MacosPackagePattern { return '^phpvpn-(\d+\.\d+\.\d+)-arm64\.pkg$' }
+
+function Get-MacosMinimumOsVersion { return '14.0' }
+
+# Unchanged copies in client/macOS/arm64 besides the package and the signed manifest
+# (install.sh carries the pinned signing key).
+function Get-MacosClientSources {
+    return [ordered]@{
+        'install.sh' = 'client/packaging/macos/dist/install.sh'
+        'uninstall.sh' = 'client/packaging/macos/dist/uninstall.sh'
+        'README.md' = 'client/packaging/macos/dist/README.md'
+    }
+}
+
+# 'placeholder' when client/macOS holds only the placeholder README.md, 'staged' when it holds only
+# the arm64 client folder. Anything else is a half-staged folder and is rejected.
+function Get-MacosDistributionState([string]$Tree) {
+    $root = Join-Path $Tree 'client/macOS'
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw 'Distribution folder client/macOS is missing.' }
+    $entries = @(Get-ChildItem -LiteralPath $root -Force | ForEach-Object {
+        if ($_.PSIsContainer) { $_.Name + '/' } else { $_.Name }
+    })
+    if ($entries.Count -eq 1 -and $entries[0] -ceq 'README.md') { return 'placeholder' }
+    if ($entries.Count -eq 1 -and $entries[0] -ceq 'arm64/') { return 'staged' }
+    throw ("client/macOS is half-staged: it must hold either only the placeholder README.md or only the arm64 " +
+        "client folder (found: $($entries -join ', ')).")
+}
+
+# Checks a package build directory of client/tools/macos/package-pkg.sh: SHA256SUMS, exactly one
+# product archive of the client version and build-provenance.json. The unstaged README.md,
+# install.sh and uninstall.sh and the logs folder of the CI artifact may be present; staging takes
+# those files from the checkout instead.
+function Read-MacosPackageBuild([string]$Directory, [string]$ClientVersion) {
+    $packages = (Resolve-Path -LiteralPath $Directory).Path
+    $sumsPath = Join-Path $packages 'SHA256SUMS'
+    $provenancePath = Join-Path $packages 'build-provenance.json'
+    foreach ($required in @($sumsPath, $provenancePath)) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            throw "The macOS package build is incomplete, $(Split-Path $required -Leaf) is missing in $packages."
+        }
+    }
+    $sums = @{}
+    foreach ($line in [IO.File]::ReadAllLines($sumsPath)) {
+        if ($line -eq '') { continue }
+        if ($line -notmatch '^([0-9a-f]{64}) [ *]([A-Za-z0-9._+-]+)$') { throw "macOS SHA256SUMS holds a malformed line: $line" }
+        $sums[$Matches[2]] = $Matches[1]
+    }
+    foreach ($name in $sums.Keys) {
+        $path = Join-Path $packages $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Sha256 $path) -ne $sums[$name]) {
+            throw "macOS package file $name is missing or does not match SHA256SUMS."
+        }
+    }
+    $found = @(Get-ChildItem -LiteralPath $packages -File -Force | Where-Object { $_.Extension -eq '.pkg' })
+    if ($found.Count -ne 1) { throw "The macOS package build must hold exactly one .pkg, found $($found.Count) in $packages." }
+    $package = $found[0].Name
+    if (-not ($package -cmatch (Get-MacosPackagePattern))) { throw "$package is not a phpvpn macOS arm64 package." }
+    if ($Matches[1] -ne $ClientVersion) { throw "$package is not client version $ClientVersion." }
+    if (-not $sums.ContainsKey($package)) { throw "$package is not listed in SHA256SUMS." }
+    $magic = New-Object byte[] 4
+    $stream = [IO.File]::OpenRead($found[0].FullName)
+    try { $read = $stream.Read($magic, 0, 4) } finally { $stream.Dispose() }
+    if ($read -ne 4 -or [Text.Encoding]::ASCII.GetString($magic) -cne 'xar!') { throw "$package is not a xar installer package." }
+
+    $provenance = [IO.File]::ReadAllText($provenancePath) | ConvertFrom-Json
+    function Get-Field([string]$Name) {
+        $property = $provenance.PSObject.Properties[$Name]
+        if ($null -eq $property) { return $null }
+        return $property.Value
+    }
+    if ((Get-Field 'formatVersion') -ne 1 -or (Get-Field 'product') -cne 'phpvpn' -or (Get-Field 'platform') -cne 'macos' -or
+        (Get-Field 'architecture') -cne 'arm64') { throw 'build-provenance.json is not a phpvpn macOS arm64 provenance.' }
+    if ((Get-Field 'version') -cne $ClientVersion) { throw "build-provenance.json names version $(Get-Field 'version'), the client is $ClientVersion." }
+    if ((Get-Field 'minimumOsVersion') -cne (Get-MacosMinimumOsVersion)) {
+        throw "build-provenance.json names minimum macOS $(Get-Field 'minimumOsVersion'), the distribution requires $(Get-MacosMinimumOsVersion)."
+    }
+    if ([string](Get-Field 'sourceCommit') -notmatch '^[0-9a-f]{40}$' -or (Get-Field 'sourceDirty') -isnot [bool]) {
+        throw 'build-provenance.json has no valid source commit and dirty flag.'
+    }
+    foreach ($name in @('builtOn', 'xcode')) {
+        $value = Get-Field $name
+        if ($value -isnot [string] -or $value.Trim() -eq '') { throw "build-provenance.json has no $name." }
+    }
+    if ((Get-Field 'trayIncluded') -isnot [bool]) { throw 'build-provenance.json has no trayIncluded flag.' }
+    $entries = @(Get-Field 'packages')
+    if ($entries.Count -ne 1 -or $entries[0].file -cne $package -or $entries[0].sha256 -cne $sums[$package] -or
+        [long]$entries[0].bytes -ne $found[0].Length) { throw "The provenance of $package does not match the package and SHA256SUMS." }
+    return [pscustomobject]@{
+        Directory  = $packages
+        Package    = $package
+        Sha256     = $sums[$package]
+        Provenance = $provenance
     }
 }
 

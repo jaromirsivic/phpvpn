@@ -6,9 +6,9 @@
 // IPC operations, so this application does not offer them.
 //
 // The same commands, output formats, exit codes (0 success, 1 failure, 2 usage)
-// and the 10 s IPC timeout apply on Windows (named pipe, wide argv) and Linux
-// (Unix socket, UTF-8 argv). Linux only adds a hint line after an unreachable
-// service error; the error text and code stay the same.
+// and the 10 s IPC timeout apply on Windows (named pipe, wide argv), Linux and
+// macOS (Unix socket, UTF-8 argv). Linux and macOS only add a hint line after an
+// unreachable service error; the error text and code stay the same.
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -27,6 +27,8 @@
 #include "core/crypto/crypto_provider.h"
 #if defined(_WIN32)
 #include "platform/windows/ipc_pipe.h"
+#elif defined(__APPLE__)
+#include "platform/posix/ipc_unix.h"
 #else
 #include "platform/linux/ipc_unix.h"
 #endif
@@ -138,11 +140,26 @@ int printResponse(const std::string& response, bool expectsEnvelope) {
 }
 
 #if !defined(_WIN32)
-// Explanations for the Linux cases the error text cannot tell apart. The code
-// and the first line stay exactly those of the service error.
-void printLinuxHint(phpvpn::IpcSocketFailure failure) {
+// Explanations for the Linux and macOS cases the error text cannot tell apart.
+// The code and the first line stay exactly those of the service error.
+void printSocketHint(phpvpn::IpcSocketFailure failure) {
     const char* hint = nullptr;
     switch (failure) {
+#if defined(__APPLE__)
+        case phpvpn::IpcSocketFailure::serviceNotRunning:
+            hint = "the phpvpn service is not running or its socket /private/var/run/phpvpn/control-v1.sock is missing "
+                   "(sudo launchctl bootstrap system /Library/LaunchDaemons/com.pilandrome.phpvpn.plist)";
+            break;
+        case phpvpn::IpcSocketFailure::accessDenied:
+            hint = "access to the phpvpn control socket was denied (check the permissions of /private/var/run/phpvpn)";
+            break;
+        case phpvpn::IpcSocketFailure::invalidPeer:
+            hint = "the control socket is not served by the root phpvpn service";
+            break;
+        case phpvpn::IpcSocketFailure::connectionClosed:
+            hint = "the phpvpn service closed the connection (/private/var/log/phpvpn/phpvpn-service.log)";
+            break;
+#else
         case phpvpn::IpcSocketFailure::serviceNotRunning:
             hint = "the phpvpn service is not running or its socket is missing (systemctl status phpvpn)";
             break;
@@ -155,6 +172,7 @@ void printLinuxHint(phpvpn::IpcSocketFailure failure) {
         case phpvpn::IpcSocketFailure::connectionClosed:
             hint = "the phpvpn service closed the connection (journalctl -u phpvpn)";
             break;
+#endif
         default:
             break;
     }
@@ -227,7 +245,7 @@ int run(const std::string& command, const std::filesystem::path* file, const std
     auto response = phpvpn::IpcSocketClient(options).exchange(request, kIpcTimeoutMs, -1, &outcome);
     if (!response.ok()) {
         std::fprintf(stderr, "%s\n", response.error().message().c_str());
-        printLinuxHint(outcome.failure);
+        printSocketHint(outcome.failure);
         return 1;
     }
 #endif

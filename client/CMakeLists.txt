@@ -13,13 +13,17 @@ if(WIN32)
     set(PHPVPN_PLATFORM "windows")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(PHPVPN_PLATFORM "linux")
+elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    # macOS: utun, PF_ROUTE, launchd, system libcurl and a static OpenSSL 3
+    # (plan-macos-v001). iOS has no platform layer yet.
+    set(PHPVPN_PLATFORM "macos")
 else()
-    message(FATAL_ERROR "phpvpn client v1 supports Windows and Linux only; ${CMAKE_SYSTEM_NAME} has no platform layer.")
+    message(FATAL_ERROR "phpvpn client v1 supports Windows, Linux and macOS only; ${CMAKE_SYSTEM_NAME} has no platform layer.")
 endif()
 
 option(PHPVPN_ENABLE_ASAN "Build with AddressSanitizer (and UndefinedBehaviorSanitizer on GCC/Clang)" OFF)
 option(PHPVPN_WARNINGS_AS_ERRORS "Treat compiler warnings as errors on GCC and Clang" ON)
-option(PHPVPN_BUILD_TRAY "Build the tray application (Linux: needs GTK 3 and ayatana-appindicator)" ON)
+option(PHPVPN_BUILD_TRAY "Build the tray application (Linux: needs GTK 3 and ayatana-appindicator; macOS: AppKit menu bar app)" ON)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -82,14 +86,23 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
         target_compile_options(phpvpn-compile-options INTERFACE -fcf-protection)
     endif()
-    # _FORTIFY_SOURCE needs the optimizer and warns without it, so Debug stays
-    # plain. Some distributions predefine a level, which is replaced explicitly.
-    target_compile_options(phpvpn-compile-options INTERFACE
-        $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-U_FORTIFY_SOURCE>
-        $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-D_FORTIFY_SOURCE=3>)
-    target_link_options(phpvpn-compile-options INTERFACE
-        -pie
-        -Wl,-z,relro,-z,now,-z,noexecstack)
+    if(APPLE)
+        # Apple clang: level 2 is the supported _FORTIFY_SOURCE, PIE is the
+        # default of the 64-bit Darwin linker and the GNU ld hardening flags do
+        # not exist. The deployment target is set by the presets (14.0).
+        target_compile_options(phpvpn-compile-options INTERFACE
+            $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-U_FORTIFY_SOURCE>
+            $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-D_FORTIFY_SOURCE=2>)
+    else()
+        # _FORTIFY_SOURCE needs the optimizer and warns without it, so Debug stays
+        # plain. Some distributions predefine a level, which is replaced explicitly.
+        target_compile_options(phpvpn-compile-options INTERFACE
+            $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-U_FORTIFY_SOURCE>
+            $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-D_FORTIFY_SOURCE=3>)
+        target_link_options(phpvpn-compile-options INTERFACE
+            -pie
+            -Wl,-z,relro,-z,now,-z,noexecstack)
+    endif()
     if(PHPVPN_ENABLE_ASAN)
         target_compile_options(phpvpn-compile-options INTERFACE
             -fsanitize=address,undefined
