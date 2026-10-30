@@ -3,8 +3,8 @@
   Product archive definition of the phpvpn macOS client (plan-macos-v001 step 8),
   used by client/tools/macos/package-pkg.sh:
 
-    productbuild --distribution distribution.xml --package-path <dir>
-                 --resources <dir> phpvpn-<version>-arm64.pkg
+    productbuild (options: distribution, package-path, resources)
+                 phpvpn-<version>-arm64.pkg
 
   It holds the single component package phpvpn-component.pkg (identifier
   com.pilandrome.phpvpn) built by pkgbuild. package-pkg.sh replaces the
