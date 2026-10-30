@@ -388,7 +388,7 @@ Opravitelný dokument je jinak platná konfigurace, které chybí pouze `virtual
 
 Sdílená validace struktury, známých členů, URL, secretu, TLS, kanonického CIDR `/24` až `/29`, runtime limitů a kontraktů platí i pro repair. V režimu analýzy lze vynechat kontrolu chybějící IP/klíče a vazbu kontraktů na dosud neznámou vlastní IP. Tato vazba se povinně ověří při doplnění IP a znovu při Finish. Chybějící identita nikdy nezmění nepodporovaný CIDR na repairable. Typované neúplné údaje nesmějí vznikat jako falešně validní `ClientConfig` s dummy klíčem.
 
-`masterSetup` přijímá tři volitelné striktní JSON booleany: `useDefaultServerSecretInWizard`, `autoDetectIpAddressInWizard` a `useDefaultAccessKeyInWizard`. Úplná šablona editoru i nový/resetovaný koncept Wizardu používají true. Při absenci se secret odvodí přesnou shodou s `CHANGE_THIS_SERVER_SECRET`, automatická IP jako false při platné uložené IP a true při chybějící IP, výchozí klíč jako false při platném uloženém klíči a true při jeho absenci. Každý příznak se odvozuje samostatně. Explicitní false má přednost i v repair bez konkrétní hodnoty, pole pak zůstane prázdné a editovatelné. Jiný typ, duplicita nebo neznámý člen je chyba. Metadata mění pouze Wizard, běžný runtime používá výhradně uložené konkrétní hodnoty secretu, IP a klíče.
+`masterSetup` přijímá tři volitelné striktní JSON booleany: `useDefaultServerSecretInWizard`, `autoDetectIpAddressInWizard` a `useDefaultAccessKeyInWizard`. Úplná šablona editoru i nový/resetovaný koncept Wizardu používají false pro `useDefaultServerSecretInWizard`, takže pole secretu je po instalaci editovatelné, a true pro oba zbývající příznaky. Při absenci se secret odvodí přesnou shodou s `CHANGE_THIS_SERVER_SECRET`, automatická IP jako false při platné uložené IP a true při chybějící IP, výchozí klíč jako false při platném uloženém klíči a true při jeho absenci. Každý příznak se odvozuje samostatně. Explicitní false má přednost i v repair bez konkrétní hodnoty, pole pak zůstane prázdné a editovatelné. Jiný typ, duplicita nebo neznámý člen je chyba. Metadata mění pouze Wizard, běžný runtime používá výhradně uložené konkrétní hodnoty secretu, IP a klíče.
 
 ### Zachování hodnot a Reset Wizardu
 
@@ -467,7 +467,7 @@ Vytvoření i Reset editoru používají jedinou továrnu `makeDefaultEditorDocu
     "serverUrl": "http://127.0.0.1/phpvpn.php",
     "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
     "trustAnyTlsCertificate": true,
-    "useDefaultServerSecretInWizard": true,
+    "useDefaultServerSecretInWizard": false,
     "vpnCidr": "10.99.99.0/24",
     "virtualIp": "10.99.99.2",
     "autoDetectIpAddressInWizard": true,

@@ -17,7 +17,7 @@ struct WizardFields {
     std::string serverSecret;
     std::string virtualIp;
     std::string accessKey;
-    bool useDefaultServerSecretInWizard = true;
+    bool useDefaultServerSecretInWizard = false;
     bool autoDetectIpAddressInWizard = true;
     bool useDefaultAccessKeyInWizard = true;
     std::string httpHeaders = kDefaultHttpHeaders;

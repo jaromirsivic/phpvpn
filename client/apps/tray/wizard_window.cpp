@@ -446,7 +446,7 @@ HWND WizardWindow::add(const wchar_t* type, const std::wstring& text, DWORD styl
         if (current != text) SetWindowTextW(child, text.c_str());
     }
     if (created && type == std::wstring_view(L"BUTTON") && (style & BS_TYPEMASK) == BS_OWNERDRAW) {
-        if (!(id == headersId ? attachModernButton(child, resources_) : attachToggleSwitch(child, resources_))) { DestroyWindow(child); return nullptr; }
+        if (!(id == headersId ? attachModernButton(child, resources_, ButtonRole::primary) : attachToggleSwitch(child, resources_))) { DestroyWindow(child); return nullptr; }
     }
     if (created && modernText) {
         if (!attachModernTextBox(child, resources_, inCard_ ? cardColor_ : ui::Color::background)) {

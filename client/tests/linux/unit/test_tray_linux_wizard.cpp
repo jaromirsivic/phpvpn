@@ -463,7 +463,7 @@ PHPVPN_TEST(tray_linux_wizard, complete_flow_url_secret_identity_contracts_finis
     PHPVPN_CHECK_EQ(p.sidebar[0].status, std::string("Completed"));
     PHPVPN_CHECK_EQ(p.sidebar[0].symbol, std::string("✓"));
     PHPVPN_CHECK(p.backVisible && p.backEnabled);
-    PHPVPN_CHECK(p.useDefaultSecret && !p.secretEnabled && p.defaultSecretWarning);
+    PHPVPN_CHECK(!p.useDefaultSecret && p.secretEnabled && p.defaultSecretWarning);
     PHPVPN_CHECK_EQ(p.secretLabel, std::string("Server secret (exact text, including any spaces)"));
 
     // A failed secret check with a MAC mismatch and an HTTP diagnostic.

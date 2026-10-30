@@ -492,7 +492,7 @@ void run(bool udp) {
     auto view = require(WizardIpc::parseView(client.wizard(WizardCommand::open).result));
     check(view.mode == WizardMode::edit && view.availability == ConfigAvailability::valid && view.fields.has_value() && view.contractCount == 0,
           "Wizard did not open startup default in edit mode with empty contracts");
-    check(view.fields->useDefaultServerSecretInWizard && view.fields->autoDetectIpAddressInWizard && view.fields->useDefaultAccessKeyInWizard,
+    check(!view.fields->useDefaultServerSecretInWizard && view.fields->autoDetectIpAddressInWizard && view.fields->useDefaultAccessKeyInWizard,
           "startup default preferences were lost");
     client.session.sessionId = view.sessionId; client.session.serviceInstanceId = view.serviceInstanceId;
     client.session.connectionEpoch = view.connectionEpoch; client.session.fields = *view.fields;

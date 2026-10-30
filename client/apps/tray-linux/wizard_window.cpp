@@ -400,7 +400,7 @@ GtkWidget* WizardWindow::buildUrlPage() {
     gtk_box_pack_start(GTK_BOX(content), example, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(content), separator(), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(content), label(text(wizardText::headersHeading), style::kLabel), FALSE, FALSE, 0);
-    headersButton_ = button(utf8(wizardText::headersButton).c_str(), style::kSecondaryButton);
+    headersButton_ = button(utf8(wizardText::headersButton).c_str(), style::kPrimaryButton);
     gtk_widget_set_halign(headersButton_, GTK_ALIGN_START);
     gtk_widget_set_size_request(headersButton_, kHeadersButtonWidth, -1);
     g_signal_connect(headersButton_, "clicked", gtkCallback([](GtkButton*, gpointer data) {
