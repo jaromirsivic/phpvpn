@@ -82,8 +82,8 @@ interface and route listings taken while connected.
   traffic counters are not compared.
 - The production launchd daemon, the `.pkg` and the production paths
   (`/Library/Application Support/phpvpn`, `/private/var/run/phpvpn`,
-  `/private/var/log/phpvpn`) are not used; `tools/macos/package-pkg.sh` and the
-  package scripts are tested separately.
+  `/private/var/log/phpvpn`) are not used by this script; the package
+  installation test below covers them on the CI runner.
 - No `kill -9` recovery, no `autoConnectOnStartup` restart, no DNS comparison
   and no tray.
 - The relay runs on `127.0.0.1`, so the reachability of a remote relay outside
@@ -92,3 +92,43 @@ interface and route listings taken while connected.
 The script changes nothing outside the private service directory, which it
 removes at the end, and the work directory; the utun interface disappears with
 the service process.
+
+# macOS package installation test
+
+`run-install-test.sh` is the counterpart of
+`tests/e2e/linux/package-install-container.sh`. macOS has no container, so the
+package is installed on the running system itself, which is why CI runs it on
+the throwaway `macos-15` runner right after `tools/macos/package-pkg.sh` and
+removes it again at the end. Do not run it on a Mac whose phpvpn installation
+you want to keep.
+
+```sh
+sudo env "PATH=$PATH" sh client/tests/e2e/macos/run-install-test.sh install   work/macos-packages/ci
+sh client/tests/ui/macos/capture-tray.sh work/macos-packages/ci/screenshots     # console user, optional
+sudo sh client/tests/e2e/macos/run-install-test.sh uninstall work/macos-packages/ci
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PHPVPN_E2E_PORT` | `18095` | Port of the local php relay used by the Connect check. |
+| `PHPVPN_E2E_WORK` | `work/e2e-macos` | Parent of the `install-<time>` log directory. |
+
+`install` installs the single `phpvpn-<version>-arm64.pkg` of the package
+directory with the system `installer -pkg … -target /` (the dist `install.sh`
+needs the signed distribution folder, which the CI artifact is not) and then
+verifies, 38 checks in all: the payload files with their owners and modes, the
+LaunchDaemon `com.pilandrome.phpvpn` running under launchd, the control socket
+in `/private/var/run/phpvpn` (owner and mode only, the group is inherited from
+`/private/var/run`), `phpvpn status` as root and as the console user, the
+rotating service log, the tray LaunchAgent registered and `phpvpn-tray`
+running in the console user's session, a Connect through the installed daemon
+against a private `php -S` relay reaching `connected` with the `utun` address
+`10.99.99.2` and the `10.99.99/24` route, and a Disconnect that removes them
+again. `uninstall` runs the dist `uninstall.sh --remove-data` and verifies,
+15 checks, that the daemon, the agent, the payload, the receipt and the
+configuration, state, runtime and log directories are gone.
+
+Not covered: `install.sh` with a signed manifest, Gatekeeper, the daemon and
+the agent after a reboot, an upgrade over an existing installation,
+`--headless`, and interactive use of the tray (see `tests/ui/README.md` for
+the rendered screenshots).

@@ -18,8 +18,10 @@ hostu vývoje žádný macOS překladač není, takže tento report je jedinou e
 | `20c8e1c` | e2e selhal při Connect | Přidán log selhání síťových změn: `add route failed … the routing answer timed out`. |
 | `aaa3a0e` | e2e prošel (33/33), balení selhalo | Úspěšný `write` RTM_ADD/RTM_DELETE se bere jako výsledek (kernel vrací odmítnutí jako errno zápisu, ozvěnu `route(8)` u ADD nečte); RTM_GET se čte blokujícím `recv` se `SO_RCVTIMEO`. `productbuild` odmítl `--` uvnitř XML komentáře `distribution.xml`. |
 | `a0f0da6` | **zelený běh** | Komentář opraven; `client-macos` i `client-linux` úspěšné, artefakt `phpvpn-macos-arm64` (7,5 MB: `phpvpn-1.0.2-arm64.pkg`, `SHA256SUMS`, `build-provenance.json`, `install.sh`, `uninstall.sh`, `README.md`, logy), běh 41109110153. |
+| `3b5d4dc` | instalační test selhal (36/38) | Do workflow přidán instalační test balíčku (`run-install-test.sh`), snímky tray (`capture-tray.sh` s testovacími proměnnými `PHPVPN_TRAY_TEST_OPEN_WINDOW` a `PHPVPN_TRAY_TEST_CAPTURE_DIR`) a odinstalace. Dvě kontroly čekaly `root:wheel` u `/private/var/run/phpvpn` a socketu, skupina `daemon` je ale zděděná z `/private/var/run`; test ověřuje vlastníka a režim. Běh 41115384835. |
+| `5901436` | **zelený běh** | Instalační test 38/38, snímky všech sedmi spuštění tray, odinstalace 15/15; artefakt nově obsahuje `screenshots/`. Běh 41116173097. |
 
-## Stav podle kroků workflow (běh `a0f0da6`, 41109110153)
+## Stav podle kroků workflow (běh `5901436`, 41116173097)
 
 | Krok | Stav | Poznámka |
 |---|---|---|
@@ -32,11 +34,14 @@ hostu vývoje žádný macOS překladač není, takže tento report je jedinou e
 | Kontraktní testy proti `php -S` (6 případů) | RUN, OK | |
 | E2E služby (33 kontrol: `--verify-tunnel`, foreground start, socket, status, Wizard IPC s commitem, soubor 0600/0700, set-config/get-config, connect do `connected`, `utun4` s 10.99.99.2, routa 10.99.99/24, `route get`, info, diagnostics, disconnect, úklid adresy, routy i rozhraní, singleton, SIGTERM exit 0, odstranění socketu, souborový log, nezměněná výchozí routa) | RUN, OK | Služba běží jako root z `/private/tmp` fixture, relay `php -S` lokálně. |
 | Balení `.pkg` (`cmake --install`, ad hoc `codesign`, `pkgbuild`, `productbuild`, SHA256SUMS, provenance) | RUN, OK | Artefakt `phpvpn-macos-arm64`. |
+| Instalace balíčku systémovým `installer -pkg` (38 kontrol: payload s vlastníky a režimy, běžící LaunchDaemon, socket, `phpvpn status` jako root i uživatel `runner`, log služby, registrovaný LaunchAgent a běžící `phpvpn-tray`, Connect přes nainstalovaného daemona proti `php -S` do `connected` s `utun` adresou 10.99.99.2 a routou 10.99.99/24, Disconnect s úklidem) | RUN, OK | `tests/e2e/macos/run-install-test.sh install`; instaluje se na runner, ne přes `install.sh` s manifestem. |
+| Snímky tray (menu bar a okna ovládací okno, Wizard, Contracts, Edit Config, Server Information, Statistics; PNG stavové položky a každého viditelného okna z pohledů aplikace) | RUN, OK | `tests/ui/macos/capture-tray.sh`, složka `screenshots/` v artefaktu; `screencapture` celé obrazovky bez oprávnění Screen Recording spolehlivý snímek nedává. |
+| Odinstalace `uninstall.sh --remove-data` (15 kontrol: daemon, agent, payload, receipt a datové adresáře pryč) | RUN, OK | `tests/e2e/macos/run-install-test.sh uninstall`. |
 
 ## Neověřeno
 
-- Ruční instalace `.pkg` na fyzickém Macu, Gatekeeper, LaunchDaemon a LaunchAgent po restartu.
-- Tray vizuálně (CI nemá grafickou relaci); přeložen a model testy prošly.
+- Instalace na fyzickém Macu (CI instaluje jen na runner systémovým `installer`), `install.sh` s podepsaným manifestem, Gatekeeper, LaunchDaemon a LaunchAgent po restartu, upgrade přes existující instalaci, `--headless`.
+- Interaktivní práce s tray: CI dokládá jen vykreslení stavové položky a oken (PNG ve `screenshots/`), ne ovládání myší a klávesnicí, tmavý menu bar ani Retina.
 - Provoz peer-to-peer mezi dvěma macOS klienty nebo macOS a Windows/Linux klientem.
 - Intel x86_64 (binárka je jen arm64).
 - Chování po pádu služby: odstranění `-interface` routy jádrem po zavření `utun` socketu (privilegovaný test to kontroluje, viz `tests/macos/privileged/test_tunnel_utun.cpp`).

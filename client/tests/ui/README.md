@@ -183,3 +183,25 @@ minimum/maximized layouts, keyboard traversal, no-wrap long lines, owner
 teardown, and injected WM_DPICHANGED messages for 96/144/192 DPI. Injected
 messages do not replace physical multi-monitor DPI acceptance. Optional
 PHPVPN_WP04_CAPTURE_DIR captures only synthetic test content.
+
+## macOS tray screenshots (2026-10-30)
+
+`client/tests/ui/macos/capture-tray.sh <output directory>` renders the
+installed macOS tray in the login session of the console user, after
+`tests/e2e/macos/run-install-test.sh install` put the package on the system
+(CI step "Tray screenshots"). It stops the tray of the LaunchAgent, starts
+`/Applications/phpvpn Tray.app` once for the menu bar and once per window
+(control window, Wizard, Communication contracts, Edit Config, Server
+Information, Statistics) with the TEST ONLY variables of
+`apps/tray-macos/macos_options.h`: `PHPVPN_TRAY_TEST_OPEN_WINDOW` opens the
+window through its menu path against the installed daemon 1.5 s after start,
+`PHPVPN_TRAY_TEST_CAPTURE_DIR` makes the tray write `<name>-status-item.png`
+and `<name>-<n>-<title>.png` of every visible window 4.5 s later and exit. The
+PNGs are rendered from the application's own views
+(`cacheDisplayInRect:toBitmapImageRep:`), so no Screen Recording permission is
+needed; the additional `screen-<name>.png` from `screencapture` may be empty on a
+runner without that permission. The script restores the LaunchAgent's tray at
+the end and prints PASS/FAIL lines. The images are in the `screenshots/`
+folder of the `phpvpn-macos-arm64` artifact. They prove that the windows
+render with the shared texts and layout; they do not replace interactive
+acceptance on a Mac (menu, keyboard, resize, dark menu bar, Retina).
