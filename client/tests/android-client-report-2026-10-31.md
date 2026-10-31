@@ -4,7 +4,8 @@ Výsledky pracovních balíků podle [plan-android-v001.md](../../Plans/2026-10-
 Co se nespustilo, je NOT RUN s důvodem. Žádný výsledek z emulátoru se nevydává za výsledek z reálného zařízení.
 
 Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-31.md),
-[WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md).
+[WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),
+[WP07 téma, komponenty, navigace a texty](android/wp07-ui-report-2026-10-31.md).
 
 ## WP00: prostředí, kostra a CI
 
