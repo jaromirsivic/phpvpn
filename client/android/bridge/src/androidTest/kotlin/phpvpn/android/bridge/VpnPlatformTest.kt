@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -131,6 +132,39 @@ class VpnPlatformTest {
             context.unbindService(connection)
         }
         assertTrue("the consent stays granted", VpnService.prepare(context) == null)
+    }
+
+    /**
+     * T-A13 on the emulator: an underlying network itself uses the VPN prefix.
+     * Prepared outside the test, because only root can add the address
+     * (google_apis images): `adb root`, `adb shell ip addr add 10.99.99.17/24
+     * dev wlan0`; IpClient then reports it in the LinkProperties of Wi-Fi.
+     * Skipped when no underlying address lies inside 10.99.99.0/24.
+     */
+    @Test
+    fun preflightRefusesAnUnderlyingAddressInsideTheVpnPrefix() {
+        val snapshot = AndroidNetworkHost(context).snapshotNetworks().toString(Charsets.UTF_8)
+        assumeTrue(
+            "no underlying address inside 10.99.99.0/24 (T-A13 needs adb root and ip addr add)",
+            snapshot.contains("\"address\":\"10.99.99."),
+        )
+        log("T-A13 snapshot: $snapshot")
+        ensureVpnConsent()
+        val (service, connection) = bindTestService()
+        try {
+            val directory = File(context.noBackupFilesDir, "vpn-preflight").apply { deleteRecursively(); mkdirs() }
+            val started = VpnTestLibrary.text(
+                VpnTestLibrary.vpnStart(
+                    AndroidNetworkHost(context), service, context.packageName.toByteArray(), directory.absolutePath.toByteArray(),
+                ),
+            )
+            log("T-A13 vpnStart: $started")
+            assertTrue(started, started.startsWith("error netconfig_preflight_conflict"))
+            assertEquals("nothing may be established", 0, service.establishCalls)
+            assertTrue(VpnInterfaces.ownVpnNetworks(context).isEmpty())
+        } finally {
+            context.unbindService(connection)
+        }
     }
 
     @Test
