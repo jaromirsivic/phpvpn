@@ -103,7 +103,7 @@ HttpDiagnostic diagnostic() {
 // Scripted Wizard service. The handler runs on the server's worker threads.
 class FakeService {
 public:
-    enum class Check { success, pending, cryptoMismatch, unauthorized };
+    enum class Check { success, pending, cryptoMismatch, unauthorized, versionMismatch };
     explicit FakeService(const TempDir& dir) : server_([this](std::string_view request) { return handle(request); }, options(dir)) {}
     ~FakeService() { server_.stop(); }
     Status start() { return server_.start(); }
@@ -213,6 +213,11 @@ private:
                         operation.state = WizardOperationState::failed;
                         operation.error = WizardIpc::safeError(Error(ErrorCode::server_unauthorized), 401, "accessKey",
                             "http://192.0.2.1/phpvpn.php", "/etc/phpvpn/config.json");
+                    } else if (check_ == Check::versionMismatch) {
+                        operation.state = WizardOperationState::failed;
+                        operation.error = WizardIpc::safeError(Error(ErrorCode::server_version_incompatible, "2.0.0"), {},
+                            operation.kind == WizardOperationKind::url ? "serverUrl" : "serverSecret",
+                            "http://192.0.2.1/phpvpn.php");
                     }
                     operations_[operation.operationId] = operation;
                     reply = WizardIpc::buildResult(id, JsonValue::makeObject({{"operationId", JsonValue::makeString(operation.operationId)},
@@ -555,6 +560,43 @@ PHPVPN_TEST(tray_linux_wizard, complete_flow_url_secret_identity_contracts_finis
     PHPVPN_CHECK_EQ(rig.host.destroyed, 1);
     PHPVPN_CHECK(confirmedCallback);
     PHPVPN_CHECK_EQ(rig.service.count("wizard-finish"), 1u);
+}
+
+PHPVPN_TEST(tray_linux_wizard, incompatible_server_version_fills_the_error_card) {
+    Rig rig;
+    PHPVPN_CHECK(rig.openAt(WizardStep::serverUrl));
+    rig.wizard.editUrl("http://192.0.2.1/phpvpn.php");
+    rig.service.setCheck(FakeService::Check::versionMismatch);
+    rig.wizard.next();
+    PHPVPN_CHECK(rig.pollUntil([&] { return rig.wizard.model().error().has_value(); }));
+    auto p = rig.wizard.presentation();
+    PHPVPN_CHECK(p.step == WizardStep::serverUrl);
+    PHPVPN_CHECK(p.errorText.has_value());
+    if (p.errorText) {
+        PHPVPN_CHECK(p.errorText->starts_with("The server uses a different major version than this client. Client version "
+                                              PHPVPN_CLIENT_VERSION ", server version 2.0.0.\n"));
+        PHPVPN_CHECK(p.errorText->find("Install a PHPVPN client and server with the same major version.") != std::string::npos);
+        PHPVPN_CHECK(p.errorText->find("HTTP status") == std::string::npos);
+        PHPVPN_CHECK(p.errorText->ends_with("\nServer URL: http://192.0.2.1/phpvpn.php"));
+    }
+    PHPVPN_CHECK(p.invalidField == WizardField::url);
+    PHPVPN_CHECK(!p.detailVisible);
+    PHPVPN_CHECK_EQ(p.sidebar[0].status, std::string("Failed"));
+    PHPVPN_CHECK(p.sidebar[0].color == ui::Color::error);
+
+    // A server replaced after the URL check is reported at the secret step; the
+    // secret itself is not declared invalid.
+    rig.service.setCheck(FakeService::Check::success);
+    rig.wizard.next();
+    PHPVPN_CHECK(rig.pollUntil([&] { return rig.wizard.model().step() == WizardStep::serverSecret; }));
+    rig.wizard.editSecret("my server secret");
+    rig.service.setCheck(FakeService::Check::versionMismatch);
+    rig.wizard.next();
+    PHPVPN_CHECK(rig.pollUntil([&] { return rig.wizard.model().error().has_value(); }));
+    p = rig.wizard.presentation();
+    PHPVPN_CHECK(p.errorText && p.errorText->find("server version 2.0.0.") != std::string::npos);
+    PHPVPN_CHECK(p.invalidField == WizardField::none);
+    PHPVPN_CHECK_EQ(p.sidebar[1].status, std::string("Failed"));
 }
 
 PHPVPN_TEST(tray_linux_wizard, keepalive_every_15_s_and_lease_expiry_after_60_s) {

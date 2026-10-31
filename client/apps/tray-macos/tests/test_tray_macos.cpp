@@ -4,14 +4,17 @@
 // running service is needed.
 #include <unistd.h>
 
+#include <fstream>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 
 #include "harness.h"
 #include "ipc_async.h"
 #include "macos_options.h"
 #include "macos_text.h"
+#include "progress_model.h"
 #include "status_item_model.h"
 
 using namespace phpvpn;
@@ -32,6 +35,13 @@ TrayStatus status(const char* state, const char* phase, const char* tunnelReady)
     value.phase = phase;
     value.tunnelReady = tunnelReady;
     return value;
+}
+
+std::string sourceText(const std::string& relative) {
+    std::ifstream in(std::string(PHPVPN_CLIENT_SOURCE_DIR) + "/" + relative, std::ios::binary);
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
 }
 }  // namespace
 
@@ -115,6 +125,39 @@ PHPVPN_TEST(TrayMacos, StatusItemFollowsTheWindowsIconRules) {
     const auto error = indicatorView(status("error", "idle", "no"), false, false, false);
     PHPVPN_CHECK(error.icon == TrayIconState::disconnected);
     PHPVPN_CHECK_EQ(error.statusText, std::string("PHPVPN: error"));
+}
+
+PHPVPN_TEST(TrayMacos, IncompatibleServerVersionShowsErrorAndItsConnectPanel) {
+    auto failed = status("error", "idle", "no");
+    failed.hasError = true;
+    failed.errorCode = "server_version_incompatible";
+    const auto view = indicatorView(failed, false, false, false);
+    PHPVPN_CHECK(view.icon == TrayIconState::disconnected);
+    PHPVPN_CHECK_EQ(view.statusText, std::string("PHPVPN: error"));
+    PHPVPN_CHECK(!view.toggleDisconnects);
+    // mac_progress_window.mm renders the shared catalogue entry.
+    const auto& text = progressErrorText("server_version_incompatible");
+    PHPVPN_CHECK_EQ(text.panel, std::string_view("Incompatible server version"));
+    PHPVPN_CHECK(text.action.find("This client is version " PHPVPN_CLIENT_VERSION ".") != std::string_view::npos);
+}
+
+PHPVPN_TEST(TrayMacos, WizardControllerIsTheTestedLinuxWorkflow) {
+    // phpvpn-linux-tests drive the Linux copy against a scripted service, including
+    // server_version_incompatible. The macOS copy may differ only in its leading
+    // note and its text header, so those tests cover the macOS Wizard as well.
+    auto mac = sourceText("apps/tray-macos/wizard_controller.cpp");
+    auto linuxCopy = sourceText("apps/tray-linux/wizard_controller.cpp");
+    PHPVPN_CHECK(!mac.empty() && !linuxCopy.empty());
+    const auto body = mac.find("#include ");
+    PHPVPN_CHECK(body != std::string::npos);
+    if (body == std::string::npos) return;
+    mac.erase(0, body);
+    const std::string macHeader = "#include \"macos_text.h\"", linuxHeader = "#include \"tray_text.h\"";
+    const auto header = mac.find(macHeader);
+    PHPVPN_CHECK(header != std::string::npos);
+    if (header == std::string::npos) return;
+    mac.replace(header, macHeader.size(), linuxHeader);
+    PHPVPN_CHECK(mac == linuxCopy);
 }
 
 PHPVPN_TEST(TrayMacos, StatusItemMenuKeepsTheUx04Order) {

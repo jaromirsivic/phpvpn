@@ -61,7 +61,8 @@ PHPVPN_TEST(TrayProgress, AllSafeFailureCategoriesFreezeUntilManualClose) {
         {"communication_failed", "Communication with the server could not be completed.", 2},
         {"communication_timeout", "The server did not respond in time. Verification could not be completed.", 0},
         {"communication_timeout", "The server did not respond in time. Verification could not be completed.", 1},
-        {"communication_timeout", "The server did not respond in time. Verification could not be completed.", 2}
+        {"communication_timeout", "The server did not respond in time. Verification could not be completed.", 2},
+        {"server_version_incompatible", "The server uses a different major version than this client.", 0}
     };
     for (const auto& failure : failures) {
         ProgressModel model;

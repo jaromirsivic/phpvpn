@@ -2,6 +2,7 @@
 #include "core/base/hex.h"
 #include "core/protocol/ndjson_reader.h"
 #include "core/protocol/request_builder.h"
+#include "core/protocol/server_version.h"
 #include <algorithm>
 
 namespace phpvpn {
@@ -75,6 +76,9 @@ Result<HealthSyntax> ProbeClient::health(bool verify) {
         time_.publish(*sample);
     }
     candidate_.reset();
+    // Unverified in the URL step: a forged value can only refuse a server, and
+    // the next steps repeat the check on the authenticated value.
+    PHPVPN_TRY(requireCompatibleServerVersion(syntax->fields.serverVersion));
     return syntax;
 }
 Result<InfoResponse> ProbeClient::info() {
@@ -90,6 +94,7 @@ Result<InfoResponse> ProbeClient::info() {
     auto result = ResponseParser::parseInfo(crypto_, keys_, secret_, id, response->body);
     if (!result) return diagnosticFailure(result.error());
     candidate_.reset();
+    PHPVPN_TRY(requireCompatibleServerVersion(result->serverVersion));
     return result;
 }
 Status ProbeClient::checkUrl(const WizardContext& context, const WizardFields& fields) {

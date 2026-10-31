@@ -145,6 +145,8 @@ if(BUILD_TESTING)
         tests/test_tray_macos.cpp)
     target_include_directories(phpvpn-tray-macos-tests PRIVATE "${CMAKE_SOURCE_DIR}/tests/unit")
     target_link_libraries(phpvpn-tray-macos-tests PRIVATE phpvpn-tray-macos-model phpvpn-compile-options)
+    # The Wizard parity test compares the macOS and Linux controller sources.
+    target_compile_definitions(phpvpn-tray-macos-tests PRIVATE PHPVPN_CLIENT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     set(PHPVPN_TRAY_TEST_INCLUDE "${CMAKE_CURRENT_BINARY_DIR}/phpvpn-tray-macos-tests.cmake")
     file(GENERATE OUTPUT "${PHPVPN_TRAY_TEST_INCLUDE}" CONTENT
 "add_test([=[phpvpn-tray-macos-tests]=] \"$<TARGET_FILE:phpvpn-tray-macos-tests>\")

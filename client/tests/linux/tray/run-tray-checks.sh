@@ -123,6 +123,17 @@ if [ "$mode" = fallback ]; then
     sleep 1
     grep -q "request dismiss-connect-diagnostic" "$work/mock.log" || fail "closing did not dismiss the diagnostic"
     pass "closing the error window sends dismiss-connect-diagnostic"
+    echo "result version" >"$work/control"
+    $P click PHPVPN Connect
+    $P wait "PHPVPN connection" "Incompatible server version" 15 || fail "no incompatible server version panel"
+    $P wait "PHPVPN connection" "The server is reachable, but this client cannot communicate with it." 3 || fail "no version explanation"
+    $P dump >"$work/version.txt"
+    grep -q "This client is version " "$work/version.txt" || fail "client version not shown"
+    grep -q "button: .Error detail.$" "$work/version.txt" && fail "an incompatible server must not offer Error detail"
+    grep -q "label: .Failed." "$work/version.txt" || fail "Server URL check not failed for the incompatible server"
+    pass "incompatible server version panel"
+    $P close "PHPVPN connection"
+    $P absent "PHPVPN connection" 5 || fail "the incompatible server window did not close"
     echo "result success" >"$work/control"
     echo connect >"$work/control"
     $P wait PHPVPN "PHPVPN: connected" 15 || fail "external connect not shown"

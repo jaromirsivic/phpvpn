@@ -23,6 +23,7 @@
 #include "core/protocol/base64url.h"
 #include "core/protocol/data_record.h"
 #include "core/protocol/iso8601.h"
+#include "core/protocol/server_version.h"
 #include "core/protocol/json.h"
 #include "core/runtime/vpn_engine.h"
 #include "harness.h"
@@ -83,6 +84,10 @@ namespace {
 constexpr const char* kConfig = R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://runtime.invalid/secret-path","serverSecret":"runtime-fixture-secret","vpnCidr":"10.99.99.0/24","virtualIp":"10.99.99.2","accessKey":"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},"communicationContracts":{"10.99.99.3":{"payloadKey":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"}}})";
 constexpr const char* kMessageId = "1f4d8c1a-3b2e-4a51-8c7d-9e0f1a2b3c4d";
 constexpr const char* kTimestamp = "2026-09-04T10:00:00.000Z";
+
+// Server versions relative to this build, so a MAJOR release keeps the fixtures valid.
+std::string compatibleServerVersion() { return PHPVPN_CLIENT_VERSION; }
+std::string incompatibleServerVersion() { return std::to_string(*semverMajor(PHPVPN_CLIENT_VERSION) + 1) + ".0.0"; }
 
 ClientConfigPtr fixtureConfig() {
     ConfigWarnings warnings;
@@ -197,6 +202,8 @@ public:
     std::atomic<int> healthCalls{0}, infoCalls{0}, dataCalls{0}, extendedCalls{0};
     std::atomic<std::uint64_t> dataRequestBytes{0}, dataResponseBytes{0};
     bool badHealthTag = false, badInfo = false, badMac = false, badPacket = false, badPayloadTag = false;
+    // A server of another MAJOR version in the authenticated health or info.
+    std::atomic<bool> incompatibleHealth{false}, incompatibleInfo{false};
     bool defer = false;
     std::function<bool(std::string_view)> acceptTarget;
     bool swappedPayloadAad = false;
@@ -271,14 +278,16 @@ private:
         std::vector<std::uint8_t> iv(12, 3), ciphertext;
         const auto ivText = Base64Url::encode(iv);
         GcmTag tag{};
-        const auto aad = healthAad(id, "1.0", "running", "ok", kTimestamp, ivText);
+        const auto version = incompatibleHealth.load() ? incompatibleServerVersion() : compatibleServerVersion();
+        const auto aad = healthAad(id, version, "running", "ok", kTimestamp, ivText);
         (void)crypto_.aesGcmSeal(key.span(), iv, asBytes(aad), {}, ciphertext, tag);
         if (badHealthTag) tag[0] ^= 1;
-        return "{\"serverVersion\":\"1.0\",\"status\":\"running\",\"description\":\"ok\",\"timestamp\":\"" +
+        return "{\"serverVersion\":\"" + version + "\",\"status\":\"running\",\"description\":\"ok\",\"timestamp\":\"" +
                std::string(kTimestamp) + "\",\"requestId\":\"" + id + "\",\"iv\":\"" + ivText + "\",\"tag\":\"" + Base64Url::encode(tag) + "\"}";
     }
     std::string info(const std::string& id, bool extended) {
-        std::string plaintext = badInfo ? "{}" : R"({"serverVersion":"1.0","generatedAt":"2026-09-04T10:00:00.000Z","clients":[],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}})";
+        std::string plaintext = badInfo ? "{}" : R"({"serverVersion":")" +
+            (incompatibleInfo.load() ? incompatibleServerVersion() : compatibleServerVersion()) + R"(","generatedAt":"2026-09-04T10:00:00.000Z","clients":[],"limits":{"maxDataRecordsPerRequest":16,"maxRequestBodyBytes":4198400,"maxQueueBytesPerClient":16777216,"queueTtlSeconds":60,"minDataPollIntervalMs":80,"maxDataPollIntervalMs":1000}})";
         if (extended) {
             ++extendedCalls;
             const auto at = plaintext.find("\"clients\":[]");
@@ -3246,5 +3255,165 @@ PHPVPN_TEST(startup_connect, delayed_startup_cannot_retry_or_replace_a_newer_man
     PHPVPN_CHECK_EQ(f.engine.connectionIdentity().epoch, std::uint64_t(1));
     PHPVPN_CHECK_EQ(f.engine.status().lastError->code, error);
     PHPVPN_CHECK_EQ(f.transport.healthCalls.load(), 1);
+}
+PHPVPN_TEST(server_version, connect_to_an_incompatible_server_fails_without_tunnel_or_retry) {
+    // health and info both carry the version; either one stops the bootstrap.
+    for (const bool inHealth : {true, false}) {
+        EngineFixture fixture;
+        (inHealth ? fixture.transport.incompatibleHealth : fixture.transport.incompatibleInfo) = true;
+        PHPVPN_REQUIRE_OK(fixture.engine.start());
+        PHPVPN_REQUIRE_OK(fixture.engine.connect());
+        PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::error; }));
+        const auto status = fixture.engine.status();
+        PHPVPN_CHECK(status.lastError.has_value());
+        if (status.lastError) {
+            PHPVPN_CHECK_EQ(status.lastError->code, std::string("server_version_incompatible"));
+            PHPVPN_CHECK(!status.lastError->recoverable);
+        }
+        // The reachable but incompatible server fails the URL checkpoint.
+        PHPVPN_CHECK(allChecks(status, CheckpointResult::failed, CheckpointResult::pending, CheckpointResult::pending));
+        PHPVPN_CHECK(!status.httpDiagnostic);
+        PHPVPN_CHECK_EQ(fixture.transport.dataCalls.load(), 0);
+        PHPVPN_CHECK_EQ(fixture.driver.starts.load(), 0);
+        // No recovery with backoff: the attempt stays a single terminal failure.
+        fixture.clock.now += 600000;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::error);
+        PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 1);
+        PHPVPN_CHECK_EQ(fixture.transport.infoCalls.load(), inHealth ? 0 : 1);
+    }
+}
+
+PHPVPN_TEST(server_version, compatible_minor_and_patch_versions_connect) {
+    EngineFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::connected; }));
+    PHPVPN_CHECK(allChecks(fixture.engine.status(), CheckpointResult::success, CheckpointResult::success,
+                           CheckpointResult::success));
+}
+
+PHPVPN_TEST(server_version, server_replaced_during_connection_is_detected_by_the_time_resync) {
+    EngineFixture fixture;
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::connected; }));
+    const int healthBefore = fixture.transport.healthCalls.load();
+    fixture.transport.incompatibleHealth = true;
+    fixture.clock.now += kDefaultTimeSyncIntervalSeconds * 1000;
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::error; }));
+    const auto status = fixture.engine.status();
+    PHPVPN_CHECK(fixture.transport.healthCalls.load() > healthBefore);
+    PHPVPN_CHECK(status.lastError.has_value());
+    if (status.lastError) {
+        PHPVPN_CHECK_EQ(status.lastError->code, std::string("server_version_incompatible"));
+        PHPVPN_CHECK(!status.lastError->recoverable);
+    }
+    PHPVPN_CHECK(eventually([&] { return fixture.driver.ends.load() >= 1; }));
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().recoveryCount, std::uint64_t(0));
+    // Nothing is exchanged with the incompatible server any more.
+    const int dataAfter = fixture.transport.dataCalls.load();
+    const int healthAfter = fixture.transport.healthCalls.load();
+    fixture.clock.now += 600000;
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    PHPVPN_CHECK_EQ(fixture.transport.dataCalls.load(), dataAfter);
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), healthAfter);
+    PHPVPN_CHECK_EQ(fixture.engine.status().state, ConnectionState::error);
+}
+
+PHPVPN_TEST(server_version, soft_recovery_401_refresh_from_an_incompatible_server_stops_the_connection) {
+    EngineFixture fixture;
+    fixture.transport.hook = [&](HttpAction action, std::string_view, int call) -> std::optional<HttpExchangeResult> {
+        if (action == HttpAction::data && call == 2) {
+            fixture.transport.incompatibleHealth = true;
+            return HttpExchangeResult{HttpResponse{401, std::string("{\"type\":\"error\",\"code\":\"unauthorized\"}"), "application/json"}, 40};
+        }
+        return {};
+    };
+    PHPVPN_REQUIRE_OK(fixture.engine.start());
+    PHPVPN_REQUIRE_OK(fixture.engine.connect());
+    PHPVPN_CHECK(eventually([&] { return fixture.engine.status().state == ConnectionState::error; }));
+    const auto status = fixture.engine.status();
+    PHPVPN_CHECK(status.lastError.has_value());
+    if (status.lastError) PHPVPN_CHECK_EQ(status.lastError->code, std::string("server_version_incompatible"));
+    PHPVPN_CHECK_EQ(fixture.transport.healthCalls.load(), 2);
+    PHPVPN_CHECK_EQ(fixture.engine.diagnostics().recoveryCount, std::uint64_t(0));
+    PHPVPN_CHECK(eventually([&] { return fixture.driver.ends.load() >= 1; }));
+}
+
+PHPVPN_TEST(server_version, worker_rejects_incompatible_health_and_info_without_http_diagnostic) {
+    // The same NetworkWorker calls serve Connect, recovery, the time resync,
+    // get-info (phpvpn info) and get-server-info (Server information).
+    ObservedCrypto crypto;
+    ScriptedTransport transport(*crypto.actual);
+    TestClock clock;
+    NetworkWorker worker(crypto, transport, clock);
+    PHPVPN_REQUIRE_OK(worker.configure(fixtureConfig()));
+    std::optional<HttpDiagnostic> diagnostic;
+    bool rejected = true;
+    transport.incompatibleHealth = true;
+    auto health = worker.performHealth({}, &diagnostic, &rejected);
+    PHPVPN_REQUIRE_ERROR(health, ErrorCode::server_version_incompatible);
+    PHPVPN_CHECK_EQ(health.error().detail, incompatibleServerVersion());
+    PHPVPN_CHECK(!diagnostic && !rejected);
+    // An incompatible server is not even used as a clock.
+    PHPVPN_CHECK(!worker.timeSync().hasSnapshot());
+    transport.incompatibleHealth = false;
+    PHPVPN_REQUIRE_OK(worker.performHealth());
+    transport.incompatibleInfo = true;
+    rejected = true;
+    PHPVPN_REQUIRE_ERROR(worker.performInfo(&diagnostic, &rejected), ErrorCode::server_version_incompatible);
+    PHPVPN_CHECK(!diagnostic && !rejected);
+    rejected = true;
+    PHPVPN_REQUIRE_ERROR(worker.performExtendedInfo(InfoRequestOptions{std::nullopt, true}, &diagnostic, &rejected),
+                         ErrorCode::server_version_incompatible);
+    PHPVPN_CHECK(!diagnostic && !rejected);
+    PHPVPN_CHECK_EQ(transport.dataCalls.load(), 0);
+    transport.incompatibleInfo = false;
+    PHPVPN_REQUIRE_OK(worker.performInfo());
+}
+
+PHPVPN_TEST(server_version, wizard_reports_the_incompatible_server_in_every_check) {
+    const auto failedCheck = [](WizardServiceFixture& fixture, WizardCommand command) {
+        fixture.request.command = command;
+        fixture.request.attemptSequence = ++fixture.sequence;
+        fixture.request.clientAttemptId = fixture.runtime.crypto.actual->randomUuidV4().value();
+        const auto started = fixture.ask(fixture.request);
+        PHPVPN_CHECK(!started.error);
+        fixture.request.operationId = started.result.find("operationId")->stringValue();
+        fixture.runDiagnostic();
+        auto result = WizardIpc::parseOperation(fixture.call(WizardCommand::get_operation).result);
+        if (!result) throw std::runtime_error("operation did not parse");
+        return std::move(result).value();
+    };
+    struct Case { WizardCommand command; bool health; const char* field; };
+    for (const Case item : {Case{WizardCommand::check_url, true, "serverUrl"},
+                            Case{WizardCommand::check_secret, true, "serverSecret"},
+                            Case{WizardCommand::check_secret, false, "serverSecret"},
+                            Case{WizardCommand::check_access, true, "accessKey"},
+                            Case{WizardCommand::check_access, false, "accessKey"}}) {
+        WizardServiceFixture fixture;
+        // The earlier steps pass against a compatible server, then the server is replaced.
+        if (item.command != WizardCommand::check_url) fixture.check(WizardCommand::check_url);
+        if (item.command == WizardCommand::check_access) fixture.check(WizardCommand::check_secret);
+        const auto probesBefore = fixture.probeHeaders.size();
+        fixture.configureProbe = [&](ScriptedTransport& transport) {
+            (item.health ? transport.incompatibleHealth : transport.incompatibleInfo) = true;
+        };
+        const auto operation = failedCheck(fixture, item.command);
+        PHPVPN_CHECK(operation.state == WizardOperationState::failed);
+        PHPVPN_CHECK(operation.error.has_value());
+        if (!operation.error) continue;
+        PHPVPN_CHECK_EQ(operation.error->code, std::string("server_version_incompatible"));
+        PHPVPN_CHECK_EQ(operation.error->field.value_or(""), std::string(item.field));
+        PHPVPN_CHECK(!operation.error->httpStatus);
+        PHPVPN_CHECK(!operation.httpDiagnostic);
+        PHPVPN_CHECK(operation.error->description.find("server version " + incompatibleServerVersion() + ".") !=
+                     std::string::npos);
+        PHPVPN_CHECK(operation.error->suggestedAction.find("same major version") != std::string::npos);
+        // No access key data request is ever sent to an incompatible server.
+        for (auto index = probesBefore; index < fixture.probeHeaders.size(); ++index)
+            PHPVPN_CHECK(fixture.probeHeaders[index].action != HttpAction::data);
+    }
 }
 }

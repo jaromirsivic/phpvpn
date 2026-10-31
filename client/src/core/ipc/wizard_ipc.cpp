@@ -439,6 +439,9 @@ WizardError WizardIpc::safeError(const Error& error, std::optional<int> status,
     else if (error.code == ErrorCode::wizard_connection_interrupted) action = "Choose Disconnect & continue to disconnect the VPN for everyone, then repeat the checks.";
     else if (error.code == ErrorCode::wizard_contract_self_conflict) action = "Choose another virtual IP, or correct the contract through Edit Config before opening a new wizard.";
     else if (error.code == ErrorCode::wizard_unsupported) action = "Update both the PHPVPN service and tray to the same version, then open Configuration Wizard again.";
+    else if (error.code == ErrorCode::server_version_incompatible)
+        action = "The server is reachable, but this client cannot communicate with it. Install a PHPVPN client and server "
+                 "with the same major version.";
     return {error.name(), httpHeadersErrorDescription(error), error.recoverable(), std::move(field), status,
         std::move(action), std::move(url), std::move(path)};
 }

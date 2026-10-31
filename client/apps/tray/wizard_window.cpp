@@ -670,7 +670,8 @@ void WizardWindow::render() {
     int invalidField = 0;
     if (model_.error()) {
         const auto& failure = *model_.error();
-        if (failure.code == "config_invalid_url" && step == WizardStep::serverUrl) invalidField = urlId;
+        if ((failure.code == "config_invalid_url" || failure.code == "server_version_incompatible") &&
+            step == WizardStep::serverUrl) invalidField = urlId;
         else if (failure.code == "config_invalid_value" && step == WizardStep::serverSecret) invalidField = secretId;
         else if ((failure.code == "config_invalid_address" || failure.code == "wizard_contract_self_conflict") &&
             step == WizardStep::identity) invalidField = ipId;

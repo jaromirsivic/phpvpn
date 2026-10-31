@@ -60,6 +60,11 @@ Result<ServerInfoSnapshot> parseServerInfoResult(std::string_view response) {
     auto root = Json::parse(response);
     if (!root || !root->isObject() || root->objectValue().size() != 3)
         return Error(ErrorCode::ipc_malformed);
+    if (const auto *error = root->find("error"); error && error->isObject()) {
+        const auto *code = error->find("code");
+        if (code && code->isString() && code->stringValue() == errorCodeName(ErrorCode::server_version_incompatible))
+            return Error(ErrorCode::server_version_incompatible);
+    }
     const auto *version = root->find("ipcVersion");
     const auto *id = root->find("requestId");
     const auto *result = root->find("result");

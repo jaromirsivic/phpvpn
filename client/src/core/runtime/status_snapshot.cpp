@@ -14,6 +14,8 @@ SafeError SafeError::fromConnection(const Error& error, ConnectionPhase phase,
                                    bool healthSyntaxUsable) {
     // client.md: public connection errors describe the failed operation,
     // never raw transport details or an inference from historical checkpoints.
+    if (error.code == ErrorCode::server_version_incompatible)
+        return {"server_version_incompatible", errorCodeDescription(error.code), false};
     if (error.code == ErrorCode::transport_timeout || error.code == ErrorCode::timeout)
         return {"communication_timeout", "The server did not respond in time. Verification could not be completed.", phase != ConnectionPhase::communication_contracts_check};
     if (phase == ConnectionPhase::communication_contracts_check)

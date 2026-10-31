@@ -43,11 +43,13 @@ echo "work directory: $work"
 
 service_pid=
 relay_pid=
+version_relay_pid=
 fake_pid=
 cleanup() {
     set +e
     [ -n "$service_pid" ] && kill -TERM "$service_pid" 2> /dev/null && wait "$service_pid" 2> /dev/null
     [ -n "$relay_pid" ] && kill "$relay_pid" 2> /dev/null && wait "$relay_pid" 2> /dev/null
+    [ -n "$version_relay_pid" ] && kill "$version_relay_pid" 2> /dev/null && wait "$version_relay_pid" 2> /dev/null
     [ -n "$fake_pid" ] && kill "$fake_pid" 2> /dev/null
     ip netns del $ns 2> /dev/null
     rm -rf "$base"
@@ -174,6 +176,43 @@ expect 0 '"state": "connected"' - "status after connect" -- phpvpn status
 expect 0 '"status": \{' - "disconnect" -- phpvpn disconnect
 for _ in $(seq 1 150); do phpvpn status 2> /dev/null | grep -q '"state": "disconnected"' && break; sleep 0.2; done
 expect 0 '"state": "disconnected"' - "status after disconnect" -- phpvpn status
+
+# --- server MAJOR version ---------------------------------------------------
+# The relays are released with the client version, so its MAJOR is the client's.
+major=$(sed -n "s/^SERVER_VERSION = '\([0-9]*\)\..*/\1/p" "$repository/server/python/phpvpn.py")
+[ -n "$major" ] || die "SERVER_VERSION not found in server/python/phpvpn.py"
+version_url=http://127.0.0.1:18097/phpvpn.php
+start_version_relay() {
+    mkdir -p "$work/relay-$1"
+    sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" -e "s|^LISTEN_PORT = 8000|LISTEN_PORT = 18097|" \
+        -e "s|^SERVER_VERSION = '[^']*'|SERVER_VERSION = '$1'|" \
+        "$repository/server/python/phpvpn.py" > "$work/relay-$1/phpvpn.py"
+    ip netns exec $ns "$python_server" -B "$work/relay-$1/phpvpn.py" > "$work/relay-$1/relay.log" 2>&1 &
+    version_relay_pid=$!
+    for _ in $(seq 1 60); do
+        [ "$(ip netns exec $ns curl -s -o /dev/null -w '%{http_code}' --max-time 2 $version_url || true)" = 200 ] && break
+        sleep 0.5
+    done
+}
+stop_version_relay() { kill "$version_relay_pid" 2> /dev/null; wait "$version_relay_pid" 2> /dev/null || true; version_relay_pid=; }
+sed -e "s|$relay_url|$version_url|" "$work/config.json" > "$work/config-version.json"
+expect 0 '"result": "ok"' - "set-config pointing at the second relay" -- phpvpn set-config "$work/config-version.json"
+for other in "$((major + 1)).0.0" "$((major - 1)).9.9"; do
+    [ "${other%%.*}" -ge 0 ] || continue
+    start_version_relay "$other"
+    expect 1 - "^server_version_incompatible: The server uses a different major version than this client\. Client version [0-9.]+, server version ${other//./\\.}\.$" \
+        "info refuses server $other" -- phpvpn info
+    expect 0 '"status": \{' - "connect to server $other is accepted as a command" -- phpvpn connect
+    for _ in $(seq 1 150); do phpvpn status 2> /dev/null | grep -q '"state": "error"' && break; sleep 0.2; done
+    expect 0 '"code": "server_version_incompatible"' - "status reports the incompatible server $other" -- phpvpn status
+    expect 0 '"serverUrlCheck": "failed"' - "the URL checkpoint fails for server $other" -- phpvpn status
+    expect 0 '"tunnelReady": "no"' - "no tunnel for server $other" -- phpvpn status
+    stop_version_relay
+done
+start_version_relay "$major.99.0"
+expect 0 '"serverVersion"' - "info accepts another MINOR of the same MAJOR" -- phpvpn info
+stop_version_relay
+expect 0 '"result": "ok"' - "set-config back to the first relay" -- phpvpn set-config "$work/config.json"
 
 kill -TERM "$service_pid"; wait "$service_pid" 2> /dev/null || true; service_pid=
 expect 1 - 'hint: the phpvpn service is not running' "status after the service stopped" -- phpvpn status

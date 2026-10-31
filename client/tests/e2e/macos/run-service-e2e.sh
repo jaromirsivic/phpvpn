@@ -86,6 +86,7 @@ default_route > "$work/default-route-before.txt"
 
 service_pid=
 relay_pid=
+version_relay_pid=
 base=
 cleanup() {
     set +e
@@ -103,6 +104,10 @@ cleanup() {
         kill "$relay_pid" 2> /dev/null
         wait "$relay_pid" 2> /dev/null
     fi
+    if [ -n "$version_relay_pid" ]; then
+        kill "$version_relay_pid" 2> /dev/null
+        wait "$version_relay_pid" 2> /dev/null
+    fi
     case $base in
         /private/tmp/phpvpn-e2e.*)
             if [ -d "$base/logs" ]; then
@@ -112,7 +117,7 @@ cleanup() {
             rm -rf "$base"
             ;;
     esac
-    rm -rf "$work/relay/buffer"
+    rm -rf "$work/relay/buffer" "$work/relay-version/buffer"
     echo "passes=$passes failures=$failures (logs in $work)"
 }
 trap cleanup EXIT
@@ -315,6 +320,54 @@ else
     cat "$work/status-failed.json"
     show_service_log
 fi
+
+# --- server MAJOR version --------------------------------------------------------
+# A second php relay of the next MAJOR version: the Wizard URL check, phpvpn info
+# and Connect must all refuse it. The shipped relay carries the client version.
+major=$(sed -n "s/^const SERVER_VERSION = '\([0-9]*\)\..*/\1/p" "$repository/server/php/phpvpn.php")
+[ -n "$major" ] || die "SERVER_VERSION not found in server/php/phpvpn.php"
+other="$((major + 1)).0.0"
+version_port=$((port + 1))
+version_url="http://127.0.0.1:$version_port/phpvpn.php"
+mkdir -p "$work/relay-version/www" "$work/relay-version/buffer"
+sed -e "s|^const BUFFER_DIRECTORY = './phpvpn_data';|const BUFFER_DIRECTORY = '$work/relay-version/buffer';|" \
+    -e "s|^const SERVER_VERSION = '[^']*';|const SERVER_VERSION = '$other';|" \
+    "$repository/server/php/phpvpn.php" > "$work/relay-version/www/phpvpn.php"
+grep -q "^const SERVER_VERSION = '$other';" "$work/relay-version/www/phpvpn.php" || die "relay version not patched"
+PHP_CLI_SERVER_WORKERS=4 "$php" -S "127.0.0.1:$version_port" -t "$work/relay-version/www" \
+    > "$work/relay-version/relay.log" 2>&1 &
+version_relay_pid=$!
+attempt=0
+until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$version_url" || true)" = 200 ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 60 ] || ! kill -0 "$version_relay_pid" 2> /dev/null; then
+        cat "$work/relay-version/relay.log" || true
+        die "the php relay of version $other did not become available at $version_url"
+    fi
+    sleep 0.5
+done
+if "$probe" --socket "$sock" --relay "$version_url" --config-path "$base/config/config.json" \
+        --virtual-ip "$virtual_ip" --expect-url-error server_version_incompatible > "$work/wizard-version.log" 2>&1; then
+    pass "Wizard URL check refuses server $other (see wizard-version.log)"
+else
+    fail "Wizard URL check of server $other"
+    cat "$work/wizard-version.log"
+fi
+sed "s|$relay_url|$version_url|" "$work/config.json" > "$work/config-version.json"
+check "phpvpn set-config pointing at server $other" cli_do set-config "$work/config-version.json"
+check "phpvpn info refuses server $other with server_version_incompatible" sh -c \
+    '! "$1" --socket "$2" info > "$3" 2>&1 && grep -q "^server_version_incompatible: .*server version $4\." "$3"' \
+    sh "$cli" "$sock" "$work/info-version.txt" "$other"
+check "phpvpn connect to server $other is accepted as a command" cli_do connect
+check "Connect to server $other ends in error" wait_state "error idle" 30
+cli_on status > "$work/status-version.json" 2>&1 || true
+check "status reports server_version_incompatible" grep -q '"code": "server_version_incompatible"' "$work/status-version.json"
+check "the URL checkpoint fails for server $other" grep -q '"serverUrlCheck": "failed"' "$work/status-version.json"
+check "no interface carries $virtual_ip for server $other" no_vpn_address
+kill "$version_relay_pid" 2> /dev/null
+wait "$version_relay_pid" 2> /dev/null || true
+version_relay_pid=
+check "phpvpn set-config back to the first relay" cli_do set-config "$work/config.json"
 
 # --- singleton -----------------------------------------------------------------
 second_status=0

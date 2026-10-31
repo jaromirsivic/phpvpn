@@ -156,6 +156,7 @@ struct Backend {
     WizardOperationResult operation;
     std::optional<HttpDiagnostic> diagnosticFixture;
     bool failWithoutDiagnostic = false;
+    Error failure{ErrorCode::response_invalid};
     unsigned diagnosticCancels = 0;
     std::vector<WizardRequest> starts;
     std::string storedSecret = "ui-test-secret", observedSecret;
@@ -289,7 +290,8 @@ struct Backend {
             if (operation.kind == WizardOperationKind::secret) operation.suggestedIp = suggestion;
             if (diagnosticFixture || failWithoutDiagnostic) {
                 operation.state = WizardOperationState::failed;
-                operation.error = WizardIpc::safeError(Error(ErrorCode::response_invalid), 200,
+                operation.error = WizardIpc::safeError(failure,
+                    failure.code == ErrorCode::server_version_incompatible ? std::nullopt : std::optional<int>(200),
                     operation.kind == WizardOperationKind::url ? "serverUrl" : "serverSecret");
                 operation.httpDiagnostic = diagnosticFixture;
             }
@@ -594,6 +596,57 @@ void wizardHttpDiagnostic() {
         check(!IsWindowVisible(child(gui.hwnd(), 705)), "error without response exposed detail");
         gui.wizard.endSession();
     }
+}
+void wizardIncompatibleServerVersion() {
+    for (bool secret : {false, true}) {
+        Gui gui(true); gui.open();
+        if (secret) gui.nextTo(secretId);
+        {
+            std::lock_guard lock(gui.backend.mutex);
+            gui.backend.failWithoutDiagnostic = true;
+            gui.backend.failure = Error(ErrorCode::server_version_incompatible, "2.0.0");
+        }
+        click(gui.hwnd(), nextId);
+        gui.until([&] { return allText(gui.hwnd()).find(L"different major version") != std::wstring::npos; },
+                  "incompatible server version not shown");
+        const auto shown = allText(gui.hwnd());
+        check(shown.find(L"Could not complete this action") != std::wstring::npos, "error card heading missing");
+        check(shown.find(L"Client version " PHPVPN_CLIENT_VERSION L", server version 2.0.0.") != std::wstring::npos,
+              "both versions must be named");
+        check(shown.find(L"same major version") != std::wstring::npos, "remedy missing");
+        check(shown.find(L"HTTP status") == std::wstring::npos, "an incompatible server is not an HTTP failure");
+        check(!IsWindowVisible(child(gui.hwnd(), 705)), "no HTTP error detail for an incompatible server");
+        check(shown.find(L"\n    Failed") != std::wstring::npos, "step not marked failed");
+        captureWizard(gui.hwnd(), secret ? L"server-version-secret.bmp" : L"server-version-url.bmp");
+        gui.wizard.endSession();
+    }
+}
+void connectIncompatibleServerVersion() {
+    Gui gui;
+    ProgressWindow progress(gui.pipe);
+    progress.open(GetModuleHandleW(nullptr));
+    TrayStatus snapshot;
+    snapshot.valid = true;
+    snapshot.state = "error";
+    snapshot.phase = "idle";
+    snapshot.tunnelReady = "no";
+    snapshot.serverUrl = phpvpn::tray::CheckpointResult::failed;
+    snapshot.hasError = true;
+    snapshot.errorCode = "server_version_incompatible";
+    snapshot.errorDescription = "raw description is never displayed";
+    progress.onSnapshot(snapshot);
+    const auto window = progress.window();
+    check(window && IsWindowVisible(window), "Connect result window missing");
+    check(progress.model().view().stage == ProgressStage::failed, "Connect failure not presented");
+    const auto shown = allText(window);
+    check(shown.find(L"Incompatible server version") != std::wstring::npos, "panel heading missing");
+    check(shown.find(L"The server is reachable, but this client cannot communicate with it.") != std::wstring::npos,
+          "panel explanation missing");
+    check(shown.find(L"This client is version " PHPVPN_CLIENT_VERSION L".") != std::wstring::npos,
+          "client version missing");
+    check(shown.find(L"raw description") == std::wstring::npos, "raw description displayed");
+    captureWizard(window, L"connect-server-version.bmp");
+    progress.endSession();
 }
 void httpHeadersDraft() {
     std::cout << "[ EVIDENCE ] headers draft: opening wizard\n" << std::flush;
@@ -2262,7 +2315,9 @@ int main(int argc, char** argv) {
         {"late_operation_result", [] { delayed(false); }},
         {"heartbeat_epoch_resume_cancel", heartbeatEpoch},
         {"editor_reset_failure_generation", editorReset},
-        {"command_reader_private_disconnect", commandReaderIsolation}
+        {"command_reader_private_disconnect", commandReaderIsolation},
+        {"server_version_wizard_error_card", wizardIncompatibleServerVersion},
+        {"server_version_connect_panel", connectIncompatibleServerVersion}
     };
     unsigned count = 0, failures = 0;
     for (const auto& [name, run] : tests) {

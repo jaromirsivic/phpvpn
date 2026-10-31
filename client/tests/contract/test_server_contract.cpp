@@ -11,6 +11,7 @@
 #include "core/protocol/base64url.h"
 #include "core/protocol/data_record.h"
 #include "core/protocol/request_builder.h"
+#include "core/protocol/server_version.h"
 #include "core/runtime/network_worker.h"
 #include "core/runtime/vpn_engine.h"
 #include "fake_config_files.h"
@@ -190,6 +191,17 @@ PHPVPN_TEST(server_contract, real_url_default_secret_and_wrong_credentials) {
     wrong.accessKey.assign(64, '1');
     PHPVPN_REQUIRE_ERROR(f.probe.checkAccess(f.document, wrong), ErrorCode::server_unauthorized);
     PHPVPN_CHECK_EQ(f.probe.lastHttpStatus().value_or(0), 401);
+}
+
+PHPVPN_TEST(server_contract, real_server_has_the_client_major_version) {
+    // Servers and client are released with one version; a different MAJOR would
+    // make every check below fail with server_version_incompatible.
+    Fixture f;
+    const auto info = f.probe.checkSecret(f.document.context, f.document.fields);
+    PHPVPN_REQUIRE_OK(info);
+    PHPVPN_CHECK(semverMajor(info->serverVersion).has_value());
+    PHPVPN_CHECK_EQ(semverMajor(info->serverVersion), semverMajor(PHPVPN_CLIENT_VERSION));
+    PHPVPN_REQUIRE_OK(requireCompatibleServerVersion(info->serverVersion));
 }
 
 PHPVPN_TEST(server_contract, all_fourteen_default_clients_authenticate_and_are_reported) {

@@ -60,6 +60,7 @@ constexpr Failure kFailures[]{
     {"contracts", "communication_contracts_verification_failed", "Communication contracts could not be verified. Check server compatibility.", 3},
     {"tunnel", "tunnel_start_failed", "The local tunnel could not be started.", 4},
     {"timeout", "communication_timeout", "The server did not respond in time. Verification could not be completed.", 1},
+    {"version", "server_version_incompatible", "The server uses a different major version than this client.", 0},
     // endpoint failure that also carries the bounded initial-Connect HTTP diagnostic
     {"http", "endpoint_unavailable_or_invalid", "The server endpoint is not reachable or not valid.", 0},
 };

@@ -61,6 +61,7 @@ add_library(phpvpn-core STATIC
     core/protocol/payload_batch.cpp
     core/protocol/request_builder.cpp
     core/protocol/response_parser.cpp
+    core/protocol/server_version.cpp
     core/protocol/uuid.cpp
 
     core/queues/flow_key.cpp

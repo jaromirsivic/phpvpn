@@ -15,6 +15,7 @@ set(PHPVPN_PORTABLE_TEST_SOURCES
     unit/test_queues.cpp
     unit/test_server_info_model.cpp
     unit/test_server_info_layout.cpp
+    unit/test_server_version.cpp
     unit/test_status_contract.cpp
     unit/test_time_sync.cpp
     unit/test_traffic_counters.cpp

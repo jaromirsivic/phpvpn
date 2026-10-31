@@ -4,7 +4,7 @@
 
 namespace phpvpn::tray {
 const ProgressErrorText &progressErrorText(std::string_view code) {
-    static constexpr std::array<ProgressErrorText, 8> errors{
+    static constexpr std::array<ProgressErrorText, 9> errors{
         {{"endpoint_unavailable_or_invalid", "The server endpoint is not reachable or not valid.",
           "Cannot connect to the server", "Check the Server URL and network connection, then try again."},
          {"server_verification_failed", "The server could not be verified with the configured SERVER_SECRET.",
@@ -19,7 +19,11 @@ const ProgressErrorText &progressErrorText(std::string_view code) {
           "Connection timed out", "Check the network and server availability, then try again."},
          {"communication_contracts_verification_failed", "Communication contracts could not be verified. Check server compatibility.", "Cannot verify communication contracts", "Check server compatibility, then reconnect."},
          {"status_unavailable", "The connection status is unavailable.", "Cannot read connection status",
-          "Check that the PHPVPN service is running."}}};
+          "Check that the PHPVPN service is running."},
+         {"server_version_incompatible", "The server uses a different major version than this client.",
+          "Incompatible server version",
+          "The server is reachable, but this client cannot communicate with it. Install a PHPVPN client and server "
+          "with the same major version. This client is version " PHPVPN_CLIENT_VERSION "."}}};
     for (const auto &error : errors)
         if (error.code == code)
             return error;

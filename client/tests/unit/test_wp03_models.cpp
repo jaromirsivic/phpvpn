@@ -73,7 +73,8 @@ PHPVPN_TEST(WP03Models, SafeCatalogDiscardsRawDescriptionsAndUnknownCodes) {
                         "tunnel_start_failed",
                         "communication_failed",
                         "communication_timeout",
-                        "status_unavailable"};
+                        "status_unavailable",
+                        "server_version_incompatible"};
     for (const auto code : codes) {
         const auto &text = progressErrorText(code);
         PHPVPN_CHECK_EQ(text.code, code);

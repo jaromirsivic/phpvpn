@@ -86,6 +86,7 @@ constexpr ErrorInfo kErrors[] = {
     {ErrorCode::response_invalid,              "response_invalid",              "The server response failed validation.",                           true},
     {ErrorCode::response_request_id_mismatch,  "response_request_id_mismatch",  "The server response belongs to a different request.",              true},
     {ErrorCode::response_mac_invalid,          "response_mac_invalid",          "The response authentication code did not verify.",                 true},
+    {ErrorCode::server_version_incompatible,   "server_version_incompatible",   "The server uses a different major version than this client.",      false},
 
     {ErrorCode::time_not_synchronised,         "time_not_synchronised",         "No verified server time is available yet.",                        true},
     {ErrorCode::time_invalid_sample,           "time_invalid_sample",           "The measured time sample was not usable.",                         true},

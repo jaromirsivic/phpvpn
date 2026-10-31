@@ -8,13 +8,17 @@
 // the receipt is confirmed, an identical finish replays the same receipt,
 // close, and get-config returns exactly the committed document. The script
 // run-service-e2e.sh compares that document with the file at the POSIX path.
+// With --expect-url-error the URL check must fail with that code instead, and
+// the probe closes the session without the later checks.
 //
 //   phpvpn-wizard-ipc-probe --socket PATH --relay URL --config-path PATH
 //                           [--virtual-ip 10.99.99.2] [--document-out FILE]
+//                           [--expect-url-error CODE]
 #include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -62,6 +66,11 @@ public:
         return reply;
     }
     void checkNext(WizardCommand command, WizardOperationKind kind) {
+        const auto failure = attemptNext(command, kind);
+        check(!failure, "Wizard operation failed: " + (failure ? failure->code : std::string()));
+    }
+    // The error of one Next check, nullopt when it succeeded.
+    std::optional<WizardError> attemptNext(WizardCommand command, WizardOperationKind kind) {
         session.clientAttemptId = uuid();
         ++session.attemptSequence;
         auto started = wizard(command);
@@ -76,7 +85,8 @@ public:
             check(value.operationId == session.operationId && value.kind == kind &&
                   value.clientAttemptId == session.clientAttemptId && value.attemptSequence == session.attemptSequence,
                   "Wizard operation correlation mismatch");
-            if (value.state == WizardOperationState::succeeded) return;
+            if (value.state == WizardOperationState::succeeded) return std::nullopt;
+            if (value.state == WizardOperationState::failed && value.error) return value.error;
             check(value.state == WizardOperationState::pending || value.state == WizardOperationState::running,
                   "Wizard operation failed: " + (value.error ? value.error->code : std::string("cancelled/interrupted")));
             if (Clock::now() >= heartbeat) { wizard(WizardCommand::keepalive); heartbeat += std::chrono::seconds(15); }
@@ -99,7 +109,7 @@ std::string stringMember(const JsonValue& object, const char* name) {
 }
 
 int run(int argc, char** argv) {
-    std::string socketPath, relay, configPath, documentOut, virtualIp = "10.99.99.2";
+    std::string socketPath, relay, configPath, documentOut, expectUrlError, virtualIp = "10.99.99.2";
     for (int index = 1; index + 1 < argc; index += 2) {
         const std::string_view name = argv[index];
         const std::string value = argv[index + 1];
@@ -108,11 +118,12 @@ int run(int argc, char** argv) {
         else if (name == "--config-path") configPath = value;
         else if (name == "--virtual-ip") virtualIp = value;
         else if (name == "--document-out") documentOut = value;
+        else if (name == "--expect-url-error") expectUrlError = value;
         else throw std::runtime_error("unknown option " + std::string(name));
     }
     if (argc % 2 == 0 || socketPath.empty() || relay.empty() || configPath.empty()) {
         std::fputs("usage: phpvpn-wizard-ipc-probe --socket PATH --relay URL --config-path PATH "
-                   "[--virtual-ip A.B.C.D] [--document-out FILE]\n", stderr);
+                   "[--virtual-ip A.B.C.D] [--document-out FILE] [--expect-url-error CODE]\n", stderr);
         return 2;
     }
 
@@ -135,6 +146,18 @@ int run(int argc, char** argv) {
     probe.session.fields.autoDetectIpAddressInWizard = false;
     probe.session.fields.accessKey = defaultAccessKey(virtualIp);
     pass("wizard-open");
+
+    if (!expectUrlError.empty()) {
+        // A relay that must be refused at the URL step, e.g. of another MAJOR version.
+        const auto failure = probe.attemptNext(WizardCommand::check_url, WizardOperationKind::url);
+        check(failure && failure->code == expectUrlError,
+              "check url ended with " + (failure ? failure->code : std::string("success")) + ", expected " + expectUrlError);
+        check(failure->field == std::optional<std::string>("serverUrl"), "the URL check failure is not bound to serverUrl");
+        pass("check url reports " + failure->code + ": " + failure->description);
+        probe.wizard(WizardCommand::close);
+        std::puts("PASS wizard IPC probe");
+        return 0;
+    }
 
     probe.checkNext(WizardCommand::check_url, WizardOperationKind::url);
     pass("check url against the real relay");

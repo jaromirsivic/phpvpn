@@ -678,7 +678,8 @@ WizardPresentation WizardController::presentation() const {
         p.errorText = std::move(panel);
         // Presentation follows only errors already evaluated by the workflow.
         // Transport failures (including timeout) do not declare the input invalid.
-        if (failure.code == "config_invalid_url" && step == WizardStep::serverUrl) p.invalidField = WizardField::url;
+        if ((failure.code == "config_invalid_url" || failure.code == "server_version_incompatible") &&
+            step == WizardStep::serverUrl) p.invalidField = WizardField::url;
         else if (failure.code == "config_invalid_value" && step == WizardStep::serverSecret) p.invalidField = WizardField::secret;
         else if ((failure.code == "config_invalid_address" || failure.code == "wizard_contract_self_conflict") &&
                  step == WizardStep::identity) p.invalidField = WizardField::ip;

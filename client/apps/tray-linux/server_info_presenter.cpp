@@ -73,7 +73,8 @@ ServerInfoSession::Finished ServerInfoSession::finish(std::uint64_t token, std::
     auto snapshot = parseServerInfoResult(response);
     if (!snapshot) {
         result.outcome = model_ ? Outcome::retained : Outcome::fatal;
-        result.text = model_ ? kServerInfoRefreshFailed : kServerInfoUnverified;
+        result.text = snapshot.error().code == ErrorCode::server_version_incompatible ? kServerInfoIncompatibleServer
+                      : model_ ? kServerInfoRefreshFailed : kServerInfoUnverified;
         return result;
     }
     auto model = buildServerInfoModel(std::move(snapshot).value());

@@ -173,13 +173,18 @@ void ServerInfoWindow::finish() {
     EnableWindow(refresh_, TRUE);
     auto snapshot = parseServerInfoResult(*response);
     if (!snapshot) {
+        const std::wstring incompatible = snapshot.error().code == ErrorCode::server_version_incompatible
+                                              ? widen(kServerInfoIncompatibleServer) : std::wstring();
         if (model_) {
-            SetWindowTextW(notice_, L"Refresh failed. Previous information is retained.");
+            SetWindowTextW(notice_, incompatible.empty() ? L"Refresh failed. Previous information is retained."
+                                                         : incompatible.c_str());
             layout();
         } else {
             showSystemMessage(
                 window_,
-                L"Server information could not be verified. Check the service, configuration and server compatibility.",
+                incompatible.empty()
+                    ? L"Server information could not be verified. Check the service, configuration and server compatibility."
+                    : incompatible.c_str(),
                 L"PHPVPN", SystemDialogIcon::error);
             endSession();
         }

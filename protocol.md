@@ -161,7 +161,7 @@ Tato veřejná stránka provádí pouze uvedenou kontrolu a neprozrazuje konfigu
 {"serverVersion":"1.0.0","status":"running","description":"OK","timestamp":"2026-08-09T20:15:30.123Z","requestId":"c22cd6e8-14a9-4d83-97b7-54c26a72d1f0","iv":"BASE64URL","tag":"BASE64URL"}
 ```
 
-- `serverVersion` je verze serverové aplikace;
+- `serverVersion` je SemVer verze serverové aplikace; klient komunikuje jen se serverem stejné MAJOR verze (kapitola 14);
 - `status` je při úspěchu `running`;
 - `description` je při úspěchu `OK`;
 - `timestamp` je aktuální UTC čas serveru s přesností na milisekundy, přesně ve formátu `YYYY-MM-DDTHH:MM:SS.sssZ`;
@@ -726,7 +726,7 @@ Chyba běžného best-effort touch není protokolovou chybou. Selhání explicit
 
 ## 14. Kompatibilita a rozšiřování
 
-Hodnota `type` určuje schéma zprávy. Serverová hodnota `serverVersion` v `health` a `info` je informativní SemVer verze aplikace a není wire negotiation.
+Hodnota `type` určuje schéma zprávy. Serverová hodnota `serverVersion` v `health` a `info` je SemVer verze aplikace. Není to wire negotiation, ale klient podle ní odmítne nekompatibilní server: MAJOR verze serveru (číslice před první tečkou, `-` nebo `+`, bez úvodní nuly) se musí rovnat MAJOR verzi klienta. MINOR a PATCH se neporovnávají, takže klient 4.8.3 komunikuje se serverem 4.1.5, ale ne se serverem 3.4.1 ani 5.1.1. Hodnota bez čitelné MAJOR verze je nekompatibilní. Klient kontroluje ověřenou hodnotu z každé odpovědi `health` a `info`; Wizard navíc už neověřenou hodnotu z `health` v kroku Server URL, kde podvržená hodnota může vést jen k odmítnutí. Při neshodě klient s tímto serverem dál nekomunikuje, ukončí případné spojení a ohlásí chybu `server_version_incompatible`.
 
 Normativní typy zpráv mají uzavřenou sadu polí. Nové volitelné informace se přidávají především do šifrovaného plaintextu `info`, kde klient musí ignorovat neznámá pole. Nekompatibilní změna povinných polí, kanonizace nebo kryptografických algoritmů vyžaduje nový název typu zprávy a nové kryptografické doménové řetězce.
 

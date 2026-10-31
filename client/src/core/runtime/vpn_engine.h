@@ -138,6 +138,8 @@ private:
     void setPhase(ConnectionPhase phase);
     void recordError(const Error& error);
     void clearError();
+    // True after tearing a connection down for server_version_incompatible.
+    bool stopForIncompatibleServer(const Result<HealthResponse>& health);
 
     std::int64_t backoffDelayMs();
     std::int64_t softBackoffDelayMs();

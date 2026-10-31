@@ -1,4 +1,5 @@
 #include "core/protocol/http_headers.h"
+#include "core/protocol/server_version.h"
 #include <unordered_set>
 #include <charconv>
 #include <algorithm>
@@ -42,6 +43,9 @@ std::string httpHeadersErrorDescription(const Error& error) {
         if (error.detail == "httpHeaders must be a string in masterSetup") return "masterSetup.httpHeaders must be a string";
         if (isHttpHeadersErrorDescription(error.detail)) return error.detail;
     }
+    // Both versions are safe: the client constant and the sanitised server value.
+    if (error.code == ErrorCode::server_version_incompatible)
+        return std::string(errorCodeDescription(error.code)) + " " + serverVersionMismatchText(error);
     return errorCodeDescription(error.code);
 }
 Result<std::string> normalizeHttpHeaders(std::string_view input) {

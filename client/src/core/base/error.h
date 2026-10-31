@@ -91,6 +91,8 @@ enum class ErrorCode {
     response_invalid,
     response_request_id_mismatch,
     response_mac_invalid,
+    // The verified `serverVersion` has another MAJOR than this client.
+    server_version_incompatible,
 
     // Time synchronisation, client.md "Synchronizace casu"
     time_not_synchronised,

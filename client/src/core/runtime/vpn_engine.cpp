@@ -402,6 +402,23 @@ void VpnEngine::recordError(const Error& error) {
     lastError_ = SafeError::fromConnection(error, phase_, healthSyntaxUsable_);
 }
 
+bool VpnEngine::stopForIncompatibleServer(const Result<HealthResponse>& health) {
+    if (health.ok() || health.error().code != ErrorCode::server_version_incompatible) return false;
+    // A server replaced by another MAJOR version during the connection: no
+    // further exchange and no recovery, the user has to install matching versions.
+    PHPVPN_LOG_WARN(kComponent, "the server changed to an incompatible major version, disconnecting");
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        lastError_ = SafeError::fromConnection(health.error(), ConnectionPhase::running);
+    }
+    softRecoveryActive_ = false;
+    softBackoffStep_ = 0;
+    softAuthRefreshed_ = false;
+    teardown(/*keepError=*/true);
+    setState(ConnectionState::error, ConnectionPhase::idle);
+    return true;
+}
+
 void VpnEngine::clearError() {
     std::lock_guard<std::mutex> lock(stateMutex_);
     lastError_.reset();
@@ -484,7 +501,9 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
         lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
         serverVerified_ = health.ok() ? Tristate::yes : Tristate::no;
         if (initialBootstrap && !health.ok()) {
-            (healthSyntaxUsable_ ? serverSecretCheck_ : serverUrlCheck_) = CheckpointResult::failed;
+            // The server at this URL is reachable but incompatible: the URL checkpoint fails.
+            const bool incompatible = health.error().code == ErrorCode::server_version_incompatible;
+            (healthSyntaxUsable_ && !incompatible ? serverSecretCheck_ : serverUrlCheck_) = CheckpointResult::failed;
         }
     }
     if (!health.ok()) {
@@ -497,7 +516,9 @@ Status VpnEngine::runConnectSequence(bool initialBootstrap, std::optional<HttpDi
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         lastInfoVerified_ = info.ok() ? Tristate::yes : Tristate::no;
-        if (initialBootstrap)
+        if (initialBootstrap && !info.ok() && info.error().code == ErrorCode::server_version_incompatible)
+            serverUrlCheck_ = CheckpointResult::failed;
+        else if (initialBootstrap)
             serverSecretCheck_ = info.ok() ? CheckpointResult::success : CheckpointResult::failed;
         if (info.ok()) {
             lastInfoPlaintext_ = info.value().plaintext;
@@ -787,8 +808,11 @@ void VpnEngine::runNetworkThread() {
                             // a repeated 401 needs the full bootstrap.
                             softAuthRefreshed_ = true;
                             auto health = network_.performHealth();
-                            std::lock_guard<std::mutex> lock(stateMutex_);
-                            lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
+                            {
+                                std::lock_guard<std::mutex> lock(stateMutex_);
+                                lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
+                            }
+                            if (stopForIncompatibleServer(health)) continue;
                         }
                     }
                     if (!escalate) {
@@ -850,8 +874,11 @@ void VpnEngine::runNetworkThread() {
                 network_.timeSync().systemClockChanged(now, clock_.systemUtcMs());
             if (needsResync) {
                 auto health = network_.performHealth();
-                std::lock_guard<std::mutex> lock(stateMutex_);
-                lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
+                {
+                    std::lock_guard<std::mutex> lock(stateMutex_);
+                    lastHealthVerified_ = health.ok() ? Tristate::yes : Tristate::no;
+                }
+                if (stopForIncompatibleServer(health)) continue;
             }
 
             const auto finished = clock_.monotonicMs();

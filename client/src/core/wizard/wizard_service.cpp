@@ -411,6 +411,8 @@ void WizardService::probeTask(std::shared_ptr<Session> session, std::shared_ptr<
             const auto field = operation->result.kind == WizardOperationKind::url ? "serverUrl" :
                 operation->result.kind == WizardOperationKind::secret ? "serverSecret" : "accessKey";
             operation->result.httpDiagnostic = std::move(diagnostic);
+            // A verified 200 from an incompatible server is not an HTTP problem.
+            if (outcome.error().code == ErrorCode::server_version_incompatible) httpStatus.reset();
             operation->result.error = WizardIpc::safeError(outcome.error(), httpStatus, field,
                 operation->result.httpDiagnostic ? std::nullopt : std::optional<std::string>(operation->fields.serverUrl));
         } else {

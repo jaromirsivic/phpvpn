@@ -8,6 +8,7 @@
 #include "core/protocol/data_record.h"
 #include "core/protocol/iso8601.h"
 #include "core/protocol/request_builder.h"
+#include "core/protocol/server_version.h"
 
 namespace phpvpn {
 namespace {
@@ -23,6 +24,18 @@ std::int64_t clampToRange(std::int64_t value, std::int64_t low, std::int64_t hig
         return low;
     }
     return value < low ? low : (value > high ? high : value);
+}
+
+// A verified response of an incompatible server is not an HTTP failure, so no
+// HTTP diagnostic or rejected response is reported with it.
+Status requireCompatibleVersion(std::string_view serverVersion,
+        std::optional<HttpDiagnostic>* failedDiagnostic, bool* rejectedResponse) {
+    auto compatible = requireCompatibleServerVersion(serverVersion);
+    if (!compatible.ok()) {
+        if (failedDiagnostic) failedDiagnostic->reset();
+        if (rejectedResponse) *rejectedResponse = false;
+    }
+    return compatible;
 }
 
 }  // namespace
@@ -124,6 +137,8 @@ Result<HealthResponse> NetworkWorker::performHealth(const std::function<void()>&
     HealthResponse health;
     PHPVPN_TRY_ASSIGN(health, ResponseParser::parseHealth(crypto_, keys_, normalisedServerSecret_,
                                                           requestId, response.body, onSyntaxUsable));
+    // Before the time sample: an incompatible server is never used, not even as a clock.
+    PHPVPN_TRY(requireCompatibleVersion(health.serverVersion, failedDiagnostic, rejectedResponse));
 
     // The timestamp is authenticated at this point, so it may enter the clock.
     TimeSnapshot snapshot;
@@ -172,6 +187,7 @@ Result<InfoResponse> NetworkWorker::performInfo(std::optional<HttpDiagnostic>* f
     PHPVPN_TRY_ASSIGN(info, ResponseParser::parseInfo(crypto_, keys_, normalisedServerSecret_,
                                                       requestId, response.body));
 
+    PHPVPN_TRY(requireCompatibleVersion(info.serverVersion, failedDiagnostic, rejectedResponse));
     PHPVPN_TRY(publishLimits(info.limits));
     if (failedDiagnostic) failedDiagnostic->reset();
     if (rejectedResponse) *rejectedResponse = false;
@@ -506,6 +522,7 @@ Result<InfoResponse> NetworkWorker::performExtendedInfo(const InfoRequestOptions
     PHPVPN_TRY_ASSIGN(info, ResponseParser::parseInfo(crypto_, keys_, normalisedServerSecret_,
                                                       requestId, response.body, (options.includeMaskedCommunicationContracts.value_or(false) ? std::optional<Ipv4Address>(config_->virtualIp) : std::nullopt)));
 
+    PHPVPN_TRY(requireCompatibleVersion(info.serverVersion, failedDiagnostic, rejectedResponse));
     PHPVPN_TRY(publishLimits(info.limits));
     if (failedDiagnostic) failedDiagnostic->reset();
     if (rejectedResponse) *rejectedResponse = false;
