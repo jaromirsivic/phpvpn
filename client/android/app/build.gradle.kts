@@ -91,4 +91,6 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    // WP05: the system VPN consent and notification dialogs of the service tests.
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }

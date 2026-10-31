@@ -18,15 +18,34 @@ class PhpvpnTestRunner : AndroidJUnitRunner() {
 /**
  * The application of the UI tests: every container gets a fresh scripted
  * [FakeIpcTransport] and the [TestConsent] instead of `VpnService.prepare`.
+ * The WP05 service tests switch to the real container ([useNativeRuntime]):
+ * JNI runtime, VPN service, system consent, the R9 state file.
  */
 class TestApplication : PhpvpnApplication() {
     lateinit var transport: FakeIpcTransport
         private set
     val consent = TestConsent()
 
-    override fun createContainer(): AppContainer = AppContainer(createTransport(), consent)
+    @Volatile
+    var native = false
+        private set
 
-    override fun createTransport(): IpcTransport = FakeIpcTransport().also { transport = it }
+    override fun createContainer(): AppContainer = if (native) super.createContainer() else AppContainer(createTransport(), consent)
+
+    override fun createTransport(): IpcTransport = if (native) super.createTransport() else FakeIpcTransport().also { transport = it }
+
+    /** The production container of [PhpvpnApplication] from now on. */
+    fun useNativeRuntime() {
+        native = true
+        resetContainer()
+    }
+
+    /** Back to the scripted transport of the UI tests. */
+    fun useFakeTransport() {
+        if (!native) return
+        native = false
+        resetContainer()
+    }
 }
 
 /**

@@ -13,6 +13,10 @@
             android:name=".debug.DebugRouteActivity"
             android:exported="true"
             android:label="@string/debug_routes_title" />
+        <!-- WP05: commands of the host-driven service tests (service-lifecycle-tests.sh). -->
+        <receiver
+            android:name=".debug.DebugVpnCommandReceiver"
+            android:exported="true" />
     </application>
 
 </manifest>
