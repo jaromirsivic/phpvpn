@@ -2,4 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- AndroidNetworkHost reads ConnectivityManager (plan-android-v001 point 4). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+      The native runtime of WP04 talks to the relay server with curl (point 9);
+      without INTERNET the sockets of the application uid are refused.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

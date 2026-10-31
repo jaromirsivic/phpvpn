@@ -8,3 +8,7 @@
 -keep interface phpvpn.android.bridge.NetworkHost { *; }
 -keep interface phpvpn.android.bridge.TunnelHost { *; }
 -keep class phpvpn.android.bridge.VpnHosts { *; }
+# JNI_OnLoad registers the natives of the runtime (NativeBridge, above) and of
+# the portable models (WP04, apps/android-jni/jni_models.cpp) by class and
+# method name; a removed or renamed ModelNatives makes the library fail to load.
+-keep class phpvpn.android.bridge.jni.ModelNatives { *; }
