@@ -1,0 +1,1 @@
+{"ipcVersion":1,"requestId":"$ID","error":{"code":"server_version_incompatible","description":"The server uses a different major version than this client.","recoverable":false}}

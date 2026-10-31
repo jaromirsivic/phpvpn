@@ -1,0 +1,1 @@
+{"ipcVersion":1,"requestId":"$ID","error":{"code":"wizard_commit_unknown","description":"The configuration publication has not been confirmed. Check its receipt before taking another action.","recoverable":false,"field":null,"httpStatus":null,"suggestedAction":"Check the existing commit receipt. Do not start another write automatically."}}

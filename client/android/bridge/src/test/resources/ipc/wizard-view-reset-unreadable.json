@@ -1,0 +1,1 @@
+{"ipcVersion":1,"requestId":"$ID","result":{"sessionId":"00000000-0000-4000-8000-000000000001","serviceInstanceId":"00000000-0000-4000-8000-000000000001","revisionToken":null,"availability":"unreadable","mode":"reset","fields":null,"context":null,"contractCount":0,"existingDefaultContractPeers":[],"connectionEpoch":0,"vpnState":"disconnected","vpnPhase":"idle"}}
