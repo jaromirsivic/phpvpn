@@ -202,9 +202,13 @@ if(PHPVPN_PLATFORM STREQUAL "android")
         if(NOT IS_DIRECTORY "${PHPVPN_ANDROID_DEPS_ABI}/lib")
             message(FATAL_ERROR "PHPVPN_ANDROID_DEPS has no ${CMAKE_ANDROID_ARCH_ABI}/lib: ${PHPVPN_ANDROID_DEPS_ABI}")
         endif()
+        # The NDK toolchain restricts library, include and package searches
+        # to CMAKE_FIND_ROOT_PATH (mode ONLY), which re-roots every other
+        # path under the NDK. The prebuilt tree must be a root of its own.
+        list(APPEND CMAKE_FIND_ROOT_PATH "${PHPVPN_ANDROID_DEPS_ABI}")
         set(OPENSSL_ROOT_DIR "${PHPVPN_ANDROID_DEPS_ABI}")
         set(OPENSSL_USE_STATIC_LIBS ON)
-        find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
+        find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto SSL)
         set(CURL_ROOT "${PHPVPN_ANDROID_DEPS_ABI}")
         set(CURL_USE_STATIC_LIBS ON)
         find_package(CURL 8.5 REQUIRED)
