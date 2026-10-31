@@ -5,7 +5,7 @@ name: client-linux
 
 on:
   push:
-    branches: [macos, main, linux, claude/heuristic-germain-25df54]
+    branches: [macos, main, linux]
   pull_request:
     branches: [main, macos, linux]
   workflow_dispatch:
