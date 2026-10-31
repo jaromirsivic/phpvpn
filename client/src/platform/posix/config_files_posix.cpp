@@ -379,7 +379,7 @@ public:
             return insecureDirectory();
         // The fixed name must still lead to the pinned directory through safe
         // ancestors, a moved or replaced directory is never used.
-        auto current = openTrustedDirectory(fixed.parent_path(), policy.expectedOwner);
+        auto current = openTrustedDirectory(fixed.parent_path(), policy.expectedOwner, policy.trustRoot);
         if (!current) return current.error();
         struct stat named {};
         if (::fstat(current->get(), &named) != 0) return readError();
@@ -583,7 +583,7 @@ Result<std::unique_ptr<ConfigFiles>> createPosixConfigFiles(
     if (!fixedPath.is_absolute() || fixedPath.filename() != kTarget ||
         fixedPath != fixedPath.lexically_normal() || fixedPath.native().find('\0') != std::string::npos)
         return Error(ErrorCode::invalid_argument);
-    auto directory = openTrustedDirectory(fixedPath.parent_path(), policy.expectedOwner);
+    auto directory = openTrustedDirectory(fixedPath.parent_path(), policy.expectedOwner, policy.trustRoot);
     if (!directory) return directory.error();
     bool supported = false;
     if (!readFilesystem(directory->get(), supported)) return readError();

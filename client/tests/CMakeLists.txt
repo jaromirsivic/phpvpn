@@ -155,6 +155,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         linux/unit/test_netlink_codec.cpp
         linux/unit/test_ipc_unix.cpp
         linux/unit/test_fd_tunnel.cpp
+        linux/unit/test_paths_trust_root.cpp
         # GTK-free models of the Linux tray (WP09); no GUI library is linked.
         linux/unit/test_tray_linux_models.cpp
         ../apps/tray-linux/indicator_model.cpp

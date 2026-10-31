@@ -46,6 +46,22 @@ Result<UniqueFd> openComponent(int parent, const char* name) {
     return fd;
 }
 
+// The anchor of a rooted walk: a directory of the expected owner that others
+// cannot write. Its group bits are left to the sandbox, see openTrustedDirectory.
+bool trustedAnchor(const struct stat& info, uid_t expectedOwner) {
+    return S_ISDIR(info.st_mode) && info.st_uid == expectedOwner && (info.st_mode & S_IWOTH) == 0;
+}
+
+// Element-wise, so /data/app2 is not below /data/app.
+bool withinRoot(const std::filesystem::path& directory, const std::filesystem::path& root) {
+    auto part = directory.begin();
+    for (const auto& element : root) {
+        if (part == directory.end() || *part != element) return false;
+        ++part;
+    }
+    return true;
+}
+
 }  // namespace
 
 Result<PosixDirectories> resolvePosixDirectories(const PosixDirectoryOverrides& overrides) {
@@ -80,17 +96,40 @@ std::filesystem::path logDirectoryPath(const PosixDirectories& directories) {
     return directories.logs;
 }
 
-Result<UniqueFd> openTrustedDirectory(const std::filesystem::path& directory, uid_t expectedOwner) {
+Result<UniqueFd> openTrustedDirectory(const std::filesystem::path& directory, uid_t expectedOwner,
+                                      const std::filesystem::path& trustRoot) {
     if (!directory.is_absolute() || directory != directory.lexically_normal() ||
         directory.native().find('\0') != std::string::npos)
         return Error(ErrorCode::invalid_argument, "the directory is not an absolute normal path");
-    UniqueFd current(::open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (!current) return unreadable();
+#if defined(__ANDROID__)
+    // Never walk from "/" here: the system owned /data would always fail, and a
+    // missing anchor is an error of the host, not an insecure directory.
+    if (trustRoot.empty())
+        return Error(ErrorCode::invalid_argument, "the trusted walk needs the private application directory");
+#endif
+    UniqueFd current;
     struct stat info {};
-    if (::fstat(current.get(), &info) != 0) return unreadable();
-    if (!trustedComponent(info, expectedOwner)) return insecure();
-    for (const auto& part : directory.relative_path()) {
-        if (part.empty()) continue;  // a trailing separator
+    std::filesystem::path below;
+    if (trustRoot.empty()) {
+        current.reset(::open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+        if (!current) return unreadable();
+        if (::fstat(current.get(), &info) != 0) return unreadable();
+        if (!trustedComponent(info, expectedOwner)) return insecure();
+        below = directory.relative_path();
+    } else {
+        if (!validDirectory(trustRoot) || !withinRoot(directory, trustRoot))
+            return Error(ErrorCode::invalid_argument, "the directory is not below the trust root");
+        current.reset(::open(trustRoot.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+        if (!current) {
+            if (errno == ELOOP || errno == ENOTDIR) return insecure();
+            return unreadable();
+        }
+        if (::fstat(current.get(), &info) != 0) return unreadable();
+        if (!trustedAnchor(info, expectedOwner)) return insecure();
+        below = directory.lexically_relative(trustRoot);  // "." for the anchor itself
+    }
+    for (const auto& part : below) {
+        if (part.empty() || part == ".") continue;  // a trailing separator, the anchor itself
         auto next = openComponent(current.get(), part.c_str());
         if (!next) return next.error();
         if (::fstat(next->get(), &info) != 0) return unreadable();
@@ -100,10 +139,13 @@ Result<UniqueFd> openTrustedDirectory(const std::filesystem::path& directory, ui
     return current;
 }
 
-Status secureServiceDirectory(const std::filesystem::path& directory, mode_t mode, uid_t expectedOwner) {
+Status secureServiceDirectory(const std::filesystem::path& directory, mode_t mode, uid_t expectedOwner,
+                              const std::filesystem::path& trustRoot) {
     if (!validDirectory(directory) || (mode & ~static_cast<mode_t>(07777)) != 0)
         return Error(ErrorCode::invalid_argument, "the directory is not an absolute normal path");
-    auto parent = openTrustedDirectory(directory.parent_path(), expectedOwner);
+    // With an anchor the parent has to be the anchor or below it, so the
+    // anchor itself is never created or repaired here.
+    auto parent = openTrustedDirectory(directory.parent_path(), expectedOwner, trustRoot);
     if (!parent) return parent.error();
     const std::string name = directory.filename().string();
     if (::mkdirat(parent->get(), name.c_str(), mode) != 0 && errno != EEXIST)
@@ -122,10 +164,11 @@ Status secureServiceDirectory(const std::filesystem::path& directory, mode_t mod
     return ok();
 }
 
-Status secureServiceDirectories(const PosixDirectories& directories, uid_t expectedOwner) {
-    PHPVPN_TRY(secureServiceDirectory(directories.config, kPosixConfigDirectoryMode, expectedOwner));
-    PHPVPN_TRY(secureServiceDirectory(directories.state, kPosixStateDirectoryMode, expectedOwner));
-    return secureServiceDirectory(directories.runtime, kPosixRuntimeDirectoryMode, expectedOwner);
+Status secureServiceDirectories(const PosixDirectories& directories, uid_t expectedOwner,
+                                const std::filesystem::path& trustRoot) {
+    PHPVPN_TRY(secureServiceDirectory(directories.config, kPosixConfigDirectoryMode, expectedOwner, trustRoot));
+    PHPVPN_TRY(secureServiceDirectory(directories.state, kPosixStateDirectoryMode, expectedOwner, trustRoot));
+    return secureServiceDirectory(directories.runtime, kPosixRuntimeDirectoryMode, expectedOwner, trustRoot);
 }
 
 }  // namespace phpvpn

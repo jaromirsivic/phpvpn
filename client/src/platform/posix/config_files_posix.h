@@ -50,6 +50,10 @@ struct PosixConfigFilePolicy {
     // unprivileged tests pass geteuid().
     uid_t expectedOwner = 0;
     std::function<PosixConfigFileAction(PosixConfigFileStage)> hook;
+    // Anchor of the trusted walk to the directory, see openTrustedDirectory in
+    // paths_posix.h. Empty on Linux and macOS; Android passes the private
+    // directory of the application.
+    std::filesystem::path trustRoot{};
 };
 
 #if defined(__linux__)
@@ -67,7 +71,8 @@ bool macosConfigFilesystemSupported(std::string_view fstypename) noexcept;
 
 // Absolute, lexically normal path whose file name is config.json. Ancestors are
 // opened without following links and must be owned by root or the expected
-// owner and not writable by others; the directory itself must be owned by the
+// owner and not writable by others (with a trust root only the ancestors below
+// it, see PosixConfigFilePolicy::trustRoot); the directory itself must be owned by the
 // expected owner and not writable by group or others. The directory is kept
 // open, every operation is relative to it. This factory never creates or
 // relaxes the directory or target permissions.
