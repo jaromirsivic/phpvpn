@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Configuration editor · PHPVPN Android</title><link rel="stylesheet" href="styles.css"></head><body><div class="review-bar"><a href="index.html">← All screens</a><span>Visual concept · no live connection · sample data</span><a href="README.md">Design notes</a></div><div class="review-layout"><section class="device" aria-label="Android mockup: Configuration editor"><div class="statusbar"><span>9:41</span><span class="sys" aria-label="Sample system status">▴ ▴ ▰</span></div><header class="appbar"><a class="back" href="10-settings.html" aria-label="Back">‹</a><h1>Configuration editor</h1></header><main class="appbody"><div class="eyebrow">ADVANCED SETTINGS</div><h2>JSON configuration</h2><p class="intro">Complete client configuration with sample credentials.</p><label class="field"><span>Active document · unsaved changes</span><textarea id="config" spellcheck="false" style="min-height:340px">{
+  &quot;masterSetup&quot;: {
+    &quot;serverUrl&quot;: &quot;https://vpn.example.com/phpvpn.php&quot;,
+    &quot;httpHeaders&quot;: &quot;Accept: application/json&quot;,
+    &quot;serverSecret&quot;: &quot;DEMO_ONLY&quot;,
+    &quot;vpnCidr&quot;: &quot;10.80.0.0/24&quot;,
+    &quot;virtualIp&quot;: &quot;10.80.0.12&quot;,
+    &quot;accessKey&quot;: &quot;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&quot;,
+    &quot;trustAnyTlsCertificate&quot;: false,
+    &quot;autoConnectOnStartup&quot;: false
+  },
+  &quot;runtime&quot;: {
+    &quot;maxOutboundQueueBytes&quot;: 67108864,
+    &quot;maxInboundQueueBytes&quot;: 67108864,
+    &quot;minOutboundPerPeerQueueBytes&quot;: 65536,
+    &quot;minInboundPerPeerQueueBytes&quot;: 65536,
+    &quot;maxQueuedPacketAgeMs&quot;: 30000,
+    &quot;maxResponseBodyBytes&quot;: 67108864,
+    &quot;maxNdjsonLineBytes&quot;: 1048576,
+    &quot;maxDataRecordsPerResponse&quot;: 4096,
+    &quot;responseTimeoutSeconds&quot;: 30,
+    &quot;timeSyncIntervalSeconds&quot;: 300
+  },
+  &quot;communicationContracts&quot;: {
+    &quot;10.80.0.2&quot;: {
+      &quot;payloadKey&quot;: &quot;bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&quot;
+    }
+  }
+}</textarea><span class="hint">Content is not saved in this mockup.</span></label><div class="notice "><strong>Changes apply when you reconnect</strong>This includes TLS, automatic connection, the VPN network and all runtime limits.</div><a class="action ghost" href="24-reset.html">Reset to default configuration</a></main><div class="footer-actions"><a class="action primary" href="25-reconnect-save.html">Save configuration</a><a class="action ghost" href="32-discard.html">Discard changes</a></div><div class="gesture" aria-hidden="true"></div><div class="toast" role="status" hidden></div></section><aside class="doc"><div class="eyebrow">23 / Settings and configuration</div><h2>Configuration editor</h2><p>The complete JSON editor also covers parameters without a dedicated desktop form. Sample values are not a recommended production configuration. Android storage is private to the app and does not reuse the Windows path.</p><h3>Mapping to the existing client</h3><p class="source">client/apps/tray/editor_window.cpp:77–130,173–253,262–352; client/src/core/config/config_validator.cpp:120–332</p><h3>Rules and pitfalls</h3><p><a href="screens/23-editor.md">Read the rules for this screen ↗</a></p><div class="scenario"><label for="scenario"><strong>Explore another state or step</strong></label><select id="scenario" data-scenario><option value="23-editor.html" selected>23 · Configuration editor</option><option value="24-reset.html" >24 · Reset configuration</option><option value="25-reconnect-save.html" >25 · Changes saved</option><option value="39-editor-invalid.html" >39 · JSON error</option><option value="33-save-unknown.html" >33 · Save result unknown</option><option value="32-discard.html" >32 · Unsaved changes</option><option value="10-settings.html" >10 · Settings</option><option value="34-about.html" >34 · About</option><option value="35-exit.html" >35 · Closing the app</option><option value="42-editor-default.html" >42 · Default editor content</option></select></div><h3>How to use this mockup</h3><p>Buttons link the sample screens. You can edit fields and reveal secrets. Changes are neither carried between pages nor saved. Scroll inside the phone to view longer content.</p><h3>Preview</h3><p><a href="previews/full/23-editor.png">Open the full screen PNG ↗</a></p></aside></div><script src="interactions.js"></script></body></html>

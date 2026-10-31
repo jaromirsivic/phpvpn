@@ -1,0 +1,764 @@
+[
+  {
+    "id": "01-connected",
+    "title": "Connection",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "The main status screen uses existing client data. It does not imply protection for all internet traffic. Duration and counters are samples.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212; client/apps/tray/statistics_model.h:15–26,119–143",
+    "flow": [
+      "02-disconnected",
+      "04-connecting",
+      "05-reconnecting",
+      "06-connection-error",
+      "07-disconnecting",
+      "08-unavailable",
+      "09-notification"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "02-disconnected",
+    "title": "Disconnected",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "The connection uses one current configuration. If system permission has already been granted, the button goes straight to connection progress.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212",
+    "flow": [
+      "03-vpn-permission",
+      "04-connecting",
+      "00-welcome"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "00-welcome",
+    "title": "Welcome",
+    "group": "connection",
+    "nav": "",
+    "back": "",
+    "note": "A new mobile entry point to the existing wizard. No account registration or public VPN server directory.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "12-wizard-url",
+      "23-editor"
+    ],
+    "family": "connection",
+    "adapt": true
+  },
+  {
+    "id": "03-vpn-permission",
+    "title": "VPN permission",
+    "group": "connection",
+    "nav": "",
+    "back": "02-disconnected",
+    "note": "A system-owned permission prompt before connecting, when required. Android supplies the exact wording and appearance. This design only illustrates the dialog.",
+    "source": "Android Developers: VPN, User experience / Prepare a service",
+    "flow": [
+      "04-connecting",
+      "37-permission-denied"
+    ],
+    "family": "connection",
+    "adapt": true
+  },
+  {
+    "id": "04-connecting",
+    "title": "Connecting",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "The four checks match the desktop client directly. Success transitions to the connected state automatically. In the mockup, choose the outcome from the scenario selector.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212",
+    "flow": [
+      "01-connected",
+      "06-connection-error",
+      "07-disconnecting"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "05-reconnecting",
+    "title": "Reconnecting",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "Reconnecting is distinct from connected. Recovery does not promise network availability or blocking of traffic outside the VPN.",
+    "source": "client/src/core/runtime/status_snapshot.h:77–110; client/apps/tray/progress_window.cpp:33–104,166–212",
+    "flow": [
+      "01-connected",
+      "06-connection-error",
+      "08-unavailable"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "06-connection-error",
+    "title": "Connection error",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "HTTP details are offered only when the client has actually captured them. Input errors and transport errors must remain distinct.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212; client/apps/tray/http_error_detail_window.cpp:19–62",
+    "flow": [
+      "04-connecting",
+      "30-http-response",
+      "12-wizard-url"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "07-disconnecting",
+    "title": "Disconnecting",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "Waiting for confirmation matches the desktop behavior. A timeout must never be presented as success.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212",
+    "flow": [
+      "02-disconnected",
+      "38-disconnect-unknown"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "08-unavailable",
+    "title": "Status unavailable",
+    "group": "connection",
+    "nav": "connection",
+    "back": "",
+    "note": "The mobile equivalent of unavailable service status. A new status read may return any confirmed state. The link to connecting is just a sample path.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212; client/apps/tray/statistics_model.h:15–26,119–143",
+    "flow": [
+      "01-connected",
+      "02-disconnected",
+      "38-disconnect-unknown"
+    ],
+    "family": "connection",
+    "adapt": false
+  },
+  {
+    "id": "09-notification",
+    "title": "Background notification",
+    "group": "connection",
+    "nav": "",
+    "back": "01-connected",
+    "note": "A replacement for the desktop tray icon. The system supplies the actual notification template. This is not a working Android notification.",
+    "source": "Android Developers: VPN, User experience",
+    "flow": [
+      "01-connected",
+      "07-disconnecting"
+    ],
+    "family": "connection",
+    "adapt": true
+  },
+  {
+    "id": "10-settings",
+    "title": "Settings",
+    "group": "settings",
+    "nav": "settings",
+    "back": "",
+    "note": "This hub preserves every desktop menu item. AutoConnect, TLS and runtime limits remain accessible through the complete JSON editor.",
+    "source": "client/apps/tray/tray_application.cpp:216–249,361–400,606–642",
+    "flow": [
+      "11-disconnect-gate",
+      "19-contracts",
+      "23-editor",
+      "34-about",
+      "35-exit"
+    ],
+    "family": "settings",
+    "adapt": false
+  },
+  {
+    "id": "11-disconnect-gate",
+    "title": "Before setup",
+    "group": "wizard",
+    "nav": "",
+    "back": "10-settings",
+    "note": "The existing disconnectGate. The first step starts only after disconnection is confirmed. A client that is already disconnected skips this screen.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "12-wizard-url",
+      "38-disconnect-unknown"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "12-wizard-url",
+    "title": "Server address",
+    "group": "wizard",
+    "nav": "",
+    "back": "10-settings",
+    "note": "The first of the four original steps. Verify only changes the screen in this mockup. It does not contact the server.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "14-wizard-secret",
+      "13-http-headers",
+      "18-wizard-error",
+      "36-config-unavailable",
+      "40-wizard-reset"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "13-http-headers",
+    "title": "HTTP headers",
+    "group": "wizard",
+    "nav": "",
+    "back": "12-wizard-url",
+    "note": "An adaptation of the separate HTTP headers editor. Text is neither carried between pages nor saved in the mockup.",
+    "source": "client/apps/tray/http_headers_window.cpp:35–76",
+    "flow": [
+      "12-wizard-url"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "14-wizard-secret",
+    "title": "Server secret",
+    "group": "wizard",
+    "nav": "",
+    "back": "12-wizard-url",
+    "note": "Both custom and default secrets are retained. The mobile design hides sensitive input by default and allows it to be revealed temporarily.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "15-wizard-identity",
+      "18-wizard-error",
+      "32-discard"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "15-wizard-identity",
+    "title": "IP and access key",
+    "group": "wizard",
+    "nav": "",
+    "back": "14-wizard-secret",
+    "note": "Automatic IP suggestions and a default access key already exist in the client. If no address is suggested, the user can enter one manually.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "16-wizard-contracts",
+      "18-wizard-error"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "16-wizard-contracts",
+    "title": "Complete setup",
+    "group": "wizard",
+    "nav": "",
+    "back": "15-wizard-identity",
+    "note": "The counts illustrate a /24 network with 252 possible remote clients. Defaults are added only on Finish. This option is disabled for unsupported configurations.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "17-wizard-saved",
+      "33-save-unknown"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "17-wizard-saved",
+    "title": "Configuration saved",
+    "group": "wizard",
+    "nav": "",
+    "back": "10-settings",
+    "note": "A confirmed save is a separate state. Connecting is an explicit choice. Saving does not start the VPN automatically.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "03-vpn-permission",
+      "02-disconnected",
+      "19-contracts"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "18-wizard-error",
+    "title": "Verification error",
+    "group": "wizard",
+    "nav": "",
+    "back": "12-wizard-url",
+    "note": "A crypto_tag_mismatch error variant. A timeout does not invalidate the inputs. The real error message must not repeat the secret.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "14-wizard-secret",
+      "30-http-response"
+    ],
+    "family": "wizard",
+    "adapt": false
+  },
+  {
+    "id": "19-contracts",
+    "title": "Communication contracts",
+    "group": "contracts",
+    "nav": "",
+    "back": "10-settings",
+    "note": "The wide desktop table becomes a list with detail screens. All candidate addresses remain paginated. The local IP is excluded from the targets.",
+    "source": "client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "20-contract-detail",
+      "22-contract-invalid",
+      "25-reconnect-save",
+      "33-save-unknown",
+      "41-contracts-page-2"
+    ],
+    "family": "contracts",
+    "adapt": false
+  },
+  {
+    "id": "20-contract-detail",
+    "title": "Contract details",
+    "group": "contracts",
+    "nav": "",
+    "back": "19-contracts",
+    "note": "The key is hidden by default on mobile. In the implementation, the key of a disabled contract is read-only. The sample switch only changes its visual state.",
+    "source": "client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "21-password-key",
+      "22-contract-invalid",
+      "19-contracts"
+    ],
+    "family": "contracts",
+    "adapt": false
+  },
+  {
+    "id": "21-password-key",
+    "title": "Key from password",
+    "group": "contracts",
+    "nav": "",
+    "back": "20-contract-detail",
+    "note": "Password, SHA-256, Default and Random are retained. This mockup deliberately does not implement cryptography or password generation.",
+    "source": "client/apps/tray/password_sha_window.cpp:12–59",
+    "flow": [
+      "20-contract-detail"
+    ],
+    "family": "contracts",
+    "adapt": false
+  },
+  {
+    "id": "22-contract-invalid",
+    "title": "Invalid key",
+    "group": "contracts",
+    "nav": "",
+    "back": "19-contracts",
+    "note": "The error belongs to a specific contract and field. The list retains the other unsaved changes.",
+    "source": "client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "20-contract-detail",
+      "21-password-key"
+    ],
+    "family": "contracts",
+    "adapt": false
+  },
+  {
+    "id": "23-editor",
+    "title": "Configuration editor",
+    "group": "settings",
+    "nav": "",
+    "back": "10-settings",
+    "note": "The complete JSON editor also covers parameters without a dedicated desktop form. Sample values are not a recommended production configuration. Android storage is private to the app and does not reuse the Windows path.",
+    "source": "client/apps/tray/editor_window.cpp:77–130,173–253,262–352; client/src/core/config/config_validator.cpp:120–332",
+    "flow": [
+      "24-reset",
+      "25-reconnect-save",
+      "39-editor-invalid",
+      "33-save-unknown",
+      "32-discard"
+    ],
+    "family": "settings",
+    "adapt": false
+  },
+  {
+    "id": "24-reset",
+    "title": "Reset configuration",
+    "group": "settings",
+    "nav": "",
+    "back": "23-editor",
+    "note": "Reset changes the draft document. It is not presented as an immediate write to the saved configuration.",
+    "source": "client/apps/tray/editor_window.cpp:77–130,173–253,262–352",
+    "flow": [
+      "42-editor-default",
+      "23-editor"
+    ],
+    "family": "settings",
+    "adapt": false
+  },
+  {
+    "id": "25-reconnect-save",
+    "title": "Changes saved",
+    "group": "settings",
+    "nav": "",
+    "back": "10-settings",
+    "note": "The desktop already offers reconnect after saving. The implementation must complete disconnection before starting a new connection. If the VPN is inactive, offer Connect instead.",
+    "source": "client/apps/tray/tray_application.cpp:361–400; client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "04-connecting",
+      "01-connected",
+      "07-disconnecting"
+    ],
+    "family": "settings",
+    "adapt": false
+  },
+  {
+    "id": "26-statistics",
+    "title": "Traffic statistics",
+    "group": "traffic",
+    "nav": "traffic",
+    "back": "",
+    "note": "All ten statistics fields are retained. No invented speed, ping, monthly history or chart based on unsupported data.",
+    "source": "client/apps/tray/statistics_model.h:15–26,119–143",
+    "flow": [
+      "27-statistics-stale",
+      "43-statistics-empty"
+    ],
+    "family": "traffic",
+    "adapt": false
+  },
+  {
+    "id": "27-statistics-stale",
+    "title": "Last known statistics",
+    "group": "traffic",
+    "nav": "traffic",
+    "back": "",
+    "note": "The stale state retains the last counters and clearly marks them as out of date. Dashes appear before the first values arrive.",
+    "source": "client/apps/tray/statistics_model.h:15–26,119–143",
+    "flow": [
+      "26-statistics",
+      "43-statistics-empty",
+      "08-unavailable"
+    ],
+    "family": "traffic",
+    "adapt": false
+  },
+  {
+    "id": "28-server",
+    "title": "Who is online",
+    "group": "server",
+    "nav": "server",
+    "back": "",
+    "note": "Online with a valid contract, online with an invalid contract and offline states are retained. The summary counts online clients and valid contracts. The local client is omitted. Longer lists use pagination.",
+    "source": "client/apps/tray/server_info_window.cpp:31–106,146–236,237–294; client/src/core/presentation/server_info_model.cpp:8–56",
+    "flow": [
+      "29-server-raw",
+      "44-server-empty",
+      "45-server-stale"
+    ],
+    "family": "server",
+    "adapt": false
+  },
+  {
+    "id": "29-server-raw",
+    "title": "Server data",
+    "group": "server",
+    "nav": "server",
+    "back": "",
+    "note": "A readable view of the complete JSON without renaming fields. The sample serverVersion is not a released version. This is a separate diagnostic sample, not the source for the list on the previous screen.",
+    "source": "client/apps/tray/server_info_window.cpp:31–106,146–236,237–294; client/tests/linux/tray/server_info_fixture.h:44–86",
+    "flow": [
+      "28-server",
+      "45-server-stale"
+    ],
+    "family": "server",
+    "adapt": false
+  },
+  {
+    "id": "30-http-response",
+    "title": "HTTP response",
+    "group": "diagnostics",
+    "nav": "",
+    "back": "06-connection-error",
+    "note": "The Request and Response tabs are retained, including notices about incomplete or reconstructed data.",
+    "source": "client/apps/tray/http_error_detail_window.cpp:19–62",
+    "flow": [
+      "31-http-request",
+      "06-connection-error"
+    ],
+    "family": "diagnostics",
+    "adapt": false
+  },
+  {
+    "id": "31-http-request",
+    "title": "HTTP request",
+    "group": "diagnostics",
+    "nav": "",
+    "back": "06-connection-error",
+    "note": "Labeling the data source prevents a reconstruction from being mistaken for a complete network capture.",
+    "source": "client/apps/tray/http_error_detail_window.cpp:19–62",
+    "flow": [
+      "30-http-response",
+      "06-connection-error"
+    ],
+    "family": "diagnostics",
+    "adapt": false
+  },
+  {
+    "id": "32-discard",
+    "title": "Unsaved changes",
+    "group": "recovery",
+    "nav": "",
+    "back": "12-wizard-url",
+    "note": "A shared pattern for system Back and closing the wizard, editor or contracts. In production, returning restores the original form. This example uses the wizard.",
+    "source": "client/apps/tray/editor_window.cpp:77–130,173–253,262–352; client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "12-wizard-url",
+      "10-settings"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "33-save-unknown",
+    "title": "Save result unknown",
+    "group": "recovery",
+    "nav": "",
+    "back": "10-settings",
+    "note": "Distinguishes the wizard commitUnknown state from the contracts unknown state. The wizard checks a receipt, while contracts read the current configuration. Retrying a write is offered only after the result has been evaluated.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733; client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "46-save-checked",
+      "17-wizard-saved",
+      "23-editor"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "34-about",
+    "title": "About",
+    "group": "settings",
+    "nav": "",
+    "back": "10-settings",
+    "note": "About remains available. The design does not invent a current version number or unsupported licensing information.",
+    "source": "client/apps/tray/tray_application.cpp:216–249,361–400,606–642",
+    "flow": [
+      "10-settings"
+    ],
+    "family": "settings",
+    "adapt": false
+  },
+  {
+    "id": "35-exit",
+    "title": "Closing the app",
+    "group": "settings",
+    "nav": "",
+    "back": "10-settings",
+    "note": "An adaptation of desktop Exit. The mobile UI should not pretend to force-stop the process. Leaving an activity and stopping the VPN are separate actions.",
+    "source": "client/apps/tray/tray_application.cpp:216–249,361–400,606–642; Android Developers: VPN, Service lifecycle",
+    "flow": [
+      "09-notification",
+      "07-disconnecting"
+    ],
+    "family": "settings",
+    "adapt": true
+  },
+  {
+    "id": "36-config-unavailable",
+    "title": "Configuration needs attention",
+    "group": "recovery",
+    "nav": "",
+    "back": "10-settings",
+    "note": "Covers missing, invalid and unreadable configurations. Editing must depend on whether the document is actually readable. A missing identity leads to the wizard.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733; client/apps/tray/editor_window.cpp:77–130,173–253,262–352",
+    "flow": [
+      "23-editor",
+      "40-wizard-reset"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "37-permission-denied",
+    "title": "VPN permission denied",
+    "group": "connection",
+    "nav": "",
+    "back": "02-disconnected",
+    "note": "An Android addition to the existing connection flow. Denying permission is not a server error.",
+    "source": "Android Developers: VPN, Prepare a service",
+    "flow": [
+      "03-vpn-permission",
+      "02-disconnected"
+    ],
+    "family": "connection",
+    "adapt": true
+  },
+  {
+    "id": "38-disconnect-unknown",
+    "title": "Disconnection unconfirmed",
+    "group": "recovery",
+    "nav": "",
+    "back": "01-connected",
+    "note": "Matches Disconnect not confirmed. No false confirmation on timeout.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212",
+    "flow": [
+      "07-disconnecting",
+      "08-unavailable",
+      "02-disconnected"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "39-editor-invalid",
+    "title": "JSON error",
+    "group": "recovery",
+    "nav": "",
+    "back": "23-editor",
+    "note": "An example of a syntax error. The actual wording must come from the validator. Do not promise an exact line number unless the validator provides it.",
+    "source": "client/src/core/config/config_validator.cpp:120–332; client/apps/tray/editor_window.cpp:77–130,173–253,262–352",
+    "flow": [
+      "23-editor"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "40-wizard-reset",
+    "title": "Reset wizard",
+    "group": "recovery",
+    "nav": "",
+    "back": "12-wizard-url",
+    "note": "A separate wizard reset variant. The mockup keeps a sample URL filled in. The actual reset uses the default placeholder.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "12-wizard-url"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "41-contracts-page-2",
+    "title": "More contracts",
+    "group": "contracts",
+    "nav": "",
+    "back": "10-settings",
+    "note": "Pagination retains draft values by target IP, not just for the visible rows.",
+    "source": "client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "19-contracts",
+      "20-contract-detail",
+      "25-reconnect-save"
+    ],
+    "family": "contracts",
+    "adapt": false
+  },
+  {
+    "id": "42-editor-default",
+    "title": "Default editor content",
+    "group": "settings",
+    "nav": "",
+    "back": "23-editor",
+    "note": "A reset preview without overwriting the actual configuration. The service would supply the complete default document.",
+    "source": "client/src/core/config/config_defaults.cpp:5–24; client/apps/tray/editor_window.cpp:77–130,173–253,262–352",
+    "flow": [
+      "23-editor",
+      "12-wizard-url"
+    ],
+    "family": "settings",
+    "adapt": false
+  },
+  {
+    "id": "43-statistics-empty",
+    "title": "Loading statistics",
+    "group": "traffic",
+    "nav": "traffic",
+    "back": "",
+    "note": "Missing data is not zero. This matches the waiting for service status state.",
+    "source": "client/apps/tray/statistics_model.h:15–26,119–143",
+    "flow": [
+      "26-statistics",
+      "08-unavailable"
+    ],
+    "family": "traffic",
+    "adapt": false
+  },
+  {
+    "id": "44-server-empty",
+    "title": "No server records",
+    "group": "server",
+    "nav": "server",
+    "back": "",
+    "note": "A valid response with an empty list, distinct from a loading failure.",
+    "source": "client/apps/tray/server_info_window.cpp:31–106,146–236,237–294",
+    "flow": [
+      "28-server",
+      "45-server-stale"
+    ],
+    "family": "server",
+    "adapt": false
+  },
+  {
+    "id": "45-server-stale",
+    "title": "Server refresh failed",
+    "group": "server",
+    "nav": "server",
+    "back": "",
+    "note": "The last successful response is retained on error. Without previous data, show only an explanation and an option to retry.",
+    "source": "client/apps/tray/server_info_window.cpp:31–106,146–236,237–294",
+    "flow": [
+      "28-server",
+      "44-server-empty"
+    ],
+    "family": "server",
+    "adapt": false
+  },
+  {
+    "id": "46-save-checked",
+    "title": "Save checked",
+    "group": "recovery",
+    "nav": "",
+    "back": "19-contracts",
+    "note": "One outcome after Check current configuration. A confirmed write shows success instead of a retry. A conflict must never cause a silent overwrite.",
+    "source": "client/apps/tray/contracts_window.cpp:23–126,241–388",
+    "flow": [
+      "25-reconnect-save",
+      "23-editor",
+      "17-wizard-saved"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "47-session-expired",
+    "title": "Wizard session expired",
+    "group": "recovery",
+    "nav": "",
+    "back": "10-settings",
+    "note": "The existing sessionExpired state. An outdated verification result must not be used to save a new configuration.",
+    "source": "client/apps/tray/wizard_window.cpp:489–733",
+    "flow": [
+      "12-wizard-url",
+      "23-editor"
+    ],
+    "family": "recovery",
+    "adapt": false
+  },
+  {
+    "id": "48-connection-checks",
+    "title": "Connection checks",
+    "group": "connection",
+    "nav": "",
+    "back": "01-connected",
+    "note": "A separate view of successful checks. Opening it never starts a new connection.",
+    "source": "client/apps/tray/progress_window.cpp:33–104,166–212",
+    "flow": [
+      "01-connected",
+      "04-connecting"
+    ],
+    "family": "connection",
+    "adapt": false
+  }
+]

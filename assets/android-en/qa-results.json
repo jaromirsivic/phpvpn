@@ -1,0 +1,44 @@
+{
+  "browser": "156.0.8078.76",
+  "screens": 49,
+  "widths": [
+    412,
+    360,
+    320
+  ],
+  "errors": [],
+  "broken": [],
+  "failed": [],
+  "checks": 147,
+  "interactionChecks": [
+    "secret reveal/hide and default input disabling",
+    "automatic IP input enabling",
+    "welcome > four wizard steps > saved > system consent > connecting",
+    "scenario navigation, bottom navigation, refresh simulation notice",
+    "contract list > detail > password > draft > second page",
+    "headers reset demonstration",
+    "gallery at 360px"
+  ],
+  "localizationAudit": {
+    "cz": {
+      "screenDescriptions": 49,
+      "htmlPages": 51,
+      "markdownLinks": 379,
+      "missing": [],
+      "language": "cs"
+    },
+    "en": {
+      "screenDescriptions": 49,
+      "htmlPages": 51,
+      "markdownLinks": 379,
+      "missing": [],
+      "language": "en"
+    },
+    "shared": {
+      "sameStyles": true,
+      "sameNavigation": true,
+      "englishPngsRegenerated": 100,
+      "unchangedEnglishPngs": []
+    }
+  }
+}
