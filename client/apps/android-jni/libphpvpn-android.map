@@ -1,0 +1,10 @@
+/* Export map of libphpvpn-android.so (plan-android-v001 WP04): every native
+   method is registered from JNI_OnLoad, so nothing else is exported. Without
+   it the weak typeinfo of libc++ templates (std::function signatures of the
+   runtime) would land in .dynsym despite -fvisibility=hidden. */
+{
+    global:
+        JNI_OnLoad;
+    local:
+        *;
+};
