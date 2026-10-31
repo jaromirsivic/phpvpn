@@ -110,8 +110,11 @@ enum class ErrorCode(val wireName: String, val recoverable: Boolean) {
     companion object {
         private val byWireName = entries.associateBy { it.wireName }
 
-        /** Codes added on Android that the desktop error.h may not list yet. */
-        val ANDROID_ADDITIONS: Set<ErrorCode> = setOf(TUNNEL_PERMISSION_MISSING)
+        /**
+         * Codes added on Android that the desktop error.h does not list yet.
+         * Empty since WP03 added tunnel_permission_missing to error.h itself.
+         */
+        val ANDROID_ADDITIONS: Set<ErrorCode> = emptySet()
 
         fun fromWire(name: String?): ErrorCode? = name?.let { byWireName[it] }
     }

@@ -107,6 +107,9 @@
     <string name="error_connection_tunnel_start_failed_title">Tunel VPN nelze spustit</string>
     <string name="error_connection_tunnel_start_failed_message">Místní tunel VPN se nepodařilo spustit.</string>
     <string name="error_connection_tunnel_start_failed_action">Zkontroluj povolení VPN pro aplikaci a zkus to znovu.</string>
+    <string name="error_connection_tunnel_permission_missing_title">Chybí povolení VPN</string>
+    <string name="error_connection_tunnel_permission_missing_message">Android této aplikaci nepovolil vytvořit VPN, nebo bylo povolení odebráno.</string>
+    <string name="error_connection_tunnel_permission_missing_action">Otevři Připojení, při dotazu Androidu VPN povol a připoj se znovu.</string>
     <string name="error_connection_communication_failed_title">Připojení nelze dokončit</string>
     <string name="error_connection_communication_failed_message">Komunikaci se serverem se nepodařilo dokončit.</string>
     <string name="error_connection_communication_failed_action">Zkontroluj síť a dostupnost serveru a zkus to znovu.</string>
