@@ -106,6 +106,9 @@ enum class ErrorCode {
     tunnel_adapter_failed,
     tunnel_session_failed,
     tunnel_io_failed,
+    // Android: the VPN consent is missing or was revoked when establish() is
+    // needed (plan-android-v001, "Nový chybový kód"). No other platform uses it.
+    tunnel_permission_missing,
     netconfig_preflight_conflict,
     netconfig_apply_failed,
     netconfig_verify_failed,
