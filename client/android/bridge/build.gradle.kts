@@ -84,4 +84,6 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    // Accepts the system VPN consent dialog in the VpnService tests (WP03).
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }
