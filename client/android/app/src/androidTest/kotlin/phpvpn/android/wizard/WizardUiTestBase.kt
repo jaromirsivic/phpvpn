@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -73,7 +74,7 @@ abstract class WizardUiTestBase {
     }
 
     fun click(@StringRes id: Int) {
-        compose.onNodeWithText(text(id)).performScrollToIfNeeded().performClick()
+        compose.onNodeWithText(text(id)).scrollIntoView().performClick()
         compose.waitForIdle()
     }
 
@@ -92,10 +93,19 @@ abstract class WizardUiTestBase {
 
     fun waitForSecure(expected: Boolean) = compose.waitUntil(5_000) { secure() == expected }
 
-    private fun SemanticsNodeInteraction.performScrollToIfNeeded(): SemanticsNodeInteraction =
+    /**
+     * Scrolls the node into the visible part of the screen body first: at
+     * 320 dp with 200 % text most content lies below the pinned footer, and a
+     * click on a node outside the viewport would land on whatever is drawn
+     * there. Nodes outside a scroll container (footer, top bar) stay as they are.
+     */
+    fun SemanticsNodeInteraction.scrollIntoView(): SemanticsNodeInteraction =
         try {
             performScrollTo()
         } catch (_: AssertionError) {
             this
         }
+
+    /** The node is on screen, after scrolling the body to it when needed. */
+    fun SemanticsNodeInteraction.shown(): SemanticsNodeInteraction = scrollIntoView().assertIsDisplayed()
 }

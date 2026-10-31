@@ -179,3 +179,28 @@ timeout, přístup), 30, 31, 30 bez dat, 32, 40 a 47 vždy `*-412.png`, `*-412-f
 14. **Hlavní dispatcher vykonává IPC okamžitě** (`Dispatchers.Main.immediate` a synchronní falešný transport):
     UI test odhalil, že odpověď Resetu mohla dorazit dřív, než ViewModel Reset zaznamenal; opraveno (Reset se
     označí před voláním), JVM testy s `StandardTestDispatcher` to neukázaly.
+
+## Doplněk: `WizardFlowTest` při 320 dp a písmu 200 % (po sloučení s WP10)
+
+WP10 hlásil, že 4 z 15 testů `WizardFlowTest` při 320 dp / 200 % neprojdou (hlavní cesta, diagnostika Connect,
+editor hlaviček, HTTP detail). Reprodukováno po `git merge android` (tip `f6d5134`) na `phpvpn-api35-wp09`
+(`emulator-5562`, `wm density 540`, `font_scale 2.0`): stejné čtyři testy selhaly.
+
+**Příčina byla v testech, ne v obrazovkách.** Při 320 dp a 200 % leží většina obsahu pod připnutou patičkou a je
+dosažitelná jen svislým posunem (pravidlo návrhu: posouvá se jen tělo, patička zůstává). Testy kontrolovaly
+`assertIsDisplayed()` u uzlů mimo viditelnou část (URL na 17, „HTTP status: 200“ na 18, kód odpovědi na 30) a
+klikaly na řádek „HTTP headers“ na 12, aniž by ho posunuly na obrazovku; klik pak dopadl na patičku a 13 se
+neotevřelo. Při 411 dp se vše vešlo do první obrazovky, proto tam testy procházely. Obrazovky se neměnily:
+nic nepřetéká vodorovně a vše je posunem dosažitelné (ověřeno i screenshoty `*-320-fs200.png`).
+
+Oprava (`WizardUiTestBase`, `WizardFlowTest`): `scrollIntoView()` posune tělo k uzlu (uzly mimo posuvný kontejner,
+patička a lišta, zůstanou) a `shown()` = posun + `assertIsDisplayed()`; všechny kontroly viditelnosti obsahu a
+všechna kliknutí na obsah je používají.
+
+| Sada | 411 dp, písmo 100 % | 320 dp (`wm density 540`), písmo 200 % |
+|---|---|---|
+| `WizardFlowTest` (WP09) | 15/15 PASS | 15/15 PASS (předtím 11/15) |
+| `WizardSaveOutcomeUiTest` (WP10) | 2/2 PASS | 2/2 PASS |
+| `:app:testDebugUnitTest` | PASS | – |
+
+Emulátor je po běhu vrácený na výchozí hustotu a písmo a zastavený.

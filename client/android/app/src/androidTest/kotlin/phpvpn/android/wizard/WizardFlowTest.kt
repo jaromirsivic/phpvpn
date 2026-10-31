@@ -1,12 +1,10 @@
 package phpvpn.android.wizard
 
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -76,7 +74,7 @@ class WizardFlowTest : WizardUiTestBase() {
         click(R.string.wizard_finish_save)
         waitForText(R.string.wizard_saved_heading)
         assertTrue(at<WizardSaved>())
-        compose.onNodeWithText(url).assertIsDisplayed()
+        compose.onNodeWithText(url).shown()
         assertEquals(1, service.requests("wizard-finish").size)
         assertEquals(1, service.requests("wizard-close").size)
         assertEquals(0, service.requests("connect").size)
@@ -96,7 +94,7 @@ class WizardFlowTest : WizardUiTestBase() {
         click(R.string.wizard_error_correct)
         waitForText(R.string.wizard_secret_heading)
         assertTrue(at<WizardSecret>())
-        compose.onNodeWithText(text(R.string.error_crypto_tag_mismatch)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.error_crypto_tag_mismatch)).shown()
     }
 
     @Test
@@ -104,19 +102,19 @@ class WizardFlowTest : WizardUiTestBase() {
         launch(WizardUrl) { checks["url"] = Check.Fail("response_invalid", "serverUrl", httpStatus = 200, diagnostic = true) }
         enterUrlAndVerify()
         waitForText(R.string.wp09_error_url_heading)
-        compose.onNodeWithText(text(R.string.wp09_http_status, 200)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.wp09_http_status, 200)).shown()
         click(R.string.entry_http_error_details)
         waitForText(R.string.http_heading)
         assertTrue(at<DiagnosticResponse>())
-        compose.onNodeWithText(text(R.string.http_response_notice_title)).assertIsDisplayed()
-        compose.onNodeWithText("HTTP/1.1 503 Service Unavailable", substring = true).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.http_response_notice_title)).shown()
+        compose.onNodeWithText("HTTP/1.1 503 Service Unavailable", substring = true).shown()
         compose.onNodeWithText("\\x01", substring = true).assertExists()
-        compose.onNodeWithText(text(R.string.wp09_diag_source_wizard)).assertIsDisplayed()
-        compose.onNodeWithText(text(R.string.http_tab_request)).performClick()
+        compose.onNodeWithText(text(R.string.wp09_diag_source_wizard)).shown()
+        click(R.string.http_tab_request)
         waitForText(R.string.http_request_title)
         assertTrue(at<DiagnosticRequest>())
-        compose.onNodeWithText(text(R.string.http_request_notice_title)).assertIsDisplayed()
-        compose.onNodeWithText(text(R.string.wp09_diag_http_unknown), substring = true).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.http_request_notice_title)).shown()
+        compose.onNodeWithText(text(R.string.wp09_diag_http_unknown), substring = true).shown()
         pressBack()
         waitForRoute { at<WizardError>() }
         click(R.string.wp09_error_correct_url)
@@ -135,10 +133,10 @@ class WizardFlowTest : WizardUiTestBase() {
         }
         enterUrlAndVerify()
         waitForText(R.string.wp09_error_version_heading)
-        compose.onNodeWithText("2.0.0", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("2.0.0", substring = true).shown()
         click(R.string.wp09_error_correct_url)
         waitForRoute { at<WizardUrl>() }
-        compose.onNodeWithText(text(R.string.error_server_version_incompatible)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.error_server_version_incompatible)).shown()
     }
 
     @Test
@@ -193,7 +191,7 @@ class WizardFlowTest : WizardUiTestBase() {
             disconnectReads = 1
         }
         waitForText(R.string.gate_heading)
-        compose.onNodeWithText(text(R.string.tag_connected_short)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.tag_connected_short)).shown()
         click(R.string.gate_disconnect_continue)
         waitForText(R.string.wizard_url_heading)
         assertTrue(at<WizardUrl>())
@@ -271,7 +269,7 @@ class WizardFlowTest : WizardUiTestBase() {
             runCatching { field(R.string.wizard_url_field).assertTextContains(FakeWizardService.PLACEHOLDER_URL) }.isSuccess
         }
         click(R.string.wizard_verify_continue)
-        compose.onNodeWithText(text(R.string.wp09_url_placeholder)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.wp09_url_placeholder)).shown()
         assertEquals("the placeholder never reaches the network", 0, service.requests("wizard-check-url").size)
     }
 
@@ -279,12 +277,12 @@ class WizardFlowTest : WizardUiTestBase() {
     fun headerEditorValidatesAndIsSecure() {
         launch(WizardUrl)
         waitForText(R.string.wizard_url_heading)
-        compose.onAllNodesWithText(text(R.string.wizard_url_headers))[0].performClick()
+        compose.onAllNodesWithText(text(R.string.wizard_url_headers))[0].scrollIntoView().performClick()
         waitForText(R.string.headers_heading)
         waitForSecure(true)
         field(R.string.headers_field).performTextReplacement("Host: example")
         click(R.string.headers_use)
-        compose.onNodeWithText(text(R.string.wp09_headers_error_managed, 1, "Host")).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.wp09_headers_error_managed, 1, "Host")).shown()
         field(R.string.headers_field).performTextReplacement("Cookie: synthetic=1\nUser-Agent: test")
         click(R.string.headers_use)
         waitForText(R.string.wizard_url_heading)
@@ -308,7 +306,7 @@ class WizardFlowTest : WizardUiTestBase() {
             connectDiagnostic = true
         }
         waitForText(R.string.wp09_diag_source_connect)
-        compose.onNodeWithText("HTTP/1.1 503 Service Unavailable", substring = true).assertIsDisplayed()
-        compose.onNodeWithText(text(R.string.http_response_hint)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("HTTP/1.1 503 Service Unavailable", substring = true).shown()
+        compose.onNodeWithText(text(R.string.http_response_hint)).shown()
     }
 }
