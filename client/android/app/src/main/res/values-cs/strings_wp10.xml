@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    České texty obrazovek WP10 nad rámec strings.xml. Klíče jsou shodné
+    s values/strings_wp10.xml (Wp10StringResourcesTest).
+-->
+<resources>
+
+    <!-- Společné pro konfigurační toky -->
+    <string name="config_saving">Ukládám…</string>
+    <string name="config_save_not_sent">Požadavek na uložení se nepodařilo odeslat. Rozpracované změny zůstávají.</string>
+    <string name="config_path_line">Konfigurační soubor: %1$s</string>
+    <string name="config_action_open_wizard">Otevřít průvodce nastavením</string>
+    <string name="config_action_open_editor">Otevřít editor konfigurace</string>
+    <string name="config_action_try_again">Zkusit znovu</string>
+    <string name="config_action_close">Zavřít</string>
+
+    <!-- 19, 41 Komunikační kontrakty -->
+    <string name="contracts_loading">Načítám komunikační kontrakty…</string>
+    <string name="contracts_peer_key_invalid">Klíč je potřeba opravit</string>
+    <string name="contracts_save_none">Žádné změny k uložení</string>
+    <string name="contracts_rejected_title">Změny se neuložily</string>
+    <string name="contracts_draft_kept">Rozpracované změny zůstávají.</string>
+    <string name="contracts_unknown_text">Než kontrakty znovu změníš nebo uložíš, ověř aktuální konfiguraci.</string>
+    <string name="contracts_unavailable_heading">Kontrakty nelze otevřít</string>
+    <string name="contracts_unavailable_missing">Konfigurace zatím neexistuje. Vytvoř ji průvodcem nastavení nebo v editoru konfigurace.</string>
+    <string name="contracts_unavailable_repairable">Konfiguraci chybí virtuální IP nebo přístupový klíč. Doplň je průvodcem nastavení nebo v editoru konfigurace.</string>
+    <string name="contracts_unavailable_invalid">Konfigurace není platná. Nejdřív ji oprav v editoru konfigurace.</string>
+
+    <!-- 20, 22 Detail kontraktu a neplatný klíč -->
+    <string name="contract_detail_key_disabled_hint">Klíč změníš po povolení komunikace.</string>
+    <string name="contract_detail_key_rejected">Klíč se nezměnil. Všechny klíče dohromady by překročily povolenou velikost.</string>
+
+    <!-- 21 Klíč z hesla -->
+    <string name="password_key_notice_text">Heslo se neukládá. Do návrhu změn se přidá jen klíč.</string>
+    <string name="password_key_target_disabled">Klíč použiješ po povolení kontraktu. Heslo zůstává.</string>
+    <string name="password_key_too_long">Heslo může mít nejvýš 255 znaků Unicode.</string>
+    <string name="password_key_invalid_utf16">Heslo obsahuje neúplný znak Unicode.</string>
+    <string name="password_key_control">Heslo obsahuje nepodporovaný řídicí znak.</string>
+    <string name="password_key_crypto">Klíč SHA-256 se nepodařilo vytvořit.</string>
+    <string name="password_key_random_failed">Náhodné heslo se nepodařilo vytvořit. Současné heslo zůstává.</string>
+    <string name="password_key_stale">Kontrakty se mezitím změnily. Otevři nástroj pro klíč znovu z kontraktu.</string>
+
+    <!-- 23, 39 Editor konfigurace a chyba v JSON -->
+    <string name="editor_loading">Načítám konfiguraci…</string>
+    <string name="editor_path">Uloženo v soukromém úložišti aplikace: %1$s</string>
+    <string name="editor_created_title">Výchozí konfigurace je vytvořená</string>
+    <string name="editor_created_text">Soubor je zapsaný. Před připojením doplň údaje své sítě.</string>
+    <string name="editor_existing_title">Konfigurace už existovala</string>
+    <string name="editor_existing_text">Konfigurační soubor mezitím vznikl. Otevřel se beze změny a nic se nepřepsalo.</string>
+    <string name="editor_document_invalid_title">Uložený dokument není platná konfigurace</string>
+    <string name="editor_document_invalid_text">Můžeš ho opravit tady. Uložení znovu zkontroluje celý dokument.</string>
+    <string name="editor_reset_failed">Výchozí konfiguraci se nepodařilo načíst. Rozepsaný obsah se nezměnil.</string>
+    <string name="editor_unknown_text">Dokud uložení neověříš, je rozepsaný obsah jen pro čtení.</string>
+    <string name="editor_invalid_value_title">Neplatná hodnota konfigurace</string>
+    <string name="editor_failed_title">Konfiguraci se nepodařilo načíst</string>
+
+    <!-- 24, 42 Reset a výchozí obsah editoru -->
+    <string name="editor_default_document">Výchozí dokument</string>
+    <string name="editor_default_hint">Toto je úplný výchozí dokument služby. Nic se nezapíše, dokud nezvolíš Uložit.</string>
+
+    <!-- 36a Vytvoření výchozí konfigurace -->
+    <string name="create_default_checking">Kontroluji konfiguraci…</string>
+    <string name="create_default_creating">Vytvářím výchozí konfiguraci…</string>
+    <string name="create_default_failed">Výchozí konfiguraci se nepodařilo vytvořit.</string>
+
+    <!-- 25 Změny uloženy -->
+    <string name="saved_checking">Zjišťuji stav připojení…</string>
+    <string name="saved_connect_subtitle">Nová konfigurace se použije při připojení.</string>
+    <string name="saved_connect_notice_title">Připojit teď?</string>
+    <string name="saved_connect_notice_text">VPN není připojená.</string>
+    <string name="saved_not_connected">Nepřipojeno</string>
+    <string name="saved_later">Teď ne</string>
+    <string name="saved_status_unavailable">Změny jsou uložené, ale aktuální stav připojení se nepodařilo ověřit. Pro jejich použití se připoj znovu ručně.</string>
+    <string name="saved_busy_text">VPN právě mění stav. Nová konfigurace se použije při dalším připojení.</string>
+    <string name="saved_reconnecting">Odpojuji před novým připojením…</string>
+    <string name="saved_reconnect_failed">VPN se nepodařilo automaticky znovu připojit. Zkontroluj obrazovku připojení.</string>
+    <string name="saved_back_to_connection">Zpět na připojení</string>
+
+    <!-- 33, 46 Výsledek uložení není známý a uložení ověřeno -->
+    <string name="save_unknown_checking">Kontroluji aktuální konfiguraci…</string>
+    <string name="save_unknown_check_failed_title">Konfiguraci se nepodařilo zkontrolovat</string>
+    <string name="save_unknown_check_failed_text">Nic se nezapsalo. Vyřeš problém a pak uložení ověř znovu.</string>
+    <string name="save_unknown_nothing">Žádné nepotvrzené uložení k ověření tu není.</string>
+    <string name="save_checked_eyebrow_editor">EDITOR KONFIGURACE</string>
+    <string name="save_checked_confirmed_heading">Změny jsou uložené</string>
+    <string name="save_checked_confirmed_text">Aktuální konfigurace odpovídá tvým změnám. Není potřeba je ukládat znovu.</string>
+    <string name="save_checked_continue">Pokračovat</string>
+</resources>
