@@ -1,0 +1,136 @@
+# Android client: debug APK and JVM tests on an Ubuntu runner
+# (plan-android-v001 step 0). Two jobs: `deps` rebuilds the static OpenSSL and
+# curl only on a cache miss (WP01 provides client/tools/android/build-deps.sh),
+# `app` restores them from the cache and never compiles them itself. The
+# emulator matrix (API 34 and 36, KVM) is added once WP02 and WP05 land.
+name: client-android
+
+on:
+  push:
+    branches: [android, main]
+    paths:
+      - "client/android/**"
+      - "client/src/**"
+      - "client/apps/android-jni/**"
+      - "client/apps/service/**"
+      - "client/apps/CMakeLists.txt"
+      - "client/CMakeLists.txt"
+      - "client/tools/android/**"
+      - ".github/workflows/client-android.yml"
+  pull_request:
+    branches: [main, android]
+    paths:
+      - "client/android/**"
+      - "client/src/**"
+      - "client/apps/android-jni/**"
+      - "client/apps/service/**"
+      - "client/apps/CMakeLists.txt"
+      - "client/CMakeLists.txt"
+      - "client/tools/android/**"
+      - ".github/workflows/client-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NDK_VERSION: 28.2.13676358
+  CMAKE_VERSION: 3.31.6
+  DEPS_DIR: work/android-deps
+
+jobs:
+  deps:
+    name: Prebuilt OpenSSL and curl
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      cache-key: ${{ steps.key.outputs.key }}
+      available: ${{ steps.key.outputs.available }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache key
+        id: key
+        run: |
+          set -eu
+          if [ -f client/tools/android/build-deps.sh ]; then
+            hash=$(sha256sum client/tools/android/build-deps.sh | cut -c1-16)
+            echo "key=android-deps-${NDK_VERSION}-${hash}" >> "$GITHUB_OUTPUT"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "key=android-deps-none" >> "$GITHUB_OUTPUT"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore
+        if: steps.key.outputs.available == 'true'
+        id: restore
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DEPS_DIR }}
+          key: ${{ steps.key.outputs.key }}
+
+      - name: NDK
+        if: steps.key.outputs.available == 'true' && steps.restore.outputs.cache-hit != 'true'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ndk;${{ env.NDK_VERSION }}
+
+      - name: Build
+        if: steps.key.outputs.available == 'true' && steps.restore.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          client/tools/android/build-deps.sh --ndk "$ANDROID_HOME/ndk/$NDK_VERSION" --out "$DEPS_DIR"
+
+      - name: Artifact
+        if: steps.key.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-deps
+          path: ${{ env.DEPS_DIR }}
+          if-no-files-found: error
+
+  app:
+    name: Debug APK and JVM tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: deps
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-37.2 build-tools;36.0.0 ndk;${{ env.NDK_VERSION }} cmake;${{ env.CMAKE_VERSION }}
+
+      - name: Prebuilt dependencies
+        if: needs.deps.outputs.available == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.DEPS_DIR }}
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        working-directory: client/android
+        env:
+          PHPVPN_ANDROID_DEPS: ${{ needs.deps.outputs.available == 'true' && format('{0}/{1}', github.workspace, env.DEPS_DIR) || '' }}
+        run: |
+          set -eu
+          ./gradlew --no-daemon assembleDebug testDebugUnitTest
+
+      - name: APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: phpvpn-android-debug
+          path: client/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

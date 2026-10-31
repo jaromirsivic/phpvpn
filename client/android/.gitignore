@@ -1,0 +1,10 @@
+# Gradle and Android Studio state
+.gradle/
+.kotlin/
+.idea/
+*.iml
+build/
+.cxx/
+local.properties
+captures/
+*.hprof

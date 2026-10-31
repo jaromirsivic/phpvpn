@@ -13,8 +13,10 @@ Podklady k plánu ve stejné složce:
 
 ## Rozhodnutí uživatele a výchozí stav
 
-- **Podporované verze:** Android 14 (API 34) a novější. `minSdk = 34`, `compileSdk = targetSdk = 36`
-  (nainstalovaná platforma `android-36`). Starší verze se nepodporují ani netestují.
+- **Podporované verze:** Android 14 (API 34) a novější. `minSdk = 34`, `targetSdk = 36`. `compileSdk` je
+  **37.2** (upraveno ve WP00: aktuální androidx knihovny, Compose 1.12, navigation 2.10, core 1.19, lifecycle
+  2.11, vyžadují překlad proti API 37; `compileSdk` určuje jen překladové API, chování za běhu dává
+  `targetSdk 36`). Starší verze se nepodporují ani netestují.
 - **Chování v síti:** klient se chová jako virtuální síťová karta, ne jako VPN pro veškerý provoz. Do tunelu jde
   jen prefix `vpnCidr` (výchozí `10.99.99.0/24`). Internet, DNS, LAN a IPv6 zůstávají beze změny. Odpovídá to
   split tunnelu v1 podle [client.md](../../client.md) (Windows, Linux, macOS): jen `virtualIp` s prefixem
@@ -153,12 +155,13 @@ profilů, widgety a dlaždice rychlého nastavení, Android TV, Wear OS, iOS. N�
     a `dataExtractionRules` vylučují vše. Obsah souboru je stejný JSON jako na desktopu, protože editor
     zobrazuje skutečný obsah a `ConfigStore` hashuje přesné bajty. Obalení klíčem z Android Keystore je mimo v1
     (R5). Obrazovky se zobrazenými tajemstvími (14, 15, 20, 21, 23) mají `FLAG_SECURE`.
-13. **POSIX vrstva na Androidu.** `__linux__` je definované i pro Android. Bionic má `explicit_bzero` od API 28
-    a `renameat2` od API 30, takže při `minSdk 34` se větve `__linux__` v
-    [`secure_buffer.cpp`](../../client/src/core/base/secure_buffer.cpp) a
-    [`config_files_posix.cpp`](../../client/src/platform/posix/config_files_posix.cpp) přeloží beze změny
-    a `core/base` se nemění. Seznam odmítaných souborových systémů je jen negativní (síťové a FUSE), takže ext4
-    i f2fs na `/data` projdou. Zbývá ověřit nebo upravit:
+13. **POSIX vrstva na Androidu.** `__linux__` je definované i pro Android. Bionic má `renameat2` od API 30,
+    takže [`config_files_posix.cpp`](../../client/src/platform/posix/config_files_posix.cpp) se přeloží beze
+    změny. Bionic ale **nemá `explicit_bzero`** (ověřeno v NDK r28c: hlavičky ani `libc.so` API 34 ho
+    neobsahují), má C23 `memset_explicit` od API 34. [`secure_buffer.cpp`](../../client/src/core/base/secure_buffer.cpp)
+    proto dostal větev `__ANDROID__` s `memset_explicit` před větví `__linux__` (hotovo ve WP00, jediná změna
+    v `core/base`). Seznam odmítaných souborových systémů je jen negativní (síťové a FUSE), takže ext4 i f2fs
+    na `/data` projdou. Zbývá ověřit nebo upravit:
     - `trustedComponent` v [`paths_posix.cpp`](../../client/src/platform/posix/paths_posix.cpp) vyžaduje
       vlastníka root nebo `expectedOwner` na celé cestě, jenže `/data` patří uživateli `system`. Android politika
       bude důvěřovat cestě od kořene soukromého adresáře aplikace (izolaci zaručuje sandbox) a kontrolovat jen

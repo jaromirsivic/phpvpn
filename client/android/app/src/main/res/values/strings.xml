@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WP00 placeholder strings. The screen texts from assets/android-en arrive
+     with WP07 (values) and assets/android-cz (values-cs). -->
+<resources>
+    <string name="app_name">phpvpn</string>
+    <string name="native_version">phpvpn native client %1$s</string>
+</resources>

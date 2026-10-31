@@ -12,7 +12,7 @@ set(PHPVPN_PLATFORM_SHARED_SOURCES
 # core <-> platform link order.
 if(WIN32)
     list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/windows/durable_file_win.cpp)
-elseif(PHPVPN_PLATFORM STREQUAL "linux" OR PHPVPN_PLATFORM STREQUAL "macos")
+elseif(PHPVPN_PLATFORM STREQUAL "linux" OR PHPVPN_PLATFORM STREQUAL "macos" OR PHPVPN_PLATFORM STREQUAL "android")
     list(APPEND PHPVPN_PLATFORM_SHARED_SOURCES platform/posix/durable_file_posix.cpp)
 endif()
 
@@ -173,4 +173,46 @@ if(PHPVPN_PLATFORM STREQUAL "macos")
         PRIVATE OpenSSL::Crypto CURL::libcurl
                 ${PHPVPN_SYSTEMCONFIGURATION} ${PHPVPN_COREFOUNDATION}
     )
+endif()
+if(PHPVPN_PLATFORM STREQUAL "android")
+    # Android (plan-android-v001): the shared POSIX configuration files and
+    # trusted paths compile unchanged (bionic has renameat2 since API 30; the
+    # secure wipe uses memset_explicit, API 34). The Unix-socket IPC is not built: UI and
+    # service share one process. The descriptor tunnel, the ConnectivityManager
+    # NetConfig, the BOOTTIME clock, the TLS trust store and the logcat sink
+    # arrive with WP03 in platform/android. The OpenSSL crypto provider and the
+    # curl transport shared with Linux need the prebuilt static libraries of
+    # WP01 (PHPVPN_ANDROID_DEPS).
+    find_package(Threads REQUIRED)
+
+    add_library(phpvpn-platform STATIC
+        platform/posix/config_files_posix.cpp
+        platform/posix/paths_posix.cpp
+    )
+
+    target_include_directories(phpvpn-platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+    target_link_libraries(phpvpn-platform
+        PUBLIC phpvpn-core phpvpn-compile-options Threads::Threads
+        PRIVATE log
+    )
+
+    if(PHPVPN_ANDROID_DEPS)
+        set(PHPVPN_ANDROID_DEPS_ABI "${PHPVPN_ANDROID_DEPS}/${CMAKE_ANDROID_ARCH_ABI}")
+        if(NOT IS_DIRECTORY "${PHPVPN_ANDROID_DEPS_ABI}/lib")
+            message(FATAL_ERROR "PHPVPN_ANDROID_DEPS has no ${CMAKE_ANDROID_ARCH_ABI}/lib: ${PHPVPN_ANDROID_DEPS_ABI}")
+        endif()
+        set(OPENSSL_ROOT_DIR "${PHPVPN_ANDROID_DEPS_ABI}")
+        set(OPENSSL_USE_STATIC_LIBS ON)
+        find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
+        set(CURL_ROOT "${PHPVPN_ANDROID_DEPS_ABI}")
+        set(CURL_USE_STATIC_LIBS ON)
+        find_package(CURL 8.5 REQUIRED)
+        target_sources(phpvpn-platform PRIVATE
+            platform/linux/crypto_openssl.cpp
+            platform/linux/transport_curl.cpp
+        )
+        target_compile_definitions(phpvpn-platform PRIVATE CURL_STATICLIB)
+        target_link_libraries(phpvpn-platform PRIVATE CURL::libcurl OpenSSL::Crypto OpenSSL::SSL)
+    endif()
 endif()

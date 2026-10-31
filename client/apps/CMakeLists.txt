@@ -1,3 +1,11 @@
+if(PHPVPN_PLATFORM STREQUAL "android")
+    # Android (plan-android-v001): no service executable, CLI or tray. The
+    # Kotlin application links libphpvpn-android.so from android-jni, which
+    # hosts the shared ServiceRuntime in the application process.
+    add_subdirectory(android-jni)
+    return()
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux: the systemd service and the CLI (plan-v001 sections 4.10 and 4.11).
     # The GTK tray (PHPVPN_BUILD_TRAY) lives in tray-linux, added further below.

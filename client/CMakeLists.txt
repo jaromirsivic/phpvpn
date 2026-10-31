@@ -11,6 +11,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(WIN32)
     set(PHPVPN_PLATFORM "windows")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Android: VpnService descriptor tunnel, in-process IPC, JNI entry in
+    # apps/android-jni, OpenSSL and curl prebuilt by tools/android
+    # (plan-android-v001). Configured by Gradle through the NDK toolchain.
+    set(PHPVPN_PLATFORM "android")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(PHPVPN_PLATFORM "linux")
 elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -18,12 +23,16 @@ elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     # (plan-macos-v001). iOS has no platform layer yet.
     set(PHPVPN_PLATFORM "macos")
 else()
-    message(FATAL_ERROR "phpvpn client v1 supports Windows, Linux and macOS only; ${CMAKE_SYSTEM_NAME} has no platform layer.")
+    message(FATAL_ERROR "phpvpn client v1 supports Windows, Linux, macOS and Android only; ${CMAKE_SYSTEM_NAME} has no platform layer.")
 endif()
 
 option(PHPVPN_ENABLE_ASAN "Build with AddressSanitizer (and UndefinedBehaviorSanitizer on GCC/Clang)" OFF)
 option(PHPVPN_WARNINGS_AS_ERRORS "Treat compiler warnings as errors on GCC and Clang" ON)
 option(PHPVPN_BUILD_TRAY "Build the tray application (Linux: needs GTK 3 and ayatana-appindicator; macOS: AppKit menu bar app)" ON)
+# Android only: root of the prebuilt static OpenSSL and curl
+# (tools/android/build-deps.sh), laid out as <root>/<abi>/{include,lib}. Empty
+# skips the crypto provider and the curl transport (WP00 skeleton builds).
+set(PHPVPN_ANDROID_DEPS "" CACHE PATH "Prebuilt OpenSSL and curl for Android, <root>/<abi>/{include,lib}")
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -82,11 +91,22 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wpedantic
         $<$<BOOL:${PHPVPN_WARNINGS_AS_ERRORS}>:-Werror>
         -fstack-protector-strong
-        -fPIE)
+        # The Android output is a shared library, so it is PIC, not PIE.
+        $<IF:$<STREQUAL:${PHPVPN_PLATFORM},android>,-fPIC,-fPIE>)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
         target_compile_options(phpvpn-compile-options INTERFACE -fcf-protection)
     endif()
-    if(APPLE)
+    if(PHPVPN_PLATFORM STREQUAL "android")
+        # NDK clang with bionic: _FORTIFY_SOURCE level 2 is the supported level,
+        # the GNU ld hardening flags apply to the shared library and -pie does
+        # not (plan-android-v001 point 15). 16 KB page alignment is the NDK r28
+        # default.
+        target_compile_options(phpvpn-compile-options INTERFACE
+            $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-U_FORTIFY_SOURCE>
+            $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-D_FORTIFY_SOURCE=2>)
+        target_link_options(phpvpn-compile-options INTERFACE
+            -Wl,-z,relro,-z,now,-z,noexecstack)
+    elseif(APPLE)
         # Apple clang: level 2 is the supported _FORTIFY_SOURCE, PIE is the
         # default of the 64-bit Darwin linker and the GNU ld hardening flags do
         # not exist. The deployment target is set by the presets (14.0).

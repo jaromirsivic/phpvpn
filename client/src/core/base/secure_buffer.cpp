@@ -21,6 +21,10 @@ void secureWipe(void* data, std::size_t size) noexcept {
     }
 #if defined(_WIN32)
     ::SecureZeroMemory(data, size);
+#elif defined(__ANDROID__)
+    // bionic has no explicit_bzero. The C23 memset_explicit exists since API 34,
+    // the minimum of the Android client, and is never elided.
+    (void)::memset_explicit(data, 0, size);
 #elif defined(__linux__)
     // glibc and musl guarantee that the compiler never elides this store.
     ::explicit_bzero(data, size);
