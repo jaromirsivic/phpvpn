@@ -101,15 +101,30 @@ fun IdentityScreen(
             )
         }
         Card {
-            SecretField(
-                value = rememberRevealed(state.accessKey),
-                onValueChange = onKey,
-                label = stringResource(R.string.wizard_identity_key_field),
-                hint = stringResource(if (state.useDefaultKey) R.string.wp09_identity_default_key_hint else R.string.wizard_identity_key_hint),
-                error = fieldError(state, WizardViewModel.FIELD_KEY),
-                enabled = state.editable && !state.useDefaultKey,
-                monospace = true,
-            )
+            if (state.useDefaultKey) {
+                // The default key is the shared pure function of the IP (verified again by the
+                // service in check-access) and publicly predictable: shown as a read-only preview.
+                TextInput(
+                    value = rememberRevealed(state.accessKey),
+                    onValueChange = {},
+                    label = stringResource(R.string.wizard_identity_key_field),
+                    hint = stringResource(R.string.wp09_identity_default_key_hint),
+                    error = fieldError(state, WizardViewModel.FIELD_KEY),
+                    enabled = false,
+                    singleLine = false,
+                    monospace = true,
+                )
+            } else {
+                SecretField(
+                    value = rememberRevealed(state.accessKey),
+                    onValueChange = onKey,
+                    label = stringResource(R.string.wizard_identity_key_field),
+                    hint = stringResource(R.string.wizard_identity_key_hint),
+                    error = fieldError(state, WizardViewModel.FIELD_KEY),
+                    enabled = state.editable,
+                    monospace = true,
+                )
+            }
             ToggleRow(
                 stringResource(R.string.wizard_identity_default_key),
                 state.useDefaultKey,

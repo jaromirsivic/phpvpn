@@ -264,10 +264,15 @@ class WizardViewModel(private val deps: WizardDependencies) : ViewModel() {
 
     /** 40 "Start over": new defaults from the service; the file changes only after Finish. */
     fun reset(): Boolean {
-        val before = controller.state.value.view
-        if (!controller.reset()) return false
+        // Marked before the call: on the main dispatcher the reply can be applied
+        // (and collected) before controller.reset() even returns.
         resetRequested = true
-        resetFromView = before
+        resetFromView = controller.state.value.view
+        if (!controller.reset()) {
+            resetRequested = false
+            resetFromView = null
+            return false
+        }
         localProblem = null
         sync()
         return true

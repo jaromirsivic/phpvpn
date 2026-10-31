@@ -111,7 +111,7 @@
     <string name="wp09_diag_size_kib">%1$s KiB</string>
     <string name="wp09_diag_request_captured">Captured by the network transport</string>
     <string name="wp09_diag_request_merged">Merged with the app headers</string>
-    <string name="wp09_diag_request_application">Reconstructed by the app</string>
+    <string name="wp09_diag_request_application">Application headers only</string>
     <string name="wp09_diag_response_captured">Captured by the network transport</string>
     <string name="wp09_diag_response_available">Available headers only</string>
     <string name="wp09_diag_response_unavailable">Not available</string>

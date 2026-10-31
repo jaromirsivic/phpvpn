@@ -15,7 +15,6 @@ import phpvpn.android.bridge.errors.ErrorTexts
 import phpvpn.android.bridge.ipc.OperationKind
 import phpvpn.android.bridge.ipc.SecretText
 import phpvpn.android.errors.ErrorStrings
-import phpvpn.android.ui.components.Card
 import phpvpn.android.ui.components.EntryRow
 import phpvpn.android.ui.components.Notice
 import phpvpn.android.ui.components.NoticeKind
@@ -125,13 +124,11 @@ internal fun StepErrorNotice(state: WizardScreenState, kind: OperationKind) {
 @Composable
 internal fun HttpDetailEntry(state: WizardScreenState, onOpen: () -> Unit) {
     if (state.httpDiagnostic == null) return
-    Card {
-        EntryRow(
-            stringResource(R.string.entry_http_error_details),
-            onClick = onOpen,
-            detail = stringResource(R.string.wizard_error_http_detail),
-        )
-    }
+    EntryRow(
+        stringResource(R.string.entry_http_error_details),
+        onClick = onOpen,
+        detail = stringResource(R.string.wizard_error_http_detail),
+    )
 }
 
 /** The text of a [SecretText] for one text field, kept until the secret changes. */

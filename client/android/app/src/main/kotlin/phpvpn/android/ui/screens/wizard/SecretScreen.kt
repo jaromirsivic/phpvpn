@@ -102,13 +102,12 @@ fun SecretScreen(
                 enabled = state.editable,
             )
         }
-        if (state.useDefaultSecret || state.secretIsDefault) {
-            Notice(
-                stringResource(R.string.wizard_secret_notice_text),
-                kind = NoticeKind.Warn,
-                title = stringResource(R.string.wizard_secret_notice_title),
-            )
-        }
+        // Always visible as in the design: the default switch is right above it.
+        Notice(
+            stringResource(R.string.wizard_secret_notice_text),
+            kind = NoticeKind.Warn,
+            title = stringResource(R.string.wizard_secret_notice_title),
+        )
         WizardProgress(state)
         StepErrorNotice(state, OperationKind.SECRET)
         HttpDetailEntry(state, onHttpDetail)

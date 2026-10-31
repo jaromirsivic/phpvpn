@@ -108,7 +108,7 @@
     <string name="wp09_diag_size_kib">%1$s KiB</string>
     <string name="wp09_diag_request_captured">Zachycené síťovým transportem</string>
     <string name="wp09_diag_request_merged">Doplněné hlavičkami aplikace</string>
-    <string name="wp09_diag_request_application">Rekonstruované aplikací</string>
+    <string name="wp09_diag_request_application">Jen hlavičky aplikace</string>
     <string name="wp09_diag_response_captured">Zachycené síťovým transportem</string>
     <string name="wp09_diag_response_available">Jen dostupné hlavičky</string>
     <string name="wp09_diag_response_unavailable">Nejsou k dispozici</string>
