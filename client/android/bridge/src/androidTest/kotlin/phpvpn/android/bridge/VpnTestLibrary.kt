@@ -38,6 +38,10 @@ object VpnTestLibrary {
     @JvmStatic
     external fun tlsRequest(url: ByteArray, trustAny: Boolean): ByteArray
 
+    /** The same request with curl directly: "curl=<code> http=<status> error=<text>". */
+    @JvmStatic
+    external fun tlsCurlDiagnose(url: ByteArray, trustAny: Boolean): ByteArray
+
     /** The process-wide system CA store. */
     @JvmStatic
     external fun tlsStoreInfo(): ByteArray

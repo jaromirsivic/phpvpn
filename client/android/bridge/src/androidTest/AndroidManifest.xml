@@ -9,6 +9,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application>
+        <!-- Asks for the VPN consent with startActivityForResult, as ConfirmDialog requires. -->
+        <activity
+            android:name="phpvpn.android.bridge.ConsentActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name="phpvpn.android.bridge.TestVpnService"
             android:exported="false"

@@ -73,8 +73,19 @@ class VpnPlatformTest {
                 verifyVpnNetwork()
 
                 assertTrue(VpnTestLibrary.text(VpnTestLibrary.vpnResponderStart()).startsWith("ok"))
+                // The per-uid VPN routing of netd can trail the VPN network by
+                // a moment (API 36 lost the first echo once): wait for the first
+                // reply, then measure. "ready" counts the unanswered probes.
                 val ping = ShellUser.run(
-                    "ip route get 10.99.99.3 uid 2000\nip route get 10.0.2.2 uid 2000\nping -c 3 -W 2 10.99.99.3",
+                    """
+                    i=0
+                    while [ §i -lt 20 ]; do
+                      if ping -c 1 -W 1 10.99.99.3 >/dev/null 2>&1; then break; fi
+                      i=§((i + 1))
+                    done
+                    echo "ready=§i"
+                    ping -c 3 -W 2 10.99.99.3
+                    """.trimIndent().replace('§', '$'),
                 )
                 log("ping 10.99.99.3 as uid 2000:\n$ping")
                 val after = otherUidChecks("after")
@@ -86,12 +97,13 @@ class VpnPlatformTest {
 
                 // T-A01: read and write through FdTunnel.
                 assertTrue("ping must get replies through the tunnel:\n$ping", ping.contains(" 3 received"))
-                assertTrue("echo requests: $summary", (counters["echoRequests"]?.toLong() ?: 0) >= 3)
-                assertTrue("echo replies: $summary", (counters["echoReplies"]?.toLong() ?: 0) >= 3)
+                assertTrue("echo requests: $summary", (counters["echoRequests"]?.toLong() ?: 0) >= 4)
+                assertEquals("every echo request answered: $summary", counters["echoRequests"], counters["echoReplies"])
                 assertTrue("targets: $summary", counters["echoTargets"].orEmpty().contains("10.99.99.3"))
                 // T-A01b: nothing but the prefix enters the tunnel, DNS included.
                 assertEquals("packets outside the prefix: $summary", "0", counters["outsidePrefix"])
-                assertEquals("IPv6 packets in the tunnel: $summary", "0", counters["ipv6"])
+                // Only the kernel's link-local or multicast housekeeping of tun0 (ipv6Local).
+                assertEquals("IPv6 packets to global addresses in the tunnel: $summary", "0", counters["ipv6"])
                 // T-A01b: what worked without the VPN still works with it.
                 for (key in CHECK_KEYS) {
                     if (before[key] == "ok") assertEquals("$key of uid 2000 with the VPN up", "ok", after[key])
@@ -170,10 +182,12 @@ class VpnPlatformTest {
             log("the VPN consent is already granted")
             return
         }
+        log("requesting the VPN consent: ${request.component}")
         val device = UiDevice.getInstance(instrumentation)
         device.wakeUp()
         ShellUser.run("wm dismiss-keyguard")
-        context.startActivity(request.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        // ConfirmDialog needs a caller started for result, see ConsentActivity.
+        context.startActivity(Intent(context, ConsentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val accept = device.wait(Until.findObject(By.res("android", "button1")), 15_000)
         assertNotNull("the VPN consent dialog did not appear", accept)
         log("accepting the VPN consent dialog: ${accept.text}")
@@ -241,7 +255,8 @@ class VpnPlatformTest {
     }
 
     // T-A01b as uid 2000: DNS (cached and fresh name), TCP 443, HTTPS with a
-    // verified certificate, IPv6 to the emulator router, LAN ping and HTTP.
+    // verified certificate, IPv6 to the emulator router, LAN ping and TCP
+    // to the emulator host (10.0.2.2).
     private fun otherUidChecks(phase: String): Map<String, String> {
         val fresh = "wp03-${System.currentTimeMillis()}-$phase.1-2-3-4.sslip.io"
         val script = CHECK_SCRIPT.replace("FRESH", fresh).replace('§', '$')
@@ -254,14 +269,15 @@ class VpnPlatformTest {
 
     private companion object {
         const val TAG = "phpvpn-vpn-test"
-        val CHECK_KEYS = listOf("dns", "dnsfresh", "tcp443", "https", "ipv6", "lan", "lanhttp")
+        val CHECK_KEYS = listOf("dns", "dnsfresh", "tcp443", "https", "ipv6", "lan", "lantcp")
         val CHECK_SCRIPT = """
             echo "uid=§(id -u)"
             r=§(ping -c 1 -W 2 www.google.com 2>&1 | head -1)
             case "§r" in *"PING www.google.com ("*) echo "dns=ok";; *) echo "dns=fail §r";; esac
             f=§(ping -c 1 -W 2 FRESH 2>&1 | head -1)
             case "§f" in *"(1.2.3.4)"*) echo "dnsfresh=ok";; *) echo "dnsfresh=fail §f";; esac
-            if nc -w 5 -z www.google.com 443 >/dev/null 2>&1; then echo "tcp443=ok"; else echo "tcp443=fail"; fi
+            # toybox 0.8.9 (API 34) has no nc -z; an empty line works everywhere.
+            if echo | nc -w 5 www.google.com 443 >/dev/null 2>&1; then echo "tcp443=ok"; else echo "tcp443=fail"; fi
             if [ -x /data/local/tmp/phpvpn-tls-probe ]; then
               t=§(/data/local/tmp/phpvpn-tls-probe https://www.google.com/ 2>&1 | grep 'verify=system-store' | head -1)
               case "§t" in *"curl=0 "*) echo "https=ok";; *) echo "https=fail §t";; esac
@@ -270,8 +286,8 @@ class VpnPlatformTest {
             fi
             if ping6 -c 1 -W 2 fec0::2 >/dev/null 2>&1; then echo "ipv6=ok"; else echo "ipv6=fail"; fi
             if ping -c 1 -W 2 10.0.2.2 >/dev/null 2>&1; then echo "lan=ok"; else echo "lan=fail"; fi
-            h=§(printf 'HEAD / HTTP/1.0\r\n\r\n' | nc -w 3 10.0.2.2 80 2>&1 | head -1)
-            case "§h" in HTTP/*) echo "lanhttp=ok";; *) echo "lanhttp=fail §h";; esac
+            # TCP to the host behind 10.0.2.2: the adb server (5037) always listens during the test.
+            if echo | nc -w 3 10.0.2.2 5037 >/dev/null 2>&1; then echo "lantcp=ok"; else echo "lantcp=fail"; fi
         """.trimIndent()
     }
 }

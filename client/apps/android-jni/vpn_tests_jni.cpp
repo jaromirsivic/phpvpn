@@ -40,6 +40,8 @@
 #include "platform/iface/durable_file.h"
 #include "platform/iface/transport.h"
 #if defined(PHPVPN_ANDROID_TLS_TESTS)
+#include <curl/curl.h>
+
 #include "platform/android/tls_trust_android.h"
 #endif
 
@@ -90,15 +92,32 @@ struct ResponderStats {
     std::uint64_t packets = 0;
     std::uint64_t insidePrefix = 0;
     std::uint64_t outsidePrefix = 0;
-    std::uint64_t ipv6 = 0;
+    std::uint64_t ipv6 = 0;       // to a global or site address
+    std::uint64_t ipv6Local = 0;  // to a link-local or multicast address
     std::uint64_t invalid = 0;
     std::uint64_t echoRequests = 0;
     std::uint64_t echoReplies = 0;
     std::uint64_t sendFailures = 0;
     std::uint64_t readFailures = 0;
     std::vector<std::string> outsideDestinations;
+    std::vector<std::string> ipv6Destinations;
     std::vector<std::string> echoTargets;
 };
+
+// Uncompressed hexadecimal groups, enough to recognize ff02::2 and friends.
+std::string ipv6Text(std::span<const std::uint8_t> address) {
+    static constexpr char kDigits[] = "0123456789abcdef";
+    std::string text;
+    for (std::size_t index = 0; index < 16; index += 2) {
+        if (index) text += ':';
+        const unsigned group = (static_cast<unsigned>(address[index]) << 8) | address[index + 1];
+        text += kDigits[(group >> 12) & 0xF];
+        text += kDigits[(group >> 8) & 0xF];
+        text += kDigits[(group >> 4) & 0xF];
+        text += kDigits[group & 0xF];
+    }
+    return text;
+}
 
 void writeChecksum(std::vector<std::uint8_t>& packet, std::size_t offset, std::size_t length, std::size_t field) {
     packet[field] = 0;
@@ -148,7 +167,15 @@ struct Scenario {
             ++stats.packets;
             const std::span<const std::uint8_t> packet(buffer.data(), read->size);
             if ((packet[0] >> 4) == 6) {
-                ++stats.ipv6;
+                // The kernel's own link-local or multicast housekeeping on the
+                // interface (router solicitation, MLD) is no traffic of an app.
+                const bool local = packet.size() >= 40 &&
+                                   (packet[24] == 0xFF || (packet[24] == 0xFE && (packet[25] & 0xC0) == 0x80));
+                ++(local ? stats.ipv6Local : stats.ipv6);
+                if (packet.size() >= 40 && stats.ipv6Destinations.size() < 8) {
+                    stats.ipv6Destinations.push_back(ipv6Text(packet.subspan(24, 16)) + "/next" +
+                                                     std::to_string(packet[6]));
+                }
                 continue;
             }
             Ipv4PacketView view;
@@ -251,12 +278,15 @@ jbyteArray vpnResponderStop(JNIEnv* env, jclass) {
     const ResponderStats& stats = state.stats;
     std::ostringstream text;
     text << "packets=" << stats.packets << " insidePrefix=" << stats.insidePrefix
-         << " outsidePrefix=" << stats.outsidePrefix << " ipv6=" << stats.ipv6 << " invalid=" << stats.invalid
-         << " echoRequests=" << stats.echoRequests << " echoReplies=" << stats.echoReplies
-         << " sendFailures=" << stats.sendFailures << " readFailures=" << stats.readFailures << " echoTargets=";
+         << " outsidePrefix=" << stats.outsidePrefix << " ipv6=" << stats.ipv6 << " ipv6Local=" << stats.ipv6Local
+         << " invalid=" << stats.invalid << " echoRequests=" << stats.echoRequests
+         << " echoReplies=" << stats.echoReplies << " sendFailures=" << stats.sendFailures
+         << " readFailures=" << stats.readFailures << " echoTargets=";
     for (const auto& target : stats.echoTargets) text << target << ",";
     text << " outsideDestinations=";
     for (const auto& destination : stats.outsideDestinations) text << destination << ",";
+    text << " ipv6Destinations=";
+    for (const auto& destination : stats.ipv6Destinations) text << destination << ",";
     return bytes(env, text.str());
 }
 
@@ -358,12 +388,44 @@ jbyteArray tlsRequest(JNIEnv* env, jclass, jbyteArray url, jboolean trustAny) {
     settings.trustAnyTlsCertificate = trustAny == JNI_TRUE;
     settings.responseTimeoutSeconds = 20;
     settings.maxResponseBodyBytes = 4 * 1024 * 1024;
+    settings.httpHeaders = kDefaultHttpHeaders;
     if (const Status configured = (*transport)->configure(settings); !configured.ok()) {
         return bytes(env, describe(configured));
     }
     const auto exchange = onNativeThread([&] { return (*transport)->post(HttpAction::health, ""); });
     if (!exchange.ok()) return bytes(env, describe(exchange.error()));
     return bytes(env, "ok status=" + std::to_string(exchange.value().statusCode));
+}
+
+// The same request with curl directly and its error text, for the cases
+// where the transport only reports the mapped error code.
+jbyteArray tlsCurlDiagnose(JNIEnv* env, jclass, jbyteArray url, jboolean trustAny) {
+    CURL* easy = curl_easy_init();
+    if (easy == nullptr) return bytes(env, "error curl_easy_init");
+    char buffer[CURL_ERROR_SIZE] = {};
+    const std::string target = utf8(env, url) + "?action=health";
+    curl_easy_setopt(easy, CURLOPT_URL, target.c_str());
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, static_cast<long>(CURL_HTTP_VERSION_1_1));
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 20000L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, trustAny == JNI_TRUE ? 0L : 1L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, trustAny == JNI_TRUE ? 0L : 2L);
+    curl_easy_setopt(easy, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_2));
+    curl_easy_setopt(easy, CURLOPT_POSTFIELDS, "");
+    curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(0));
+    curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, buffer);
+    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, +[](char*, std::size_t size, std::size_t count, void*) { return size * count; });
+    if (trustAny != JNI_TRUE && !installAndroidSystemTrust(easy).ok()) {
+        curl_easy_cleanup(easy);
+        return bytes(env, "error the CA store could not be installed");
+    }
+    const CURLcode code = onNativeThread([easy] { return curl_easy_perform(easy); });
+    long status = 0;
+    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_cleanup(easy);
+    return bytes(env, "curl=" + std::to_string(static_cast<int>(code)) + " http=" + std::to_string(status) +
+                          " error=" + buffer);
 }
 
 jbyteArray tlsStoreInfo(JNIEnv* env, jclass) {
@@ -378,6 +440,9 @@ jbyteArray tlsRequest(JNIEnv* env, jclass, jbyteArray, jboolean) {
     return bytes(env, "skipped: built without PHPVPN_ANDROID_DEPS");
 }
 jbyteArray tlsStoreInfo(JNIEnv* env, jclass) { return bytes(env, "skipped: built without PHPVPN_ANDROID_DEPS"); }
+jbyteArray tlsCurlDiagnose(JNIEnv* env, jclass, jbyteArray, jboolean) {
+    return bytes(env, "skipped: built without PHPVPN_ANDROID_DEPS");
+}
 #endif
 
 const JNINativeMethod kVpnTestMethods[] = {
@@ -393,6 +458,7 @@ const JNINativeMethod kVpnTestMethods[] = {
      reinterpret_cast<void*>(&vpnLoadCheck)},
     {const_cast<char*>("tlsRequest"), const_cast<char*>("([BZ)[B"), reinterpret_cast<void*>(&tlsRequest)},
     {const_cast<char*>("tlsStoreInfo"), const_cast<char*>("()[B"), reinterpret_cast<void*>(&tlsStoreInfo)},
+    {const_cast<char*>("tlsCurlDiagnose"), const_cast<char*>("([BZ)[B"), reinterpret_cast<void*>(&tlsCurlDiagnose)},
 };
 
 }  // namespace

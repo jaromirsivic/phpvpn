@@ -44,8 +44,11 @@ if(PHPVPN_ANDROID_NATIVE_TESTS)
         ${PHPVPN_ANDROID_TEST_HARNESS_DIR} ${CMAKE_SOURCE_DIR}/tests/android ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(phpvpn-android-tests PRIVATE PHPVPN_TEST_HARNESS_NO_MAIN)
     if(PHPVPN_ANDROID_DEPS)
-        # The curl transport and the CA store exist only with the WP01 libraries.
-        target_compile_definitions(phpvpn-android-tests PRIVATE PHPVPN_ANDROID_TLS_TESTS)
+        # The curl transport and the CA store exist only with the WP01 libraries;
+        # the TLS diagnosis of vpn_tests_jni.cpp calls curl directly.
+        target_compile_definitions(phpvpn-android-tests PRIVATE PHPVPN_ANDROID_TLS_TESTS CURL_STATICLIB)
+        target_include_directories(phpvpn-android-tests SYSTEM PRIVATE
+            "${PHPVPN_ANDROID_DEPS}/${CMAKE_ANDROID_ARCH_ABI}/include")
     endif()
     target_link_libraries(phpvpn-android-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options log)
     set_target_properties(phpvpn-android-tests PROPERTIES

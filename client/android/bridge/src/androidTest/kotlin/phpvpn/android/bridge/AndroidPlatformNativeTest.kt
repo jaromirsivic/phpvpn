@@ -1,5 +1,6 @@
 package phpvpn.android.bridge
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -59,13 +60,27 @@ class AndroidPlatformNativeTest {
             Triple("https://wrong.host.badssl.com/", false, false),
         )
         for ((url, trustAny, expectOk) in cases) {
-            val result = VpnTestLibrary.text(VpnTestLibrary.tlsRequest(url.toByteArray(), trustAny))
-            Log.i(TAG, "POST $url trustAny=$trustAny: $result")
-            if (expectOk) {
-                assertTrue("$url trustAny=$trustAny: $result", result.startsWith("ok status="))
-            } else {
-                assertTrue("$url trustAny=$trustAny: $result", result.startsWith("error transport_tls_failed"))
+            // badssl.com sometimes resets a handshake (also seen in WP01): a
+            // reset is retried, a certificate verdict is deterministic.
+            var passed = false
+            var last = ""
+            for (attempt in 1..3) {
+                val result = VpnTestLibrary.text(VpnTestLibrary.tlsRequest(url.toByteArray(), trustAny))
+                // The transport reports only the code; curl itself tells why.
+                val curl = VpnTestLibrary.text(VpnTestLibrary.tlsCurlDiagnose(url.toByteArray(), trustAny))
+                last = "$result; curl directly: $curl"
+                Log.i(TAG, "POST $url trustAny=$trustAny attempt $attempt: $last")
+                passed = if (expectOk) {
+                    result.startsWith("ok status=")
+                } else {
+                    // Refused by the certificate check (CURLE_PEER_FAILED_VERIFICATION),
+                    // not by a reset.
+                    result.startsWith("error transport_tls_failed") && curl.startsWith("curl=60 ")
+                }
+                if (passed) break
+                SystemClock.sleep(1_000)
             }
+            assertTrue("$url trustAny=$trustAny: $last", passed)
         }
     }
 
