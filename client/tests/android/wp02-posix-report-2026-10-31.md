@@ -187,6 +187,8 @@ sh tests/linux/netns/run-netns-tests.sh ../work/build/linux-netns
 
 ## T-N03: SELinux v sandboxu aplikace
 
+Stav před follow-upem; vyřešeno strategií `exchange`, viz [Follow-up](#follow-up-záloha-bez-hardlinku-strategie-exchange).
+
 Sonda `android_posix.config_file_system_calls_are_permitted` v `noBackupFilesDir` jako `untrusted_app`
 (API 34 i 36, ext4 `0xef53`):
 
@@ -220,6 +222,9 @@ Kód `config_files_posix` jsem podle zadání neoslaboval.
 
 ## Návrh náhradní cesty pro Android (`config_files_posix`)
 
+Původní návrh; implementace se od něj liší výběrem přes politiku místo `#ifdef`, samostatným stavem
+`backupMoved` a `RENAME_NOREPLACE` při přesunu do zálohy (viz Follow-up).
+
 Doporučení: **záloha výměnou jmen místo hardlinku**, jen v `#if defined(__ANDROID__)`, bez změny formátu
 journalu `PHPVPN-CONFIG-1` a bez změny Linux a macOS cesty.
 
@@ -242,7 +247,7 @@ navazujícího kroku (WP02 follow-up nebo WP03), protože jde o sdílený soubor
 
 ## Odchylky od plánu
 
-- Hotovo-kritérium WP02 není splněné: T-N03 selhává na `linkat` (SELinux), viz návrh výše.
+- Hotovo-kritérium WP02 nebylo v první iteraci splněné (T-N03 na `linkat`); follow-up ho splnil.
 - Testovací SHA-256 provider místo OpenSSL v T-N03 a v `phpvpn-android-posix-tests`, dokud WP01 nedodá
   `PHPVPN_ANDROID_DEPS`; s ním se automaticky použije skutečný provider.
 - `run-native-tests.ps1` spouští výchozí jen T-N01 sady; POSIX případy jako shell uživatel jen na vyžádání.
@@ -251,3 +256,93 @@ navazujícího kroku (WP02 follow-up nebo WP03), protože jde o sdílený soubor
 - `test_paths_trust_root.cpp` není v macOS sadě (`phpvpn-macos-tests`), protože ji nelze ověřit bez macOS.
 - Gradle spustil instrumentovaný test na obou připojených emulátorech (API 34 a 36, druhý spustil jiný agent).
 - Mimo plán opravený `test_server_version.cpp` (rozbitý Linux build na GCC 13).
+
+## Follow-up: záloha bez hardlinku (strategie `exchange`)
+
+Na pokyn koordinátora po sloučení WP01 a WP02 do `android` (f21112d, 64d6d26 sloučeno do větve WP02).
+Předsestavené OpenSSL 3.5.9 a curl 8.23.0 z WP01: `D:/git/phpvpn/work/android-deps/openssl-3.5.9-curl-8.23.0`
+(`phpvpn.androidDeps` v `client/android/local.properties`, `-AndroidDeps` u `run-native-tests.ps1`).
+
+### Změna
+
+- `PosixConfigFilePolicy::backupStrategy` typu `PosixConfigBackupStrategy { hardLink, exchange }`, výchozí
+  `kDefaultPosixConfigBackupStrategy`: `hardLink` na Linuxu a macOS, `exchange` na Androidu. Výběr je
+  politikou, ne jen `#ifdef`, takže Linux testuje obě strategie. WP04 předává `exchange` explicitně:
+  `PosixConfigFilePolicy{getuid(), {}, noBackupFilesDir, PosixConfigBackupStrategy::exchange}`.
+- `hardLink` beze změny chování: stejné kroky, háčky, stavy journalu a recovery.
+- `exchange` (jen když existuje původní `config.json`, jinak je publikace shodná s `hardLink`):
+  1. Až po `stageVerified` beze změny (journal, `fsync` journalu i adresáře, stage, ověření hashe).
+  2. `beforePublish`; revalidace: `config.json` musí být bezpečný a mít identitu `record.original`
+     a `config.previous` nesmí existovat, jinak `failBeforePublish` (nic se nepublikovalo, stage a journal
+     se uklidí, výsledek `config_write_failed`). Cíl vyměněný během ukládání se tak nikdy nepřepíše.
+  3. `renameat2(stage, config.json, RENAME_EXCHANGE)`: bod publikace, `afterPublish`, `fsync` adresáře,
+     `afterDirectorySync`.
+  4. Kontrola, že jméno stage drží `record.original`, `renameat2(stage, config.previous, RENAME_NOREPLACE)`,
+     `fsync` adresáře, nový háček `backupMoved`.
+  5. Ověření identity `config.json`, `beforeConfirm`, `CONFIRMED` do journalu, stejně jako `hardLink`.
+- macOS nemá `RENAME_EXCHANGE`: `createPosixConfigFiles` vrátí pro `exchange` `not_supported` („the exchange
+  backup strategy needs RENAME_EXCHANGE, macOS has none“), volání swapu je tam pahýl s `ENOTSUP`. Výchozí
+  macOS cesta a build se nemění.
+- Hlavička `config_files_posix.h` popisuje obě strategie a nový mezistav, recovery kód ho komentuje.
+
+### Journal a recovery
+
+Záznam journalu se nemění (`PHPVPN-CONFIG-1`, identity `staged` a `original`, případně `CONFIRMED`); žádný
+příznak strategie se nezapisuje, protože identity inodů rozliší každý mezistav. Recovery proto nezávisí na
+nastavené strategii (test obnoví stav po pádu strategie `exchange` instancí s `hardLink`).
+
+| Stav na disku po pádu (`exchange`) | Recovery |
+|---|---|
+| `config.json` = original, stage = staged (před swapem) | `notPublished`, úklid stage a journalu, jako `hardLink` |
+| **nový mezistav**: `config.json` = staged, jméno stage = original, `config.previous` chybí (pád v `afterPublish` nebo `afterDirectorySync`) | `confirmed` (identita a hash cíle); před úklidem dokončí přesun `renameat2(stage, config.previous, RENAME_NOREPLACE)` + `fsync` adresáře, pak běžný úklid (`config.previous` s identitou original, journal). Opakovatelné: po přesunu jméno stage original nedrží. Jméno v cestě nechá journal další recovery, jako každý nedokončený úklid. |
+| `config.json` = staged, `config.previous` = original (pád v `backupMoved`, `beforeConfirm`) | `confirmed`, stejný stav jako po publikaci `hardLink` |
+
+Záruky `client.md` zůstávají: poslední úspěšné uložení vyhrává (další uložení po odmítnutém přepíše externí
+změnu a ta je pak v `config.previous`), žádné tiché přepsání (swap běží jen nad journalovaným originálem),
+recovery je idempotentní (opakovaný pád v `beforeRecoveryCleanup` i dvojí recovery ověřeny testem).
+
+### Testy
+
+- `test_config_files_linux.cpp`: každý scénář backendu (19) se registruje makrem `PHPVPN_CONFIG_FILES_TEST`
+  pro každou strategii platformy: `config_files_linux.*` s `hardLink` (Linux, macOS) a `config_files_exchange.*`
+  s `exchange` (Linux, Android). Rozdíly v očekávání: `backupLinked` je jen `hardLink`, `backupMoved` jen
+  `exchange` a patří k publikovaným stavům; na Androidu fixture cizího hardlinku je NOT RUN.
+- Nové testy `exchange`: původní inode jako záloha bez linku (`nlink` 1), recovery mezistavu po pádu v
+  `afterPublish` i `afterDirectorySync` včetně pádu v `beforeRecoveryCleanup` a recovery instancí `hardLink`,
+  selhání po swapu (`afterPublish`, `afterDirectorySync`, `backupMoved`, `beforeConfirm`) a cíl vyměněný během
+  ukládání (původní soubor se přesune, ne smaže, aby se číslo inodu nerecyklovalo). Plus výchozí strategie
+  podle platformy a na macOS odmítnutí `exchange` (jen inspekcí).
+- Sonda `android_posix` už `linkat` a `link` jen hlásí (obě `EACCES` v sandboxu), vyžaduje `RENAME_EXCHANGE`.
+
+### Výsledky follow-upu
+
+| Test | Výsledek | Poznámka |
+|---|---|---|
+| Linux build (WSL, GCC 13.3, `linux-release`, `-Werror`, tray zapnutý) | PASS | bez varování |
+| `ctest -L "portable\|linux"` | PASS | `phpvpn-core-tests` 303, `phpvpn-linux-tests` 162 (dříve 138: +19 variant `config_files_exchange`, +4 testy `exchange`, +1 výchozí strategie) |
+| Totéž jako `nobody` | PASS | 303/0, 162/0, logger 2/0 |
+| `ctest -R phpvpn-logger-tests` | PASS | 2 |
+| T-N01 s OpenSSL z WP01 na `phpvpn-api34` (`emulator-5554`) | PASS | `phpvpn-core-tests` 303/0 včetně kryptografické podmnožiny, logger 2/0 |
+| T-N01 s OpenSSL z WP01 na `phpvpn-api36` (`emulator-5556`) | PASS | 303/0, logger 2/0 |
+| **T-N03** `:bridge:connectedDebugAndroidTest`, `ANDROID_SERIAL=emulator-5554` | **PASS** | uid 10195, `u:r:untrusted_app`; 41 nativních případů, 0 selhání (23 `config_files_exchange`, 5 `paths_trust_root`, 5 `FdTunnel`, 3 `paths_linux`, 2 `durable_file_linux`, sonda, výchozí strategie, statfs politika); skutečný OpenSSL provider |
+| **T-N03** totéž, `ANDROID_SERIAL=emulator-5556` | **PASS** | uid 10220, `untrusted_app`; 41/0 |
+| T-N03 dílčí případ: podvržený hardlink v `unsafe_targets...` | NOT RUN | aplikace hardlink vytvořit nemůže (SELinux), útočník v sandboxu také ne |
+| T-N03 dílčí případ: cizí vlastník souboru | NOT RUN | `chown` vyžaduje root, pokryto politikou očekávaného vlastníka |
+| `gradlew assembleDebug assembleRelease` s `phpvpn.androidDeps` | PASS | |
+| netns testy | NOT RUN | follow-up nemění tunel ani síť; poslední běh 12/12 výše |
+| macOS (Apple clang, `phpvpn-macos-tests`) | NOT RUN | není macOS host; inspekcí: výchozí `hardLink`, `exchange` odmítnut ve factory, pahýl swapu bez `renameat2` |
+
+Příkazy follow-upu:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File client\tools\android\run-native-tests.ps1 `
+    -AndroidDeps D:/git/phpvpn/work/android-deps/openssl-3.5.9-curl-8.23.0 -BuildDir work\build\android-tests-deps-x86_64
+powershell -NoProfile -ExecutionPolicy Bypass -File client\tools\android\run-native-tests.ps1 `
+    -Serial emulator-5556 -SkipBuild -BuildDir work\build\android-tests-deps-x86_64
+$env:JAVA_HOME = 'D:\androidstudio\jbr'; cd client\android
+$env:ANDROID_SERIAL = 'emulator-5554'; .\gradlew.bat :bridge:connectedDebugAndroidTest
+$env:ANDROID_SERIAL = 'emulator-5556'; .\gradlew.bat :bridge:connectedDebugAndroidTest
+```
+
+Linux beze změny příkazů (sekce Příkazy). `ANDROID_SERIAL` omezil instrumentovaný test na jeden emulátor,
+protože třetí emulátor (`emulator-5558`) patřil jinému agentovi.

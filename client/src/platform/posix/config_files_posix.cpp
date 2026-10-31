@@ -72,6 +72,21 @@ int renameNoReplace(int directory, const char* from, const char* to) {
 #endif
 }
 
+// Atomic swap of two existing names (exchange backup strategy). macOS has no
+// RENAME_EXCHANGE; createPosixConfigFiles refuses the strategy there, so the
+// stub is never reached.
+int exchangeNames(int directory, const char* first, const char* second) {
+#if defined(__APPLE__)
+    (void)directory;
+    (void)first;
+    (void)second;
+    errno = ENOTSUP;
+    return -1;
+#else
+    return ::renameat2(directory, first, directory, second, RENAME_EXCHANGE);
+#endif
+}
+
 // False when statfs fails. Otherwise `supported` tells whether the
 // configuration may live on that filesystem.
 bool readFilesystem(int fd, bool& supported) {
@@ -289,7 +304,11 @@ public:
         case PosixConfigFileAction::fail: return unknown(record);
         case PosixConfigFileAction::proceed: break;
         }
-        if (record.original) {
+        // The exchange strategy keeps the original by the swap below instead of
+        // a hard link here (header of config_files_posix.h).
+        const bool exchange = record.original.has_value() &&
+            policy_.backupStrategy == PosixConfigBackupStrategy::exchange;
+        if (record.original && !exchange) {
             if (::linkat(directory_.get(), kTarget, directory_.get(), kBackup, 0) != 0)
                 return failBeforePublish(record, stage, journalId);
             // The source name may have changed. Use only a backup with the exact
@@ -314,8 +333,19 @@ public:
             UniqueFd current = openEntry(kTarget);
             if (!current && errno != ENOENT) return failBeforePublish(record, stage, journalId);
             if (current && !inspect(current.get(), info)) return failBeforePublish(record, stage, journalId);
+            // The swap moves whatever config.json is to the stage name, so it
+            // runs only on the journaled original and only while no backup
+            // exists. A target replaced during the save is never overwritten.
+            if (exchange) {
+                if (!current || identityOf(info) != record.original.value())
+                    return failBeforePublish(record, stage, journalId);
+                struct stat backupInfo {};
+                if (::fstatat(directory_.get(), kBackup, &backupInfo, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT)
+                    return failBeforePublish(record, stage, journalId);
+            }
         }
-        const int renamed = mode == ConfigPublishMode::replace ?
+        const int renamed = exchange ? exchangeNames(directory_.get(), stage.c_str(), kTarget) :
+            mode == ConfigPublishMode::replace ?
             ::renameat(directory_.get(), stage.c_str(), directory_.get(), kTarget) :
             renameNoReplace(directory_.get(), stage.c_str(), kTarget);
         const int renameError = renamed == 0 ? 0 : errno;
@@ -335,6 +365,20 @@ public:
         case PosixConfigFileAction::crash: return crashed();
         case PosixConfigFileAction::fail: return unknown(record);
         case PosixConfigFileAction::proceed: break;
+        }
+        if (exchange) {
+            // Intermediate state of the exchange strategy: config.json is the
+            // staged inode, the stage name holds the original. Move it to the
+            // backup name; recoverLocked finishes the same move after a crash.
+            if (!entryIs(stage.c_str(), record.original.value()) ||
+                renameNoReplace(directory_.get(), stage.c_str(), kBackup) != 0 ||
+                fullSync(directory_.get()) != 0)
+                return unknown(record);
+            switch (at(PosixConfigFileStage::backupMoved)) {
+            case PosixConfigFileAction::crash: return crashed();
+            case PosixConfigFileAction::fail: return unknown(record);
+            case PosixConfigFileAction::proceed: break;
+            }
         }
         {
             UniqueFd published = openEntry(kTarget);
@@ -401,6 +445,12 @@ private:
         struct stat other {};
         return ::fstatat(directory_.get(), name, &other, AT_SYMLINK_NOFOLLOW) == 0 &&
             S_ISREG(other.st_mode) && identityOf(other) == identityOf(info);
+    }
+    // The name is a regular file with exactly this inode identity.
+    bool entryIs(const char* name, ConfigFileIdentity expected) const {
+        struct stat other {};
+        return ::fstatat(directory_.get(), name, &other, AT_SYMLINK_NOFOLLOW) == 0 &&
+            S_ISREG(other.st_mode) && identityOf(other) == expected;
     }
     // A single name, or exactly the transient pair config.json/config.previous
     // of one inode that the publication itself creates.
@@ -520,6 +570,18 @@ private:
         case PosixConfigFileAction::fail: return result;
         case PosixConfigFileAction::proceed: break;
         }
+        // Exchange strategy, crash between the swap and the move of the
+        // original: config.json is the staged inode (so the result is
+        // confirmed) and the stage name still holds the original inode. Finish
+        // the move, so the cleanup below sees the completed publication of
+        // either strategy. Repeating it is harmless: once moved, the stage name
+        // no longer holds the original. A name in the way leaves the journal for
+        // the next recovery, as any failed cleanup does.
+        if (record.original && result.state == ConfigRecoveryState::confirmed &&
+            entryIs(stage.c_str(), record.original.value())) {
+            if (renameNoReplace(directory_.get(), stage.c_str(), kBackup) != 0) return result;
+            fullSync(directory_.get());
+        }
         if (record.original && !removeKnown(kBackup, record.original.value())) {
             if (result.state != ConfigRecoveryState::confirmed) result.state = ConfigRecoveryState::unknown;
             return result;
@@ -583,6 +645,10 @@ Result<std::unique_ptr<ConfigFiles>> createPosixConfigFiles(
     if (!fixedPath.is_absolute() || fixedPath.filename() != kTarget ||
         fixedPath != fixedPath.lexically_normal() || fixedPath.native().find('\0') != std::string::npos)
         return Error(ErrorCode::invalid_argument);
+#if defined(__APPLE__)
+    if (policy.backupStrategy == PosixConfigBackupStrategy::exchange)
+        return Error(ErrorCode::not_supported, "the exchange backup strategy needs RENAME_EXCHANGE, macOS has none");
+#endif
     auto directory = openTrustedDirectory(fixedPath.parent_path(), policy.expectedOwner, policy.trustRoot);
     if (!directory) return directory.error();
     bool supported = false;

@@ -4,7 +4,8 @@ Výsledky pracovních balíků podle [plan-android-v001.md](../../Plans/2026-10-
 Co se nespustilo, je NOT RUN s důvodem. Žádný výsledek z emulátoru se nevydává za výsledek z reálného zařízení.
 
 Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-31.md),
-[WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md).
+[WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),
+[WP07 téma, komponenty, navigace a texty](android/wp07-ui-report-2026-10-31.md).
 
 ## WP00: prostředí, kostra a CI
 
@@ -63,5 +64,7 @@ Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-3
 | `gradlew assembleDebug` lokálně | PASS | `app-debug.apk` (`versionCode 10003`, `versionName 1.0.3`, `minSdkVersion 34`, `targetSdkVersion 36`, `compileSdkVersion 37`), `native-code: arm64-v8a x86_64`, `zipalign -c -P 16 -v 4` „Verification successful“ |
 | APK na `phpvpn-api34` zobrazí text z nativní knihovny | PASS | emulátor x86_64 API 34 headless (WHPX, boot 24 s), `uiautomator dump` obsahuje `text="phpvpn native client 1.0.3"`, snímek `work/build/wp00-api34.png`, žádný záznam `AndroidRuntime:E` |
 | `gradlew testDebugUnitTest` lokálně | PASS | zatím bez testů, ověřuje jen konfiguraci úlohy |
-| CI `client-android.yml` | NOT RUN | spustí se po pushnutí větve `android` |
+| CI `client-android.yml` | PASS | běhy #5 (8fcef32) a #6 (3ad0c24) na ubuntu-24.04: job `deps` (cache miss → build-deps.sh, artefakt), job `app` (`assembleDebug testDebugUnitTest`, APK artefakt). První běhy #1 až #4 selhaly, protože `gradlew` byl commitnutý bez práva spuštění. |
+| CI `client-linux.yml` na větvi `android` | PASS | od #24 (64d6d26); před WP02 selhával i na `main` (12e3ac1) kvůli `-Werror=range-loop-construct` v `test_server_version.cpp`, opraveno ve WP02. |
+| CI `client-macos.yml` na větvi `android` | FAIL (předchozí stav) | krok „Install test (.pkg with the system installer, root)“ selhává už na `main` od 12e3ac1, nesouvisí s Androidem; logy vyžadují přihlášení na GitHub, příčina zatím nezjištěna. |
 | Nalezeno a opraveno | | `app` bez `abiFilters` balilo i `armeabi-v7a` a `x86` knihovny androidx; doplněno `abiFilters` do obou modulů (R4). |

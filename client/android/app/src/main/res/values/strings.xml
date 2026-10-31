@@ -1,7 +1,598 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- WP00 placeholder strings. The screen texts from assets/android-en arrive
-     with WP07 (values) and assets/android-cz (values-cs). -->
+<!--
+    English texts of the Android client, transcribed by hand from
+    assets/android-en (generate.cjs). values-cs/strings.xml has exactly the
+    same keys (StringResourcesTest). Groups follow the screen ids of
+    Plans/2026-10-31-09-40-08/android-screen-map.md. Sample data of the design
+    (addresses, sizes, times) are %n$ arguments, never part of the text.
+    Mockup-only sentences (demo toasts, "sample", "illustrative") are left out.
+    Non-translatable symbols and the brand name live in symbols.xml.
+-->
 <resources>
-    <string name="app_name">phpvpn</string>
-    <string name="native_version">phpvpn native client %1$s</string>
+
+    <!-- Shared: app bar, bottom navigation, accessibility -->
+    <string name="common_back">Back</string>
+    <string name="common_platform_eyebrow">ANDROID</string>
+    <string name="common_brand_logo">PHPVPN logo</string>
+    <string name="nav_main">Main navigation</string>
+    <string name="nav_connection">Connection</string>
+    <string name="nav_traffic">Traffic</string>
+    <string name="nav_server">Server</string>
+    <string name="nav_settings">Settings</string>
+    <string name="common_show">Show</string>
+    <string name="common_hide">Hide</string>
+    <string name="common_secret_hidden">Hidden value</string>
+    <string name="common_yes">Yes</string>
+    <string name="common_no">No</string>
+    <string name="common_opens_detail">Opens details</string>
+
+    <!-- Shared: placeholders of WP07, replaced by the screens of WP08 to WP10 -->
+    <string name="placeholder_notice_title">Placeholder screen</string>
+    <string name="placeholder_notice_text">The content of this screen is delivered by work package WP%1$02d. Navigation, arguments and Back already behave as in the final app.</string>
+    <string name="placeholder_argument">Route argument: %1$s</string>
+
+    <!-- Shared: tags and states (tag text is always shown, colour is never the only signal) -->
+    <string name="tag_connected">CONNECTED</string>
+    <string name="tag_disconnected">DISCONNECTED</string>
+    <string name="tag_connecting">CONNECTING</string>
+    <string name="tag_reconnecting">RECONNECTING</string>
+    <string name="tag_disconnecting">DISCONNECTING</string>
+    <string name="tag_status_unknown">STATUS UNKNOWN</string>
+    <string name="tag_system_permission">SYSTEM PERMISSION</string>
+    <string name="tag_saved">SAVED</string>
+    <string name="tag_connected_short">Connected</string>
+    <string name="tag_enabled">Enabled</string>
+    <string name="tag_disabled">Disabled</string>
+    <string name="tag_online">Online</string>
+    <string name="tag_offline">Offline</string>
+    <string name="tag_last_status_online">Last status: online</string>
+
+    <!-- Shared: the four connection checks (04, 06, 48) -->
+    <string name="check_server_url">Server URL</string>
+    <string name="check_server_secret">Server secret</string>
+    <string name="check_access_key">Access key</string>
+    <string name="check_contracts">Communication contracts</string>
+    <string name="check_state_done">Verified</string>
+    <string name="check_state_pending">Verifying…</string>
+    <string name="check_state_off">Waiting for verification</string>
+    <string name="check_state_fail">Verification failed</string>
+
+    <!-- Shared: server card (01, 02, 05, 07, 17, 48) -->
+    <string name="server_card_label">Server</string>
+    <string name="row_virtual_ip">Virtual IP</string>
+    <string name="row_vpn_network">VPN network</string>
+
+    <!-- Shared: traffic metrics (01, 26, 27) -->
+    <string name="metric_received">↓ Received over VPN</string>
+    <string name="metric_sent">↑ Sent over VPN</string>
+    <plurals name="metric_ipv4_packets">
+        <item quantity="one">%1$s IPv4 packet</item>
+        <item quantity="other">%1$s IPv4 packets</item>
+    </plurals>
+    <string name="duration_min_sec">%1$d min %2$d s</string>
+    <string name="duration_min">%1$d min</string>
+
+    <!-- Shared: wizard stepper (12, 14, 15, 16, 18) -->
+    <string name="wizard_step_caption">PHONE SETUP</string>
+    <string name="wizard_step_of">Step %1$d of %2$d</string>
+    <string name="wizard_eyebrow">SETUP WIZARD</string>
+    <string name="wizard_verify_continue">Verify and continue</string>
+    <string name="wizard_cancel_setup">Cancel setup</string>
+
+    <!-- Shared: actions used on several screens -->
+    <string name="action_connect_vpn">Connect VPN</string>
+    <string name="action_disconnect_vpn">Disconnect VPN</string>
+    <string name="action_discard_changes">Discard changes</string>
+    <string name="action_keep_editing">Keep editing</string>
+    <string name="action_refresh_now">Refresh now</string>
+    <string name="action_inspect_configuration">Inspect configuration</string>
+    <string name="entry_http_error_details">HTTP error details</string>
+    <string name="entry_communication_contracts">Communication contracts</string>
+    <string name="entry_configuration_editor">Configuration editor</string>
+
+    <!-- 00 Welcome (00-welcome) -->
+    <string name="welcome_title">Welcome</string>
+    <string name="welcome_eyebrow">PHPVPN FOR ANDROID</string>
+    <string name="welcome_heading">Your network.\nOn your phone.</string>
+    <string name="welcome_intro">Set up access to your PHPVPN server.</string>
+    <string name="welcome_steps_title">Get started in four steps</string>
+    <string name="welcome_step_1">01 · Server address</string>
+    <string name="welcome_step_1_value">URL</string>
+    <string name="welcome_step_2">02 · Server secret</string>
+    <string name="welcome_step_2_value">Verification</string>
+    <string name="welcome_step_3">03 · Virtual IP and key</string>
+    <string name="welcome_step_3_value">Identity</string>
+    <string name="welcome_step_4">04 · Contracts</string>
+    <string name="welcome_step_4_value">Communication</string>
+    <string name="welcome_admin_hint">Ask your network administrator for the server address and access credentials.</string>
+    <string name="welcome_set_up">Set up connection</string>
+    <string name="welcome_open_editor">Open configuration editor</string>
+
+    <!-- 01 Connection: connected (01-connected) -->
+    <string name="connection_title">Connection</string>
+    <string name="connected_heading">You are connected</string>
+    <string name="connected_subtitle">Connection active · %1$s</string>
+    <string name="connected_checks_entry">Connection checks</string>
+    <string name="connected_checks_entry_detail">URL, secret, access key and contracts</string>
+
+    <!-- 02 Disconnected (02-disconnected) -->
+    <string name="disconnected_title">Disconnected</string>
+    <string name="disconnected_heading">Ready to connect</string>
+    <string name="disconnected_subtitle">Connect this phone to your virtual network.</string>
+    <string name="disconnected_notice_title">Configuration ready</string>
+    <string name="disconnected_notice_text">The server and credentials will be verified again when you connect.</string>
+    <string name="disconnected_edit_configuration">Edit configuration</string>
+    <string name="disconnected_edit_configuration_detail">Setup wizard and advanced settings</string>
+
+    <!-- 03 VPN permission (03-vpn-permission; the dialog itself belongs to Android) -->
+    <string name="permission_title">VPN permission</string>
+    <string name="permission_waiting">Waiting for Android approval.</string>
+
+    <!-- 04 Connecting (04-connecting) -->
+    <string name="connecting_title">Connecting</string>
+    <string name="connecting_heading">Connecting</string>
+    <string name="connecting_subtitle">Verifying access to the server.</string>
+    <string name="connecting_notice_title">You can leave this screen</string>
+    <string name="connecting_notice_text">The notification will also show connection progress.</string>
+    <string name="connecting_cancel">Cancel connection</string>
+
+    <!-- 05 Reconnecting (05-reconnecting) -->
+    <string name="reconnecting_title">Reconnecting</string>
+    <string name="reconnecting_heading">Reconnecting</string>
+    <string name="reconnecting_subtitle">The connection to the server was interrupted.</string>
+    <string name="reconnecting_notice_title">Waiting to reconnect</string>
+    <string name="reconnecting_notice_text">The client is trying to restore the connection. It has not been confirmed yet.</string>
+    <string name="reconnecting_last_error">View last error</string>
+
+    <!-- 06 Connection error (06-connection-error) -->
+    <string name="connection_error_title">Connection error</string>
+    <string name="connection_error_eyebrow">CONNECTION FAILED</string>
+    <string name="connection_error_heading">Server not responding</string>
+    <string name="connection_error_intro">Check your internet connection and the server address.</string>
+    <string name="connection_error_notice_title">Request timed out</string>
+    <string name="connection_error_notice_text">The connection was not confirmed. A communication failure does not by itself mean the password is wrong.</string>
+    <string name="connection_error_http_detail">Request and available response</string>
+    <string name="connection_error_check_url">Check server URL</string>
+    <string name="connection_error_try_again">Try again</string>
+
+    <!-- 07 Disconnecting (07-disconnecting) -->
+    <string name="disconnecting_title">Disconnecting</string>
+    <string name="disconnecting_heading">Disconnecting VPN</string>
+    <string name="disconnecting_subtitle">Waiting for disconnection to be confirmed.</string>
+    <string name="disconnecting_notice_title">Not disconnected yet</string>
+    <string name="disconnecting_notice_text">Disconnection remains in progress until confirmation arrives.</string>
+    <string name="disconnecting_progress">Disconnecting…</string>
+
+    <!-- 08 Status unavailable (08-unavailable) -->
+    <string name="unavailable_title">Status unavailable</string>
+    <string name="unavailable_heading">Unable to verify status</string>
+    <string name="unavailable_subtitle">The app has not received the current VPN status.</string>
+    <string name="unavailable_notice_title">Neither connection nor disconnection is confirmed</string>
+    <string name="unavailable_last_known_connected">Last known status: connected at %1$s.</string>
+    <string name="unavailable_last_statistics">Last known statistics</string>
+    <string name="unavailable_last_statistics_detail">These values may be out of date</string>
+    <string name="unavailable_check_again">Check status again</string>
+
+    <!-- 09 Background notification (09-notification; used by the service notification, WP05) -->
+    <string name="notification_title">Background notification</string>
+    <string name="notification_eyebrow">ANDROID · NOTIFICATION</string>
+    <string name="notification_heading">Your VPN at a glance</string>
+    <string name="notification_intro">The connection can remain active after you leave the screen.</string>
+    <string name="notification_active">Active</string>
+    <string name="notification_connected">Connected to the virtual network</string>
+    <string name="notification_detail">%1$s · %2$s</string>
+    <string name="notification_open">Open</string>
+    <string name="notification_disconnect">Disconnect</string>
+    <string name="notification_behaviour">Tap the notification to open the current connection status. The notification disappears when the service stops.</string>
+
+    <!-- 10 Settings (10-settings) -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_eyebrow">ONE NETWORK, ONE CONFIGURATION</string>
+    <string name="settings_wizard">Setup wizard</string>
+    <string name="settings_wizard_detail">Server, identity and contracts</string>
+    <string name="settings_contracts_detail">Keys for individual virtual IP addresses</string>
+    <string name="settings_editor_detail">Complete JSON configuration</string>
+    <string name="settings_about">About</string>
+    <string name="settings_about_detail">PHPVPN and design information</string>
+    <string name="settings_notice_title">Changes and active connections</string>
+    <string name="settings_notice_text">Changes take effect on the next connection. After saving, you can choose to reconnect.</string>
+    <string name="settings_exit">Closing and background operation</string>
+    <string name="settings_exit_detail">What happens when you close the app</string>
+
+    <!-- 11 Before setup (11-disconnect-gate) -->
+    <string name="gate_title">Before setup</string>
+    <string name="gate_heading">Disconnect first</string>
+    <string name="gate_intro">Disconnect the VPN before verifying a new configuration.</string>
+    <string name="gate_current_status">Current status</string>
+    <string name="gate_notice_title">Your connection will be interrupted</string>
+    <string name="gate_notice_text">Open connections to the virtual network may stop working.</string>
+    <string name="gate_disconnect_continue">Disconnect and continue</string>
+    <string name="gate_keep_connected">Keep connected</string>
+
+    <!-- 12 Server address (12-wizard-url) -->
+    <string name="wizard_url_title">Server address</string>
+    <string name="wizard_url_heading">Where is your server?</string>
+    <string name="wizard_url_intro">Enter the full address of the PHPVPN script.</string>
+    <string name="wizard_url_field">Server URL</string>
+    <string name="wizard_url_hint">HTTP and HTTPS are supported. The URL must not contain user credentials, a query or a fragment.</string>
+    <string name="wizard_url_headers">HTTP headers</string>
+    <string name="wizard_url_headers_detail">Custom request headers</string>
+    <string name="wizard_url_notice_title">First, we check availability</string>
+    <string name="wizard_url_notice_text">Changes are saved only in the final step of the wizard.</string>
+    <string name="wizard_url_defaults">Start with defaults</string>
+
+    <!-- 13 HTTP headers (13-http-headers) -->
+    <string name="headers_title">HTTP headers</string>
+    <string name="headers_eyebrow">ADVANCED · STEP 1</string>
+    <string name="headers_heading">Request headers</string>
+    <string name="headers_intro">Enter one header per line.</string>
+    <string name="headers_field">HTTP headers</string>
+    <string name="headers_hint">These changes belong to the wizard draft.</string>
+    <string name="headers_notice_text">Headers may contain sensitive data. Follow the instructions of your administrator.</string>
+    <string name="headers_reset">Reset headers</string>
+    <string name="headers_use">Use in wizard</string>
+    <string name="headers_cancel">Cancel changes</string>
+
+    <!-- 14 Server secret (14-wizard-secret) -->
+    <string name="wizard_secret_title">Server secret</string>
+    <string name="wizard_secret_heading">Verify your server</string>
+    <string name="wizard_secret_intro">Use the same secret as the one configured on the server.</string>
+    <string name="wizard_secret_url_verified">Server URL verified</string>
+    <string name="wizard_secret_field">Server secret</string>
+    <string name="wizard_secret_use_default">Use default secret</string>
+    <string name="wizard_secret_notice_title">The default is not private</string>
+    <string name="wizard_secret_notice_text">Use the secret provided by your administrator. The default value is predictable.</string>
+
+    <!-- 15 IP and access key (15-wizard-identity) -->
+    <string name="wizard_identity_title">IP and access key</string>
+    <string name="wizard_identity_heading">Your network identity</string>
+    <string name="wizard_identity_network">Virtual network: %1$s</string>
+    <string name="wizard_identity_ip_field">Virtual IP</string>
+    <string name="wizard_identity_suggest_ip">Suggest an IP automatically</string>
+    <string name="wizard_identity_key_field">Access key</string>
+    <string name="wizard_identity_key_hint">Key provided by your network administrator.</string>
+    <string name="wizard_identity_default_key">Use default key</string>
+    <string name="wizard_identity_notice_title">If no address is available</string>
+    <string name="wizard_identity_notice_text">Turn off automatic suggestions and enter an address assigned by your administrator.</string>
+
+    <!-- 16 Complete setup (16-wizard-contracts) -->
+    <string name="wizard_finish_title">Complete setup</string>
+    <string name="wizard_finish_heading">Who can you connect to?</string>
+    <string name="wizard_finish_intro">Contracts define the keys used for communication between virtual IP addresses.</string>
+    <string name="wizard_finish_add_defaults">Add default contracts</string>
+    <string name="wizard_finish_existing">Existing contracts</string>
+    <string name="wizard_finish_missing">Missing default contracts</string>
+    <string name="wizard_finish_to_add">To add on completion</string>
+    <string name="wizard_finish_notice_title">Default keys are predictable</string>
+    <string name="wizard_finish_notice_text">Set a matching private key on both sides before communicating privately.</string>
+    <string name="wizard_finish_server">Server</string>
+    <string name="wizard_finish_this_phone">This phone</string>
+    <string name="wizard_finish_save">Finish and save</string>
+
+    <!-- 17 Configuration saved (17-wizard-saved) -->
+    <string name="wizard_saved_title">Configuration saved</string>
+    <string name="wizard_saved_heading">Ready</string>
+    <string name="wizard_saved_subtitle">The phone configuration has been saved successfully.</string>
+    <string name="wizard_saved_review">Review contracts</string>
+    <string name="wizard_saved_review_detail">Set your own communication keys</string>
+    <string name="wizard_saved_later">Connect later</string>
+
+    <!-- 18 Verification error (18-wizard-error) -->
+    <string name="wizard_error_title">Verification error</string>
+    <string name="wizard_error_heading">Secret does not match</string>
+    <string name="wizard_error_intro">The server responded, but the secret could not be verified.</string>
+    <string name="wizard_error_notice_title">Verification failed</string>
+    <string name="wizard_error_notice_text">Check the value with your server administrator and try again.</string>
+    <string name="wizard_error_http_detail">If available</string>
+    <string name="wizard_error_correct">Correct the secret</string>
+
+    <!-- 19 Communication contracts (19-contracts) -->
+    <string name="contracts_title">Communication contracts</string>
+    <string name="contracts_eyebrow">THIS PHONE · %1$s</string>
+    <string name="contracts_heading">Communication\ncontracts</string>
+    <string name="contracts_intro">Enable communication and use the same key at both ends.</string>
+    <plurals name="contracts_unsaved_changes">
+        <item quantity="one">%1$d unsaved change</item>
+        <item quantity="other">%1$d unsaved changes</item>
+    </plurals>
+    <string name="contracts_unsaved_text">Changes take effect on the next connection.</string>
+    <string name="contracts_peer_unsaved">Unsaved change</string>
+    <string name="contracts_peer_key_configured">Key configured</string>
+    <string name="contracts_peer_disabled">Communication disabled</string>
+    <plurals name="contracts_page_range">
+        <item quantity="one">%1$d–%2$d of %3$d address</item>
+        <item quantity="other">%1$d–%2$d of %3$d addresses</item>
+    </plurals>
+    <string name="contracts_page_previous">Previous page of contracts</string>
+    <string name="contracts_page_next">Next page of contracts</string>
+    <plurals name="contracts_save_changes">
+        <item quantity="one">Save %1$d change</item>
+        <item quantity="other">Save %1$d changes</item>
+    </plurals>
+
+    <!-- 20 Contract details (20-contract-detail) -->
+    <string name="contract_detail_title">Contract details</string>
+    <string name="contract_detail_eyebrow">%1$s ↔ %2$s</string>
+    <string name="contract_detail_heading">Communication with\n%1$s</string>
+    <string name="contract_detail_enable">Enable communication</string>
+    <string name="contract_detail_key_field">Communication key</string>
+    <string name="contract_detail_key_hint">Exactly 64 lowercase hexadecimal characters (0–9, a–f).</string>
+    <string name="contract_detail_from_password">Create a key from a password</string>
+    <string name="contract_detail_notice_title">Both sides need the same key</string>
+    <string name="contract_detail_notice_text">Update the contract on the other device as well.</string>
+    <string name="contract_detail_draft_hint">The change is added to your draft contracts. Save all changes together from the list.</string>
+    <string name="contract_detail_apply">Apply to draft</string>
+
+    <!-- 21 Key from password (21-password-key) -->
+    <string name="password_key_title">Key from password</string>
+    <string name="password_key_eyebrow">CONTRACT · %1$s</string>
+    <string name="password_key_intro">SHA-256 converts a password into a communication key.</string>
+    <string name="password_key_field">Password</string>
+    <string name="password_key_default">Default</string>
+    <string name="password_key_random">Random</string>
+    <string name="password_key_preview">SHA-256 key preview</string>
+    <string name="password_key_notice_title">The key updates as you type</string>
+    <string name="password_key_use">Use key</string>
+
+    <!-- 22 Invalid key (22-contract-invalid) -->
+    <string name="contract_invalid_title">Invalid key</string>
+    <string name="contract_invalid_heading">Correct the communication key</string>
+    <string name="contract_invalid_notice_title">Changes cannot be saved yet</string>
+    <string name="contract_invalid_notice_text">First invalid contract: %1$s.</string>
+    <string name="contract_invalid_error">The key must contain exactly 64 lowercase hexadecimal characters. It currently has %1$d.</string>
+    <string name="contract_invalid_back">Back to editing</string>
+
+    <!-- 23 Configuration editor (23-editor) -->
+    <string name="editor_title">Configuration editor</string>
+    <string name="editor_eyebrow">ADVANCED SETTINGS</string>
+    <string name="editor_heading">JSON configuration</string>
+    <string name="editor_intro">Complete client configuration.</string>
+    <string name="editor_field">Active document</string>
+    <string name="editor_field_dirty">Active document · unsaved changes</string>
+    <string name="editor_notice_title">Changes apply when you reconnect</string>
+    <string name="editor_notice_text">This includes TLS, automatic connection, the VPN network and all runtime limits.</string>
+    <string name="editor_reset">Reset to default configuration</string>
+    <string name="editor_save">Save configuration</string>
+
+    <!-- 24 Reset configuration (24-reset) -->
+    <string name="reset_title">Reset configuration</string>
+    <string name="reset_eyebrow">RESET CONFIGURATION</string>
+    <string name="reset_heading">Replace your draft?</string>
+    <string name="reset_text">The editor will load the default configuration. Your current draft will be discarded.</string>
+    <string name="reset_text_save">The file changes only when you select Save.</string>
+    <string name="reset_confirm">Reset in editor</string>
+    <string name="reset_keep">Keep my draft</string>
+
+    <!-- 25 Changes saved (25-reconnect-save) -->
+    <string name="saved_title">Changes saved</string>
+    <string name="saved_heading">Changes saved</string>
+    <string name="saved_subtitle">The active VPN is still using the previous configuration.</string>
+    <string name="saved_notice_title">Use the new configuration?</string>
+    <string name="saved_notice_text">Reconnecting will briefly interrupt active connections.</string>
+    <string name="saved_status">Save status</string>
+    <string name="saved_status_confirmed">Confirmed</string>
+    <string name="saved_active_connection">Active connection</string>
+    <string name="saved_previous_configuration">Previous configuration</string>
+    <string name="saved_reconnect">Reconnect</string>
+    <string name="saved_next_connection">Use on next connection</string>
+
+    <!-- 26 Traffic statistics (26-statistics) -->
+    <string name="traffic_title">Traffic statistics</string>
+    <string name="traffic_eyebrow">CURRENT CONNECTION</string>
+    <string name="traffic_heading">VPN traffic</string>
+    <string name="traffic_intro">Connected for %1$s · current values</string>
+    <string name="traffic_http_bodies">HTTP message bodies</string>
+    <string name="traffic_requests">Requests</string>
+    <string name="traffic_responses">Responses</string>
+    <string name="traffic_total">Total</string>
+    <string name="traffic_polls">Data polls</string>
+    <string name="traffic_empty_polls">Empty polls</string>
+    <string name="traffic_payload_polls">Polls with payload</string>
+    <string name="traffic_hint">Counters are read-only. HTTP data and IPv4 traffic measure different layers.</string>
+
+    <!-- 27 Last known statistics (27-statistics-stale) -->
+    <string name="traffic_stale_title">Last known statistics</string>
+    <string name="traffic_stale_eyebrow">LAST KNOWN VALUES</string>
+    <string name="traffic_stale_notice_title">VPN status unavailable</string>
+    <string name="traffic_stale_notice_text">Showing the last received values, not current traffic.</string>
+    <string name="traffic_total_polls">Total polls</string>
+
+    <!-- 28 Who is online (28-server) -->
+    <string name="server_online_title">Who is online</string>
+    <string name="server_eyebrow">SERVER · %1$s</string>
+    <string name="server_heading">Network devices</string>
+    <string name="server_tab_online">Who is online</string>
+    <string name="server_tab_raw">Server data</string>
+    <plurals name="server_online_count">
+        <item quantity="one">%1$d online</item>
+        <item quantity="other">%1$d online</item>
+    </plurals>
+    <plurals name="server_valid_contracts">
+        <item quantity="one">%1$d valid contract</item>
+        <item quantity="other">%1$d valid contracts</item>
+    </plurals>
+    <string name="server_summary">%1$s · %2$s</string>
+    <string name="server_contract_with">Contract with %1$s</string>
+    <string name="server_contract_valid">✓ Valid communication contract</string>
+    <string name="server_contract_invalid">! Invalid communication contract</string>
+    <string name="server_last_seen">Last seen: %1$s</string>
+    <string name="server_auto_refresh">Auto refresh</string>
+    <string name="server_online_hint">Online means activity within 60 seconds of the server response timestamp.</string>
+
+    <!-- 29 Server data (29-server-raw) -->
+    <string name="server_raw_title">Server data</string>
+    <string name="server_raw_heading">Server information</string>
+    <string name="server_raw_notice_title">Raw response</string>
+    <string name="server_raw_notice_text">Read-only.</string>
+
+    <!-- 30 HTTP response (30-http-response) -->
+    <string name="http_response_title">HTTP response</string>
+    <string name="http_eyebrow">ERROR DETAILS · READ-ONLY</string>
+    <string name="http_heading">HTTP exchange</string>
+    <string name="http_tab_request">Request</string>
+    <string name="http_tab_response">Response</string>
+    <string name="http_response_notice_title">The response may be incomplete</string>
+    <string name="http_response_notice_text">The size refers only to received content. Complete system headers may not be available.</string>
+    <string name="http_response_hint">Available diagnostics belong to a specific connection attempt.</string>
+
+    <!-- 31 HTTP request (31-http-request) -->
+    <string name="http_request_title">HTTP request</string>
+    <string name="http_request_notice_title">Reconstructed by the app</string>
+    <string name="http_request_notice_text">Showing available application headers. The HTTP version is unknown.</string>
+
+    <!-- 32 Unsaved changes (32-discard, shared dialog) -->
+    <string name="discard_title">Unsaved changes</string>
+    <string name="discard_eyebrow">CONFIGURATION DRAFT</string>
+    <string name="discard_heading">Discard changes?</string>
+    <string name="discard_text">Your draft has not been saved. Leaving will discard these changes.</string>
+
+    <!-- 33 Save result unknown (33-save-unknown) -->
+    <string name="save_unknown_title">Save result unknown</string>
+    <string name="save_unknown_eyebrow">SAVE NOT CONFIRMED</string>
+    <string name="save_unknown_heading">Verify first</string>
+    <string name="save_unknown_intro">Communication with the service was interrupted while saving.</string>
+    <string name="save_unknown_notice_title">It is unclear whether changes were saved</string>
+    <string name="save_unknown_notice_text">Your draft is preserved. Do not resubmit the change until you have checked the current state.</string>
+    <string name="save_unknown_draft">Draft changes</string>
+    <string name="save_unknown_draft_value">Preserved</string>
+    <string name="save_unknown_editing">Editing</string>
+    <string name="save_unknown_editing_value">Temporarily paused</string>
+    <string name="save_unknown_inspect">Inspect current configuration</string>
+    <string name="save_unknown_verify">Verify save</string>
+
+    <!-- 34 About (34-about) -->
+    <string name="about_title">About</string>
+    <string name="about_tagline">A client for your virtual network.</string>
+    <string name="about_platform">Platform</string>
+    <string name="about_platform_value">Android</string>
+    <string name="about_version">Client version</string>
+    <string name="about_protocol">Protocol</string>
+    <string name="about_font">Inter typeface</string>
+    <string name="about_font_licence">SIL Open Font License 1.1</string>
+
+    <!-- 35 Closing the app (35-exit) -->
+    <string name="exit_title">Closing the app</string>
+    <string name="exit_eyebrow">BACKGROUND OPERATION</string>
+    <string name="exit_heading">Close or disconnect?</string>
+    <string name="exit_intro">Leaving the app screen does not necessarily stop the VPN.</string>
+    <string name="exit_keep_title">Keep the connection</string>
+    <string name="exit_keep_text">Return to the Android home screen. PHPVPN will remain accessible through its notification.</string>
+    <string name="exit_preview_notification">Preview notification</string>
+    <string name="exit_stop_title">Stop VPN</string>
+    <string name="exit_stop_text">Disconnects the virtual network and stops the active service after confirmation.</string>
+
+    <!-- 36 Configuration needs attention (36-config-unavailable) -->
+    <string name="attention_title">Configuration needs attention</string>
+    <string name="attention_eyebrow">LOADING CONFIGURATION</string>
+    <string name="attention_heading">Configuration unavailable</string>
+    <string name="attention_notice_title">The document is invalid</string>
+    <string name="attention_notice_text">The wizard cannot continue with this configuration.</string>
+    <string name="attention_repair">Repair in JSON editor</string>
+    <string name="attention_repair_detail">For a readable UTF-8 document</string>
+    <string name="attention_defaults">Start with default configuration</string>
+    <string name="attention_defaults_detail">Saved only when setup is complete</string>
+    <string name="attention_intro">If the document is missing or unreadable, check the files provided by your administrator. The existing configuration is not overwritten without a confirmed save.</string>
+    <string name="attention_create_default">Create default configuration and edit</string>
+
+    <!-- 36a Create default configuration (dialog over 00, 10 and 36; text from plan-android-v001 WP10) -->
+    <string name="create_default_title">Create default configuration</string>
+    <string name="create_default_text">No configuration exists at: %1$s. Create the default configuration now and open the editor? The file will be written immediately. You can also choose No and use the setup wizard.</string>
+
+    <!-- 37 VPN permission denied (37-permission-denied) -->
+    <string name="permission_denied_title">VPN permission denied</string>
+    <string name="permission_denied_heading">VPN permission denied</string>
+    <string name="permission_denied_subtitle">System permission was denied.</string>
+    <string name="permission_denied_notice_title">Permission is needed to create a VPN</string>
+    <string name="permission_denied_notice_text">Your configuration is preserved. You can request a connection again.</string>
+    <string name="permission_denied_retry">Request permission again</string>
+    <string name="permission_denied_stay">Stay disconnected</string>
+
+    <!-- 38 Disconnection unconfirmed (38-disconnect-unknown) -->
+    <string name="disconnect_unknown_title">Disconnection unconfirmed</string>
+    <string name="disconnect_unknown_heading">Disconnection unconfirmed</string>
+    <string name="disconnect_unknown_subtitle">The service status could not be retrieved.</string>
+    <string name="disconnect_unknown_notice_title">The VPN may still be active</string>
+    <string name="disconnect_unknown_notice_text">Try disconnecting again or check the current status.</string>
+    <string name="disconnect_unknown_retry">Try disconnecting again</string>
+    <string name="disconnect_unknown_check">Check status</string>
+
+    <!-- 39 JSON error (39-editor-invalid) -->
+    <string name="editor_invalid_title">JSON error</string>
+    <string name="editor_invalid_eyebrow">CONFIGURATION NOT SAVED</string>
+    <string name="editor_invalid_heading">Correct the document</string>
+    <string name="editor_invalid_notice_title">Invalid JSON</string>
+    <string name="editor_invalid_changes_kept">Your changes remain in the editor.</string>
+    <string name="editor_invalid_field">Configuration · excerpt</string>
+    <string name="editor_invalid_error">Check the document syntax before saving again.</string>
+    <string name="editor_invalid_back">Back to editor</string>
+
+    <!-- 40 Reset wizard (40-wizard-reset) -->
+    <string name="wizard_reset_title">Reset wizard</string>
+    <string name="wizard_reset_heading">Start over?</string>
+    <string name="wizard_reset_text">Your draft steps will be discarded and the wizard will return to its defaults.</string>
+    <string name="wizard_reset_text_saved">The saved configuration will not change until you finish the wizard.</string>
+    <string name="wizard_reset_confirm">Start over</string>
+
+    <!-- 41 More contracts (41-contracts-page-2) -->
+    <string name="contracts_more_title">More contracts</string>
+    <string name="contracts_more_kept">Changes from the previous page are preserved.</string>
+
+    <!-- 42 Default editor content (42-editor-default) -->
+    <string name="editor_default_title">Default editor content</string>
+    <string name="editor_default_heading">Default values</string>
+    <string name="editor_default_notice_title">Reset loaded in the editor</string>
+    <string name="editor_default_notice_text">Nothing has been saved yet. Enter the details for your network.</string>
+    <string name="editor_default_field">Default document excerpt</string>
+    <string name="editor_default_wizard">Complete with the wizard</string>
+    <string name="editor_default_continue">Continue in editor</string>
+
+    <!-- 43 Loading statistics (43-statistics-empty) -->
+    <string name="traffic_empty_title">Loading statistics</string>
+    <string name="traffic_empty_eyebrow">WAITING FOR FIRST STATUS</string>
+    <string name="traffic_empty_notice_title">No values received yet</string>
+    <string name="traffic_empty_notice_text">Counters will appear after the service status is received.</string>
+    <string name="traffic_empty_bytes">Received / sent bytes</string>
+    <string name="traffic_empty_packets">Received / sent packets</string>
+    <string name="traffic_empty_http">HTTP requests / responses</string>
+    <string name="traffic_empty_http_total">Total HTTP body size</string>
+    <string name="traffic_waiting_polls">Empty / payload polls</string>
+
+    <!-- 44 No server records (44-server-empty) -->
+    <string name="server_empty_title">No server records</string>
+    <string name="server_empty_heading">No records yet</string>
+    <string name="server_empty_text">The server returned no clients.</string>
+    <string name="server_empty_notice_title">An empty response is not a connection error</string>
+    <string name="server_empty_notice_text">Information may appear on the next refresh.</string>
+
+    <!-- 45 Server refresh failed (45-server-stale) -->
+    <string name="server_stale_title">Server refresh failed</string>
+    <string name="server_stale_eyebrow">LAST SERVER RESPONSE</string>
+    <string name="server_stale_notice_title">Refresh failed</string>
+    <string name="server_stale_notice_text">Last successful refresh at %1$s. Device status may be out of date.</string>
+    <string name="server_stale_retry">Retry refresh</string>
+
+    <!-- 46 Save checked (46-save-checked) -->
+    <string name="save_checked_title">Save checked</string>
+    <string name="save_checked_eyebrow">COMMUNICATION CONTRACTS</string>
+    <string name="save_checked_heading">Draft not saved</string>
+    <string name="save_checked_notice_title">Current configuration checked</string>
+    <string name="save_checked_notice_text">The current configuration does not contain this draft. You can submit it again.</string>
+    <string name="save_checked_check">Configuration check</string>
+    <string name="save_checked_check_value">Complete</string>
+    <string name="save_checked_intro">If another process has changed the configuration, compare it with your draft first.</string>
+    <string name="save_checked_again">Save draft again</string>
+
+    <!-- 47 Wizard session expired (47-session-expired) -->
+    <string name="session_expired_title">Wizard session expired</string>
+    <string name="session_expired_heading">Open a new session</string>
+    <string name="session_expired_notice_title">Session expired</string>
+    <string name="session_expired_notice_text">This session can no longer continue. Reload the current configuration and run the required checks.</string>
+    <string name="session_expired_intro">After a service restart, always check the current configuration, especially if the previous save was not confirmed.</string>
+    <string name="session_expired_reopen">Reopen wizard</string>
+
+    <!-- 48 Connection checks (48-connection-checks) -->
+    <string name="checks_title">Connection checks</string>
+    <string name="checks_heading">All checks passed</string>
+    <string name="checks_intro">Results from the last connection.</string>
+
 </resources>
