@@ -36,6 +36,8 @@ work="$work_root/install-$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$work"
 port=${PHPVPN_E2E_PORT:-18095}
 relay_url="http://127.0.0.1:$port/phpvpn.php"
+# start_php_relay and stop_php_relay: a relay of our own, ended with its workers.
+. "$client/tests/e2e/macos/php-relay.sh"
 
 DAEMON_LABEL=com.pilandrome.phpvpn
 AGENT_LABEL=com.pilandrome.phpvpn-tray
@@ -156,15 +158,15 @@ if [ "$mode" = install ]; then
         mkdir -p "$work/relay/www" "$work/relay/buffer"
         sed "s|^const BUFFER_DIRECTORY = './phpvpn_data';|const BUFFER_DIRECTORY = '$work/relay/buffer';|" \
             "$repository/server/php/phpvpn.php" > "$work/relay/www/phpvpn.php"
-        PHP_CLI_SERVER_WORKERS=8 "$php" -S "127.0.0.1:$port" -t "$work/relay/www" > "$work/relay/relay.log" 2>&1 &
-        relay_pid=$!
-        attempt=0
-        until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$relay_url" || true)" = 200 ]; do
-            attempt=$((attempt + 1))
-            if [ "$attempt" -ge 60 ] || ! kill -0 "$relay_pid" 2> /dev/null; then break; fi
-            sleep 0.5
-        done
-        check "the php relay answers at $relay_url" sh -c "curl -s -o /dev/null --max-time 2 '$relay_url'"
+        # A relay that answers must be the one started here: a server left on
+        # the port by an earlier test would be a different server.
+        if start_php_relay "$port" "$work/relay/www" "$work/relay/relay.log" 8; then
+            relay_pid=$php_relay_pid
+            pass "the private php relay answers at $relay_url"
+        else
+            relay_pid=
+            fail "the private php relay is not available at $relay_url"
+        fi
         cat > "$work/config.json" <<EOF
 {
   "masterSetup": {
@@ -205,14 +207,16 @@ EOF
         else
             fail "the installed daemon did not reach connected (state: $state)"
             tail -n 40 "$LOG_DIR/phpvpn-service.log" | sed 's/^/  service log: /'
+            # The status names the phase, the checkpoints and lastError.
+            "$CLI" status > "$work/status-connect.json" 2>&1 || true
+            sed 's/^/  status: /' "$work/status-connect.json"
         fi
         check "a utun interface carries 10.99.99.2" sh -c "ifconfig | grep -q 'inet 10.99.99.2 '"
         check "disconnect through the installed daemon" "$CLI" disconnect
         attempt=0
         while ifconfig | grep -q 'inet 10.99.99.2 ' && [ "$attempt" -lt 60 ]; do attempt=$((attempt + 1)); sleep 0.5; done
         check "the address 10.99.99.2 is gone after disconnect" sh -c "! ifconfig | grep -q 'inet 10.99.99.2 '"
-        kill "$relay_pid" 2> /dev/null || true
-        wait "$relay_pid" 2> /dev/null || true
+        stop_php_relay "$relay_pid"
     else
         echo "php or curl missing on PATH, the Connect check through the installed daemon is skipped"
     fi
