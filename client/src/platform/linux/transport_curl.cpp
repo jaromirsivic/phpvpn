@@ -28,11 +28,24 @@
 #include "core/config/config_document.h"
 #include "core/protocol/http_headers.h"
 #include "platform/iface/transport.h"
+#if defined(__ANDROID__)
+#include "platform/android/tls_trust_android.h"
+#endif
 
 namespace phpvpn {
 namespace {
 
 using SteadyClock = std::chrono::steady_clock;
+
+// System CA trust of a verifying request. Linux and macOS keep the default CA
+// locations of their curl and OpenSSL builds, so the hook is empty there.
+// Android has no CA bundle OpenSSL can read and installs the system store
+// (plan-android-v001 point 10). Never called with trustAnyTlsCertificate.
+#if defined(__ANDROID__)
+Status configureTlsTrust(CURL* easy) { return installAndroidSystemTrust(easy); }
+#else
+Status configureTlsTrust(CURL*) { return ok(); }
+#endif
 
 bool initializeCurl() {
     static std::once_flag once;
@@ -425,6 +438,9 @@ private:
         }
         if (curl_easy_setopt(easy, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_2)) != CURLE_OK)
             return Error(ErrorCode::transport_tls_failed);
+        if (!settings_.trustAnyTlsCertificate) {
+            if (auto trusted = configureTlsTrust(easy); !trusted.ok()) return trusted;
+        }
         if (state.capture) {
             // The debug callback replaces curl's own verbose output entirely.
             if (curl_easy_setopt(easy, CURLOPT_DEBUGFUNCTION, onDebug) != CURLE_OK ||

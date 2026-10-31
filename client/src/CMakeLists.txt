@@ -180,14 +180,20 @@ if(PHPVPN_PLATFORM STREQUAL "android")
     # trusted paths compile unchanged (bionic has renameat2 since API 30; the
     # secure wipe uses memset_explicit, API 34). The Unix-socket IPC is not built: UI and
     # service share one process. The packet I/O of the VpnService descriptor is
-    # the FdTunnel shared with Linux. The tunnel driver, the ConnectivityManager
-    # NetConfig, the BOOTTIME clock, the TLS trust store and the logcat sink
-    # arrive with WP03 in platform/android. The OpenSSL crypto provider and the
-    # curl transport shared with Linux need the prebuilt static libraries of
-    # WP01 (PHPVPN_ANDROID_DEPS).
+    # the FdTunnel shared with Linux. platform/android (WP03) holds the shared
+    # AndroidVpnContext, the VpnService tunnel driver, the ConnectivityManager
+    # NetConfig, the BOOTTIME clock and the logcat sink; the JNI hosts they call
+    # live in apps/android-jni. The OpenSSL crypto provider and the curl
+    # transport shared with Linux, and with them the Android CA store, need the
+    # prebuilt static libraries of WP01 (PHPVPN_ANDROID_DEPS).
     find_package(Threads REQUIRED)
 
     add_library(phpvpn-platform STATIC
+        platform/android/clock_android.cpp
+        platform/android/log_sink_android.cpp
+        platform/android/netconfig_android.cpp
+        platform/android/tunnel_android.cpp
+        platform/android/vpn_context.cpp
         platform/posix/config_files_posix.cpp
         platform/posix/fd_tunnel.cpp
         platform/posix/paths_posix.cpp
@@ -216,6 +222,7 @@ if(PHPVPN_PLATFORM STREQUAL "android")
         set(CURL_USE_STATIC_LIBS ON)
         find_package(CURL 8.5 REQUIRED)
         target_sources(phpvpn-platform PRIVATE
+            platform/android/tls_trust_android.cpp
             platform/linux/crypto_openssl.cpp
             platform/linux/transport_curl.cpp
         )
