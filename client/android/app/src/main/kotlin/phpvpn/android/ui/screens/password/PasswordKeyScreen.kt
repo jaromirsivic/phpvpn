@@ -21,7 +21,7 @@ import phpvpn.android.ui.components.NoticeKind
 import phpvpn.android.ui.components.ScreenScaffold
 import phpvpn.android.ui.components.SecretField
 import phpvpn.android.ui.components.TopBar
-import phpvpn.android.ui.screens.SecureWindow
+import phpvpn.android.ui.screens.secure.SecureWindow
 
 /**
  * 21 Key from password: SHA-256 of the exact password, Default (the

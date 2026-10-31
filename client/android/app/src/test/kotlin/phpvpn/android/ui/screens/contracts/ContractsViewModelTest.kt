@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import phpvpn.android.bridge.controller.ContractsStage
@@ -21,7 +22,10 @@ import phpvpn.android.debug.ConfigReplies.answerNext
 import phpvpn.android.standin.StandInPasswordKeyModel
 import phpvpn.android.ui.screens.password.PasswordKeyViewModel
 import phpvpn.android.ui.screens.runFlowTest
-import phpvpn.android.ui.screens.save.SaveVerification
+import phpvpn.android.ui.navigation.SaveOrigin
+import phpvpn.android.ui.screens.save.SaveOutcomePhase
+import phpvpn.android.ui.screens.save.SaveOutcomeRegistry
+import phpvpn.android.ui.screens.save.SaveOutcomeState
 import phpvpn.android.ui.screens.writes
 
 /**
@@ -246,18 +250,28 @@ class ContractsViewModelTest {
         runFlowTest(transport) { deps ->
             val vm = ContractsViewModel(deps)
             advanceUntilIdle()
+            val source = vm.saveOutcome
+            assertEquals(SaveOrigin.Contracts, source.origin)
+            assertSame(source, SaveOutcomeRegistry.source(SaveOrigin.Contracts))
+            assertEquals(SaveOutcomePhase.IDLE, source.state.value.phase)
+            assertFalse(source.verify()) // nothing unknown yet
             vm.setEnabled("10.99.99.3", true)
             vm.setKey("10.99.99.3", keyA)
             vm.save() // no reply: the write may have happened
             advanceUntilIdle()
             assertEquals(ContractsNavigation.Unknown, vm.navigation.value)
+            assertEquals(SaveOutcomeState(SaveOutcomePhase.UNKNOWN, draftChanges = 1, configPath = ConfigReplies.CONFIG_PATH), source.state.value)
             val submitted = ConfigReplies.submitted(transport.requests("set-config").single())
             transport.answerNext("get-config-document", ConfigReplies.valid(submitted))
-            val result = vm.verify()
-            assertEquals(SaveVerification.Confirmed(ConfigReplies.CONFIG_PATH), result)
-            assertEquals(result, vm.verification)
-            assertFalse(vm.state.value.canRepeat)
+            assertTrue(source.verify())
+            assertEquals(SaveOutcomePhase.CHECKING, source.state.value.phase)
+            assertFalse(source.verify()) // one check at a time
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFIRMED, source.state.value.phase)
+            assertFalse(source.state.value.canRepeat)
+            assertFalse(source.repeatSave())
             assertEquals(1, transport.requests("set-config").size)
+            assertEquals(2, transport.requests("get-config-document").size)
         }
     }
 
@@ -268,24 +282,54 @@ class ContractsViewModelTest {
         runFlowTest(transport) { deps ->
             val vm = ContractsViewModel(deps)
             advanceUntilIdle()
+            val source = vm.saveOutcome
             vm.setEnabled("10.99.99.3", true)
             vm.setKey("10.99.99.3", keyA)
-            vm.saveAgain() // not allowed before a check
+            assertFalse(source.repeatSave()) // not allowed before a check
             vm.save()
             advanceUntilIdle()
+            assertFalse(source.repeatSave()) // not allowed while the result is unknown
             assertEquals(1, transport.requests("set-config").size)
             // Someone else saved another document meanwhile.
             val foreign = ConfigReplies.document(contracts = mapOf("10.99.99.5" to keyB))
             transport.answerNext("get-config-document", ConfigReplies.valid(foreign))
-            assertEquals(SaveVerification.Failed(ContractsViewModel.DIFFERENT), vm.verify())
-            assertEquals(1, transport.requests("set-config").size)
-            assertTrue(vm.state.value.canRepeat)
-            transport.answer("set-config", ConfigReplies.ACK)
-            vm.saveAgain()
+            source.verify()
             advanceUntilIdle()
-            assertEquals(ContractsNavigation.Saved, vm.navigation.value)
+            assertEquals(SaveOutcomePhase.CONFLICT, source.state.value.phase)
+            assertTrue(source.state.value.canRepeat)
+            assertEquals(1, transport.requests("set-config").size)
+            transport.answer("set-config", ConfigReplies.ACK)
+            assertTrue(source.repeatSave())
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFIRMED, source.state.value.phase)
             assertEquals(2, transport.requests("set-config").size)
             assertEquals(contractsOf(ConfigReplies.submitted(transport.requests("set-config")[0])), contractsOf(ConfigReplies.submitted(transport.requests("set-config")[1])))
+        }
+    }
+
+    @Test
+    fun aRepeatThatIsRejectedIsNotSavedAndKeepsTheDraft() {
+        val transport = FakeIpcTransport()
+        transport.answerNext("get-config-document", ConfigReplies.valid())
+        runFlowTest(transport) { deps ->
+            val vm = ContractsViewModel(deps)
+            advanceUntilIdle()
+            vm.setEnabled("10.99.99.3", true)
+            vm.setKey("10.99.99.3", keyA)
+            vm.save()
+            advanceUntilIdle()
+            transport.answerNext("get-config-document", ConfigReplies.missing())
+            vm.saveOutcome.verify()
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFLICT, vm.saveOutcome.state.value.phase)
+            transport.answerNext("set-config", ConfigReplies.INVALID_JSON)
+            assertTrue(vm.saveOutcome.repeatSave())
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.NOT_SAVED, vm.saveOutcome.state.value.phase)
+            assertEquals(ErrorCode.CONFIG_INVALID_JSON.wireName, vm.saveOutcome.state.value.errorCode)
+            assertFalse(vm.saveOutcome.state.value.canRepeat)
+            assertEquals(ContractsStage.EDITING, vm.state.value.stage)
+            assertEquals(1, vm.dirtyCount())
         }
     }
 
@@ -300,9 +344,13 @@ class ContractsViewModelTest {
             vm.setKey("10.99.99.3", keyA)
             vm.save()
             advanceUntilIdle()
-            // The check read times out.
-            assertEquals(SaveVerification.Unknown, vm.verify())
-            assertFalse(vm.state.value.canRepeat)
+            // The check read times out: still unknown, with the reason, and checkable again.
+            assertTrue(vm.saveOutcome.verify())
+            advanceUntilIdle()
+            val state = vm.saveOutcome.state.value
+            assertEquals(SaveOutcomePhase.UNKNOWN, state.phase)
+            assertEquals(ErrorCode.IPC_UNAVAILABLE.wireName, state.errorCode)
+            assertFalse(state.canRepeat)
             assertEquals(ContractsStage.SAVE_UNKNOWN, vm.state.value.stage)
             assertNotNull(vm.navigation.value)
             assertEquals(1, transport.requests("set-config").size)
