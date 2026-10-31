@@ -8,7 +8,8 @@ Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-3
 [WP03 platformní vrstva Androidu](android/wp03-platform-report-2026-10-31.md),
 [WP06 Kotlin IPC klient a stavové modely](android/wp06-ipc-report-2026-10-31.md),
 [WP07 téma, komponenty, navigace a texty](android/wp07-ui-report-2026-10-31.md),
-[WP08 obrazovky Connection, Traffic, Server, Settings](android/wp08-screens-report-2026-10-31.md).
+[WP08 obrazovky Connection, Traffic, Server, Settings](android/wp08-screens-report-2026-10-31.md),
+[WP10 kontrakty, heslo, editor](android/wp10-editor-report-2026-10-31.md).
 
 ## WP00: prostředí, kostra a CI
 
