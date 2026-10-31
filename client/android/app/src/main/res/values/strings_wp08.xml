@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    WP08 texts that the design does not contain but the real screens need:
+    states the mockup only hints at (onRevoke, R9 process restart, loading
+    before the first status, configuration variants of 36, server failure
+    without previous data), Android settings (battery, Always-on) and the
+    real Exit choices. values-cs/strings_wp08.xml has exactly the same keys
+    (Wp08StringResourcesTest). Groups follow the screen ids of
+    android-screen-map.md.
+-->
+<resources>
+
+    <!-- Shared: durations and pagers -->
+    <string name="duration_h_min">%1$d h %2$d min</string>
+    <string name="wp08_page_previous">Previous page</string>
+    <string name="wp08_page_next">Next page</string>
+    <string name="wp08_page_of">Page %1$d of %2$d</string>
+    <string name="wp08_check_again">Check again</string>
+
+    <!-- 01-08 Connection: loading before the first status (nothing is claimed) -->
+    <string name="connection_loading_heading">Reading VPN status</string>
+    <string name="connection_loading_subtitle">The app is waiting for the first status from the VPN service.</string>
+
+    <!-- 02 Disconnected: why the connection ended, configuration state, refused Connect -->
+    <string name="disconnected_revoked_title">Another VPN app took over</string>
+    <string name="disconnected_revoked_text">Android gave the VPN to another app, so PHPVPN disconnected. It does not reconnect by itself.</string>
+    <string name="disconnected_restarted_title">The connection ended</string>
+    <string name="disconnected_restarted_text">Android stopped the app while the VPN was active. Connect again when you need the virtual network.</string>
+    <string name="disconnected_attention_detail">Connect needs a valid configuration</string>
+    <string name="connect_refused_title">Connect was not started</string>
+
+    <!-- 04 Connecting: status read failed during the attempt -->
+    <string name="connecting_status_unavailable_title">Progress not confirmed</string>
+
+    <!-- 06 Connection error: input errors are not transport errors -->
+    <string name="connection_error_eyebrow_input">VERIFICATION FAILED</string>
+    <string name="connection_error_kind_transport">Connection not confirmed</string>
+    <string name="connection_error_kind_input">Rejected during verification</string>
+    <string name="connection_error_check_configuration">Check configuration</string>
+    <string name="connection_error_check_configuration_detail">Setup wizard, starting with the server address</string>
+    <string name="connection_error_client_version">This app is version %1$s.</string>
+
+    <!-- 08 Status unavailable: last known state -->
+    <string name="unavailable_last_known_disconnected">Last known status: disconnected at %1$s.</string>
+    <string name="unavailable_last_known_connecting">Last known status: connecting at %1$s.</string>
+    <string name="unavailable_last_known_none">No status has been received since the app started.</string>
+
+    <!-- 10 Settings: background operation -->
+    <string name="settings_battery">Battery optimisation</string>
+    <string name="settings_battery_detail">Let the VPN keep working while the screen is off</string>
+    <string name="settings_always_on">Always-on VPN</string>
+    <string name="settings_always_on_on">On, set in Android VPN settings</string>
+    <string name="settings_always_on_off">Off, set in Android VPN settings</string>
+    <string name="settings_always_on_unknown">Reported while the VPN service runs</string>
+    <string name="settings_lockdown_title">Block connections without VPN is on</string>
+    <string name="settings_lockdown_text">PHPVPN does not support this mode. While the VPN is not connected, Android may block network access of other apps.</string>
+
+    <!-- 26 Traffic: values while not connected -->
+    <string name="traffic_intro_not_connected">Not connected · current values</string>
+    <string name="traffic_intro_current">Current values</string>
+
+    <!-- 28 Who is online: loading and failure without previous data -->
+    <string name="server_eyebrow_plain">SERVER</string>
+    <string name="server_loading">Loading server information…</string>
+    <string name="server_failed_title">Server information could not be loaded</string>
+    <string name="server_failed_hint">No earlier server information is available, so no list is shown.</string>
+
+    <!-- 34 About: real build metadata -->
+    <string name="about_native_version">Native core version</string>
+    <string name="about_build_type">Build</string>
+    <string name="about_licence_show">Show licence</string>
+    <string name="about_licence_hide">Hide licence</string>
+    <string name="about_value_unavailable">Unavailable</string>
+
+    <!-- 35 Closing the app: the real choices -->
+    <string name="exit_close_window">Close window, stay connected</string>
+    <string name="exit_disconnect_close">Disconnect and close</string>
+
+    <!-- 36 Configuration needs attention: missing, unreadable, valid, unknown -->
+    <string name="attention_missing_title">No configuration yet</string>
+    <string name="attention_missing_text">Set up the connection with the wizard, or create the default configuration and edit it.</string>
+    <string name="attention_unreadable_title">The document cannot be read</string>
+    <string name="attention_valid_title">The configuration is valid</string>
+    <string name="attention_valid_text">There is nothing to repair.</string>
+    <string name="attention_unknown_title">Configuration state unavailable</string>
+    <string name="attention_wizard">Set up with the wizard</string>
+    <string name="attention_wizard_detail">Server, identity and contracts</string>
+    <string name="attention_path">Configuration file</string>
+
+    <!-- 48 Connection checks: not all checks passed -->
+    <string name="checks_heading_failed">A check failed</string>
+    <string name="checks_heading_incomplete">Checks not complete</string>
+
+</resources>

@@ -3,8 +3,12 @@ package phpvpn.android.bridge.jni
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import phpvpn.android.bridge.errors.ErrorCode
+import phpvpn.android.bridge.ipc.IpcJson
 import phpvpn.android.bridge.ipc.ServerInfoReply
+import phpvpn.android.bridge.ipc.ServerInfoResult
 import phpvpn.android.bridge.repository.ServerInfoHook
 
 /** `ServerClientState`, same order: online with a matching contract, online without, offline. */
@@ -85,6 +89,25 @@ object NativeServerInfo {
             resource.close()
         }
     }
+
+    /**
+     * The same classification for an already validated result (WP08's
+     * `ServerInfoModelSource` receives the typed `ServerInfoResult`): it is put
+     * back into a get-server-info envelope with a fixed correlation, because
+     * the native parser checks the whole reply.
+     */
+    fun parse(result: ServerInfoResult): ServerInfoParse {
+        val envelope = JsonObject(
+            linkedMapOf(
+                "ipcVersion" to JsonPrimitive(1),
+                "requestId" to JsonPrimitive(ENVELOPE_REQUEST_ID),
+                "result" to IpcJson.encodeToJsonElement(ServerInfoResult.serializer(), result),
+            ),
+        )
+        return parse(envelope.toString().encodeToByteArray())
+    }
+
+    private const val ENVELOPE_REQUEST_ID = "00000000-0000-4000-8000-00000000051f"
 
     /** `serverClientStateText` (English desktop text). */
     fun stateText(state: ServerClientState): String = ModelNatives.serverInfoStateText(state.ordinal)?.decodeToString() ?: ""

@@ -11,6 +11,8 @@ enum class ConnectionErrorCode(val wireName: String) {
     SERVER_VERIFICATION_FAILED("server_verification_failed"),
     ACCESS_KEY_REJECTED("access_key_rejected"),
     TUNNEL_START_FAILED("tunnel_start_failed"),
+    // Android only (WP03): the VPN consent is missing or revoked, screen 37.
+    TUNNEL_PERMISSION_MISSING("tunnel_permission_missing"),
     COMMUNICATION_FAILED("communication_failed"),
     COMMUNICATION_TIMEOUT("communication_timeout"),
     COMMUNICATION_CONTRACTS_VERIFICATION_FAILED("communication_contracts_verification_failed"),

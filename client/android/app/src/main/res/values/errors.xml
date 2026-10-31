@@ -107,6 +107,9 @@
     <string name="error_connection_tunnel_start_failed_title">Cannot start the VPN tunnel</string>
     <string name="error_connection_tunnel_start_failed_message">The local VPN tunnel could not be started.</string>
     <string name="error_connection_tunnel_start_failed_action">Check the VPN permission of the app and try again.</string>
+    <string name="error_connection_tunnel_permission_missing_title">VPN permission is missing</string>
+    <string name="error_connection_tunnel_permission_missing_message">Android has not granted this app permission to create a VPN, or the permission was revoked.</string>
+    <string name="error_connection_tunnel_permission_missing_action">Open Connection and allow the VPN when Android asks, then connect again.</string>
     <string name="error_connection_communication_failed_title">Cannot complete the connection</string>
     <string name="error_connection_communication_failed_message">Communication with the server could not be completed.</string>
     <string name="error_connection_communication_failed_action">Check the network and the server availability, then try again.</string>

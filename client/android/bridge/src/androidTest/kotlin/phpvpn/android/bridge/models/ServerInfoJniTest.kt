@@ -152,6 +152,8 @@ class ServerInfoJniTest {
         val text = reply(3)
         val root = StrictJson.parse(text) as JsonObject
         val result = phpvpn.android.bridge.ipc.IpcJson.decodeFromJsonElement(ServerInfoResult.serializer(), root["result"]!!)
+        // The typed result (WP08's ServerInfoModelSource input) classifies like the exact reply.
+        assertEquals(parsed(text), (NativeServerInfo.parse(result) as ServerInfoParse.Parsed).view)
         assertTrue(hook.accept(ServerInfoReply(result, text)))
         assertEquals(3, hook.latest.value!!.rows.size)
         val incompatible = RuntimeHarness.fixture("server-info-incompatible.json", id)

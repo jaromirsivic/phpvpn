@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Texty WP08, které návrh neobsahuje (viz values/strings_wp08.xml). Stejné
+    klíče jako anglický soubor (Wp08StringResourcesTest), tykání podle
+    assets/android-cz.
+-->
+<resources>
+
+    <!-- Společné: doby a stránkování -->
+    <string name="duration_h_min">%1$d h %2$d min</string>
+    <string name="wp08_page_previous">Předchozí stránka</string>
+    <string name="wp08_page_next">Další stránka</string>
+    <string name="wp08_page_of">Stránka %1$d z %2$d</string>
+    <string name="wp08_check_again">Zkontrolovat znovu</string>
+
+    <!-- 01-08 Připojení: načítání před prvním stavem (nic se netvrdí) -->
+    <string name="connection_loading_heading">Zjišťuji stav VPN</string>
+    <string name="connection_loading_subtitle">Aplikace čeká na první stav od služby VPN.</string>
+
+    <!-- 02 Odpojeno: proč spojení skončilo, stav konfigurace, odmítnutý Connect -->
+    <string name="disconnected_revoked_title">VPN převzala jiná aplikace</string>
+    <string name="disconnected_revoked_text">Android předal VPN jiné aplikaci, proto se PHPVPN odpojilo. Samo se znovu nepřipojí.</string>
+    <string name="disconnected_restarted_title">Spojení skončilo</string>
+    <string name="disconnected_restarted_text">Android ukončil aplikaci během aktivní VPN. Až budeš virtuální síť potřebovat, připoj se znovu.</string>
+    <string name="disconnected_attention_detail">Připojení vyžaduje platnou konfiguraci</string>
+    <string name="connect_refused_title">Připojení se nespustilo</string>
+
+    <!-- 04 Připojování: čtení stavu během pokusu selhalo -->
+    <string name="connecting_status_unavailable_title">Průběh není potvrzený</string>
+
+    <!-- 06 Chyba připojení: chyby vstupu nejsou chyby přenosu -->
+    <string name="connection_error_eyebrow_input">OVĚŘENÍ SE NEZDAŘILO</string>
+    <string name="connection_error_kind_transport">Připojení nebylo potvrzené</string>
+    <string name="connection_error_kind_input">Odmítnuto při ověření</string>
+    <string name="connection_error_check_configuration">Zkontrolovat konfiguraci</string>
+    <string name="connection_error_check_configuration_detail">Průvodce konfigurací od adresy serveru</string>
+    <string name="connection_error_client_version">Tato aplikace má verzi %1$s.</string>
+
+    <!-- 08 Stav není dostupný: poslední známý stav -->
+    <string name="unavailable_last_known_disconnected">Poslední známý stav: odpojeno v %1$s.</string>
+    <string name="unavailable_last_known_connecting">Poslední známý stav: připojování v %1$s.</string>
+    <string name="unavailable_last_known_none">Od spuštění aplikace nepřišel žádný stav.</string>
+
+    <!-- 10 Nastavení: běh na pozadí -->
+    <string name="settings_battery">Optimalizace baterie</string>
+    <string name="settings_battery_detail">Ať VPN funguje i při zhasnuté obrazovce</string>
+    <string name="settings_always_on">Trvalá VPN</string>
+    <string name="settings_always_on_on">Zapnuto v nastavení VPN Androidu</string>
+    <string name="settings_always_on_off">Vypnuto v nastavení VPN Androidu</string>
+    <string name="settings_always_on_unknown">Zobrazí se, když běží služba VPN</string>
+    <string name="settings_lockdown_title">Blokování připojení bez VPN je zapnuté</string>
+    <string name="settings_lockdown_text">PHPVPN tento režim nepodporuje. Dokud VPN není připojená, může Android ostatním aplikacím blokovat přístup k síti.</string>
+
+    <!-- 26 Provoz: hodnoty bez připojení -->
+    <string name="traffic_intro_not_connected">Nepřipojeno · aktuální hodnoty</string>
+    <string name="traffic_intro_current">Aktuální hodnoty</string>
+
+    <!-- 28 Kdo je online: načítání a selhání bez předchozích dat -->
+    <string name="server_eyebrow_plain">SERVER</string>
+    <string name="server_loading">Načítám informace ze serveru…</string>
+    <string name="server_failed_title">Informace ze serveru se nepodařilo načíst</string>
+    <string name="server_failed_hint">Starší informace ze serveru nejsou k dispozici, proto se žádný seznam nezobrazuje.</string>
+
+    <!-- 34 O aplikaci: skutečná metadata buildu -->
+    <string name="about_native_version">Verze nativního jádra</string>
+    <string name="about_build_type">Sestavení</string>
+    <string name="about_licence_show">Zobrazit licenci</string>
+    <string name="about_licence_hide">Skrýt licenci</string>
+    <string name="about_value_unavailable">Není k dispozici</string>
+
+    <!-- 35 Zavření aplikace: skutečné volby -->
+    <string name="exit_close_window">Zavřít okno, zůstat připojený</string>
+    <string name="exit_disconnect_close">Odpojit a zavřít</string>
+
+    <!-- 36 Konfigurace vyžaduje opravu: chybí, nečitelná, platná, neznámá -->
+    <string name="attention_missing_title">Konfigurace zatím neexistuje</string>
+    <string name="attention_missing_text">Nastav připojení v průvodci, nebo vytvoř výchozí konfiguraci a uprav ji.</string>
+    <string name="attention_unreadable_title">Dokument nelze přečíst</string>
+    <string name="attention_valid_title">Konfigurace je platná</string>
+    <string name="attention_valid_text">Není co opravovat.</string>
+    <string name="attention_unknown_title">Stav konfigurace není dostupný</string>
+    <string name="attention_wizard">Nastavit v průvodci</string>
+    <string name="attention_wizard_detail">Server, identita a kontrakty</string>
+    <string name="attention_path">Soubor konfigurace</string>
+
+    <!-- 48 Kontroly připojení: ne všechny kontroly prošly -->
+    <string name="checks_heading_failed">Kontrola selhala</string>
+    <string name="checks_heading_incomplete">Kontroly nejsou dokončené</string>
+
+</resources>

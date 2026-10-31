@@ -11,6 +11,15 @@ import phpvpn.android.bridge.repository.ConnectionRepository
 import phpvpn.android.bridge.repository.ServerInfoHook
 import phpvpn.android.bridge.repository.ServerInfoRepository
 import phpvpn.android.bridge.repository.StatisticsRepository
+import phpvpn.android.ui.state.AlwaysOnStatus
+import phpvpn.android.ui.state.ConfigSummaryRepository
+import phpvpn.android.ui.state.ConnectActions
+import phpvpn.android.ui.state.ConnectionUiEvents
+import phpvpn.android.ui.state.KotlinServerInfoModel
+import phpvpn.android.ui.state.RepositoryConnectActions
+import phpvpn.android.ui.state.ServerInfoModelResult
+import phpvpn.android.ui.state.ServerInfoModelSource
+import phpvpn.android.ui.state.VpnConsent
 
 /**
  * Process-wide dependencies of the UI (plan-android-v001, "Kotlin část"). One
@@ -18,16 +27,22 @@ import phpvpn.android.bridge.repository.StatisticsRepository
  * [appContainer]. The [transport] is the platform-specific piece: the JNI
  * transport of WP04 in the real app, a fake in UI tests and previews.
  * [documentCheck] is the native configuration validator in the app (WP04) and
- * the structural approximation of WP06 in JVM tests. [serverInfoHook] is the
- * native `ServerInfoModel` in the app (`NativeServerInfoHook`, whose `latest`
- * the Server screens of WP08 read) and accept-all in tests.
+ * the structural approximation of WP06 in tests.
  * Flow controllers (Wizard, editor, contracts) are created per flow by the
  * screens of WP09 and WP10 from [ipcClient]; they are not process-wide.
+ *
+ * The seams for later work packages: WP04 passes the JNI transport, the
+ * native [serverInfoModel] and [documentCheck]; WP05 passes [alwaysOn], wraps
+ * [connectActions] (foreground service before Connect) and reports into
+ * [connectionEvents].
  */
 class AppContainer(
     val transport: IpcTransport,
+    val vpnConsent: VpnConsent,
+    val alwaysOn: AlwaysOnStatus = AlwaysOnStatus.UNKNOWN,
+    val serverInfoModel: ServerInfoModelSource = KotlinServerInfoModel,
+    connectActions: ((ConnectionRepository) -> ConnectActions)? = null,
     documentCheck: ConfigDocumentCheck = StructuralConfigDocumentCheck,
-    val serverInfoHook: ServerInfoHook = ServerInfoHook.ACCEPT_ALL,
 ) {
     /** Background scope of the repositories, alive as long as the process. */
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -35,5 +50,15 @@ class AppContainer(
     val ipcClient: IpcClient = IpcClient(transport, documentCheck = documentCheck)
     val connection: ConnectionRepository = ConnectionRepository(ipcClient, scope)
     val statistics: StatisticsRepository = StatisticsRepository(connection, scope)
-    val serverInfo: ServerInfoRepository = ServerInfoRepository(ipcClient, scope, serverInfoHook)
+
+    // A snapshot the model cannot verify is a failed refresh (45), exactly like
+    // buildServerInfoModel failing in server_info_window.cpp.
+    val serverInfo: ServerInfoRepository = ServerInfoRepository(
+        ipcClient,
+        scope,
+        ServerInfoHook { reply -> serverInfoModel.build(reply.result) is ServerInfoModelResult.Ok },
+    )
+    val configSummary: ConfigSummaryRepository = ConfigSummaryRepository(ipcClient)
+    val connectionEvents: ConnectionUiEvents = ConnectionUiEvents()
+    val connectActions: ConnectActions = connectActions?.invoke(connection) ?: RepositoryConnectActions(connection)
 }

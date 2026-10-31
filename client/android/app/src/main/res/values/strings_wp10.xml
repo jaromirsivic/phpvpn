@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    English texts that the WP10 screens (19-25, 32, 33, 36a, 39, 41, 42, 46)
+    need beyond strings.xml: real states the static design does not show
+    (loading, refusals, unknown results, the inactive VPN variant of 25, the
+    confirmed variant of 46). Same voice as assets/android-en; values-cs has
+    exactly the same keys (Wp10StringResourcesTest).
+-->
+<resources>
+
+    <!-- Shared by the configuration flows -->
+    <string name="config_saving">Saving…</string>
+    <string name="config_save_not_sent">The save request could not be sent. Your draft has been kept.</string>
+    <string name="config_path_line">Configuration file: %1$s</string>
+    <string name="config_action_open_wizard">Open setup wizard</string>
+    <string name="config_action_open_editor">Open configuration editor</string>
+    <string name="config_action_try_again">Try again</string>
+    <string name="config_action_close">Close</string>
+
+    <!-- 19, 41 Communication contracts -->
+    <string name="contracts_loading">Loading the communication contracts…</string>
+    <string name="contracts_peer_key_invalid">Key needs correction</string>
+    <string name="contracts_save_none">No changes to save</string>
+    <string name="contracts_rejected_title">Changes were not saved</string>
+    <string name="contracts_draft_kept">Your draft has been kept.</string>
+    <string name="contracts_unknown_text">Check the current configuration before you change or save the contracts again.</string>
+    <string name="contracts_unavailable_heading">Contracts cannot be opened</string>
+    <string name="contracts_unavailable_missing">No configuration exists yet. Create it with the setup wizard or in the configuration editor.</string>
+    <string name="contracts_unavailable_repairable">The configuration is missing the virtual IP or the access key. Complete it with the setup wizard or in the configuration editor.</string>
+    <string name="contracts_unavailable_invalid">The configuration is not valid. Correct it in the configuration editor first.</string>
+
+    <!-- 20, 22 Contract details and invalid key -->
+    <string name="contract_detail_key_disabled_hint">Enable communication to change the key.</string>
+    <string name="contract_detail_key_rejected">The key was not changed. All keys together would exceed the size limit.</string>
+
+    <!-- 21 Key from password -->
+    <string name="password_key_notice_text">The password is not stored. Only the key goes into your draft.</string>
+    <string name="password_key_target_disabled">Enable this contract to apply the key. Your password is kept.</string>
+    <string name="password_key_too_long">The password must contain at most 255 Unicode characters.</string>
+    <string name="password_key_invalid_utf16">The password contains an incomplete Unicode character.</string>
+    <string name="password_key_control">The password contains an unsupported control character.</string>
+    <string name="password_key_crypto">The SHA-256 key could not be generated.</string>
+    <string name="password_key_random_failed">A random password could not be generated. The current password has been kept.</string>
+    <string name="password_key_stale">The contracts changed in the meantime. Open the key tool again from the contract.</string>
+
+    <!-- 23, 39 Configuration editor and JSON error -->
+    <string name="editor_loading">Loading the configuration…</string>
+    <string name="editor_path">Stored in the private storage of the app: %1$s</string>
+    <string name="editor_created_title">Default configuration created</string>
+    <string name="editor_created_text">The file has been written. Enter the details of your network before you connect.</string>
+    <string name="editor_existing_title">A configuration already existed</string>
+    <string name="editor_existing_text">A configuration file appeared in the meantime. It was opened unchanged and nothing was overwritten.</string>
+    <string name="editor_document_invalid_title">The saved document is not a valid configuration</string>
+    <string name="editor_document_invalid_text">You can correct it here. Saving checks the whole document again.</string>
+    <string name="editor_reset_failed">The default configuration could not be loaded. Your draft is unchanged.</string>
+    <string name="editor_unknown_text">The draft is read-only until you verify the save.</string>
+    <string name="editor_invalid_value_title">Invalid configuration value</string>
+    <string name="editor_failed_title">The configuration could not be loaded</string>
+
+    <!-- 24, 42 Reset and default editor content -->
+    <string name="editor_default_document">Default document</string>
+    <string name="editor_default_hint">This is the complete default document of the service. Nothing is written until you select Save.</string>
+
+    <!-- 36a Create default configuration -->
+    <string name="create_default_checking">Checking the configuration…</string>
+    <string name="create_default_creating">Creating the default configuration…</string>
+    <string name="create_default_failed">The default configuration could not be created.</string>
+
+    <!-- 25 Changes saved -->
+    <string name="saved_checking">Checking the connection status…</string>
+    <string name="saved_connect_subtitle">The new configuration will be used when you connect.</string>
+    <string name="saved_connect_notice_title">Connect now?</string>
+    <string name="saved_connect_notice_text">The VPN is not connected.</string>
+    <string name="saved_not_connected">Not connected</string>
+    <string name="saved_later">Not now</string>
+    <string name="saved_status_unavailable">Your changes were saved, but the current connection status could not be verified. Reconnect manually to apply them.</string>
+    <string name="saved_busy_text">The VPN is changing its state. The new configuration is used on the next connection.</string>
+    <string name="saved_reconnecting">Disconnecting before the new connection…</string>
+    <string name="saved_reconnect_failed">The VPN could not be reconnected automatically. Check the connection screen.</string>
+    <string name="saved_back_to_connection">Back to connection</string>
+
+    <!-- 33, 46 Save result unknown and save checked -->
+    <string name="save_unknown_checking">Checking the current configuration…</string>
+    <string name="save_unknown_check_failed_title">The configuration could not be checked</string>
+    <string name="save_unknown_check_failed_text">Nothing was written. Resolve the problem, then verify the save again.</string>
+    <string name="save_unknown_nothing">There is no unconfirmed save to verify.</string>
+    <string name="save_checked_eyebrow_editor">CONFIGURATION EDITOR</string>
+    <string name="save_checked_confirmed_heading">Changes are saved</string>
+    <string name="save_checked_confirmed_text">The current configuration matches your changes. They do not need to be saved again.</string>
+    <string name="save_checked_continue">Continue</string>
+</resources>
