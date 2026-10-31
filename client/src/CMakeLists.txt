@@ -122,6 +122,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         platform/linux/dns_snapshot.cpp
         platform/linux/interface_identity.cpp
         platform/posix/event_wait.cpp
+        platform/posix/fd_tunnel.cpp
         platform/posix/ipc_unix.cpp
         platform/linux/netconfig_netlink.cpp
         platform/linux/netlink_codec.cpp
@@ -178,7 +179,8 @@ if(PHPVPN_PLATFORM STREQUAL "android")
     # Android (plan-android-v001): the shared POSIX configuration files and
     # trusted paths compile unchanged (bionic has renameat2 since API 30; the
     # secure wipe uses memset_explicit, API 34). The Unix-socket IPC is not built: UI and
-    # service share one process. The descriptor tunnel, the ConnectivityManager
+    # service share one process. The packet I/O of the VpnService descriptor is
+    # the FdTunnel shared with Linux. The tunnel driver, the ConnectivityManager
     # NetConfig, the BOOTTIME clock, the TLS trust store and the logcat sink
     # arrive with WP03 in platform/android. The OpenSSL crypto provider and the
     # curl transport shared with Linux need the prebuilt static libraries of
@@ -187,6 +189,7 @@ if(PHPVPN_PLATFORM STREQUAL "android")
 
     add_library(phpvpn-platform STATIC
         platform/posix/config_files_posix.cpp
+        platform/posix/fd_tunnel.cpp
         platform/posix/paths_posix.cpp
     )
 
