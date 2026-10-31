@@ -171,8 +171,8 @@ Při 320 dp a 200 % nic nepřetéká vodorovně a vše je dosažitelné posunem;
 1. **Kotlin náhrady místo JNI.** `ContractsModel`, `ContractsSaveMachine`, `classifySaveResponse` a `PasswordKeyModel`
    běží do WP04 v Kotlinu (balíček `phpvpn.android.standin`) za rozhraními. Validace konfigurace je strukturní podmnožina
    (viz výše); `notice` stroje má u chyb jen jméno kódu.
-2. **`SecureWindow` a `SaveOutcomeSource`** vznikly ve WP10, protože WP09 je v `android` zatím neměl. Sloučí hlavní
-   session.
+2. **`SecureWindow` a `SaveOutcomeSource`** vznikly ve WP10, protože WP09 je v `android` zatím neměl. Po sloučení
+   platí verze WP09, viz „Sladění s WP09“.
 3. **Detail kontraktu edituje draft přímo**, Apply to draft jen zavře detail; Discard (32) vrátí řádek do stavu při
    otevření. Tím zůstává model jediným zdrojem pravdy i pro klíč z 21 (`applyPasswordKey` nad zachyceným cílem).
 4. **Neplatný klíč se do draftu přijme** (jako tabulka desktopu) a blokuje až Save, které otevře 22. Chyba se ukazuje
@@ -194,3 +194,46 @@ Při 320 dp a 200 % nic nepřetéká vodorovně a vše je dosažitelné posunem;
     portu 5564, na konci zastavený.
 11. **Tajemství v polích Compose.** Heslo, klíče a dokument drží `BasicTextField` jako `String`; model dostává
     `CharArray`/`SecretText`, které se po použití maže. Nic se neloguje, `toString()` modelů obsah nevypisuje.
+
+## Sladění s WP09
+
+Větev WP10 nejprve převzala `android` (a3e23e5, obsahuje sloučený WP10 a WP08), potom větev WP09
+`worktree-agent-a881945cfed202a82`. Jediný konflikt byl add/add v `ui/screens/save/SaveOutcomeSource.kt`; platí verze
+WP09. `SecureWindow` WP09 leží v `ui/screens/secure/SecureWindow.kt` (počítadlo v tagu decor view), vlastní
+`ui/screens/SecureWindow.kt` WP10 je odstraněný a obrazovky 20, 21, 22, 23, 39, 42 volají verzi WP09. Čtyři aditivní
+změny WP09 v `WizardController` prošly bez konfliktu.
+
+Změna smlouvy proti původní verzi WP10 (`suspend fun verify(): SaveVerification`):
+
+- **Zdroj:** `SaveOutcomeSource` má `origin`, `state: StateFlow<SaveOutcomeState>`, `verify(): Boolean` (jedna kontrola,
+  nikdy zápis) a `repeatSave(): Boolean` (jen při `canRepeat`). Zdroj se registruje v `SaveOutcomeRegistry` po dobu života
+  draftu: `ContractsViewModel` (vázaný na graf kontraktů) v init a odregistruje v `onCleared`, `EditorViewModel`
+  (vázaný na kořen grafu) stejně, ve fázi IDLE, když žádné uložení nečeká.
+- **Fáze kontraktů a editoru:** UNKNOWN po nejasném uložení; CHECKING během jediného `get-config-document`; CONFIRMED
+  při shodě s odeslaným dokumentem nebo po potvrzeném opakování (→ 25, relace editoru se smaže); CONFLICT při jiném
+  nebo chybějícím souboru, `canRepeat` jen když to stroj nebo `EditorController` dovolí, během opakování false
+  (→ 46); NOT_SAVED, když výslovné opakování z 46 služba prokazatelně odmítla nebo se neodeslalo (`errorCode` kódu,
+  draft zůstává v editaci). Nerozhodnutá kontrola zůstává UNKNOWN s `errorCode` důvodu (kontrakty: kód ze stroje,
+  u nativního textu `config_read_failed`; editor: kód `EditorFailure`).
+- **Sdílené 33 a 46:** jedna komponenta `SaveOutcomeScreen` pro obě cesty vykresluje fázi, ne cestu (UNKNOWN/CHECKING
+  jako 33, NOT_SAVED/CONFLICT/CONFIRMED jako 46). Zdroj se čte `rememberSaveOutcomeSource(origin)`, na každou změnu
+  fáze se volá `followSaveOutcome(origin, phase)`; jedinou výjimkou je CONFLICT (a NOT_SAVED mimo Wizard) přímo na 46,
+  kde by nová navigace na tutéž cestu nahradila záznam a efekt by se opakoval donekonečna. Bez zdroje obrazovka nic
+  netvrdí a nenabízí kontrolu. Pro Wizard ukáže 33 i hlášku po restartu služby (`serviceRestarted`, cesta).
+- **Zrušeno:** `SaveVerification`, potvrzená varianta 46 s tlačítkem Continue (CONFIRMED vede rovnou na 25, resp. 17),
+  zástupná obrazovka 33/46 pro `origin=wizard`.
+
+Ověření po sloučení (emulátor `phpvpn-api36-wp10`, port 5564, na konci zastavený):
+
+| Sada | Výsledek |
+|---|---|
+| `:bridge:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug` | PASS; `app` 165 testů (WP10 54: kontrakty VM 11, editor VM 12, stand-in 24, 25 4, texty 3) |
+| `connectedDebugAndroidTest` pro `ContractsUiTest` (5), `EditorUiTest` (5), nový `WizardSaveOutcomeUiTest` (2) a `WizardFlowTest` WP09 (15), 411 dp | 27/27 PASS |
+| Totéž pro balíček `phpvpn.android.wp10` (12) při 320 dp / 200 % | 12/12 PASS |
+
+`WizardSaveOutcomeUiTest` ověřuje cestu Wizardu přes sdílenou 33: Verify save pošle jedno `wizard-get-commit`,
+potvrzený receipt vede na 17, selhaný zpět na 16, `wizard-finish` jen jednou, Save draft again se nenabízí.
+`WizardFlowTest` při 320 dp / 200 %: 4 z 15 testů WP09 neprojdou (hlavní cesta, diagnostika Connect, editor hlaviček,
+HTTP detail), žádný z nich neprochází obrazovkami WP10; patří WP09 (NOT RUN pro WP10). Compose testy WP10 nově čekají na
+výsledek IPC (`waitForText`, `waitForTag`) a před kliknutím schovají klávesnici: první běh po startu emulátoru jinak
+občas klikl do patičky, která se posouvala s IME.

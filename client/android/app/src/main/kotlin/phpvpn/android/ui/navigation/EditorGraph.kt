@@ -16,24 +16,23 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.dialog
 import androidx.navigation.compose.navigation
 import androidx.navigation.toRoute
-import phpvpn.android.bridge.controller.ContractsStage
+import kotlinx.coroutines.flow.MutableStateFlow
 import phpvpn.android.bridge.controller.EditorState
-import phpvpn.android.ui.components.ActionStyle
 import phpvpn.android.ui.components.MainDestination
 import phpvpn.android.ui.screens.configFlowDependencies
-import phpvpn.android.ui.screens.contracts.ContractsViewModel
 import phpvpn.android.ui.screens.editor.CreateDefaultDialogContent
 import phpvpn.android.ui.screens.editor.EditorActions
 import phpvpn.android.ui.screens.editor.EditorNavigation
 import phpvpn.android.ui.screens.editor.EditorResetScreen
 import phpvpn.android.ui.screens.editor.EditorScreen
 import phpvpn.android.ui.screens.editor.EditorViewModel
-import phpvpn.android.ui.screens.save.SaveCheckedOrigin
-import phpvpn.android.ui.screens.save.SaveCheckedScreen
-import phpvpn.android.ui.screens.save.SaveUnknownScreen
+import phpvpn.android.ui.screens.save.SaveOutcomePhase
+import phpvpn.android.ui.screens.save.SaveOutcomeScreen
+import phpvpn.android.ui.screens.save.SaveOutcomeState
+import phpvpn.android.ui.screens.save.followSaveOutcome
+import phpvpn.android.ui.screens.save.rememberSaveOutcomeSource
 import phpvpn.android.ui.screens.save.SavedScreen
 import phpvpn.android.ui.screens.save.SavedViewModel
-import phpvpn.android.R
 
 /**
  * WP10: the configuration editor (23, 39), Reset (24, 42) and the dialog 36a
@@ -156,9 +155,11 @@ private fun EditorNavigationEffect(nav: NavHostController, vm: EditorViewModel, 
 
 /**
  * Shared save outcomes: Changes saved (25), Save result unknown (33) and Save
- * checked (46). The contracts and the editor verify with their own
- * [phpvpn.android.ui.screens.save.SaveOutcomeSource]; the Wizard side of 33
- * and 46 (receipt check with wizard-get-commit) belongs to WP09.
+ * checked (46). 33 and 46 render the registered [SaveOutcomeSource] of their
+ * origin (Wizard of WP09, contracts and editor of WP10; contract in
+ * SaveOutcomeSource.kt) and follow every phase change with
+ * [followSaveOutcome]: CONFIRMED → 17 (Wizard) or 25, NOT_SAVED → 16
+ * (Wizard) or 46, CONFLICT → 46.
  */
 internal fun NavGraphBuilder.saveOutcomes(nav: NavHostController) {
     composable<Saved>(deepLinks = link(MapPaths.SAVED)) {
@@ -169,90 +170,31 @@ internal fun NavGraphBuilder.saveOutcomes(nav: NavHostController) {
         SavedScreen(vm, onDone = done)
     }
     composable<SaveUnknown>(deepLinks = link(MapPaths.SAVE_UNKNOWN)) { entry ->
-        when (val origin = entry.toRoute<SaveUnknown>().origin) {
-            SaveOrigin.Wizard -> WizardSaveOutcomePlaceholder(nav, R.string.save_unknown_title)
-            SaveOrigin.Contracts -> {
-                val vm = existingContractsViewModel(nav)
-                SaveUnknownScreen(
-                    source = vm?.takeIf { it.state.collectAsState().value.stage == ContractsStage.SAVE_UNKNOWN },
-                    draftChanges = vm?.dirtyCount(),
-                    onBack = { nav.popBackStack() },
-                    onInspect = { nav.openEditor() },
-                    onDecided = { nav.showSaveChecked(origin) },
-                )
-            }
-            SaveOrigin.Editor -> {
-                val vm = editorViewModel(nav)
-                val state by vm.state.collectAsState()
-                val pending = state is EditorState.SaveUnknown || state is EditorState.Checking
-                SaveUnknownScreen(
-                    source = vm.takeIf { pending },
-                    draftChanges = null,
-                    onBack = { nav.popBackStack() },
-                    onInspect = null,
-                    onDecided = { nav.showSaveChecked(origin) },
-                )
-            }
-        }
+        SaveOutcomeRoute(nav, entry.toRoute<SaveUnknown>().origin, onChecked = false)
     }
     composable<SaveChecked>(deepLinks = link(MapPaths.SAVE_CHECKED)) { entry ->
-        when (val origin = entry.toRoute<SaveChecked>().origin) {
-            SaveOrigin.Wizard -> WizardSaveOutcomePlaceholder(nav, R.string.save_checked_title)
-            SaveOrigin.Contracts -> {
-                val vm = existingContractsViewModel(nav)
-                val ui = vm?.state?.collectAsState()?.value
-                if (vm != null) ContractsNavigationEffect(nav, vm)
-                SaveCheckedScreen(
-                    origin = SaveCheckedOrigin.Contracts,
-                    verification = vm?.verification,
-                    draftChanges = vm?.dirtyCount(),
-                    saving = ui?.stage == ContractsStage.SAVING,
-                    canSaveAgain = ui?.canRepeat == true,
-                    onBack = { nav.popBackStack() },
-                    onContinue = { nav.showSaved(origin) },
-                    onSaveAgain = { vm?.saveAgain() },
-                    onInspect = { nav.openEditor() },
-                )
-            }
-            SaveOrigin.Editor -> {
-                val vm = editorViewModel(nav)
-                val state by vm.state.collectAsState()
-                EditorNavigationEffect(nav, vm)
-                SaveCheckedScreen(
-                    origin = SaveCheckedOrigin.Editor,
-                    verification = vm.verification,
-                    draftChanges = null,
-                    saving = state is EditorState.Saving,
-                    canSaveAgain = (state as? EditorState.SaveChecked)?.matched == false,
-                    onBack = { nav.popBackStack() },
-                    onContinue = {
-                        vm.close()
-                        nav.showSaved(origin)
-                    },
-                    onSaveAgain = vm::saveAgain,
-                    onInspect = null,
-                )
-            }
-        }
+        SaveOutcomeRoute(nav, entry.toRoute<SaveChecked>().origin, onChecked = true)
     }
 }
 
-/** The contracts state holder when the contracts graph is on the back stack (33 and 46 sit above it). */
 @Composable
-private fun existingContractsViewModel(nav: NavHostController): ContractsViewModel? {
-    val owner = remember(nav) { runCatching { nav.getBackStackEntry<ContractsGraph>() }.getOrNull() } ?: return null
-    val deps = configFlowDependencies()
-    return viewModel(owner, factory = contractsFactory(deps))
-}
-
-/** The Wizard verifies its receipt with wizard-get-commit; that side of 33/46 is WP09's. */
-@Composable
-private fun WizardSaveOutcomePlaceholder(nav: NavHostController, title: Int) {
-    PlaceholderScreen(
-        title,
-        WP09,
+private fun SaveOutcomeRoute(nav: NavHostController, origin: SaveOrigin, onChecked: Boolean) {
+    val source = rememberSaveOutcomeSource(origin)
+    val idle = remember { MutableStateFlow(SaveOutcomeState()) }
+    val state by (source?.state ?: idle).collectAsState()
+    LaunchedEffect(origin, state.phase) {
+        // On 46 the rule for CONFLICT (and NOT_SAVED outside the Wizard) is 46 itself:
+        // navigating there again would replace this entry and run this effect forever.
+        val staysOn46 = state.phase == SaveOutcomePhase.CONFLICT ||
+            (state.phase == SaveOutcomePhase.NOT_SAVED && origin != SaveOrigin.Wizard)
+        if (!(onChecked && staysOn46)) nav.followSaveOutcome(origin, state.phase)
+    }
+    SaveOutcomeScreen(
+        origin,
+        source,
+        state,
         onBack = { nav.popBackStack() },
-        argument = "origin=wizard",
-        footer = listOf(navAction(R.string.save_unknown_verify, ActionStyle.Primary) { nav.popBackStack() }),
+        // The editor's own draft is frozen underneath; a second editor cannot inspect it.
+        onInspect = if (origin == SaveOrigin.Editor) null else ({ nav.openEditor() }),
     )
 }

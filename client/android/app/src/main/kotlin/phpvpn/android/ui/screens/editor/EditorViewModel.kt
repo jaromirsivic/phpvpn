@@ -8,7 +8,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,10 +16,14 @@ import phpvpn.android.bridge.controller.EditorController
 import phpvpn.android.bridge.controller.EditorNotice
 import phpvpn.android.bridge.controller.EditorSession
 import phpvpn.android.bridge.controller.EditorState
+import phpvpn.android.bridge.errors.ErrorCode
 import phpvpn.android.bridge.ipc.SecretText
+import phpvpn.android.ui.navigation.SaveOrigin
 import phpvpn.android.ui.screens.ConfigFlowDependencies
+import phpvpn.android.ui.screens.save.SaveOutcomePhase
+import phpvpn.android.ui.screens.save.SaveOutcomeRegistry
 import phpvpn.android.ui.screens.save.SaveOutcomeSource
-import phpvpn.android.ui.screens.save.SaveVerification
+import phpvpn.android.ui.screens.save.SaveOutcomeState
 
 /** One-shot navigation requests of the editor flow. */
 sealed interface EditorNavigation {
@@ -46,7 +49,7 @@ sealed interface EditorNavigation {
  * 10 and 36 outside the editor graph; [close] wipes the session when the
  * editor is left.
  */
-class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSource {
+class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel() {
     private val controller = EditorController(deps.ipcClient, deps.classifier, deps.clock)
 
     val state: StateFlow<EditorState> = controller.state
@@ -79,10 +82,6 @@ class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSo
     /** One-shot navigation requests of the editor flow. */
     val navigation: StateFlow<EditorNavigation?> = _navigation.asStateFlow()
 
-    /** Last result of [verify], read by 46. */
-    var verification by mutableStateOf<SaveVerification?>(null)
-        private set
-
     val dirty: Boolean
         get() {
             @Suppress("UNUSED_EXPRESSION")
@@ -92,6 +91,8 @@ class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSo
 
     /** Opens the editor (from 00, 10, 36, 33): no-op while a session is open. */
     fun open() {
+        // A new session starts without a pending save outcome (a confirmed one was shown already).
+        if (session() == null) outcome(SaveOutcomePhase.IDLE)
         viewModelScope.launch {
             // A 36a that was dismissed without an answer created nothing; ask again.
             if (controller.state.value is EditorState.ConfirmCreate) controller.answerCreate(false)
@@ -147,23 +148,18 @@ class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSo
         }
     }
 
-    /** "Save draft again" on 46 after a check found a different file. */
-    fun saveAgain() {
-        rejection = null
-        viewModelScope.launch {
-            controller.repeatSave()
-            afterSave()
-        }
-    }
-
-    private fun afterSave() {
+    private suspend fun afterSave(repeat: Boolean = false) {
         when (val current = controller.state.value) {
-            is EditorState.Saved -> _navigation.value = EditorNavigation.Saved
+            is EditorState.Saved -> if (repeat) confirmed() else _navigation.value = EditorNavigation.Saved
             is EditorState.SaveUnknown -> {
-                verification = null
-                _navigation.value = EditorNavigation.Unknown
+                outcome(SaveOutcomePhase.UNKNOWN, path = current.session.configPath)
+                if (!repeat) _navigation.value = EditorNavigation.Unknown
             }
-            is EditorState.Editing -> rejection = current.notice as? EditorNotice.Rejected
+            is EditorState.Editing -> {
+                rejection = current.notice as? EditorNotice.Rejected
+                // A repeat from 46 that provably did not write: the draft is back in the editor.
+                if (repeat) outcome(SaveOutcomePhase.NOT_SAVED, errorCode = notSavedCode(current.notice), path = current.session.configPath)
+            }
             else -> Unit
         }
     }
@@ -177,17 +173,74 @@ class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSo
         _navigation.value = null
     }
 
-    /** 33 → 46: reads the actual document once; never writes. */
-    override suspend fun verify(): SaveVerification = viewModelScope.async {
-        controller.checkSaveResult()
-        val result = when (val current = controller.state.value) {
-            is EditorState.SaveChecked ->
-                if (current.matched) SaveVerification.Confirmed(current.session.configPath) else SaveVerification.Failed(DIFFERENT)
-            else -> SaveVerification.Unknown
+    // ------------------------------------------------------------------ 33 and 46 (SaveOutcomeSource)
+
+    private val _saveState = MutableStateFlow(SaveOutcomeState())
+
+    /**
+     * The editor side of 33 and 46 (WP09 contract, SaveOutcomeSource.kt),
+     * registered for the lifetime of this holder; IDLE while no save outcome
+     * is pending. [verify] reads the actual document once and never writes;
+     * [repeatSave] writes the kept draft again only after a check found a
+     * different or missing file.
+     */
+    val saveOutcome: SaveOutcomeSource = object : SaveOutcomeSource {
+        override val origin: SaveOrigin = SaveOrigin.Editor
+        override val state: StateFlow<SaveOutcomeState> = _saveState.asStateFlow()
+
+        override fun verify(): Boolean {
+            val unknown = controller.state.value as? EditorState.SaveUnknown ?: return false
+            if (_saveState.value.phase != SaveOutcomePhase.UNKNOWN) return false
+            outcome(SaveOutcomePhase.CHECKING, path = unknown.session.configPath)
+            viewModelScope.launch {
+                controller.checkSaveResult()
+                when (val current = controller.state.value) {
+                    is EditorState.SaveChecked ->
+                        if (current.matched) confirmed() else outcome(SaveOutcomePhase.CONFLICT, canRepeat = true, path = current.session.configPath)
+                    is EditorState.SaveUnknown -> outcome(
+                        SaveOutcomePhase.UNKNOWN,
+                        errorCode = (current.notice as? EditorNotice.CheckFailed)?.failure?.code ?: ErrorCode.CONFIG_READ_FAILED.wireName,
+                        path = current.session.configPath,
+                    )
+                    else -> outcome(SaveOutcomePhase.UNKNOWN)
+                }
+            }
+            return true
         }
-        verification = result
-        result
-    }.await()
+
+        override fun repeatSave(): Boolean {
+            val checked = controller.state.value as? EditorState.SaveChecked ?: return false
+            if (checked.matched || !_saveState.value.canRepeat) return false
+            rejection = null
+            outcome(SaveOutcomePhase.CONFLICT, canRepeat = false, path = checked.session.configPath)
+            viewModelScope.launch {
+                controller.repeatSave()
+                afterSave(repeat = true)
+            }
+            return true
+        }
+    }
+
+    private val unregisterSaveOutcome = SaveOutcomeRegistry.register(saveOutcome)
+
+    private fun outcome(phase: SaveOutcomePhase, canRepeat: Boolean = false, errorCode: String? = null, path: String? = null) {
+        _saveState.value = SaveOutcomeState(phase = phase, canRepeat = canRepeat, errorCode = errorCode, configPath = path)
+    }
+
+    /** The write is proven (check matched or repeat confirmed): success, the session is wiped, 46 leads on to 25. */
+    private suspend fun confirmed() {
+        val path = session()?.configPath ?: (controller.state.value as? EditorState.Saved)?.configPath
+        controller.close()
+        text = ""
+        draftRevision++
+        outcome(SaveOutcomePhase.CONFIRMED, path = path)
+    }
+
+    private fun notSavedCode(notice: EditorNotice?): String = when (notice) {
+        is EditorNotice.Rejected -> notice.code.wireName
+        EditorNotice.NotSent -> ErrorCode.IPC_UNAVAILABLE.wireName
+        else -> ErrorCode.INTERNAL.wireName
+    }
 
     /** Back, Cancel or Discard: wipes the session. A file created through 36a stays. */
     fun close() {
@@ -195,7 +248,7 @@ class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSo
         rejection = null
         createdNow = null
         resetLoaded = null
-        verification = null
+        outcome(SaveOutcomePhase.IDLE)
         _navigation.value = null
         viewModelScope.launch {
             controller.close()
@@ -219,12 +272,8 @@ class EditorViewModel(deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSo
     }
 
     override fun onCleared() {
+        unregisterSaveOutcome()
         // viewModelScope is already cancelled; the close itself does not suspend while idle.
         CoroutineScope(Dispatchers.Unconfined).launch { controller.close() }
-    }
-
-    companion object {
-        /** [SaveVerification.Failed] reason when the current configuration is not the draft. */
-        const val DIFFERENT = "different"
     }
 }

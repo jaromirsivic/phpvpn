@@ -8,6 +8,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.core.view.WindowCompat
@@ -63,6 +64,32 @@ class Wp10Harness(private val compose: ComposeRule) {
 
     fun plural(id: Int, count: Int, vararg args: Any): String = compose.activity.resources.getQuantityString(id, count, *args)
 
+    /**
+     * Hides the soft keyboard and lets the window settle, so a following
+     * click does not land while the footer moves with the IME inset.
+     */
+    fun hideKeyboard() {
+        compose.runOnUiThread {
+            val window = compose.activity.window
+            WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
+        }
+        compose.waitForIdle()
+        Thread.sleep(SETTLE_MS)
+        compose.waitForIdle()
+    }
+
+    /** Waits until a node with exactly [value] exists (a screen change after an IPC result). */
+    fun waitForText(value: String, timeoutMs: Long = WAIT_MS) =
+        compose.waitUntil(timeoutMs) { compose.onAllNodes(hasText(value)).fetchSemanticsNodes().isNotEmpty() }
+
+    /** Waits until the node tagged [tag] shows [value] (the draft count arrives with the next model revision). */
+    fun waitForTagText(tag: String, value: String, timeoutMs: Long = WAIT_MS) =
+        compose.waitUntil(timeoutMs) { compose.onAllNodes(hasTestTag(tag) and hasText(value)).fetchSemanticsNodes().isNotEmpty() }
+
+    /** Waits until a node tagged [tag] exists. */
+    fun waitForTag(tag: String, timeoutMs: Long = WAIT_MS) =
+        compose.waitUntil(timeoutMs) { compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
+
     /** The editable text node inside a field wrapped by [tag]. */
     fun field(tag: String): SemanticsNodeInteraction = compose.onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag(tag)))
 
@@ -81,12 +108,7 @@ class Wp10Harness(private val compose: ComposeRule) {
      */
     fun screenshot(name: String) {
         // The design shows no keyboard: hide it before the capture.
-        compose.runOnUiThread {
-            val window = compose.activity.window
-            WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
-        }
-        compose.waitForIdle()
-        Thread.sleep(SETTLE_MS)
+        hideKeyboard()
         val wasSecure = secure
         if (wasSecure) compose.runOnUiThread { compose.activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
         compose.waitForIdle()
@@ -104,5 +126,6 @@ class Wp10Harness(private val compose: ComposeRule) {
 
     private companion object {
         const val SETTLE_MS = 400L
+        const val WAIT_MS = 10_000L
     }
 }

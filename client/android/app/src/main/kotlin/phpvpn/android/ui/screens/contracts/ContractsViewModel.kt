@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,8 +23,11 @@ import phpvpn.android.bridge.controller.SaveResult
 import phpvpn.android.bridge.errors.ErrorCode
 import phpvpn.android.bridge.ipc.SecretText
 import phpvpn.android.ui.screens.ConfigFlowDependencies
+import phpvpn.android.ui.navigation.SaveOrigin
+import phpvpn.android.ui.screens.save.SaveOutcomePhase
+import phpvpn.android.ui.screens.save.SaveOutcomeRegistry
 import phpvpn.android.ui.screens.save.SaveOutcomeSource
-import phpvpn.android.ui.screens.save.SaveVerification
+import phpvpn.android.ui.screens.save.SaveOutcomeState
 
 /** Page size of the contracts list, `kTablePageSize` of core/presentation/table_pagination.h. */
 const val CONTRACTS_PAGE_SIZE = 20
@@ -77,7 +79,7 @@ sealed interface ContractsNavigation {
  * native [phpvpn.android.bridge.controller.ContractsSaveMachineHandle] (the
  * Kotlin stand-in until WP04); this class only routes UI actions to it.
  */
-class ContractsViewModel(private val deps: ConfigFlowDependencies) : ViewModel(), SaveOutcomeSource {
+class ContractsViewModel(private val deps: ConfigFlowDependencies) : ViewModel() {
     private val machine = deps.contractsMachine()
     private var lastSaveResult: SaveResult? = null
 
@@ -93,15 +95,8 @@ class ContractsViewModel(private val deps: ConfigFlowDependencies) : ViewModel()
     val state: StateFlow<ContractsUiState> = controller.state
     val navigation: StateFlow<ContractsNavigation?> = _navigation.asStateFlow()
 
-    /** Last result of [verify], read by 46. */
-    var verification by mutableStateOf<SaveVerification?>(null)
-        private set
-
     /** A save that was refused before publication or not sent at all; the draft is kept. */
     var rejection by mutableStateOf<SaveProblem?>(null)
-        private set
-
-    var verifying by mutableStateOf(false)
         private set
 
     private val model: ContractsModelHandle? get() = machine.model
@@ -236,23 +231,27 @@ class ContractsViewModel(private val deps: ConfigFlowDependencies) : ViewModel()
         viewModelScope.launch { handle(controller.save()) }
     }
 
-    /** "Save draft again" on 46: only after a check found a different file. */
-    fun saveAgain() {
-        if (!state.value.canRepeat) return
-        rejection = null
-        viewModelScope.launch { handle(controller.save(confirmedRepeat = true)) }
-    }
-
     private fun handle(event: ContractsEvent) {
         val result = lastSaveResult
         lastSaveResult = null
         when (event) {
-            ContractsEvent.SAVED -> _navigation.value = ContractsNavigation.Saved
-            ContractsEvent.UNKNOWN -> {
-                verification = null
-                _navigation.value = ContractsNavigation.Unknown
+            ContractsEvent.SAVED -> if (outcomePending) {
+                outcome(SaveOutcomePhase.CONFIRMED)
+            } else {
+                _navigation.value = ContractsNavigation.Saved
             }
-            ContractsEvent.REJECTED -> rejection = SaveProblem(result?.error ?: ErrorCode.INTERNAL, result?.outcome == SaveOutcome.NOT_SENT)
+            ContractsEvent.UNKNOWN -> {
+                lastCheckError = null
+                outcome(SaveOutcomePhase.UNKNOWN)
+                if (!outcomePending) _navigation.value = ContractsNavigation.Unknown
+                outcomePending = true
+            }
+            ContractsEvent.REJECTED -> {
+                val problem = SaveProblem(result?.error ?: ErrorCode.INTERNAL, result?.outcome == SaveOutcome.NOT_SENT)
+                rejection = problem
+                // A repeat from 46 that provably did not write: the draft is back in editing.
+                if (outcomePending) outcome(SaveOutcomePhase.NOT_SAVED, errorCode = problem.code.wireName)
+            }
             // A local preparation failure (size limits, busy): nothing was sent.
             else -> controller.state.value.failureCode?.let { rejection = SaveProblem(ErrorCode.fromWire(it) ?: ErrorCode.INTERNAL, false) }
         }
@@ -262,27 +261,69 @@ class ContractsViewModel(private val deps: ConfigFlowDependencies) : ViewModel()
         _navigation.value = null
     }
 
-    /** 33 → 46: one get-config-document compared with the frozen candidate; never writes. */
-    override suspend fun verify(): SaveVerification = viewModelScope.async {
-        verifying = true
-        try {
-            val result = when (controller.checkSaveResult()) {
-                ContractsEvent.MATCHED -> SaveVerification.Confirmed(controller.state.value.configPath ?: "")
-                ContractsEvent.DIFFERENT -> SaveVerification.Failed(DIFFERENT)
-                else -> SaveVerification.Unknown
+    // ------------------------------------------------------------------ 33 and 46 (SaveOutcomeSource)
+
+    /** True from an unknown save until the flow closes: 33/46 follow this save. */
+    private var outcomePending = false
+    private var lastCheckError: String? = null
+    private val _saveState = MutableStateFlow(SaveOutcomeState())
+
+    /**
+     * The contracts side of 33 and 46 (WP09 contract, SaveOutcomeSource.kt):
+     * registered for as long as this graph-scoped draft lives. [verify] runs
+     * one get-config-document that the save machine compares with its frozen
+     * candidate; [repeatSave] is the explicit "Save draft again" and only
+     * while the machine allows a repeat after a differing check.
+     */
+    val saveOutcome: SaveOutcomeSource = object : SaveOutcomeSource {
+        override val origin: SaveOrigin = SaveOrigin.Contracts
+        override val state: StateFlow<SaveOutcomeState> = _saveState.asStateFlow()
+
+        override fun verify(): Boolean {
+            if (_saveState.value.phase != SaveOutcomePhase.UNKNOWN) return false
+            outcome(SaveOutcomePhase.CHECKING)
+            viewModelScope.launch {
+                when (controller.checkSaveResult()) {
+                    ContractsEvent.MATCHED -> outcome(SaveOutcomePhase.CONFIRMED)
+                    ContractsEvent.DIFFERENT -> outcome(SaveOutcomePhase.CONFLICT, canRepeat = controller.state.value.canRepeat)
+                    else -> {
+                        // The check decided nothing; the reason as a code (the stand-in reports it, native text maps to a read failure).
+                        lastCheckError = ErrorCode.fromWire(machine.notice)?.wireName ?: ErrorCode.CONFIG_READ_FAILED.wireName
+                        outcome(SaveOutcomePhase.UNKNOWN, errorCode = lastCheckError)
+                    }
+                }
             }
-            verification = result
-            result
-        } finally {
-            verifying = false
+            return true
         }
-    }.await()
+
+        override fun repeatSave(): Boolean {
+            if (!_saveState.value.canRepeat || !controller.state.value.canRepeat) return false
+            rejection = null
+            // While the repeat is in flight nothing else may be repeated.
+            outcome(SaveOutcomePhase.CONFLICT, canRepeat = false)
+            viewModelScope.launch { handle(controller.save(confirmedRepeat = true)) }
+            return true
+        }
+    }
+
+    private val unregisterSaveOutcome = SaveOutcomeRegistry.register(saveOutcome)
+
+    private fun outcome(phase: SaveOutcomePhase, canRepeat: Boolean = false, errorCode: String? = null) {
+        _saveState.value = SaveOutcomeState(
+            phase = phase,
+            canRepeat = canRepeat,
+            draftChanges = if (phase == SaveOutcomePhase.IDLE) null else dirtyCount(),
+            errorCode = errorCode,
+            configPath = controller.state.value.configPath,
+        )
+    }
 
     private fun changed() {
         viewModelScope.launch { controller.changed() }
     }
 
     override fun onCleared() {
+        unregisterSaveOutcome()
         snapshot?.key?.wipe()
         snapshot = null
         machine.close()
@@ -291,9 +332,6 @@ class ContractsViewModel(private val deps: ConfigFlowDependencies) : ViewModel()
     private class Snapshot(val remoteIp: String, val enabled: Boolean, val key: SecretText)
 
     companion object {
-        /** [SaveVerification.Failed] reason when the current configuration is not the draft. */
-        const val DIFFERENT = "different"
-
         /** True while the stage allows changes in the list and the details. */
         fun editing(stage: ContractsStage): Boolean = stage == ContractsStage.EDITING || stage == ContractsStage.INVALID
     }
