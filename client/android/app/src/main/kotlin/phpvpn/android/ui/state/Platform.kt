@@ -1,8 +1,10 @@
 package phpvpn.android.ui.state
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
@@ -32,7 +34,12 @@ interface VpnConsent {
     fun request(launcher: ActivityResultLauncher<Intent>): Boolean
 }
 
-/** The real consent over `VpnService.prepare`. */
+/**
+ * The real consent over `VpnService.prepare` and the Activity Result API
+ * ([rememberVpnConsentLauncher]): the system dialog records a consent only for
+ * a caller started for a result (WP03 finding). `prepare()` takes the VPN slot
+ * from another app, so it runs only at Connect (and in the boot receiver).
+ */
 class SystemVpnConsent(private val context: Context) : VpnConsent {
     override fun isGranted(): Boolean = VpnService.prepare(context) == null
 
@@ -63,6 +70,9 @@ interface ConnectActions {
     suspend fun connect(): CommandResult
 
     suspend fun disconnect(): CommandResult
+
+    /** Exit (35): waits at most [timeoutMs] until the VPN service stopped after a confirmed Disconnect. */
+    suspend fun awaitServiceStopped(timeoutMs: Long) {}
 }
 
 class RepositoryConnectActions(private val connection: ConnectionRepository) : ConnectActions {
@@ -103,17 +113,83 @@ enum class DisconnectReason {
  * Local Android facts the IPC status cannot carry. WP05 reports them from the
  * service; the Disconnected screen (02) explains them until the next Connect.
  * The flag never replaces get-status: it is shown only while the status
- * confirms the disconnected state.
+ * confirms the disconnected state. In the app the reason starts from and is
+ * kept in the R9 state file ([initial], [onChange]), so a process that ended
+ * after the service gave up still explains it (WP05).
  */
-class ConnectionUiEvents {
-    private val _reason = MutableStateFlow<DisconnectReason?>(null)
+class ConnectionUiEvents(
+    initial: DisconnectReason? = null,
+    private val onChange: (DisconnectReason?) -> Unit = {},
+) {
+    private val _reason = MutableStateFlow(initial)
     val reason: StateFlow<DisconnectReason?> = _reason.asStateFlow()
 
     fun report(reason: DisconnectReason) {
         _reason.value = reason
+        onChange(reason)
     }
 
     fun clear() {
+        if (_reason.value == null) return
         _reason.value = null
+        onChange(null)
+    }
+}
+
+/**
+ * POST_NOTIFICATIONS for the notification (09). The Connection screen asks the
+ * first time Connect is pressed; the VPN runs without it, and after a denial
+ * the UI explains that once ([explanationPending], [explained]).
+ */
+interface NotificationPermission {
+    /** Not granted and never asked: the next Connect asks first. */
+    fun shouldRequest(): Boolean
+
+    /** The request was shown; [granted] is its result. */
+    fun onRequestResult(granted: Boolean)
+
+    val explanationPending: StateFlow<Boolean>
+
+    fun explained()
+
+    companion object {
+        /** Never asks (UI tests and previews). */
+        val GRANTED: NotificationPermission = object : NotificationPermission {
+            override fun shouldRequest() = false
+
+            override fun onRequestResult(granted: Boolean) {}
+
+            override val explanationPending: StateFlow<Boolean> = MutableStateFlow(false)
+
+            override fun explained() {}
+        }
+    }
+}
+
+/** [NotificationPermission] over the runtime permission and two private preference flags. */
+class SystemNotificationPermission(context: Context) : NotificationPermission {
+    private val context = context.applicationContext
+    private val preferences = this.context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val _explanation = MutableStateFlow(false)
+    override val explanationPending: StateFlow<Boolean> = _explanation.asStateFlow()
+
+    override fun shouldRequest(): Boolean =
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            !preferences.getBoolean(ASKED, false)
+
+    override fun onRequestResult(granted: Boolean) {
+        preferences.edit().putBoolean(ASKED, true).apply()
+        if (!granted && !preferences.getBoolean(EXPLAINED, false)) _explanation.value = true
+    }
+
+    override fun explained() {
+        preferences.edit().putBoolean(EXPLAINED, true).apply()
+        _explanation.value = false
+    }
+
+    private companion object {
+        const val PREFERENCES = "phpvpn-ui"
+        const val ASKED = "notificationPermissionAsked"
+        const val EXPLAINED = "notificationPermissionExplained"
     }
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Czech WP05 texts; the keys equal values/strings_wp05.xml (Wp05StringResourcesTest). -->
+<resources>
+
+    <!-- 09: kanál oznámení -->
+    <string name="notification_channel_name">Připojení VPN</string>
+    <string name="notification_channel_description">Ukazuje stav VPN, když běží na pozadí.</string>
+
+    <!-- 09: titulek = stav, text = server a virtuální IP -->
+    <string name="notification_title_connecting">Připojování</string>
+    <string name="notification_title_connected">Připojeno</string>
+    <string name="notification_title_reconnecting">Obnovování spojení</string>
+    <string name="notification_title_disconnecting">Odpojování</string>
+    <string name="notification_title_failed">Připojení selhalo</string>
+    <string name="notification_title_unavailable">Stav nelze ověřit</string>
+    <string name="notification_text">%1$s · %2$s</string>
+    <string name="notification_action_disconnect">Odpojit</string>
+
+    <!-- 02 / 04: POST_NOTIFICATIONS zamítnuto, vysvětlí se jednou -->
+    <string name="notifications_off_title">Oznámení jsou vypnutá</string>
+    <string name="notifications_off_text">VPN poběží i bez nich, její stav ale uvidíš jen v aplikaci. Oznámení pro PHPVPN můžeš povolit v nastavení systému.</string>
+    <string name="notifications_off_ok">OK</string>
+
+</resources>

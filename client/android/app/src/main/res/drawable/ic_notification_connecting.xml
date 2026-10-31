@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon "connecting" (09, also reconnecting and
+     disconnecting): the monochrome form of assets/phpvpn-connecting.svg,
+     frame and the outline of the cross. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="@android:color/white"
+        android:pathData="M0,0h72v72h-72zM6,6v60h60v-60z" />
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="@android:color/white"
+        android:pathData="M28,9H44V23H59V49H44V63H28V49H13V23H28ZM33,14V28H18V44H33V58H39V44H54V28H39V14Z" />
+</vector>

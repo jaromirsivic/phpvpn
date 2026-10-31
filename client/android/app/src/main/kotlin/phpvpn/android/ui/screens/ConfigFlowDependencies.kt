@@ -11,6 +11,7 @@ import phpvpn.android.bridge.controller.PasswordKeyModelHandle
 import phpvpn.android.bridge.controller.SaveResponseClassifier
 import phpvpn.android.bridge.ipc.IpcClient
 import phpvpn.android.bridge.ipc.MonotonicClock
+import phpvpn.android.bridge.repository.CommandResult
 import phpvpn.android.bridge.repository.ConnectionRepository
 import phpvpn.android.standin.StandInContractsSaveMachine
 import phpvpn.android.standin.StandInPasswordKeyModel
@@ -30,6 +31,8 @@ class ConfigFlowDependencies(
     val contractsMachine: () -> ContractsSaveMachineHandle = { StandInContractsSaveMachine() },
     val passwordKeyModel: () -> PasswordKeyModelHandle = { StandInPasswordKeyModel() },
     val clock: MonotonicClock = MonotonicClock.SYSTEM,
+    /** Connect of 25: through the VPN service in the app (WP05), the repository in tests. */
+    val connectVpn: suspend () -> CommandResult = connection::connect,
 )
 
 /** Override of the flow dependencies; null means the application container. */
@@ -41,6 +44,6 @@ fun configFlowDependencies(): ConfigFlowDependencies {
     val context = LocalContext.current
     return remember(context) {
         val container = context.appContainer
-        ConfigFlowDependencies(container.ipcClient, container.connection)
+        ConfigFlowDependencies(container.ipcClient, container.connection, connectVpn = container.connectActions::connect)
     }
 }

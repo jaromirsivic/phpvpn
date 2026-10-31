@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon "disconnected" (09: failed, status unavailable):
+     the monochrome form of assets/phpvpn-disconnected.svg, frame and only the
+     horizontal bar with its window, the cross is broken. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="@android:color/white"
+        android:pathData="M0,0h72v72h-72zM6,6v60h60v-60z" />
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="@android:color/white"
+        android:pathData="M13,23h46v26h-46zM30,31v10h12v-10z" />
+</vector>

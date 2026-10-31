@@ -1,9 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- WP00 placeholder manifest. The VpnService, the permissions and the boot
-     receiver are added in WP05. Backups and data extraction are off because
-     the configuration holds the access key, the payload keys and the server
-     secret (plan-android-v001 point 12). -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- The app manifest (plan-android-v001 step 5). Backups and data extraction
+     are off because the configuration holds the access key, the payload keys
+     and the server secret (point 12). Exported are only the launcher
+     activity, the VPN service (callable only by the system through
+     BIND_VPN_SERVICE) and the boot receiver. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- The native curl of the relay requests (also merged from bridge). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- NetworkHost snapshots and the VPN network checks (point 4). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The foreground VPN service of type systemExempted (point 7, WP00 policy check). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+    <!-- The background notification (09); the VPN runs without it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- autoConnectOnStartup after the device started (life cycle step 7). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- androidx.core declares this for registerReceiver below API 33; minSdk is 34. -->
+    <permission
+        android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        tools:node="remove" />
+    <uses-permission
+        android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        tools:node="remove" />
 
     <application
         android:name=".PhpvpnApplication"
@@ -23,6 +45,33 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The VPN service and TunnelHost (point 18). The system binds and
+             starts it (Always-on) with android.net.VpnService; the app itself
+             starts it with its own actions. -->
+        <service
+            android:name=".service.PhpvpnVpnService"
+            android:exported="true"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Exported adb/benchmark hook of androidx.profileinstaller; the
+             profile is still installed at startup by its initializer. -->
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:node="remove" />
     </application>
 
 </manifest>

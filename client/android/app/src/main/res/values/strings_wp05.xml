@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    WP05 texts: the background notification (09) of the VPN service and the
+    one explanation after POST_NOTIFICATIONS was denied. The design has only
+    a sample notification, so the titles follow the connection states of
+    01 to 07. values-cs/strings_wp05.xml has exactly the same keys
+    (Wp05StringResourcesTest).
+-->
+<resources>
+
+    <!-- 09: notification channel -->
+    <string name="notification_channel_name">VPN connection</string>
+    <string name="notification_channel_description">Shows the state of the VPN while it runs in the background.</string>
+
+    <!-- 09: title = state, text = server and virtual IP -->
+    <string name="notification_title_connecting">Connecting</string>
+    <string name="notification_title_connected">Connected</string>
+    <string name="notification_title_reconnecting">Reconnecting</string>
+    <string name="notification_title_disconnecting">Disconnecting</string>
+    <string name="notification_title_failed">Connection failed</string>
+    <string name="notification_title_unavailable">Status unavailable</string>
+    <string name="notification_text">%1$s · %2$s</string>
+    <string name="notification_action_disconnect">Disconnect</string>
+
+    <!-- 02 / 04: POST_NOTIFICATIONS denied, explained once -->
+    <string name="notifications_off_title">Notifications are off</string>
+    <string name="notifications_off_text">The VPN keeps running without them, but its state is shown only in the app. You can allow notifications for PHPVPN in the system settings.</string>
+    <string name="notifications_off_ok">OK</string>
+
+</resources>

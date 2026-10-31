@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon "connected" (09): the monochrome form of
+     assets/phpvpn-connected.svg. Android draws only the alpha channel, so the
+     states differ by shape: frame, full cross and the centre window. The frame
+     is thicker than in the SVG to stay visible at 24 dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="@android:color/white"
+        android:pathData="M0,0h72v72h-72zM6,6v60h60v-60z" />
+    <path
+        android:fillType="evenOdd"
+        android:fillColor="@android:color/white"
+        android:pathData="M28,9H44V23H59V49H44V63H28V49H13V23H28ZM30,31v10h12v-10z" />
+</vector>
