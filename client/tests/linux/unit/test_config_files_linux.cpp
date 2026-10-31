@@ -5,7 +5,8 @@
 // paths are platform specific, macOS paths are in tests/macos/unit. Android
 // runs the same file (plan-android-v001 T-N03) inside the application sandbox,
 // with the trusted walk anchored at the temporary directory the runner points
-// TMPDIR to.
+// TMPDIR to. The backend scenarios run once per backup strategy: hardLink on
+// Linux and macOS, exchange on Linux and Android.
 #include "harness.h"
 
 #include <fcntl.h>
@@ -108,8 +109,24 @@ std::filesystem::path trustRoot() {
 #endif
 }
 
+using Strategy = PosixConfigBackupStrategy;
+
+// Backup strategy of the running case. Every scenario of the backend runs once
+// per strategy the platform offers, see PHPVPN_CONFIG_FILES_TEST.
+Strategy gStrategy = kDefaultPosixConfigBackupStrategy;
+
+struct StrategyScope {
+    Strategy previous;
+    explicit StrategyScope(Strategy strategy) : previous(gStrategy) { gStrategy = strategy; }
+    ~StrategyScope() { gStrategy = previous; }
+    StrategyScope(const StrategyScope&) = delete;
+    StrategyScope& operator=(const StrategyScope&) = delete;
+};
+
+bool exchangeStrategy() { return gStrategy == Strategy::exchange; }
+
 LinuxConfigFilePolicy policy(std::function<Action(Stage)> hook = {}) {
-    return LinuxConfigFilePolicy{::geteuid(), std::move(hook), trustRoot()};
+    return LinuxConfigFilePolicy{::geteuid(), std::move(hook), trustRoot(), gStrategy};
 }
 
 // Fires `action` once at `stage` after arm() was called.
@@ -131,7 +148,40 @@ using Files = std::unique_ptr<ConfigFiles>;
 
 }  // namespace
 
-PHPVPN_TEST(config_files_linux, factory_rejects_invalid_paths_and_unsafe_directories) {
+// Registers a backend scenario once per backup strategy of the platform:
+// config_files_linux.<name> with hardLink (Linux, macOS) and
+// config_files_exchange.<name> with exchange (Linux, Android). Android cannot
+// run hardLink (SELinux refuses linkat to applications), macOS has no
+// RENAME_EXCHANGE.
+#if defined(__ANDROID__)
+#define PHPVPN_CONFIG_FILES_VARIANTS(name)                                                         \
+    PHPVPN_TEST(config_files_exchange, name) {                                                     \
+        StrategyScope scope(Strategy::exchange);                                                   \
+        config_files_case_##name();                                                                \
+    }
+#elif defined(__APPLE__)
+#define PHPVPN_CONFIG_FILES_VARIANTS(name)                                                         \
+    PHPVPN_TEST(config_files_linux, name) {                                                        \
+        StrategyScope scope(Strategy::hardLink);                                                   \
+        config_files_case_##name();                                                                \
+    }
+#else
+#define PHPVPN_CONFIG_FILES_VARIANTS(name)                                                         \
+    PHPVPN_TEST(config_files_linux, name) {                                                        \
+        StrategyScope scope(Strategy::hardLink);                                                   \
+        config_files_case_##name();                                                                \
+    }                                                                                              \
+    PHPVPN_TEST(config_files_exchange, name) {                                                     \
+        StrategyScope scope(Strategy::exchange);                                                   \
+        config_files_case_##name();                                                                \
+    }
+#endif
+#define PHPVPN_CONFIG_FILES_TEST(name)                                                             \
+    static void config_files_case_##name();                                                        \
+    PHPVPN_CONFIG_FILES_VARIANTS(name)                                                             \
+    static void config_files_case_##name()
+
+PHPVPN_CONFIG_FILES_TEST(factory_rejects_invalid_paths_and_unsafe_directories) {
     TempDirectory fixture;
     PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles("config.json", policy()), ErrorCode::invalid_argument);
     PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.path / "other.json", policy()), ErrorCode::invalid_argument);
@@ -140,9 +190,9 @@ PHPVPN_TEST(config_files_linux, factory_rejects_invalid_paths_and_unsafe_directo
     PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.path / "missing" / "config.json", policy()),
                          ErrorCode::config_unreadable);
     // A different expected owner makes the directory foreign.
-    PHPVPN_REQUIRE_ERROR(
-        createLinuxConfigFiles(fixture.config(), LinuxConfigFilePolicy{::geteuid() + 1, {}, trustRoot()}),
-        ErrorCode::config_directory_security_invalid);
+    const LinuxConfigFilePolicy foreign{::geteuid() + 1, {}, trustRoot(), gStrategy};
+    PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.config(), foreign),
+                         ErrorCode::config_directory_security_invalid);
     for (const mode_t unsafe : {mode_t(0720), mode_t(0702), mode_t(0777)}) {
         PHPVPN_CHECK(::chmod(fixture.path.c_str(), unsafe) == 0);
         PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.config(), policy()),
@@ -191,7 +241,7 @@ PHPVPN_TEST(config_files_macos, filesystem_policy_refuses_network_and_fuse_by_ty
 }
 #endif
 
-PHPVPN_TEST(config_files_linux, bounded_read_exact_hash_and_replace_create_only) {
+PHPVPN_CONFIG_FILES_TEST(bounded_read_exact_hash_and_replace_create_only) {
     TempDirectory fixture;
     auto created = createLinuxConfigFiles(fixture.config(), policy());
     PHPVPN_REQUIRE_OK(created);
@@ -240,7 +290,7 @@ PHPVPN_TEST(config_files_linux, bounded_read_exact_hash_and_replace_create_only)
     PHPVPN_CHECK(clean->state == ConfigRecoveryState::clean);
 }
 
-PHPVPN_TEST(config_files_linux, repeated_commit_is_idempotent_and_never_replayed) {
+PHPVPN_CONFIG_FILES_TEST(repeated_commit_is_idempotent_and_never_replayed) {
     TempDirectory fixture;
     auto made = createLinuxConfigFiles(fixture.config(), policy());
     PHPVPN_REQUIRE_OK(made);
@@ -261,7 +311,7 @@ PHPVPN_TEST(config_files_linux, repeated_commit_is_idempotent_and_never_replayed
                          ErrorCode::config_too_large);
 }
 
-PHPVPN_TEST(config_files_linux, exact_file_limit_and_no_full_read_for_oversize) {
+PHPVPN_CONFIG_FILES_TEST(exact_file_limit_and_no_full_read_for_oversize) {
     TempDirectory fixture;
     std::size_t chunks = 0;
     auto made = createLinuxConfigFiles(fixture.config(), policy([&](Stage stage) {
@@ -283,7 +333,7 @@ PHPVPN_TEST(config_files_linux, exact_file_limit_and_no_full_read_for_oversize) 
                          ErrorCode::config_too_large);
 }
 
-PHPVPN_TEST(config_files_linux, growth_during_read_is_too_large_not_truncated) {
+PHPVPN_CONFIG_FILES_TEST(growth_during_read_is_too_large_not_truncated) {
     TempDirectory fixture;
     bool grow = false;
     auto made = createLinuxConfigFiles(fixture.config(), policy([&](Stage stage) {
@@ -305,7 +355,7 @@ PHPVPN_TEST(config_files_linux, growth_during_read_is_too_large_not_truncated) {
     PHPVPN_CHECK_EQ(grown->bytes, std::string(32768, 'a') + "g");
 }
 
-PHPVPN_TEST(config_files_linux, unsafe_targets_are_unreadable_and_never_written_through) {
+PHPVPN_CONFIG_FILES_TEST(unsafe_targets_are_unreadable_and_never_written_through) {
     TempDirectory fixture;
     auto made = createLinuxConfigFiles(fixture.config(), policy());
     PHPVPN_REQUIRE_OK(made);
@@ -322,11 +372,17 @@ PHPVPN_TEST(config_files_linux, unsafe_targets_are_unreadable_and_never_written_
     PHPVPN_CHECK(::unlink(fixture.config().c_str()) == 0);
 
     // A second hard link outside the publication protocol.
+#if defined(__ANDROID__)
+    // SELinux refuses every application a hard link in its data, the planted
+    // link is impossible there for an attacker as well.
+    std::cout << "[ NOT RUN ] a planted hard link, SELinux refuses link to applications\n";
+#else
     PHPVPN_CHECK(::link(outside.c_str(), fixture.config().c_str()) == 0);
     PHPVPN_REQUIRE_ERROR(files->readBounded(kMaxConfigFileBytes), ErrorCode::config_unreadable);
     PHPVPN_REQUIRE_ERROR(files->publish("new", ConfigPublishMode::replace, kCommitA), ErrorCode::config_write_failed);
     PHPVPN_CHECK_EQ(readFile(outside), std::string("unrelated"));
     PHPVPN_CHECK(::unlink(fixture.config().c_str()) == 0);
+#endif
 
     // FIFO and directory at the fixed name, neither may block or be read.
     PHPVPN_CHECK(::mkfifo(fixture.config().c_str(), 0600) == 0);
@@ -365,7 +421,7 @@ PHPVPN_TEST(config_files_linux, unsafe_targets_are_unreadable_and_never_written_
     PHPVPN_CHECK(!std::filesystem::exists(fixture.path / "config.publish-journal"));
 }
 
-PHPVPN_TEST(config_files_linux, wrong_directory_mode_or_moved_directory_blocks_publication) {
+PHPVPN_CONFIG_FILES_TEST(wrong_directory_mode_or_moved_directory_blocks_publication) {
     TempDirectory fixture;
     const auto directory = fixture.path / "etc";
     PHPVPN_CHECK(::mkdir(directory.c_str(), 0700) == 0);
@@ -393,7 +449,7 @@ PHPVPN_TEST(config_files_linux, wrong_directory_mode_or_moved_directory_blocks_p
     PHPVPN_CHECK_EQ(readFile(moved / "config.json"), std::string("second"));
 }
 
-PHPVPN_TEST(config_files_linux, directory_stat_failure_is_not_a_policy_mismatch) {
+PHPVPN_CONFIG_FILES_TEST(directory_stat_failure_is_not_a_policy_mismatch) {
     TempDirectory fixture;
     for (unsigned failureAt : {1u, 2u, 3u}) {
         unsigned reads = 0;
@@ -413,10 +469,13 @@ PHPVPN_TEST(config_files_linux, directory_stat_failure_is_not_a_policy_mismatch)
     }
 }
 
-PHPVPN_TEST(config_files_linux, injected_prepublication_failures_preserve_original) {
+PHPVPN_CONFIG_FILES_TEST(injected_prepublication_failures_preserve_original) {
     for (const auto failure : {Stage::stageCreated, Stage::beforeJournalFlush, Stage::journalFlushed,
                                Stage::stageWritten, Stage::beforeStageFlush, Stage::backupLinked,
                                Stage::beforePublish}) {
+        // exchange keeps the original only after the swap, see
+        // exchange_failures_after_the_swap_resolve_by_recovery.
+        if (failure == Stage::backupLinked && exchangeStrategy()) continue;
         TempDirectory fixture;
         Injector injector{failure, Action::fail};
         auto made = createLinuxConfigFiles(fixture.config(), policy(injector.hook()));
@@ -434,7 +493,7 @@ PHPVPN_TEST(config_files_linux, injected_prepublication_failures_preserve_origin
     }
 }
 
-PHPVPN_TEST(config_files_linux, failures_around_publication_resolve_without_replaying) {
+PHPVPN_CONFIG_FILES_TEST(failures_around_publication_resolve_without_replaying) {
     // Failure after the verified stage: nothing published, recovery says so.
     // Failures after the rename: published, recovery confirms by identity and hash.
     for (const auto failure : {Stage::stageVerified, Stage::afterPublish, Stage::afterDirectorySync,
@@ -465,14 +524,17 @@ PHPVPN_TEST(config_files_linux, failures_around_publication_resolve_without_repl
     }
 }
 
-PHPVPN_TEST(config_files_linux, crash_between_every_step_recovers_consistently) {
+PHPVPN_CONFIG_FILES_TEST(crash_between_every_step_recovers_consistently) {
     const Stage stages[] = {Stage::stageCreated, Stage::beforeJournalFlush, Stage::journalFlushed,
                             Stage::stageWritten, Stage::beforeStageFlush, Stage::stageVerified,
                             Stage::backupLinked, Stage::beforePublish, Stage::afterPublish,
-                            Stage::afterDirectorySync, Stage::beforeConfirm};
+                            Stage::afterDirectorySync, Stage::backupMoved, Stage::beforeConfirm};
     for (const bool withOriginal : {false, true}) {
         for (const auto crash : stages) {
-            if (crash == Stage::backupLinked && !withOriginal) continue;
+            // Each strategy reaches only its own backup stage, and only with an original.
+            const Stage ownBackup = exchangeStrategy() ? Stage::backupMoved : Stage::backupLinked;
+            if ((crash == Stage::backupLinked || crash == Stage::backupMoved) && (!withOriginal || crash != ownBackup))
+                continue;
             TempDirectory fixture;
             if (withOriginal) {
                 auto made = createLinuxConfigFiles(fixture.config(), policy());
@@ -489,7 +551,7 @@ PHPVPN_TEST(config_files_linux, crash_between_every_step_recovers_consistently) 
                 PHPVPN_CHECK(injector.fired);
             }
             const bool published = crash == Stage::afterPublish || crash == Stage::afterDirectorySync ||
-                crash == Stage::beforeConfirm;
+                crash == Stage::backupMoved || crash == Stage::beforeConfirm;
             const std::string expectedTarget = published ? "new" : (withOriginal ? "old" : "READ ERROR");
             // Readers never see a partial file, even before recovery.
             PHPVPN_CHECK_EQ(readFile(fixture.config()), expectedTarget);
@@ -545,7 +607,7 @@ PHPVPN_TEST(config_files_linux, crash_between_every_step_recovers_consistently) 
     }
 }
 
-PHPVPN_TEST(config_files_linux, notpublished_recovery_reports_before_cleanup) {
+PHPVPN_CONFIG_FILES_TEST(notpublished_recovery_reports_before_cleanup) {
     TempDirectory fixture;
     {
         Injector injector{Stage::beforePublish, Action::crash, true};
@@ -563,7 +625,7 @@ PHPVPN_TEST(config_files_linux, notpublished_recovery_reports_before_cleanup) {
     PHPVPN_CHECK(names(fixture.path).empty());
 }
 
-PHPVPN_TEST(config_files_linux, foreign_backup_and_planted_links_are_preserved) {
+PHPVPN_CONFIG_FILES_TEST(foreign_backup_and_planted_links_are_preserved) {
     TempDirectory fixture;
     auto made = createLinuxConfigFiles(fixture.config(), policy());
     PHPVPN_REQUIRE_OK(made);
@@ -590,7 +652,7 @@ PHPVPN_TEST(config_files_linux, foreign_backup_and_planted_links_are_preserved) 
     PHPVPN_CHECK(std::filesystem::is_symlink(second.path / "config.previous"));
 }
 
-PHPVPN_TEST(config_files_linux, corrupt_or_linked_journal_fails_closed) {
+PHPVPN_CONFIG_FILES_TEST(corrupt_or_linked_journal_fails_closed) {
     TempDirectory fixture;
     auto made = createLinuxConfigFiles(fixture.config(), policy());
     PHPVPN_REQUIRE_OK(made);
@@ -617,7 +679,7 @@ PHPVPN_TEST(config_files_linux, corrupt_or_linked_journal_fails_closed) {
     PHPVPN_CHECK_EQ(readFile(outside), std::string("PHPVPN-CONFIG-1\n"));
 }
 
-PHPVPN_TEST(config_files_linux, confirmed_receipt_survives_external_change_and_allows_later_save) {
+PHPVPN_CONFIG_FILES_TEST(confirmed_receipt_survives_external_change_and_allows_later_save) {
     TempDirectory fixture;
     auto made = createLinuxConfigFiles(fixture.config(), policy());
     PHPVPN_REQUIRE_OK(made);
@@ -635,7 +697,7 @@ PHPVPN_TEST(config_files_linux, confirmed_receipt_survives_external_change_and_a
     PHPVPN_CHECK_EQ(readFile(fixture.config()), std::string("last writer"));
 }
 
-PHPVPN_TEST(config_files_linux, unrelated_target_after_unconfirmed_commit_stays_unknown) {
+PHPVPN_CONFIG_FILES_TEST(unrelated_target_after_unconfirmed_commit_stays_unknown) {
     TempDirectory fixture;
     auto made = createLinuxConfigFiles(fixture.config(),
         policy([](Stage stage) { return stage == Stage::afterPublish ? Action::fail : Action::proceed; }));
@@ -655,7 +717,7 @@ PHPVPN_TEST(config_files_linux, unrelated_target_after_unconfirmed_commit_stays_
     PHPVPN_CHECK_EQ(readFile(moved), std::string("uncertain"));
 }
 
-PHPVPN_TEST(config_files_linux, create_if_missing_loses_to_external_writer) {
+PHPVPN_CONFIG_FILES_TEST(create_if_missing_loses_to_external_writer) {
     TempDirectory fixture;
     bool injected = false;
     auto made = createLinuxConfigFiles(fixture.config(), policy([&](Stage stage) {
@@ -673,7 +735,7 @@ PHPVPN_TEST(config_files_linux, create_if_missing_loses_to_external_writer) {
     PHPVPN_CHECK((names(fixture.path) == std::vector<std::string>{"config.json"}));
 }
 
-PHPVPN_TEST(config_files_linux, create_if_missing_under_concurrency_publishes_once) {
+PHPVPN_CONFIG_FILES_TEST(create_if_missing_under_concurrency_publishes_once) {
     const char* commits[] = {"00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000012",
                              "00000000-0000-4000-8000-000000000013", "00000000-0000-4000-8000-000000000014",
                              "00000000-0000-4000-8000-000000000015", "00000000-0000-4000-8000-000000000016",
@@ -741,7 +803,7 @@ PHPVPN_TEST(config_files_linux, create_if_missing_under_concurrency_publishes_on
     }
 }
 
-PHPVPN_TEST(config_files_linux, config_store_over_the_linux_backend) {
+PHPVPN_CONFIG_FILES_TEST(config_store_over_the_linux_backend) {
     TempDirectory fixture;
     auto crypto = createPlatformCryptoProvider();
     PHPVPN_REQUIRE_OK(crypto);
@@ -776,6 +838,182 @@ PHPVPN_TEST(config_files_linux, config_store_over_the_linux_backend) {
     PHPVPN_CHECK_EQ(*recreated->snapshot.document, makeDefaultEditorDocument());
     PHPVPN_CHECK_EQ(modeOf(fixture.config()), mode_t(0600));
 }
+
+PHPVPN_TEST(config_files_backup, default_strategy_per_platform) {
+#if defined(__ANDROID__)
+    PHPVPN_CHECK(PosixConfigFilePolicy{}.backupStrategy == Strategy::exchange);
+#else
+    PHPVPN_CHECK(PosixConfigFilePolicy{}.backupStrategy == Strategy::hardLink);
+#endif
+}
+
+#if defined(__APPLE__)
+PHPVPN_TEST(config_files_backup, exchange_is_refused_without_rename_exchange) {
+    TempDirectory fixture;
+    StrategyScope scope(Strategy::exchange);
+    PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.config(), policy()), ErrorCode::not_supported);
+}
+#else
+namespace {
+
+ConfigFileIdentity identityOfPath(const std::filesystem::path& path) {
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) != 0) return {};
+    return ConfigFileIdentity{static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino)};
+}
+
+nlink_t linksOf(const std::filesystem::path& path) {
+    struct stat info {};
+    return ::lstat(path.c_str(), &info) == 0 ? info.st_nlink : 0;
+}
+
+std::vector<std::string> stageNames(const std::filesystem::path& directory) {
+    std::vector<std::string> result;
+    for (const auto& name : names(directory))
+        if (name.starts_with("config.stage.")) result.push_back(name);
+    return result;
+}
+
+}  // namespace
+
+PHPVPN_TEST(config_files_exchange, swap_keeps_the_original_inode_as_the_backup_without_a_link) {
+    TempDirectory fixture;
+    StrategyScope scope(Strategy::exchange);
+    auto made = createLinuxConfigFiles(fixture.config(), policy());
+    PHPVPN_REQUIRE_OK(made);
+    auto& files = made.value();
+    auto first = files->publish("old", ConfigPublishMode::replace, kCommitA);
+    PHPVPN_REQUIRE_OK(first);
+    PHPVPN_REQUIRE_OK(files->recover());
+    auto second = files->publish("new", ConfigPublishMode::replace, kCommitB);
+    PHPVPN_REQUIRE_OK(second);
+    PHPVPN_CHECK(second->state == ConfigPublishState::confirmed);
+    PHPVPN_CHECK_EQ(readFile(fixture.config()), std::string("new"));
+    PHPVPN_CHECK(identityOfPath(fixture.config()) == second->identity);
+    PHPVPN_CHECK_EQ(readFile(fixture.path / "config.previous"), std::string("old"));
+    PHPVPN_CHECK(identityOfPath(fixture.path / "config.previous") == first->identity);
+    PHPVPN_CHECK_EQ(linksOf(fixture.config()), nlink_t(1));
+    PHPVPN_CHECK_EQ(linksOf(fixture.path / "config.previous"), nlink_t(1));
+    PHPVPN_CHECK((names(fixture.path) ==
+                  std::vector<std::string>{"config.json", "config.previous", "config.publish-journal"}));
+    auto recovered = files->recover();
+    PHPVPN_REQUIRE_OK(recovered);
+    PHPVPN_CHECK(recovered->state == ConfigRecoveryState::confirmed);
+    PHPVPN_CHECK((names(fixture.path) == std::vector<std::string>{"config.json"}));
+    auto clean = files->recover();
+    PHPVPN_REQUIRE_OK(clean);
+    PHPVPN_CHECK(clean->state == ConfigRecoveryState::clean);
+}
+
+PHPVPN_TEST(config_files_exchange, recovery_finishes_the_backup_move_after_a_crash_in_between) {
+    for (const auto crash : {Stage::afterPublish, Stage::afterDirectorySync}) {
+        TempDirectory fixture;
+        ConfigFileIdentity original;
+        {
+            StrategyScope scope(Strategy::exchange);
+            auto made = createLinuxConfigFiles(fixture.config(), policy());
+            PHPVPN_REQUIRE_OK(made);
+            auto first = made.value()->publish("old", ConfigPublishMode::replace, kCommitA);
+            PHPVPN_REQUIRE_OK(first);
+            original = first->identity.value_or(ConfigFileIdentity{});
+            PHPVPN_REQUIRE_OK(made.value()->recover());
+            Injector injector{crash, Action::crash, true};
+            auto crashing = createLinuxConfigFiles(fixture.config(), policy(injector.hook()));
+            PHPVPN_REQUIRE_OK(crashing);
+            PHPVPN_REQUIRE_ERROR(crashing.value()->publish("new", ConfigPublishMode::replace, kCommitB),
+                                 ErrorCode::internal);
+            PHPVPN_CHECK(injector.fired);
+        }
+        // The intermediate state: the swap is done, the original inode is
+        // still under the stage name and there is no backup yet.
+        PHPVPN_CHECK_EQ(readFile(fixture.config()), std::string("new"));
+        const auto stages = stageNames(fixture.path);
+        PHPVPN_CHECK_EQ(stages.size(), std::size_t(1));
+        if (stages.size() != 1) continue;
+        PHPVPN_CHECK(identityOfPath(fixture.path / stages.front()) == original);
+        PHPVPN_CHECK_EQ(readFile(fixture.path / stages.front()), std::string("old"));
+        PHPVPN_CHECK(!std::filesystem::exists(fixture.path / "config.previous"));
+        PHPVPN_CHECK(!readFile(fixture.path / "config.publish-journal").ends_with("CONFIRMED\n"));
+
+        // A crash inside the recovery cleanup leaves the state untouched.
+        {
+            Injector injector{Stage::beforeRecoveryCleanup, Action::crash, true};
+            auto made = createLinuxConfigFiles(fixture.config(), policy(injector.hook()));
+            PHPVPN_REQUIRE_OK(made);
+            PHPVPN_CHECK(!made.value()->recover().ok());
+            PHPVPN_CHECK(identityOfPath(fixture.path / stages.front()) == original);
+        }
+        // Recovery does not depend on the configured strategy: the journaled
+        // identities alone identify the state, and it never links.
+        StrategyScope recovering(Strategy::hardLink);
+        auto made = createLinuxConfigFiles(fixture.config(), policy());
+        PHPVPN_REQUIRE_OK(made);
+        auto recovered = made.value()->recover();
+        PHPVPN_REQUIRE_OK(recovered);
+        PHPVPN_CHECK(recovered->state == ConfigRecoveryState::confirmed);
+        PHPVPN_CHECK_EQ(recovered->commitId, std::string(kCommitB));
+        PHPVPN_CHECK((names(fixture.path) == std::vector<std::string>{"config.json"}));
+        PHPVPN_CHECK_EQ(readFile(fixture.config()), std::string("new"));
+        auto again = made.value()->recover();
+        PHPVPN_REQUIRE_OK(again);
+        PHPVPN_CHECK(again->state == ConfigRecoveryState::clean);
+    }
+}
+
+PHPVPN_TEST(config_files_exchange, failures_after_the_swap_resolve_by_recovery) {
+    for (const auto failure : {Stage::afterPublish, Stage::afterDirectorySync, Stage::backupMoved,
+                               Stage::beforeConfirm}) {
+        TempDirectory fixture;
+        StrategyScope scope(Strategy::exchange);
+        Injector injector{failure, Action::fail};
+        auto made = createLinuxConfigFiles(fixture.config(), policy(injector.hook()));
+        PHPVPN_REQUIRE_OK(made);
+        PHPVPN_REQUIRE_OK(made.value()->publish("old", ConfigPublishMode::replace, kCommitA));
+        PHPVPN_REQUIRE_OK(made.value()->recover());
+        injector.armed = true;
+        auto result = made.value()->publish("new", ConfigPublishMode::replace, kCommitB);
+        PHPVPN_REQUIRE_OK(result);
+        PHPVPN_CHECK(injector.fired);
+        PHPVPN_CHECK(result->state == ConfigPublishState::unknown);
+        PHPVPN_CHECK_EQ(readFile(fixture.config()), std::string("new"));
+        auto recovered = made.value()->recover();
+        PHPVPN_REQUIRE_OK(recovered);
+        PHPVPN_CHECK(recovered->state == ConfigRecoveryState::confirmed);
+        PHPVPN_CHECK_EQ(recovered->commitId, std::string(kCommitB));
+        PHPVPN_CHECK((names(fixture.path) == std::vector<std::string>{"config.json"}));
+    }
+}
+
+PHPVPN_TEST(config_files_exchange, a_target_replaced_during_the_save_is_never_overwritten) {
+    TempDirectory fixture;
+    StrategyScope scope(Strategy::exchange);
+    bool replace = false;
+    auto made = createLinuxConfigFiles(fixture.config(), policy([&](Stage stage) {
+        if (replace && stage == Stage::beforePublish) {
+            replace = false;
+            // Moved away, not deleted: a freed inode number could be reused
+            // by the new file and would look like the original.
+            PHPVPN_CHECK(::rename(fixture.config().c_str(), (fixture.path / "moved").c_str()) == 0);
+            writeFile(fixture.config(), "external");
+        }
+        return Action::proceed;
+    }));
+    PHPVPN_REQUIRE_OK(made);
+    PHPVPN_REQUIRE_OK(made.value()->publish("old", ConfigPublishMode::replace, kCommitA));
+    PHPVPN_REQUIRE_OK(made.value()->recover());
+    replace = true;
+    PHPVPN_REQUIRE_ERROR(made.value()->publish("new", ConfigPublishMode::replace, kCommitB),
+                         ErrorCode::config_write_failed);
+    PHPVPN_CHECK_EQ(readFile(fixture.config()), std::string("external"));
+    PHPVPN_CHECK_EQ(readFile(fixture.path / "moved"), std::string("old"));
+    PHPVPN_CHECK((names(fixture.path) == std::vector<std::string>{"config.json", "moved"}));
+    // The next save is the last writer, as with the hard link strategy.
+    auto next = made.value()->publish("last writer", ConfigPublishMode::replace, kCommitC);
+    PHPVPN_REQUIRE_OK(next);
+    PHPVPN_CHECK(next->state == ConfigPublishState::confirmed);
+    PHPVPN_CHECK_EQ(readFile(fixture.path / "config.previous"), std::string("external"));
+}
+#endif
 
 PHPVPN_TEST(durable_file_linux, replaces_atomically_with_private_mode_and_no_leftovers) {
     TempDirectory fixture;

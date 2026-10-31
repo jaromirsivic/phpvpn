@@ -3,8 +3,10 @@
 // application sandbox SELinux (untrusted_app on app_data_file) decides what
 // passes, not the file mode, and the configuration code only reports an error
 // code. This probe prints the exact call and errno of a refusal, so a failed
-// configuration test can be traced to the policy. Also creates the fixtures the
+// configuration test can be traced to the policy. Also tries the fixtures the
 // configuration tests need: a symbolic link, a FIFO and a second hard link.
+// linkat and link are reported only: Android publishes with the exchange
+// backup strategy, and SELinux refuses applications every hard link.
 #include "harness.h"
 
 #include <errno.h>
@@ -83,9 +85,11 @@ PHPVPN_TEST(android_posix, config_file_system_calls_are_permitted) {
     ::close(file);
     PHPVPN_CHECK(probe("fsync(directory)", ::fsync(directory)));
 
-    // The publication keeps the previous version as a second hard link.
-    const bool linked = probe("linkat(stage, backup)", ::linkat(directory, "stage", directory, "backup", 0));
-    PHPVPN_CHECK(linked);
+    // Only the hardLink backup strategy links; Android uses exchange because
+    // SELinux refuses applications the link permission (EACCES). Reported, not
+    // required.
+    const bool linked = probe("linkat(stage, backup) [hardLink strategy only]",
+                              ::linkat(directory, "stage", directory, "backup", 0));
     if (linked) {
         PHPVPN_CHECK(probe("fstatat(AT_SYMLINK_NOFOLLOW)", ::fstatat(directory, "backup", &info, AT_SYMLINK_NOFOLLOW)));
         PHPVPN_CHECK_EQ(info.st_nlink, static_cast<nlink_t>(2));
@@ -100,8 +104,7 @@ PHPVPN_TEST(android_posix, config_file_system_calls_are_permitted) {
     std::cout << "    [ PROBE ] renameat2(RENAME_NOREPLACE) onto an existing name: errno " << errno << "\n";
     PHPVPN_CHECK(refused != 0 && errno == EEXIST);
 
-    // An atomic swap of two names keeps both inodes, the candidate for a
-    // backup without a hard link (see the WP02 report).
+    // The exchange backup strategy: an atomic swap of two names keeps both inodes.
     struct stat published {};
     PHPVPN_CHECK(probe("fstatat(config.json)", ::fstatat(directory, "config.json", &published, AT_SYMLINK_NOFOLLOW)));
     PHPVPN_CHECK(probe("renameat2(RENAME_EXCHANGE)",
@@ -118,8 +121,8 @@ PHPVPN_TEST(android_posix, config_file_system_calls_are_permitted) {
     PHPVPN_CHECK(probe("mkfifoat", ::mkfifoat(directory, "fifo", 0600)));
     const int fixture = ::openat(directory, "fixture", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fixture >= 0) ::close(fixture);
-    PHPVPN_CHECK(probe("link (test fixture)",
-                       ::link((probeDirectory.path / "fixture").c_str(), (probeDirectory.path / "hard").c_str())));
+    probe("link (planted hard link fixture, reported only)",
+          ::link((probeDirectory.path / "fixture").c_str(), (probeDirectory.path / "hard").c_str()));
     ::close(directory);
 }
 

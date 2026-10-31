@@ -1,0 +1,608 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    České texty Android klienta, ručně přepsané z lokální schválené předlohy
+    assets/android-cz (generate.cjs; adresář je v .gitignore, tento soubor je
+    jediný verzovaný zdroj češtiny). Klíče jsou shodné s values/strings.xml
+    (StringResourcesTest). Texty, které návrh nemá (36a, varianta 36 missing,
+    Skrýt, zástupné obrazovky), jsou přeložené v rámci WP07.
+-->
+<resources>
+
+    <!-- Společné: horní lišta, spodní navigace, přístupnost -->
+    <string name="common_back">Zpět</string>
+    <string name="common_platform_eyebrow">ANDROID</string>
+    <string name="common_brand_logo">Logo PHPVPN</string>
+    <string name="nav_main">Hlavní navigace</string>
+    <string name="nav_connection">Připojení</string>
+    <string name="nav_traffic">Provoz</string>
+    <string name="nav_server">Server</string>
+    <string name="nav_settings">Nastavení</string>
+    <string name="common_show">Zobrazit</string>
+    <string name="common_hide">Skrýt</string>
+    <string name="common_secret_hidden">Skrytá hodnota</string>
+    <string name="common_yes">Ano</string>
+    <string name="common_no">Ne</string>
+    <string name="common_opens_detail">Otevře detail</string>
+
+    <!-- Společné: zástupné obrazovky WP07, nahradí je obrazovky WP08 až WP10 -->
+    <string name="placeholder_notice_title">Zástupná obrazovka</string>
+    <string name="placeholder_notice_text">Obsah této obrazovky dodá pracovní balík WP%1$02d. Navigace, argumenty a Zpět se už chovají jako ve výsledné aplikaci.</string>
+    <string name="placeholder_argument">Argument cesty: %1$s</string>
+
+    <!-- Společné: štítky a stavy (štítek má vždy text, barva nikdy není jediným signálem) -->
+    <string name="tag_connected">PŘIPOJENO</string>
+    <string name="tag_disconnected">ODPOJENO</string>
+    <string name="tag_connecting">PŘIPOJOVÁNÍ</string>
+    <string name="tag_reconnecting">OBNOVOVÁNÍ</string>
+    <string name="tag_disconnecting">ODPOJOVÁNÍ</string>
+    <string name="tag_status_unknown">NEZNÁMÝ STAV</string>
+    <string name="tag_system_permission">SYSTÉMOVÝ SOUHLAS</string>
+    <string name="tag_saved">ULOŽENO</string>
+    <string name="tag_connected_short">Připojeno</string>
+    <string name="tag_enabled">Zapnuto</string>
+    <string name="tag_disabled">Vypnuto</string>
+    <string name="tag_online">Online</string>
+    <string name="tag_offline">Offline</string>
+    <string name="tag_last_status_online">Poslední stav: online</string>
+
+    <!-- Společné: čtyři kontroly připojení (04, 06, 48) -->
+    <string name="check_server_url">URL serveru</string>
+    <string name="check_server_secret">Tajemství serveru</string>
+    <string name="check_access_key">Přístupový klíč</string>
+    <string name="check_contracts">Komunikační kontrakty</string>
+    <string name="check_state_done">Ověřeno</string>
+    <string name="check_state_pending">Ověřuji…</string>
+    <string name="check_state_off">Čeká na ověření</string>
+    <string name="check_state_fail">Ověření selhalo</string>
+
+    <!-- Společné: karta serveru (01, 02, 05, 07, 17, 48) -->
+    <string name="server_card_label">Server</string>
+    <string name="row_virtual_ip">Virtuální IP</string>
+    <string name="row_vpn_network">Síť VPN</string>
+
+    <!-- Společné: metriky provozu (01, 26, 27) -->
+    <string name="metric_received">↓ Přijato přes VPN</string>
+    <string name="metric_sent">↑ Odesláno přes VPN</string>
+    <plurals name="metric_ipv4_packets">
+        <item quantity="one">%1$s IPv4 paket</item>
+        <item quantity="few">%1$s IPv4 pakety</item>
+        <item quantity="many">%1$s IPv4 paketu</item>
+        <item quantity="other">%1$s IPv4 paketů</item>
+    </plurals>
+    <string name="duration_min_sec">%1$d min %2$d s</string>
+    <string name="duration_min">%1$d min</string>
+
+    <!-- Společné: kroky průvodce (12, 14, 15, 16, 18) -->
+    <string name="wizard_step_caption">KONFIGURACE TELEFONU</string>
+    <string name="wizard_step_of">Krok %1$d ze %2$d</string>
+    <string name="wizard_eyebrow">PRŮVODCE KONFIGURACÍ</string>
+    <string name="wizard_verify_continue">Ověřit a pokračovat</string>
+    <string name="wizard_cancel_setup">Zrušit průvodce</string>
+
+    <!-- Společné: akce na více obrazovkách -->
+    <string name="action_connect_vpn">Připojit VPN</string>
+    <string name="action_disconnect_vpn">Odpojit VPN</string>
+    <string name="action_discard_changes">Zahodit změny</string>
+    <string name="action_keep_editing">Pokračovat v úpravě</string>
+    <string name="action_refresh_now">Obnovit nyní</string>
+    <string name="action_inspect_configuration">Prohlédnout konfiguraci</string>
+    <string name="entry_http_error_details">Detail HTTP chyby</string>
+    <string name="entry_communication_contracts">Komunikační kontrakty</string>
+    <string name="entry_configuration_editor">Editor konfigurace</string>
+
+    <!-- 00 První spuštění (00-welcome) -->
+    <string name="welcome_title">První spuštění</string>
+    <string name="welcome_eyebrow">PHPVPN PRO ANDROID</string>
+    <string name="welcome_heading">Tvoje síť.\nI v telefonu.</string>
+    <string name="welcome_intro">Nastav přístup ke svému PHPVPN serveru.</string>
+    <string name="welcome_steps_title">Začneš čtyřmi kroky</string>
+    <string name="welcome_step_1">01 · Adresa serveru</string>
+    <string name="welcome_step_1_value">URL</string>
+    <string name="welcome_step_2">02 · Tajemství serveru</string>
+    <string name="welcome_step_2_value">Ověření</string>
+    <string name="welcome_step_3">03 · Virtuální IP a klíč</string>
+    <string name="welcome_step_3_value">Identita</string>
+    <string name="welcome_step_4">04 · Kontrakty</string>
+    <string name="welcome_step_4_value">Komunikace</string>
+    <string name="welcome_admin_hint">Adresu serveru a přístupové údaje získáš od správce své sítě.</string>
+    <string name="welcome_set_up">Nastavit připojení</string>
+    <string name="welcome_open_editor">Otevřít editor konfigurace</string>
+
+    <!-- 01 Připojení: připojeno (01-connected) -->
+    <string name="connection_title">Připojení</string>
+    <string name="connected_heading">Jsi připojený</string>
+    <string name="connected_subtitle">Spojení je aktivní · %1$s</string>
+    <string name="connected_checks_entry">Kontroly připojení</string>
+    <string name="connected_checks_entry_detail">URL, tajemství, přístupový klíč a kontrakty</string>
+
+    <!-- 02 Odpojeno (02-disconnected) -->
+    <string name="disconnected_title">Odpojeno</string>
+    <string name="disconnected_heading">Připraveno připojit</string>
+    <string name="disconnected_subtitle">Připoj tento telefon ke své virtuální síti.</string>
+    <string name="disconnected_notice_title">Konfigurace je připravená</string>
+    <string name="disconnected_notice_text">Při připojení se znovu ověří server a přístupové údaje.</string>
+    <string name="disconnected_edit_configuration">Upravit konfiguraci</string>
+    <string name="disconnected_edit_configuration_detail">Průvodce a pokročilá nastavení</string>
+
+    <!-- 03 Souhlas s VPN (03-vpn-permission; samotný dialog patří Androidu) -->
+    <string name="permission_title">Souhlas s VPN</string>
+    <string name="permission_waiting">Čekáme na potvrzení Androidu.</string>
+
+    <!-- 04 Připojování (04-connecting) -->
+    <string name="connecting_title">Připojování</string>
+    <string name="connecting_heading">Navazuji spojení</string>
+    <string name="connecting_subtitle">Ověřuji přístup k serveru.</string>
+    <string name="connecting_notice_title">Můžeš pokračovat mimo aplikaci</string>
+    <string name="connecting_notice_text">Průběh připojení uvidíš také v oznámení.</string>
+    <string name="connecting_cancel">Zrušit připojování</string>
+
+    <!-- 05 Obnovování spojení (05-reconnecting) -->
+    <string name="reconnecting_title">Obnovování spojení</string>
+    <string name="reconnecting_heading">Obnovuji spojení</string>
+    <string name="reconnecting_subtitle">Spojení se serverem bylo přerušeno.</string>
+    <string name="reconnecting_notice_title">Čekáme na obnovení</string>
+    <string name="reconnecting_notice_text">Klient se pokouší obnovit spojení. Připojení zatím není potvrzené.</string>
+    <string name="reconnecting_last_error">Zobrazit poslední chybu</string>
+
+    <!-- 06 Chyba připojení (06-connection-error) -->
+    <string name="connection_error_title">Chyba připojení</string>
+    <string name="connection_error_eyebrow">PŘIPOJENÍ SE NEZDAŘILO</string>
+    <string name="connection_error_heading">Server neodpovídá</string>
+    <string name="connection_error_intro">Zkontroluj připojení k internetu a adresu serveru.</string>
+    <string name="connection_error_notice_title">Časový limit požadavku</string>
+    <string name="connection_error_notice_text">Připojení nebylo potvrzené. Chyba komunikace sama o sobě neznamená nesprávné heslo.</string>
+    <string name="connection_error_http_detail">Požadavek a dostupná odpověď</string>
+    <string name="connection_error_check_url">Zkontrolovat URL serveru</string>
+    <string name="connection_error_try_again">Zkusit znovu</string>
+
+    <!-- 07 Odpojování (07-disconnecting) -->
+    <string name="disconnecting_title">Odpojování</string>
+    <string name="disconnecting_heading">Odpojuji VPN</string>
+    <string name="disconnecting_subtitle">Čekáme na potvrzení ukončení spojení.</string>
+    <string name="disconnecting_notice_title">Ještě není odpojeno</string>
+    <string name="disconnecting_notice_text">Dokud nepřijde potvrzení, zobrazujeme probíhající odpojení.</string>
+    <string name="disconnecting_progress">Probíhá odpojování…</string>
+
+    <!-- 08 Stav není dostupný (08-unavailable) -->
+    <string name="unavailable_title">Stav není dostupný</string>
+    <string name="unavailable_heading">Stav nelze ověřit</string>
+    <string name="unavailable_subtitle">Aplikace neobdržela aktuální stav VPN.</string>
+    <string name="unavailable_notice_title">Připojení ani odpojení není potvrzené</string>
+    <string name="unavailable_last_known_connected">Poslední známý stav: připojeno v %1$s.</string>
+    <string name="unavailable_last_statistics">Poslední statistiky</string>
+    <string name="unavailable_last_statistics_detail">Zobrazené hodnoty nemusí být aktuální</string>
+    <string name="unavailable_check_again">Znovu zjistit stav</string>
+
+    <!-- 09 Oznámení na pozadí (09-notification; použije oznámení služby, WP05) -->
+    <string name="notification_title">Oznámení na pozadí</string>
+    <string name="notification_eyebrow">ANDROID · OZNÁMENÍ</string>
+    <string name="notification_heading">VPN na dosah</string>
+    <string name="notification_intro">Po zavření obrazovky může spojení zůstat aktivní.</string>
+    <string name="notification_active">Aktivní</string>
+    <string name="notification_connected">Připojeno k virtuální síti</string>
+    <string name="notification_detail">%1$s · %2$s</string>
+    <string name="notification_open">Otevřít</string>
+    <string name="notification_disconnect">Odpojit</string>
+    <string name="notification_behaviour">Klepnutí na oznámení otevře aktuální stav spojení. Oznámení se po ukončení služby odstraní.</string>
+
+    <!-- 10 Nastavení (10-settings) -->
+    <string name="settings_title">Nastavení</string>
+    <string name="settings_eyebrow">JEDNA SÍŤ, JEDNA KONFIGURACE</string>
+    <string name="settings_wizard">Průvodce konfigurací</string>
+    <string name="settings_wizard_detail">Server, identita a kontrakty</string>
+    <string name="settings_contracts_detail">Klíče pro jednotlivé virtuální IP</string>
+    <string name="settings_editor_detail">Úplná konfigurace v JSON</string>
+    <string name="settings_about">O aplikaci</string>
+    <string name="settings_about_detail">PHPVPN a informace o návrhu</string>
+    <string name="settings_notice_title">Změny a aktivní připojení</string>
+    <string name="settings_notice_text">Změny se projeví při dalším připojení. Po uložení nabídneme opětovné připojení.</string>
+    <string name="settings_exit">Ukončení a běh na pozadí</string>
+    <string name="settings_exit_detail">Co se stane při zavření aplikace</string>
+
+    <!-- 11 Před konfigurací (11-disconnect-gate) -->
+    <string name="gate_title">Před konfigurací</string>
+    <string name="gate_heading">Nejprve odpojit</string>
+    <string name="gate_intro">Pro bezpečné ověření nové konfigurace musí být VPN odpojená.</string>
+    <string name="gate_current_status">Aktuální stav</string>
+    <string name="gate_notice_title">Spojení bude přerušeno</string>
+    <string name="gate_notice_text">Otevřená spojení do virtuální sítě mohou přestat fungovat.</string>
+    <string name="gate_disconnect_continue">Odpojit a pokračovat</string>
+    <string name="gate_keep_connected">Ponechat připojení</string>
+
+    <!-- 12 Adresa serveru (12-wizard-url) -->
+    <string name="wizard_url_title">Adresa serveru</string>
+    <string name="wizard_url_heading">Kde je tvůj server?</string>
+    <string name="wizard_url_intro">Zadej úplnou adresu skriptu PHPVPN.</string>
+    <string name="wizard_url_field">URL serveru</string>
+    <string name="wizard_url_hint">HTTP i HTTPS jsou podporované. URL nesmí obsahovat uživatele, dotaz ani fragment.</string>
+    <string name="wizard_url_headers">HTTP hlavičky</string>
+    <string name="wizard_url_headers_detail">Vlastní hlavičky požadavků</string>
+    <string name="wizard_url_notice_title">Nejdříve ověříme dostupnost</string>
+    <string name="wizard_url_notice_text">Změny se uloží až v posledním kroku průvodce.</string>
+    <string name="wizard_url_defaults">Začít s výchozími hodnotami</string>
+
+    <!-- 13 HTTP hlavičky (13-http-headers) -->
+    <string name="headers_title">HTTP hlavičky</string>
+    <string name="headers_eyebrow">POKROČILÉ · KROK 1</string>
+    <string name="headers_heading">Hlavičky požadavků</string>
+    <string name="headers_intro">Jedna hlavička na každý řádek.</string>
+    <string name="headers_field">HTTP hlavičky</string>
+    <string name="headers_hint">Úprava patří k rozepsané konfiguraci průvodce.</string>
+    <string name="headers_notice_text">Hlavičky mohou obsahovat citlivé údaje. Upravuj je podle pokynů správce.</string>
+    <string name="headers_reset">Obnovit výchozí hlavičky</string>
+    <string name="headers_use">Použít v průvodci</string>
+    <string name="headers_cancel">Zrušit úpravu</string>
+
+    <!-- 14 Tajemství serveru (14-wizard-secret) -->
+    <string name="wizard_secret_title">Tajemství serveru</string>
+    <string name="wizard_secret_heading">Ověř server</string>
+    <string name="wizard_secret_intro">Použij stejné tajemství, jaké má nastavený server.</string>
+    <string name="wizard_secret_url_verified">URL serveru je ověřená</string>
+    <string name="wizard_secret_field">Tajemství serveru</string>
+    <string name="wizard_secret_use_default">Použít výchozí tajemství</string>
+    <string name="wizard_secret_notice_title">Výchozí hodnota není soukromá</string>
+    <string name="wizard_secret_notice_text">Pro vlastní síť použij tajemství od správce. Výchozí hodnota je předvídatelná.</string>
+
+    <!-- 15 IP a přístupový klíč (15-wizard-identity) -->
+    <string name="wizard_identity_title">IP a přístupový klíč</string>
+    <string name="wizard_identity_heading">Tvoje identita v síti</string>
+    <string name="wizard_identity_network">Virtuální síť: %1$s</string>
+    <string name="wizard_identity_ip_field">Virtuální IP</string>
+    <string name="wizard_identity_suggest_ip">Automaticky navrhnout IP</string>
+    <string name="wizard_identity_key_field">Přístupový klíč</string>
+    <string name="wizard_identity_key_hint">Klíč od správce sítě.</string>
+    <string name="wizard_identity_default_key">Použít výchozí klíč</string>
+    <string name="wizard_identity_notice_title">Pokud není volná adresa</string>
+    <string name="wizard_identity_notice_text">Vypni automatický návrh a zadej adresu přidělenou správcem.</string>
+
+    <!-- 16 Dokončení konfigurace (16-wizard-contracts) -->
+    <string name="wizard_finish_title">Dokončení konfigurace</string>
+    <string name="wizard_finish_heading">S kým komunikovat?</string>
+    <string name="wizard_finish_intro">Kontrakty určují klíče pro komunikaci mezi virtuálními IP adresami.</string>
+    <string name="wizard_finish_add_defaults">Doplnit výchozí kontrakty</string>
+    <string name="wizard_finish_existing">Existující kontrakty</string>
+    <string name="wizard_finish_missing">Chybějící výchozí kontrakty</string>
+    <string name="wizard_finish_to_add">Přidá se při dokončení</string>
+    <string name="wizard_finish_notice_title">Výchozí klíče jsou předvídatelné</string>
+    <string name="wizard_finish_notice_text">Před soukromou komunikací nastav na obou stranách vlastní shodný klíč.</string>
+    <string name="wizard_finish_server">Server</string>
+    <string name="wizard_finish_this_phone">Tento telefon</string>
+    <string name="wizard_finish_save">Dokončit a uložit</string>
+
+    <!-- 17 Konfigurace uložena (17-wizard-saved) -->
+    <string name="wizard_saved_title">Konfigurace uložena</string>
+    <string name="wizard_saved_heading">Připraveno</string>
+    <string name="wizard_saved_subtitle">Konfigurace telefonu byla úspěšně uložena.</string>
+    <string name="wizard_saved_review">Zkontrolovat kontrakty</string>
+    <string name="wizard_saved_review_detail">Nastav vlastní klíče pro komunikaci</string>
+    <string name="wizard_saved_later">Připojit později</string>
+
+    <!-- 18 Chyba ověření (18-wizard-error) -->
+    <string name="wizard_error_title">Chyba ověření</string>
+    <string name="wizard_error_heading">Tajemství nesouhlasí</string>
+    <string name="wizard_error_intro">Server odpověděl, ale tajemství se nepodařilo ověřit.</string>
+    <string name="wizard_error_notice_title">Ověření selhalo</string>
+    <string name="wizard_error_notice_text">Zkontroluj hodnotu u správce serveru a zkus to znovu.</string>
+    <string name="wizard_error_http_detail">Pokud je k dispozici</string>
+    <string name="wizard_error_correct">Opravit tajemství</string>
+
+    <!-- 19 Komunikační kontrakty (19-contracts) -->
+    <string name="contracts_title">Komunikační kontrakty</string>
+    <string name="contracts_eyebrow">TENTO TELEFON · %1$s</string>
+    <string name="contracts_heading">Komunikační\nkontrakty</string>
+    <string name="contracts_intro">Povol komunikaci a nastav stejný klíč na obou koncích.</string>
+    <plurals name="contracts_unsaved_changes">
+        <item quantity="one">%1$d neuložená změna</item>
+        <item quantity="few">%1$d neuložené změny</item>
+        <item quantity="many">%1$d neuložené změny</item>
+        <item quantity="other">%1$d neuložených změn</item>
+    </plurals>
+    <string name="contracts_unsaved_text">Projeví se při dalším připojení.</string>
+    <string name="contracts_peer_unsaved">Neuložená změna</string>
+    <string name="contracts_peer_key_configured">Klíč nastaven</string>
+    <string name="contracts_peer_disabled">Komunikace nepovolena</string>
+    <plurals name="contracts_page_range">
+        <item quantity="one">%1$d–%2$d z %3$d adresy</item>
+        <item quantity="few">%1$d–%2$d z %3$d adres</item>
+        <item quantity="many">%1$d–%2$d z %3$d adresy</item>
+        <item quantity="other">%1$d–%2$d z %3$d adres</item>
+    </plurals>
+    <string name="contracts_page_previous">Předchozí stránka kontraktů</string>
+    <string name="contracts_page_next">Další stránka kontraktů</string>
+    <plurals name="contracts_save_changes">
+        <item quantity="one">Uložit %1$d změnu</item>
+        <item quantity="few">Uložit %1$d změny</item>
+        <item quantity="many">Uložit %1$d změny</item>
+        <item quantity="other">Uložit %1$d změn</item>
+    </plurals>
+
+    <!-- 20 Detail kontraktu (20-contract-detail) -->
+    <string name="contract_detail_title">Detail kontraktu</string>
+    <string name="contract_detail_eyebrow">%1$s ↔ %2$s</string>
+    <string name="contract_detail_heading">Komunikace s\n%1$s</string>
+    <string name="contract_detail_enable">Povolit komunikaci</string>
+    <string name="contract_detail_key_field">Komunikační klíč</string>
+    <string name="contract_detail_key_hint">Přesně 64 malých hexadecimálních znaků (0–9, a–f).</string>
+    <string name="contract_detail_from_password">Vytvořit klíč z hesla</string>
+    <string name="contract_detail_notice_title">Obě strany potřebují stejný klíč</string>
+    <string name="contract_detail_notice_text">Změnu je nutné provést také v kontraktu druhého zařízení.</string>
+    <string name="contract_detail_draft_hint">Změna se přidá do rozpracovaných kontraktů. Uložíš je společně v seznamu.</string>
+    <string name="contract_detail_apply">Použít v návrhu změn</string>
+
+    <!-- 21 Klíč z hesla (21-password-key) -->
+    <string name="password_key_title">Klíč z hesla</string>
+    <string name="password_key_eyebrow">KONTRAKT · %1$s</string>
+    <string name="password_key_intro">SHA-256 převádí heslo na komunikační klíč.</string>
+    <string name="password_key_field">Heslo</string>
+    <string name="password_key_default">Výchozí</string>
+    <string name="password_key_random">Náhodné</string>
+    <string name="password_key_preview">Náhled SHA-256 klíče</string>
+    <string name="password_key_notice_title">Klíč se přepočítává při psaní</string>
+    <string name="password_key_use">Použít klíč</string>
+
+    <!-- 22 Neplatný klíč (22-contract-invalid) -->
+    <string name="contract_invalid_title">Neplatný klíč</string>
+    <string name="contract_invalid_heading">Oprav komunikační klíč</string>
+    <string name="contract_invalid_notice_title">Změny zatím nelze uložit</string>
+    <string name="contract_invalid_notice_text">První neplatný kontrakt: %1$s.</string>
+    <string name="contract_invalid_error">Klíč musí mít přesně 64 malých hexadecimálních znaků. Teď obsahuje %1$d.</string>
+    <string name="contract_invalid_back">Vrátit se k úpravě</string>
+
+    <!-- 23 Editor konfigurace (23-editor) -->
+    <string name="editor_title">Editor konfigurace</string>
+    <string name="editor_eyebrow">POKROČILÉ NASTAVENÍ</string>
+    <string name="editor_heading">Konfigurace JSON</string>
+    <string name="editor_intro">Úplná konfigurace klienta.</string>
+    <string name="editor_field">Aktivní dokument</string>
+    <string name="editor_field_dirty">Aktivní dokument · rozepsané změny</string>
+    <string name="editor_notice_title">Změny se projeví po připojení</string>
+    <string name="editor_notice_text">Patří sem i TLS, automatické připojení, síť VPN a všechny provozní limity.</string>
+    <string name="editor_reset">Obnovit výchozí konfiguraci</string>
+    <string name="editor_save">Uložit konfiguraci</string>
+
+    <!-- 24 Reset konfigurace (24-reset) -->
+    <string name="reset_title">Reset konfigurace</string>
+    <string name="reset_eyebrow">OBNOVENÍ KONFIGURACE</string>
+    <string name="reset_heading">Nahradit rozepsaný obsah?</string>
+    <string name="reset_text">Editor se naplní výchozí konfigurací. Současný rozepsaný obsah zahodíš.</string>
+    <string name="reset_text_save">Soubor se změní až po stisknutí Uložit.</string>
+    <string name="reset_confirm">Obnovit v editoru</string>
+    <string name="reset_keep">Ponechat rozepsaný obsah</string>
+
+    <!-- 25 Změny uloženy (25-reconnect-save) -->
+    <string name="saved_title">Změny uloženy</string>
+    <string name="saved_heading">Změny jsou uložené</string>
+    <string name="saved_subtitle">Aktivní VPN ještě používá předchozí konfiguraci.</string>
+    <string name="saved_notice_title">Použít novou konfiguraci?</string>
+    <string name="saved_notice_text">Opětovné připojení krátce přeruší probíhající spojení.</string>
+    <string name="saved_status">Uložení</string>
+    <string name="saved_status_confirmed">Potvrzeno</string>
+    <string name="saved_active_connection">Aktivní spojení</string>
+    <string name="saved_previous_configuration">Původní konfigurace</string>
+    <string name="saved_reconnect">Znovu připojit</string>
+    <string name="saved_next_connection">Použít při příštím připojení</string>
+
+    <!-- 26 Statistiky provozu (26-statistics) -->
+    <string name="traffic_title">Statistiky provozu</string>
+    <string name="traffic_eyebrow">AKTUÁLNÍ SPOJENÍ</string>
+    <string name="traffic_heading">Provoz VPN</string>
+    <string name="traffic_intro">Připojeno %1$s · aktuální hodnoty</string>
+    <string name="traffic_http_bodies">HTTP datová těla</string>
+    <string name="traffic_requests">Požadavky</string>
+    <string name="traffic_responses">Odpovědi</string>
+    <string name="traffic_total">Celkem</string>
+    <string name="traffic_polls">Dotazy na data</string>
+    <string name="traffic_empty_polls">Prázdné dotazy</string>
+    <string name="traffic_payload_polls">Dotazy s daty</string>
+    <string name="traffic_hint">Počítadla jsou pouze ke čtení. HTTP data a IPv4 provoz měří odlišné vrstvy.</string>
+
+    <!-- 27 Poslední statistiky (27-statistics-stale) -->
+    <string name="traffic_stale_title">Poslední statistiky</string>
+    <string name="traffic_stale_eyebrow">POSLEDNÍ ZNÁMÉ HODNOTY</string>
+    <string name="traffic_stale_notice_title">Stav VPN není dostupný</string>
+    <string name="traffic_stale_notice_text">Ukazujeme poslední přijaté hodnoty. Nejde o aktuální provoz.</string>
+    <string name="traffic_total_polls">Dotazy celkem</string>
+
+    <!-- 28 Kdo je online (28-server) -->
+    <string name="server_online_title">Kdo je online</string>
+    <string name="server_eyebrow">SERVER · %1$s</string>
+    <string name="server_heading">Zařízení v síti</string>
+    <string name="server_tab_online">Kdo je online</string>
+    <string name="server_tab_raw">Data serveru</string>
+    <plurals name="server_online_count">
+        <item quantity="one">%1$d online</item>
+        <item quantity="few">%1$d online</item>
+        <item quantity="many">%1$d online</item>
+        <item quantity="other">%1$d online</item>
+    </plurals>
+    <plurals name="server_valid_contracts">
+        <item quantity="one">%1$d platný kontrakt</item>
+        <item quantity="few">%1$d platné kontrakty</item>
+        <item quantity="many">%1$d platného kontraktu</item>
+        <item quantity="other">%1$d platných kontraktů</item>
+    </plurals>
+    <string name="server_summary">%1$s · %2$s</string>
+    <string name="server_contract_with">Kontrakt s %1$s</string>
+    <string name="server_contract_valid">✓ Platný komunikační kontrakt</string>
+    <string name="server_contract_invalid">! Neplatný komunikační kontrakt</string>
+    <string name="server_last_seen">Naposledy: %1$s</string>
+    <string name="server_auto_refresh">Automaticky obnovovat</string>
+    <string name="server_online_hint">Online znamená aktivitu během posledních 60 sekund vůči času odpovědi serveru.</string>
+
+    <!-- 29 Data serveru (29-server-raw) -->
+    <string name="server_raw_title">Data serveru</string>
+    <string name="server_raw_heading">Informace serveru</string>
+    <string name="server_raw_notice_title">Neupravená odpověď</string>
+    <string name="server_raw_notice_text">Pouze ke čtení.</string>
+
+    <!-- 30 HTTP odpověď (30-http-response) -->
+    <string name="http_response_title">HTTP odpověď</string>
+    <string name="http_eyebrow">DETAIL CHYBY · POUZE KE ČTENÍ</string>
+    <string name="http_heading">HTTP komunikace</string>
+    <string name="http_tab_request">Požadavek</string>
+    <string name="http_tab_response">Odpověď</string>
+    <string name="http_response_notice_title">Odpověď nemusí být úplná</string>
+    <string name="http_response_notice_text">Velikost se vztahuje jen k přijatému obsahu. Kompletní systémové hlavičky nemusí být k dispozici.</string>
+    <string name="http_response_hint">Dostupná diagnostika se váže ke konkrétnímu pokusu.</string>
+
+    <!-- 31 HTTP požadavek (31-http-request) -->
+    <string name="http_request_title">HTTP požadavek</string>
+    <string name="http_request_notice_title">Rekonstrukce aplikací</string>
+    <string name="http_request_notice_text">Zobrazují se dostupné aplikační hlavičky. Verze HTTP není známá.</string>
+
+    <!-- 32 Neuložené změny (32-discard, společný dialog) -->
+    <string name="discard_title">Neuložené změny</string>
+    <string name="discard_eyebrow">ROZEPSANÁ KONFIGURACE</string>
+    <string name="discard_heading">Zahodit změny?</string>
+    <string name="discard_text">Rozpracované změny zatím nebyly uložené. Odchodem je ztratíš.</string>
+
+    <!-- 33 Výsledek uložení není známý (33-save-unknown) -->
+    <string name="save_unknown_title">Výsledek uložení není známý</string>
+    <string name="save_unknown_eyebrow">ULOŽENÍ NEBYLO POTVRZENO</string>
+    <string name="save_unknown_heading">Nejdříve ověřit</string>
+    <string name="save_unknown_intro">Spojení se službou bylo přerušeno během ukládání.</string>
+    <string name="save_unknown_notice_title">Není jisté, zda byly změny uložené</string>
+    <string name="save_unknown_notice_text">Návrh je zachovaný. Neodesílej stejnou změnu znovu, dokud neověříš aktuální stav.</string>
+    <string name="save_unknown_draft">Rozpracované změny</string>
+    <string name="save_unknown_draft_value">Zachované</string>
+    <string name="save_unknown_editing">Úpravy</string>
+    <string name="save_unknown_editing_value">Dočasně pozastavené</string>
+    <string name="save_unknown_inspect">Prohlédnout aktuální konfiguraci</string>
+    <string name="save_unknown_verify">Ověřit uložení</string>
+
+    <!-- 34 O aplikaci (34-about) -->
+    <string name="about_title">O aplikaci</string>
+    <string name="about_tagline">Klient pro tvoji virtuální síť.</string>
+    <string name="about_platform">Platforma</string>
+    <string name="about_platform_value">Android</string>
+    <string name="about_version">Verze klienta</string>
+    <string name="about_protocol">Protokol</string>
+    <string name="about_font">Písmo Inter</string>
+    <string name="about_font_licence">SIL Open Font License 1.1</string>
+
+    <!-- 35 Zavření aplikace (35-exit) -->
+    <string name="exit_title">Zavření aplikace</string>
+    <string name="exit_eyebrow">BĚH NA POZADÍ</string>
+    <string name="exit_heading">Zavřít, nebo odpojit?</string>
+    <string name="exit_intro">Opuštění obrazovky aplikace nemusí ukončit VPN.</string>
+    <string name="exit_keep_title">Ponechat spojení</string>
+    <string name="exit_keep_text">Vrať se na plochu Androidu. PHPVPN zůstane dostupné přes oznámení.</string>
+    <string name="exit_preview_notification">Náhled oznámení</string>
+    <string name="exit_stop_title">Ukončit VPN</string>
+    <string name="exit_stop_text">Odpojí virtuální síť a po potvrzení ukončí aktivní službu.</string>
+
+    <!-- 36 Konfigurace vyžaduje opravu (36-config-unavailable) -->
+    <string name="attention_title">Konfigurace vyžaduje opravu</string>
+    <string name="attention_eyebrow">NAČTENÍ KONFIGURACE</string>
+    <string name="attention_heading">Konfiguraci nelze použít</string>
+    <string name="attention_notice_title">Dokument není platný</string>
+    <string name="attention_notice_text">Průvodce z této konfigurace nemůže pokračovat.</string>
+    <string name="attention_repair">Opravit v JSON editoru</string>
+    <string name="attention_repair_detail">Pro čitelný dokument v UTF-8</string>
+    <string name="attention_defaults">Začít s výchozí konfigurací</string>
+    <string name="attention_defaults_detail">Uloží se až po dokončení</string>
+    <string name="attention_intro">Pokud dokument chybí nebo jej nelze přečíst, zkontroluj podklady od správce. Stávající konfigurace se bez potvrzeného uložení nepřepisuje.</string>
+    <string name="attention_create_default">Vytvořit výchozí konfiguraci a upravit</string>
+
+    <!-- 36a Vytvořit výchozí konfiguraci (dialog nad 00, 10 a 36; text podle plan-android-v001 WP10) -->
+    <string name="create_default_title">Vytvořit výchozí konfiguraci</string>
+    <string name="create_default_text">Na tomto místě žádná konfigurace neexistuje: %1$s. Vytvořit teď výchozí konfiguraci a otevřít editor? Soubor se zapíše okamžitě. Můžeš také zvolit Ne a použít průvodce konfigurací.</string>
+
+    <!-- 37 VPN není povolena (37-permission-denied) -->
+    <string name="permission_denied_title">VPN není povolena</string>
+    <string name="permission_denied_heading">VPN není povolena</string>
+    <string name="permission_denied_subtitle">Systémový souhlas byl zamítnut.</string>
+    <string name="permission_denied_notice_title">Bez souhlasu nelze vytvořit VPN</string>
+    <string name="permission_denied_notice_text">Konfigurace je zachovaná. O připojení můžeš požádat znovu.</string>
+    <string name="permission_denied_retry">Znovu požádat o souhlas</string>
+    <string name="permission_denied_stay">Zůstat odpojený</string>
+
+    <!-- 38 Odpojení není potvrzené (38-disconnect-unknown) -->
+    <string name="disconnect_unknown_title">Odpojení není potvrzené</string>
+    <string name="disconnect_unknown_heading">Odpojení není potvrzené</string>
+    <string name="disconnect_unknown_subtitle">Stav služby se nepodařilo zjistit.</string>
+    <string name="disconnect_unknown_notice_title">VPN může být stále aktivní</string>
+    <string name="disconnect_unknown_notice_text">Zkus odpojení znovu nebo ověř aktuální stav.</string>
+    <string name="disconnect_unknown_retry">Znovu odpojit</string>
+    <string name="disconnect_unknown_check">Ověřit stav</string>
+
+    <!-- 39 Chyba v JSON (39-editor-invalid) -->
+    <string name="editor_invalid_title">Chyba v JSON</string>
+    <string name="editor_invalid_eyebrow">KONFIGURACE NEBYLA ULOŽENA</string>
+    <string name="editor_invalid_heading">Oprav dokument</string>
+    <string name="editor_invalid_notice_title">Neplatný JSON</string>
+    <string name="editor_invalid_changes_kept">Změny zůstávají v editoru.</string>
+    <string name="editor_invalid_field">Konfigurace · výřez</string>
+    <string name="editor_invalid_error">Zkontroluj syntaxi dokumentu před dalším uložením.</string>
+    <string name="editor_invalid_back">Vrátit se do editoru</string>
+
+    <!-- 40 Reset průvodce (40-wizard-reset) -->
+    <string name="wizard_reset_title">Reset průvodce</string>
+    <string name="wizard_reset_heading">Začít znovu?</string>
+    <string name="wizard_reset_text">Rozpracované kroky se zahodí a průvodce se vrátí k výchozím hodnotám.</string>
+    <string name="wizard_reset_text_saved">Uložená konfigurace se nezmění, dokud průvodce nedokončíš.</string>
+    <string name="wizard_reset_confirm">Začít znovu</string>
+
+    <!-- 41 Další kontrakty (41-contracts-page-2) -->
+    <string name="contracts_more_title">Další kontrakty</string>
+    <string name="contracts_more_kept">Změny z předchozí stránky jsou zachované.</string>
+
+    <!-- 42 Výchozí obsah editoru (42-editor-default) -->
+    <string name="editor_default_title">Výchozí obsah editoru</string>
+    <string name="editor_default_heading">Výchozí hodnoty</string>
+    <string name="editor_default_notice_title">Reset je připravený v editoru</string>
+    <string name="editor_default_notice_text">Zatím se nic neuložilo. Doplň údaje vlastní sítě.</string>
+    <string name="editor_default_field">Výřez výchozího dokumentu</string>
+    <string name="editor_default_wizard">Doplnit pomocí průvodce</string>
+    <string name="editor_default_continue">Pokračovat v editoru</string>
+
+    <!-- 43 Statistiky se načítají (43-statistics-empty) -->
+    <string name="traffic_empty_title">Statistiky se načítají</string>
+    <string name="traffic_empty_eyebrow">ČEKÁME NA PRVNÍ STAV</string>
+    <string name="traffic_empty_notice_title">Zatím nemáme žádné hodnoty</string>
+    <string name="traffic_empty_notice_text">Čítače se zobrazí po přijetí stavu služby.</string>
+    <string name="traffic_empty_bytes">Přijaté / odeslané bajty</string>
+    <string name="traffic_empty_packets">Přijaté / odeslané pakety</string>
+    <string name="traffic_empty_http">HTTP požadavky / odpovědi</string>
+    <string name="traffic_empty_http_total">HTTP těla celkem</string>
+    <string name="traffic_waiting_polls">Dotazy prázdné / s daty</string>
+
+    <!-- 44 Server bez záznamů (44-server-empty) -->
+    <string name="server_empty_title">Server bez záznamů</string>
+    <string name="server_empty_heading">Zatím žádné záznamy</string>
+    <string name="server_empty_text">Server nevrátil žádné klienty.</string>
+    <string name="server_empty_notice_title">Prázdná odpověď není chyba spojení</string>
+    <string name="server_empty_notice_text">Informace se mohou objevit při příští aktualizaci.</string>
+
+    <!-- 45 Server nelze obnovit (45-server-stale) -->
+    <string name="server_stale_title">Server nelze obnovit</string>
+    <string name="server_stale_eyebrow">POSLEDNÍ ODPOVĚĎ SERVERU</string>
+    <string name="server_stale_notice_title">Aktualizace selhala</string>
+    <string name="server_stale_notice_text">Poslední úspěšná aktualizace v %1$s. Stav zařízení může být neaktuální.</string>
+    <string name="server_stale_retry">Zkusit obnovit</string>
+
+    <!-- 46 Uložení ověřeno (46-save-checked) -->
+    <string name="save_checked_title">Uložení ověřeno</string>
+    <string name="save_checked_eyebrow">KOMUNIKAČNÍ KONTRAKTY</string>
+    <string name="save_checked_heading">Návrh není uložený</string>
+    <string name="save_checked_notice_title">Aktuální konfigurace byla ověřena</string>
+    <string name="save_checked_notice_text">Načtená konfigurace neobsahuje tento návrh. Můžeš ho znovu odeslat.</string>
+    <string name="save_checked_check">Kontrola konfigurace</string>
+    <string name="save_checked_check_value">Dokončena</string>
+    <string name="save_checked_intro">Pokud konfiguraci mezitím změnil jiný proces, nejprve porovnej její obsah s návrhem.</string>
+    <string name="save_checked_again">Uložit návrh znovu</string>
+
+    <!-- 47 Relace průvodce skončila (47-session-expired) -->
+    <string name="session_expired_title">Relace průvodce skončila</string>
+    <string name="session_expired_heading">Otevři novou relaci</string>
+    <string name="session_expired_notice_title">Platnost relace vypršela</string>
+    <string name="session_expired_notice_text">V této relaci už nelze pokračovat. Znovu načti aktuální konfiguraci a proveď potřebná ověření.</string>
+    <string name="session_expired_intro">Po restartu služby vždy zkontroluj aktuální konfiguraci, zejména pokud předchozí uložení nebylo potvrzené.</string>
+    <string name="session_expired_reopen">Otevřít průvodce znovu</string>
+
+    <!-- 48 Kontroly připojení (48-connection-checks) -->
+    <string name="checks_title">Kontroly připojení</string>
+    <string name="checks_heading">Vše je ověřené</string>
+    <string name="checks_intro">Výsledky posledního připojení.</string>
+
+</resources>
