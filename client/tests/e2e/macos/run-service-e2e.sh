@@ -38,6 +38,8 @@ port=${PHPVPN_E2E_PORT:-18094}
 relay_url="http://127.0.0.1:$port/phpvpn.php"
 php=${PHPVPN_PHP:-php}
 work=${PHPVPN_E2E_WORK:-$repository/work/e2e-macos/$(date +%Y%m%d-%H%M%S)-$$}
+# start_php_relay and stop_php_relay: the relays end with their workers.
+. "$client/tests/e2e/macos/php-relay.sh"
 virtual_ip=10.99.99.2
 peer_ip=10.99.99.3
 access_key=0202020202020202020202020202020202020202020202020202020202020202
@@ -100,14 +102,8 @@ cleanup() {
         kill -KILL "$service_pid" 2> /dev/null
         wait "$service_pid" 2> /dev/null
     fi
-    if [ -n "$relay_pid" ]; then
-        kill "$relay_pid" 2> /dev/null
-        wait "$relay_pid" 2> /dev/null
-    fi
-    if [ -n "$version_relay_pid" ]; then
-        kill "$version_relay_pid" 2> /dev/null
-        wait "$version_relay_pid" 2> /dev/null
-    fi
+    stop_php_relay "$relay_pid"
+    stop_php_relay "$version_relay_pid"
     case $base in
         /private/tmp/phpvpn-e2e.*)
             if [ -d "$base/logs" ]; then
@@ -141,17 +137,8 @@ sed "s|^const BUFFER_DIRECTORY = './phpvpn_data';|const BUFFER_DIRECTORY = '$wor
 grep -q "^const BUFFER_DIRECTORY = '$work/relay/buffer';" "$work/relay/www/phpvpn.php" || die "relay buffer not patched"
 grep -q "^const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';" "$work/relay/www/phpvpn.php" ||
     die "the shipped relay is not the wizard-default profile"
-PHP_CLI_SERVER_WORKERS=8 "$php" -S "127.0.0.1:$port" -t "$work/relay/www" > "$work/relay/relay.log" 2>&1 &
-relay_pid=$!
-attempt=0
-until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$relay_url" || true)" = 200 ]; do
-    attempt=$((attempt + 1))
-    if [ "$attempt" -ge 60 ] || ! kill -0 "$relay_pid" 2> /dev/null; then
-        cat "$work/relay/relay.log" || true
-        die "the php relay did not become available at $relay_url"
-    fi
-    sleep 0.5
-done
+start_php_relay "$port" "$work/relay/www" "$work/relay/relay.log" 8 || die "the php relay is not available at $relay_url"
+relay_pid=$php_relay_pid
 pass "php relay reachable at $relay_url"
 
 # --- service instance ----------------------------------------------------------
@@ -322,8 +309,10 @@ else
 fi
 
 # --- server MAJOR version --------------------------------------------------------
-# A second php relay of the next MAJOR version: the Wizard URL check, phpvpn info
-# and Connect must all refuse it. The shipped relay carries the client version.
+# A second php relay of the next MAJOR version on the next port: the Wizard URL
+# check, phpvpn info and Connect must all refuse it. The shipped relay carries
+# the client version. The relay is stopped with its workers afterwards and the
+# port is verified free: run-install-test.sh defaults to this very port.
 major=$(sed -n "s/^const SERVER_VERSION = '\([0-9]*\)\..*/\1/p" "$repository/server/php/phpvpn.php")
 [ -n "$major" ] || die "SERVER_VERSION not found in server/php/phpvpn.php"
 other="$((major + 1)).0.0"
@@ -334,18 +323,9 @@ sed -e "s|^const BUFFER_DIRECTORY = './phpvpn_data';|const BUFFER_DIRECTORY = '$
     -e "s|^const SERVER_VERSION = '[^']*';|const SERVER_VERSION = '$other';|" \
     "$repository/server/php/phpvpn.php" > "$work/relay-version/www/phpvpn.php"
 grep -q "^const SERVER_VERSION = '$other';" "$work/relay-version/www/phpvpn.php" || die "relay version not patched"
-PHP_CLI_SERVER_WORKERS=4 "$php" -S "127.0.0.1:$version_port" -t "$work/relay-version/www" \
-    > "$work/relay-version/relay.log" 2>&1 &
-version_relay_pid=$!
-attempt=0
-until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$version_url" || true)" = 200 ]; do
-    attempt=$((attempt + 1))
-    if [ "$attempt" -ge 60 ] || ! kill -0 "$version_relay_pid" 2> /dev/null; then
-        cat "$work/relay-version/relay.log" || true
-        die "the php relay of version $other did not become available at $version_url"
-    fi
-    sleep 0.5
-done
+start_php_relay "$version_port" "$work/relay-version/www" "$work/relay-version/relay.log" 4 ||
+    die "the php relay of version $other is not available at $version_url"
+version_relay_pid=$php_relay_pid
 if "$probe" --socket "$sock" --relay "$version_url" --config-path "$base/config/config.json" \
         --virtual-ip "$virtual_ip" --expect-url-error server_version_incompatible > "$work/wizard-version.log" 2>&1; then
     pass "Wizard URL check refuses server $other (see wizard-version.log)"
@@ -364,9 +344,10 @@ cli_on status > "$work/status-version.json" 2>&1 || true
 check "status reports server_version_incompatible" grep -q '"code": "server_version_incompatible"' "$work/status-version.json"
 check "the URL checkpoint fails for server $other" grep -q '"serverUrlCheck": "failed"' "$work/status-version.json"
 check "no interface carries $virtual_ip for server $other" no_vpn_address
-kill "$version_relay_pid" 2> /dev/null
-wait "$version_relay_pid" 2> /dev/null || true
+stop_php_relay "$version_relay_pid"
 version_relay_pid=
+check "nothing answers on 127.0.0.1:$version_port once the relay of version $other is stopped" \
+    sh -c '! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$1/"' sh "$version_port"
 check "phpvpn set-config back to the first relay" cli_do set-config "$work/config.json"
 
 # --- singleton -----------------------------------------------------------------

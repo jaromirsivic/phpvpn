@@ -28,6 +28,8 @@ client=$(cd "$(dirname "$0")/../.." && pwd)
 repository=$(cd "$client/.." && pwd)
 build=${PHPVPN_BUILD_DIR:-$repository/work/build/macos-contract}
 url="http://127.0.0.1:$port/phpvpn.php"
+# start_php_relay and stop_php_relay: the php relay ends with its workers.
+. "$client/tests/e2e/macos/php-relay.sh"
 
 case $relay in
     php|python) ;;
@@ -59,10 +61,7 @@ mkdir -p "$repository/work"
 fixture=$(mktemp -d "$repository/work/contract-relay.XXXXXX")
 server_pid=
 cleanup() {
-    if [ -n "$server_pid" ]; then
-        kill "$server_pid" 2>/dev/null || true
-        wait "$server_pid" 2>/dev/null || true
-    fi
+    stop_php_relay "$server_pid"
     rm -rf "$fixture"
 }
 trap cleanup EXIT
@@ -77,8 +76,11 @@ if [ "$relay" = php ]; then
         "$repository/server/php/phpvpn.php" > "$fixture/www/phpvpn.php"
     grep -q "^const BUFFER_DIRECTORY = '$fixture/buffer';" "$fixture/www/phpvpn.php"
     grep -q "^const SERVER_SECRET = 'CHANGE_THIS_SERVER_SECRET';" "$fixture/www/phpvpn.php"
-    PHP_CLI_SERVER_WORKERS=4 php -S "127.0.0.1:$port" -t "$fixture/www" > "$fixture/relay.log" 2>&1 &
-    server_pid=$!
+    start_php_relay "$port" "$fixture/www" "$fixture/relay.log" 4 || {
+        echo "run-server-contract.sh: the php relay did not become available at $url" >&2
+        exit 1
+    }
+    server_pid=$php_relay_pid
 else
     python=${PHPVPN_SERVER_PYTHON:-python3}
     sed -e "s|^STORAGE_DRIVER = 'disk'|STORAGE_DRIVER = 'memory'|" \

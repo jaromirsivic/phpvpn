@@ -16,7 +16,8 @@ namespaces can check.
   `tests/phpvpn-wizard-ipc-probe` inside `PHPVPN_BUILD_DIR`.
 - `php` (8.x, the CLI built-in server) and `curl` on `PATH`. sudo keeps the
   caller's `PATH` only when it is passed on explicitly, see below.
-- TCP port 18094 free on 127.0.0.1 (`PHPVPN_E2E_PORT` changes it) and no
+- TCP ports 18094 and 18095 free on 127.0.0.1 (`PHPVPN_E2E_PORT` and the
+  next port, where the relay of another MAJOR version listens) and no
   interface of the host using `10.99.99.2`.
 
 ## Running
@@ -29,7 +30,7 @@ sudo env "PATH=$PATH" PHPVPN_BUILD_DIR="$PWD/work/build/macos-release" \
 | Variable | Default | Meaning |
 |---|---|---|
 | `PHPVPN_BUILD_DIR` | required | CMake build directory. |
-| `PHPVPN_E2E_PORT` | `18094` | Port of the local php relay. |
+| `PHPVPN_E2E_PORT` | `18094` | Port of the local php relay; the relay of another MAJOR version uses the next port. |
 | `PHPVPN_E2E_WORK` | `work/e2e-macos/<timestamp>-<pid>` | Logs and artifacts. |
 | `PHPVPN_PHP` | `php` | PHP CLI used for the relay and for reading JSON. |
 
@@ -43,6 +44,14 @@ service file log (`service-logs/phpvpn-service.log`), the relay log, the CLI
 transcript (`cli.log`), the Wizard probe output, the stored and returned
 configuration documents, the status and diagnostics envelopes, and the
 interface and route listings taken while connected.
+
+Both scripts and `tools/macos/run-server-contract.sh` start and stop their
+`php -S` relays through `php-relay.sh` in this directory: a relay starts only
+on a port that does not answer yet and must still be the process that answers,
+and `stop_php_relay` ends the forked `PHP_CLI_SERVER_WORKERS` before the
+master. macOS, unlike Linux and FreeBSD, gives those workers no parent-death
+signal, so a plain `kill` of the master leaves them serving the port for the
+next script, which then talks to the wrong relay.
 
 ## What is covered
 
@@ -124,7 +133,9 @@ rotating service log, the tray LaunchAgent registered and `phpvpn-tray`
 running in the console user's session, a Connect through the installed daemon
 against a private `php -S` relay reaching `connected` with the `utun` address
 `10.99.99.2` and the `10.99.99/24` route, and a Disconnect that removes them
-again. `uninstall` runs the dist `uninstall.sh --remove-data` and verifies,
+again. A Connect that does not reach `connected` prints the tail of the
+service log and the `phpvpn status` document (phase, checkpoints, `lastError`).
+`uninstall` runs the dist `uninstall.sh --remove-data` and verifies,
 15 checks, that the daemon, the agent, the payload, the receipt and the
 configuration, state, runtime and log directories are gone.
 
