@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Developer-facing labels of the debug catalog and route switcher. Not
+     shipped in release builds and not translated. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="debug_catalog_title">Component catalog</string>
+    <string name="debug_routes_title">Route switcher</string>
+    <string name="debug_section_text">Text styles</string>
+    <string name="debug_section_card">Card</string>
+    <string name="debug_section_tag">Tag: success, neutral, warn, error, small</string>
+    <string name="debug_section_hero">Hero: connected (compact), connecting, disconnected, brand</string>
+    <string name="debug_section_info_row">InfoRow and EntryRow</string>
+    <string name="debug_section_metric">MetricTile</string>
+    <string name="debug_section_check">CheckRow: done, pending, off, fail</string>
+    <string name="debug_section_stepper">Stepper: steps 1 to 4</string>
+    <string name="debug_section_notice">Notice: info, warn, error, success</string>
+    <string name="debug_section_actions">ActionButton: primary, secondary, danger, ghost, disabled</string>
+    <string name="debug_section_footer">FooterActions</string>
+    <string name="debug_section_fields">TextInput, SecretField, ToggleRow</string>
+    <string name="debug_section_peer">PeerRow</string>
+    <string name="debug_section_pager">Pager</string>
+    <string name="debug_section_code">CodeBlock</string>
+    <string name="debug_section_tabs">Tabs</string>
+    <string name="debug_section_bottom_nav">BottomNav: all four destinations</string>
+    <string name="debug_section_top_bar">TopBar: main, nested with Back, root without Back</string>
+    <string name="debug_section_dialog">DialogCard (32 Unsaved changes)</string>
+</resources>

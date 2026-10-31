@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tags of ExcludeFromAutofill (ui/components/Foundation.kt). -->
+    <item name="autofill_exclusion_count" type="id" />
+    <item name="autofill_previous_mode" type="id" />
+</resources>

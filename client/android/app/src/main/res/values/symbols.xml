@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Language-neutral strings: the brand and the typographic symbols of the
+     design. Kept out of strings.xml so that the EN and CS files stay
+     key-for-key identical (StringResourcesTest). -->
+<resources>
+    <string name="app_name" translatable="false">PHPVPN</string>
+    <string name="brand_name" translatable="false">PHPVPN</string>
+    <!-- .check .bullet glyphs; decorative, the state text carries the meaning -->
+    <string name="symbol_check_done" translatable="false">✓</string>
+    <string name="symbol_check_pending" translatable="false">…</string>
+    <string name="symbol_check_off" translatable="false">·</string>
+    <string name="symbol_check_fail" translatable="false">!</string>
+    <!-- .peer-symbol glyphs of the settings hub (10) -->
+    <string name="symbol_wizard" translatable="false">◇</string>
+    <string name="symbol_contracts" translatable="false">⇄</string>
+    <string name="symbol_editor" translatable="false">{ }</string>
+    <string name="symbol_about" translatable="false">i</string>
+    <!-- Missing data is not zero (43) -->
+    <string name="value_missing" translatable="false">—</string>
+    <string name="value_missing_pair" translatable="false">— / —</string>
+</resources>
