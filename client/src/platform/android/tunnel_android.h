@@ -3,7 +3,9 @@
 //
 // loadAndVerify checks the VPN consent through the NetworkHost
 // (tunnel_permission_missing) and that the VpnService registered its
-// TunnelHost (tunnel_adapter_failed, "the VPN service is not running").
+// TunnelHost (tunnel_driver_unsupported, "the VPN service is not running";
+// not recoverable, so a Connect without the service ends in `error` instead of
+// an endless recovery, WP05).
 // createAdapter only allocates the synthetic identity (point 3); openAdapter is
 // not_supported like on Linux. startSession establishes the interface from the
 // recorded VpnSpec, immediately checks that the default route and the DNS

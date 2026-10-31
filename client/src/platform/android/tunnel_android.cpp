@@ -55,8 +55,11 @@ public:
         }
         // Never triggered by the UI, Connect always passes the service
         // (plan, "Životní cyklus", step 1), but a defined error, not a crash.
+        // Not recoverable (WP05): a retry cannot bring the service back, so a
+        // recoverable code would keep the engine in recovering forever. The
+        // same code as the missing context and network host.
         if (!context_->tunnelHost()) {
-            return Error(ErrorCode::tunnel_adapter_failed, "the VPN service is not running");
+            return Error(ErrorCode::tunnel_driver_unsupported, "the VPN service is not running");
         }
         verified_ = true;
         return Status::success();

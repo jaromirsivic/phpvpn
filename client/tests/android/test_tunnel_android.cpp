@@ -64,9 +64,11 @@ PHPVPN_TEST(AndroidTunnel, LoadAndVerifyChecksTheConsentFirst) {
 
     fixture.network->consent = true;
     const auto missing = fixture.driver->loadAndVerify(L"");
-    PHPVPN_REQUIRE_ERROR(missing, ErrorCode::tunnel_adapter_failed);
+    PHPVPN_REQUIRE_ERROR(missing, ErrorCode::tunnel_driver_unsupported);
     if (!missing.ok()) PHPVPN_CHECK_EQ(missing.error().detail, std::string("the VPN service is not running"));
     PHPVPN_CHECK(!errorCodeIsRecoverable(ErrorCode::tunnel_permission_missing));
+    // WP05: a Connect without the service must end in error, not in recovery.
+    PHPVPN_CHECK(!errorCodeIsRecoverable(ErrorCode::tunnel_driver_unsupported));
 
     fixture.context->setTunnelHost(fixture.tunnelHost);
     PHPVPN_REQUIRE_OK(fixture.driver->loadAndVerify(L"ignored"));
