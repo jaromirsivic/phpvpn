@@ -116,6 +116,9 @@ object ErrorStrings {
         ErrorTextKey.CONNECTION_TUNNEL_START_FAILED_TITLE -> R.string.error_connection_tunnel_start_failed_title
         ErrorTextKey.CONNECTION_TUNNEL_START_FAILED_MESSAGE -> R.string.error_connection_tunnel_start_failed_message
         ErrorTextKey.CONNECTION_TUNNEL_START_FAILED_ACTION -> R.string.error_connection_tunnel_start_failed_action
+        ErrorTextKey.CONNECTION_TUNNEL_PERMISSION_MISSING_TITLE -> R.string.error_connection_tunnel_permission_missing_title
+        ErrorTextKey.CONNECTION_TUNNEL_PERMISSION_MISSING_MESSAGE -> R.string.error_connection_tunnel_permission_missing_message
+        ErrorTextKey.CONNECTION_TUNNEL_PERMISSION_MISSING_ACTION -> R.string.error_connection_tunnel_permission_missing_action
         ErrorTextKey.CONNECTION_COMMUNICATION_FAILED_TITLE -> R.string.error_connection_communication_failed_title
         ErrorTextKey.CONNECTION_COMMUNICATION_FAILED_MESSAGE -> R.string.error_connection_communication_failed_message
         ErrorTextKey.CONNECTION_COMMUNICATION_FAILED_ACTION -> R.string.error_connection_communication_failed_action
