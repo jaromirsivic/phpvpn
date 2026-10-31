@@ -98,6 +98,7 @@ constexpr ErrorInfo kErrors[] = {
     {ErrorCode::tunnel_adapter_failed,         "tunnel_adapter_failed",         "The virtual adapter could not be created or opened.",              true},
     {ErrorCode::tunnel_session_failed,         "tunnel_session_failed",         "The tunnel session could not be started.",                         true},
     {ErrorCode::tunnel_io_failed,              "tunnel_io_failed",              "A tunnel read or write operation failed.",                         true},
+    {ErrorCode::tunnel_permission_missing,     "tunnel_permission_missing",     "The permission to create the VPN interface is missing or was revoked.", false},
     {ErrorCode::netconfig_preflight_conflict,  "netconfig_preflight_conflict",  "An existing address, prefix or route conflicts with the tunnel.",  false},
     {ErrorCode::netconfig_apply_failed,        "netconfig_apply_failed",        "The address or route could not be applied.",                       true},
     {ErrorCode::netconfig_verify_failed,       "netconfig_verify_failed",       "The network state after the change did not pass verification.",    true},

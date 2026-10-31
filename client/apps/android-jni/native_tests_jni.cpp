@@ -19,6 +19,11 @@
 
 #include "harness.h"
 
+namespace phpvpn {
+// vpn_tests_jni.cpp
+bool registerVpnTestNatives(JNIEnv* env);
+}  // namespace phpvpn
+
 namespace {
 
 std::string utf8(JNIEnv* env, jbyteArray bytes) {
@@ -83,5 +88,6 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     }
     const jint registered = env->RegisterNatives(library, kTestMethods, static_cast<jint>(std::size(kTestMethods)));
     env->DeleteLocalRef(library);
-    return registered == JNI_OK ? JNI_VERSION_1_6 : JNI_ERR;
+    // The VpnService scenarios of vpn_tests_jni.cpp (WP03, T-A01).
+    return registered == JNI_OK && phpvpn::registerVpnTestNatives(env) ? JNI_VERSION_1_6 : JNI_ERR;
 }

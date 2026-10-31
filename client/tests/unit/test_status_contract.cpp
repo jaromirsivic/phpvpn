@@ -170,3 +170,29 @@ PHPVPN_TEST(StatusContract, ConnectHttpDiagnosticModelRetiresOldAndClearedAttemp
     model.onSnapshot(restarted, 0); PHPVPN_CHECK(!model.httpDiagnostic());
     model.onSnapshot(s, 0); PHPVPN_CHECK(!model.httpDiagnostic());
 }
+
+// plan-android-v001 "Nový chybový kód": the missing VPN consent keeps its own
+// public code in the status so the Android UI can show its consent screen, and
+// is never retried; every other tunnel failure stays tunnel_start_failed.
+PHPVPN_TEST(StatusContract, AndroidMissingVpnConsentKeepsItsOwnCode) {
+    const Error missing(ErrorCode::tunnel_permission_missing, "the VPN consent is missing");
+    PHPVPN_CHECK_EQ(std::string(missing.name()), std::string("tunnel_permission_missing"));
+    PHPVPN_CHECK(!errorCodeIsRecoverable(ErrorCode::tunnel_permission_missing));
+    PHPVPN_CHECK(!errorCodeIsTransient(ErrorCode::tunnel_permission_missing));
+
+    auto snapshot = fixture(1);
+    snapshot.state = ConnectionState::error;
+    snapshot.phase = ConnectionPhase::idle;
+    snapshot.lastError = SafeError::fromConnection(missing, ConnectionPhase::starting_tunnel);
+    const auto parsed = tray::parseStatusResponse(IpcProtocol::buildStatusResponse(kRequestId, snapshot));
+    PHPVPN_CHECK(parsed.valid);
+    PHPVPN_CHECK_EQ(parsed.errorCode, "tunnel_permission_missing");
+    PHPVPN_CHECK_EQ(parsed.errorDescription,
+                    std::string("The permission to create the VPN interface is missing or was revoked."));
+    PHPVPN_CHECK(!parsed.errorRecoverable);
+
+    const auto adapter = SafeError::fromConnection(Error(ErrorCode::tunnel_adapter_failed),
+                                                   ConnectionPhase::starting_tunnel);
+    PHPVPN_CHECK_EQ(adapter.code, std::string("tunnel_start_failed"));
+    PHPVPN_CHECK(adapter.recoverable);
+}

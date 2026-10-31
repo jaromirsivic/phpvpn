@@ -79,6 +79,35 @@ target_link_libraries(phpvpn-logger-tests PRIVATE phpvpn-core phpvpn-compile-opt
 add_test(NAME phpvpn-logger-tests COMMAND phpvpn-logger-tests)
 set_tests_properties(phpvpn-logger-tests PROPERTIES TIMEOUT 30)
 
+# The Android platform layer on the build host (plan-android-v001 WP03, T-N02):
+# AndroidVpnContext, the snapshot parser, AndroidNetConfig and the tunnel
+# driver over fake hosts, the core's TunnelSession included. Linux adds the
+# BOOTTIME clock and the FdTunnel session. The sources are compiled directly
+# against phpvpn-core, so the platform library of the host stays out. The
+# Android build runs the same cases on the device (android branch below).
+if(WIN32 OR PHPVPN_PLATFORM STREQUAL "linux")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/android/platform_tests.cmake)
+    add_executable(phpvpn-android-host-tests
+        unit/harness.cpp
+        ${PHPVPN_ANDROID_PLATFORM_TEST_SOURCES}
+        ${PHPVPN_ANDROID_HOST_PLATFORM_SOURCES}
+    )
+    set(PHPVPN_ANDROID_HOST_TEST_LABELS "android")
+    if(PHPVPN_PLATFORM STREQUAL "linux")
+        target_sources(phpvpn-android-host-tests PRIVATE
+            ${PHPVPN_ANDROID_PLATFORM_POSIX_TEST_SOURCES}
+            ${PHPVPN_ANDROID_HOST_LINUX_PLATFORM_SOURCES}
+        )
+        # The Linux CI selects "portable|linux".
+        set(PHPVPN_ANDROID_HOST_TEST_LABELS "android;linux")
+    endif()
+    target_include_directories(phpvpn-android-host-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit ${CMAKE_CURRENT_SOURCE_DIR}/android)
+    target_link_libraries(phpvpn-android-host-tests PRIVATE phpvpn-core phpvpn-compile-options)
+    add_test(NAME phpvpn-android-host-tests COMMAND phpvpn-android-host-tests)
+    set_tests_properties(phpvpn-android-host-tests PROPERTIES LABELS "${PHPVPN_ANDROID_HOST_TEST_LABELS}" TIMEOUT 120)
+endif()
+
 # Real relay contract tests on every platform (Windows: WinHTTP/CNG, Linux:
 # libcurl/OpenSSL), see tools/run-server-contract.ps1 and
 # tools/linux/run-server-contract.sh.
@@ -159,6 +188,18 @@ if(PHPVPN_PLATFORM STREQUAL "android")
     add_executable(phpvpn-android-posix-tests unit/harness.cpp ${PHPVPN_ANDROID_POSIX_TEST_SOURCES})
     target_include_directories(phpvpn-android-posix-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
     target_link_libraries(phpvpn-android-posix-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    # T-N02 on the device as the shell user (WP03); the same cases run inside
+    # the application sandbox through libphpvpn-android-tests.so.
+    include(${CMAKE_CURRENT_SOURCE_DIR}/android/platform_tests.cmake)
+    add_executable(phpvpn-android-platform-tests
+        unit/harness.cpp
+        ${PHPVPN_ANDROID_PLATFORM_TEST_SOURCES}
+        ${PHPVPN_ANDROID_PLATFORM_POSIX_TEST_SOURCES}
+        ${PHPVPN_ANDROID_PLATFORM_DEVICE_TEST_SOURCES}
+    )
+    target_include_directories(phpvpn-android-platform-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit ${CMAKE_CURRENT_SOURCE_DIR}/android)
+    target_link_libraries(phpvpn-android-platform-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options log)
     return()
 endif()
 

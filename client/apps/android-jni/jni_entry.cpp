@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <iterator>
 
+#include "jni_vpn_bridge.h"
+
 namespace {
 
 // The version from PHPVPN_CLIENT_VERSION, the single source of truth in
@@ -42,5 +44,5 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     }
     const jint registered = env->RegisterNatives(bridge, kBridgeMethods, static_cast<jint>(std::size(kBridgeMethods)));
     env->DeleteLocalRef(bridge);
-    return registered == JNI_OK ? JNI_VERSION_1_6 : JNI_ERR;
+    return registered == JNI_OK && phpvpn::registerVpnHostNatives(env) ? JNI_VERSION_1_6 : JNI_ERR;
 }

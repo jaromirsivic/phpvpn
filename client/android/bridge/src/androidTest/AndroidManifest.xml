@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Test-only VpnService of the instrumented tests T-A01 and T-A01b
+  (plan-android-v001 WP03). The production service (PhpvpnVpnService, WP05)
+  lives in the app module; this one only implements TunnelHost for the test.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The TLS exchange of AndroidPlatformNativeTest (T-N04 in the application). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!-- Asks for the VPN consent with startActivityForResult, as ConfirmDialog requires. -->
+        <activity
+            android:name="phpvpn.android.bridge.ConsentActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name="phpvpn.android.bridge.TestVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
