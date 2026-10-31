@@ -12,6 +12,7 @@ import phpvpn.android.bridge.jni.NativeConfigDocumentCheck
 import phpvpn.android.bridge.jni.NativeServerInfo
 import phpvpn.android.bridge.jni.ServerInfoParse
 import phpvpn.android.service.IntentStore
+import phpvpn.android.service.ProcessEndNotice
 import phpvpn.android.service.ServiceAlwaysOnStatus
 import phpvpn.android.service.ServiceConnectActions
 import phpvpn.android.ui.state.ConnectionUiEvents
@@ -51,7 +52,7 @@ open class PhpvpnApplication : Application() {
     protected open fun createContainer(): AppContainer {
         val transport = createTransport()
         val intents = IntentStore.get(this)
-        return AppContainer(
+        val container = AppContainer(
             transport,
             SystemVpnConsent(this),
             alwaysOn = ServiceAlwaysOnStatus,
@@ -61,6 +62,8 @@ open class PhpvpnApplication : Application() {
             connectionEvents = ConnectionUiEvents(intents.read().notice) { reason -> intents.update { it.copy(notice = reason) } },
             notificationPermission = SystemNotificationPermission(this),
         )
+        ProcessEndNotice.schedule(container, intents)
+        return container
     }
 
     /** The JNI transport of the native runtime, started here on first use. */

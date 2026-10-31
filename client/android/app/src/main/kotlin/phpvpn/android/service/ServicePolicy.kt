@@ -156,6 +156,23 @@ object StickyRestartPolicy {
     }
 }
 
+/**
+ * R9 fallback (WP05 finding): Android 14 and 15 do not restart a sticky VPN
+ * service whose process died while the VPN interface existed, so the R9
+ * decision never runs and the VPN would vanish without a word. When a new
+ * process finds the flag still set, no service running after the grace period
+ * and the engine confirmed idle, the connection ended with the old process:
+ * the flag is cleared and 02 says so. Never a reconnect.
+ */
+object ProcessEndCheck {
+    /** Longer than the first sticky restart delay of Android (1 s). */
+    const val GRACE_MS = 10_000L
+
+    fun endedWithTheProcess(record: IntentRecord, serviceRunning: Boolean, status: TrayStatus?): Boolean =
+        record.wantConnected && !serviceRunning && status != null && status.valid &&
+            status.phase == ConnectionPhase.IDLE && status.state == ConnectionState.DISCONNECTED
+}
+
 /** A command of the service itself, before its result is known. */
 enum class LocalOperation { CONNECT, DISCONNECT }
 

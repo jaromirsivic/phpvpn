@@ -138,6 +138,19 @@ class ServicePolicyTest {
         assertTrue(probes.decide(edge, now) is RestartDecision.GiveUp)
     }
 
+    @Test
+    fun aVanishedConnectionIsExplainedOnlyWhenNothingRuns() {
+        val wanted = IntentRecord(wantConnected = true)
+        assertTrue(ProcessEndCheck.endedWithTheProcess(wanted, serviceRunning = false, status = disconnected))
+        assertFalse("no flag", ProcessEndCheck.endedWithTheProcess(IntentRecord(), false, disconnected))
+        assertFalse("the sticky restart runs", ProcessEndCheck.endedWithTheProcess(wanted, true, disconnected))
+        assertFalse("status unknown", ProcessEndCheck.endedWithTheProcess(wanted, false, null))
+        assertFalse(ProcessEndCheck.endedWithTheProcess(wanted, false, TrayStatus()))
+        for (busy in listOf(connected, connecting, recovering, stopping, failed)) {
+            assertFalse("$busy", ProcessEndCheck.endedWithTheProcess(wanted, false, busy))
+        }
+    }
+
     // --- foreground life cycle ------------------------------------------------
 
     @Test
