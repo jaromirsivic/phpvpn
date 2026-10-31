@@ -32,7 +32,8 @@ android {
         targetSdk = 36
         versionCode = clientVersionCode
         versionName = clientVersion
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Installs a test application with a scripted IPC transport (WP08 UI tests).
+        testInstrumentationRunner = "phpvpn.android.PhpvpnTestRunner"
         ndk {
             // R4: 64-bit only. Also drops the 32-bit native libraries that
             // androidx dependencies would otherwise package.
@@ -53,8 +54,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // IPC reply builders shared by the JVM tests and the Compose UI tests.
+    sourceSets {
+        getByName("test").kotlin.directories.add("src/testShared/kotlin")
+        getByName("androidTest").kotlin.directories.add("src/testShared/kotlin")
+    }
+
     buildFeatures {
         compose = true
+        // About (34) shows the build's own version and type (WP08).
+        buildConfig = true
     }
 }
 

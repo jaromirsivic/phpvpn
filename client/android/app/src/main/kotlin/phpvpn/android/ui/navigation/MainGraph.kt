@@ -1,155 +1,169 @@
 package phpvpn.android.ui.navigation
 
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.res.stringResource
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.dialog
 import androidx.navigation.toRoute
-import phpvpn.android.R
-import phpvpn.android.ui.components.ActionStyle
-import phpvpn.android.ui.components.Card
-import phpvpn.android.ui.components.InfoRow
+import phpvpn.android.appContainer
 import phpvpn.android.ui.components.MainDestination
-import phpvpn.android.ui.components.Tabs
+import phpvpn.android.ui.screens.common.appViewModel
+import phpvpn.android.ui.screens.connection.ConnectionChecksScreen
+import phpvpn.android.ui.screens.connection.ConnectionNavigation
+import phpvpn.android.ui.screens.connection.ConnectionScreen
+import phpvpn.android.ui.screens.connection.PermissionDeniedScreen
+import phpvpn.android.ui.screens.server.ServerScreen
+import phpvpn.android.ui.screens.settings.AboutScreen
+import phpvpn.android.ui.screens.settings.ConfigAttentionScreen
+import phpvpn.android.ui.screens.settings.ConfigNavigation
+import phpvpn.android.ui.screens.settings.ExitDialog
+import phpvpn.android.ui.screens.settings.SettingsNavigation
+import phpvpn.android.ui.screens.settings.SettingsScreen
+import phpvpn.android.ui.screens.settings.WelcomeScreen
+import phpvpn.android.ui.screens.traffic.TrafficScreen
+import phpvpn.android.ui.state.ConfigStateViewModel
+import phpvpn.android.ui.state.ConnectionViewModel
+import phpvpn.android.ui.state.ExitViewModel
+import phpvpn.android.ui.state.ServerViewModel
+import phpvpn.android.ui.state.SettingsViewModel
+import phpvpn.android.ui.state.StartDestinationViewModel
+import phpvpn.android.ui.state.StartTarget
+import phpvpn.android.ui.state.TrafficViewModel
 
 /**
  * WP08: the four main destinations and Welcome (00, 01-08, 10, 26-29, 37, 38,
- * 43-45, 48), plus About (34), Configuration needs attention (36) and the Exit
- * dialog (35). Everything here is still the WP07 placeholder.
+ * 43-45, 48). The screens live in ui/screens, their state holders in ui/state.
  */
 internal fun NavGraphBuilder.mainDestinations(nav: NavHostController) {
     val selectMain: (MainDestination) -> Unit = { nav.navigateToMain(it) }
 
-    composable<Connection>(deepLinks = link(MapPaths.CONNECTION)) {
-        PlaceholderScreen(
-            R.string.connection_title,
-            WP08,
-            main = MainDestination.Connection,
-            onSelectMain = selectMain,
-            links = listOf(
-                navAction(R.string.connected_checks_entry) { nav.navigate(ConnectionChecks) },
-                navAction(R.string.permission_denied_title) { nav.navigate(ConnectionPermission) },
-                navAction(R.string.entry_http_error_details) { nav.navigate(DiagnosticResponse(DiagnosticSource.Connect)) },
-                navAction(R.string.connection_error_check_url) { nav.openWizardUrl() },
-                navAction(R.string.unavailable_last_statistics) { nav.navigateToMain(MainDestination.Traffic) },
-                navAction(R.string.disconnected_edit_configuration) { nav.navigateToMain(MainDestination.Settings) },
+    composable<Connection>(deepLinks = link(MapPaths.CONNECTION)) { entry ->
+        StartDestinationCheck(nav)
+        ConnectionScreen(
+            connectionViewModel(nav, entry),
+            LocalContext.current.appContainer.vpnConsent,
+            ConnectionNavigation(
+                selectMain = selectMain,
+                openChecks = { nav.navigate(ConnectionChecks) { launchSingleTop = true } },
+                openPermissionDenied = { nav.navigate(ConnectionPermission) { launchSingleTop = true } },
+                openConfigAttention = { nav.navigate(ConfigAttention) { launchSingleTop = true } },
+                openHttpDetails = { nav.navigate(DiagnosticResponse(DiagnosticSource.Connect)) { launchSingleTop = true } },
+                openWizardUrl = { nav.openWizardUrl() },
             ),
         )
     }
-    composable<ConnectionChecks>(deepLinks = link(MapPaths.CONNECTION_CHECKS)) {
-        PlaceholderScreen(R.string.checks_title, WP08, onBack = { nav.popBackStack() })
+    composable<ConnectionChecks>(deepLinks = link(MapPaths.CONNECTION_CHECKS)) { entry ->
+        ConnectionChecksScreen(connectionViewModel(nav, entry), onBack = { nav.popBackStack() })
     }
-    composable<ConnectionPermission>(deepLinks = link(MapPaths.CONNECTION_PERMISSION)) {
-        PlaceholderScreen(
-            R.string.permission_denied_title,
-            WP08,
-            onBack = { nav.popBackStack() },
-            footer = listOf(
-                navAction(R.string.permission_denied_retry, ActionStyle.Primary) { nav.popBackStack() },
-                navAction(R.string.permission_denied_stay, ActionStyle.Ghost) { nav.popBackStack() },
-            ),
+    composable<ConnectionPermission>(deepLinks = link(MapPaths.CONNECTION_PERMISSION)) { entry ->
+        PermissionDeniedScreen(
+            connectionViewModel(nav, entry),
+            LocalContext.current.appContainer.vpnConsent,
+            onDone = { nav.popBackStack() },
         )
     }
     composable<Traffic>(deepLinks = link(MapPaths.TRAFFIC)) {
-        PlaceholderScreen(R.string.traffic_title, WP08, main = MainDestination.Traffic, onSelectMain = selectMain)
+        TrafficScreen(appViewModel { TrafficViewModel(it.statistics) }, selectMain)
     }
     composable<Server>(deepLinks = link(MapPaths.SERVER)) { entry ->
-        val route = entry.toRoute<Server>()
-        // The tab is screen state seeded from the route (server?tab=raw opens 29).
-        var tab by rememberSaveable { mutableStateOf(route.tab) }
-        PlaceholderScreen(
-            if (tab == ServerTab.Online) R.string.server_online_title else R.string.server_raw_title,
-            WP08,
-            main = MainDestination.Server,
-            onSelectMain = selectMain,
-            argument = "tab=${tab.name.lowercase()}",
-            extra = {
-                Tabs(
-                    listOf(stringResource(R.string.server_tab_online), stringResource(R.string.server_tab_raw)),
-                    tab.ordinal,
-                    { tab = ServerTab.entries[it] },
-                )
-            },
+        ServerScreen(
+            appViewModel { ServerViewModel(it.serverInfo, it.serverInfoModel, it.configSummary) },
+            entry.toRoute<Server>().tab,
+            selectMain,
         )
     }
     composable<Settings>(deepLinks = link(MapPaths.SETTINGS)) {
-        PlaceholderScreen(
-            R.string.settings_title,
-            WP08,
-            main = MainDestination.Settings,
-            onSelectMain = selectMain,
-            links = listOf(
-                navAction(R.string.settings_wizard) { nav.openWizard() },
-                navAction(R.string.entry_communication_contracts) { nav.openContracts() },
-                navAction(R.string.entry_configuration_editor) { nav.openEditor() },
-                navAction(R.string.settings_about) { nav.navigate(About) },
-                navAction(R.string.settings_exit) { nav.navigate(Exit) },
+        SettingsScreen(
+            appViewModel { SettingsViewModel(it.connection, it.alwaysOn) },
+            SettingsNavigation(
+                selectMain = selectMain,
+                openWizardGate = { nav.openWizard() },
+                openWizardUrl = { nav.openWizardUrl() },
+                openContracts = { nav.openContracts() },
+                openEditor = { nav.openEditor() },
+                openAbout = { nav.navigate(About) { launchSingleTop = true } },
+                openExit = { nav.navigate(Exit) { launchSingleTop = true } },
             ),
         )
     }
     composable<Welcome>(deepLinks = link(MapPaths.WELCOME)) {
-        PlaceholderScreen(
-            R.string.welcome_title,
-            WP08,
-            footer = listOf(
-                navAction(R.string.welcome_set_up, ActionStyle.Primary) { nav.openWizardUrl() },
-                navAction(R.string.welcome_open_editor, ActionStyle.Ghost) { nav.navigate(CreateDefaultConfig("")) },
-            ),
-        )
+        WelcomeScreen(appViewModel { ConfigStateViewModel(it.ipcClient, loadOnStart = false) }, configNavigation(nav))
     }
 }
 
 /** WP08: About (34), Configuration needs attention (36) and the Exit dialog (35). */
 internal fun NavGraphBuilder.settingsExtras(nav: NavHostController, clientVersion: () -> String) {
     composable<About>(deepLinks = link(MapPaths.ABOUT)) {
-        PlaceholderScreen(
-            R.string.about_title,
-            WP08,
-            onBack = { nav.popBackStack() },
-            extra = {
-                Card {
-                    InfoRow(stringResource(R.string.about_version), clientVersion())
-                    InfoRow(stringResource(R.string.about_font), stringResource(R.string.about_font_licence), divider = true)
-                }
-            },
-        )
+        val alwaysOn by LocalContext.current.appContainer.alwaysOn.state.collectAsStateWithLifecycle()
+        AboutScreen(clientVersion, alwaysOn, onBack = { nav.popBackStack() })
     }
     composable<ConfigAttention>(deepLinks = link(MapPaths.CONFIG_ATTENTION)) {
-        PlaceholderScreen(
-            R.string.attention_title,
-            WP08,
+        ConfigAttentionScreen(
+            appViewModel { ConfigStateViewModel(it.ipcClient, loadOnStart = true) },
+            configNavigation(nav),
             onBack = { nav.popBackStack() },
-            links = listOf(
-                navAction(R.string.attention_repair) { nav.openEditor() },
-                navAction(R.string.attention_defaults) { nav.openWizardUrl() },
-                navAction(R.string.attention_create_default) { nav.navigate(CreateDefaultConfig("")) },
-            ),
         )
     }
     dialog<Exit>(
         deepLinks = link(MapPaths.EXIT),
         dialogProperties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        PlaceholderDialog(
-            title = stringResource(R.string.exit_heading),
-            eyebrow = stringResource(R.string.exit_eyebrow),
-            paragraphs = listOf(
-                stringResource(R.string.exit_intro),
-                stringResource(R.string.placeholder_notice_text, WP08),
-            ),
-            actions = listOf(
-                navAction(R.string.exit_keep_title, ActionStyle.Primary) { nav.popBackStack() },
-                navAction(R.string.action_disconnect_vpn, ActionStyle.Danger) {
-                    nav.popBackStack()
-                    nav.navigateToMain(MainDestination.Connection)
-                },
-            ),
+        ExitDialog(
+            appViewModel { ExitViewModel(it.connection, it.connectActions) },
+            onShowConnection = {
+                nav.popBackStack()
+                nav.navigateToMain(MainDestination.Connection)
+            },
         )
+    }
+}
+
+private fun configNavigation(nav: NavHostController) = ConfigNavigation(
+    openWizardUrl = { nav.openWizardUrl() },
+    openEditor = { nav.openEditor() },
+    openCreateDefault = { path -> nav.navigate(CreateDefaultConfig(path)) { launchSingleTop = true } },
+    openAttention = { nav.navigate(ConfigAttention) { launchSingleTop = true } },
+)
+
+/**
+ * 37 and 48 sit on top of Connection and share its state holder, so they see
+ * the same status and a consent granted on 37 starts the same Connect.
+ */
+@Composable
+private fun connectionViewModel(nav: NavHostController, entry: NavBackStackEntry): ConnectionViewModel {
+    val owner = remember(entry) { runCatching { nav.getBackStackEntry<Connection>() }.getOrDefault(entry) }
+    return appViewModel(owner) {
+        ConnectionViewModel(it.connection, it.connectActions, it.vpnConsent, it.connectionEvents, it.configSummary)
+    }
+}
+
+/**
+ * Start destination (WP07 left `showWelcome` to WP08): one get-config-state
+ * per activity. Missing configuration makes Welcome (00) the root; a stored
+ * but unusable document opens 36 over Connection. A late answer never moves
+ * the user away from another screen.
+ */
+@Composable
+private fun StartDestinationCheck(nav: NavHostController) {
+    val activity = LocalActivity.current as? ComponentActivity ?: return
+    val decider = appViewModel(activity) { StartDestinationViewModel(it.ipcClient) }
+    LaunchedEffect(decider) {
+        val target = decider.decide() ?: return@LaunchedEffect
+        if (nav.currentDestination?.hasRoute<Connection>() != true) return@LaunchedEffect
+        when (target) {
+            StartTarget.WELCOME -> nav.showWelcome()
+            StartTarget.ATTENTION -> nav.navigate(ConfigAttention) { launchSingleTop = true }
+        }
     }
 }
