@@ -60,6 +60,11 @@ target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-core phpvpn-compile-optio
 # PHPVPN_LINUX_CRYPTO_READY was switched on by WP02 with the OpenSSL provider;
 # macOS shares that provider.
 set(PHPVPN_LINUX_CRYPTO_READY ON)
+if(PHPVPN_PLATFORM STREQUAL "android" AND NOT PHPVPN_ANDROID_DEPS)
+    # Android links the same OpenSSL provider only with the prebuilt libraries
+    # of WP01 (PHPVPN_ANDROID_DEPS); without them the crypto subset is skipped.
+    set(PHPVPN_LINUX_CRYPTO_READY OFF)
+endif()
 if(TARGET phpvpn-platform AND (WIN32 OR PHPVPN_LINUX_CRYPTO_READY))
     target_sources(phpvpn-core-tests PRIVATE ${PHPVPN_PORTABLE_CRYPTO_TEST_SOURCES})
     target_link_libraries(phpvpn-core-tests PRIVATE phpvpn-platform)
@@ -141,6 +146,20 @@ if(PHPVPN_PLATFORM STREQUAL "macos")
         add_executable(phpvpn-wizard-ipc-probe e2e/linux/wizard_ipc_probe.cpp)
         target_link_libraries(phpvpn-wizard-ipc-probe PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
     endif()
+endif()
+
+if(PHPVPN_PLATFORM STREQUAL "android")
+    # Android (plan-android-v001 WP02): phpvpn-core-tests and
+    # phpvpn-logger-tests above are cross-compiled and run on a device or
+    # emulator by tools/android/run-native-tests.ps1 (adb, shell user); ctest
+    # cannot run them on the build host. The POSIX layer cases belong inside the
+    # application sandbox (apps/android-jni, T-N03); this executable runs them
+    # as the shell user for diagnosis only, where SELinux refuses hard links.
+    include(${CMAKE_CURRENT_SOURCE_DIR}/android/posix_tests.cmake)
+    add_executable(phpvpn-android-posix-tests unit/harness.cpp ${PHPVPN_ANDROID_POSIX_TEST_SOURCES})
+    target_include_directories(phpvpn-android-posix-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/unit)
+    target_link_libraries(phpvpn-android-posix-tests PRIVATE phpvpn-platform phpvpn-core phpvpn-compile-options)
+    return()
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
