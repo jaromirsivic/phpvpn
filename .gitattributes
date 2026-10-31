@@ -17,3 +17,5 @@ client/tests/e2e/macos/** text eol=lf
 client/apps/tray-macos/** text eol=lf
 .github/** text eol=lf
 client/tests/ui/macos/** text eol=lf
+client/android/gradlew text eol=lf
+client/tools/android/** text eol=lf
