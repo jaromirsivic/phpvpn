@@ -5,9 +5,9 @@ name: client-macos
 
 on:
   push:
-    branches: [macos, main]
+    branches: [macos, main, android]
   pull_request:
-    branches: [main, macos]
+    branches: [main, macos, android]
   workflow_dispatch:
 
 permissions:
