@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    České texty WP09 (průvodce konfigurací 11-18, 40, 47 a HTTP diagnostika
+    30, 31), které návrh neobsahuje, ale vyžaduje je smlouva. Klíče jsou
+    shodné s values/strings_wp09.xml (Wp09StringResourcesTest), tón tykáním
+    jako values-cs/strings.xml.
+-->
+<resources>
+    <!-- Průběh průvodce a společné texty -->
+    <string name="wp09_loading">Načítám konfiguraci…</string>
+    <string name="wp09_checking_url">Kontroluji server…</string>
+    <string name="wp09_checking_secret">Ověřuji server…</string>
+    <string name="wp09_checking_access">Kontroluji přístup…</string>
+    <string name="wp09_waiting_disconnect">Čekám na odpojení VPN…</string>
+    <string name="wp09_saving">Ukládám konfiguraci…</string>
+    <string name="wp09_resetting">Ukončuji kontrolu a vracím výchozí hodnoty…</string>
+    <string name="wp09_action_failed_title">Akci se nepodařilo dokončit</string>
+    <string name="wp09_http_status">HTTP status: %1$d</string>
+    <string name="wp09_try_again">Zkusit znovu</string>
+
+    <!-- 11 Před konfigurací -->
+    <string name="wp09_gate_status_connecting">Připojuje se</string>
+    <string name="wp09_gate_status_reconnecting">Obnovuje spojení</string>
+    <string name="wp09_gate_status_disconnecting">Odpojuje se</string>
+    <string name="wp09_gate_status_disconnected">Odpojeno</string>
+    <string name="wp09_gate_status_error">Chyba spojení</string>
+    <string name="wp09_gate_no_reconnect">Průvodce VPN automaticky znovu nepřipojí.</string>
+    <string name="wp09_gate_offline">VPN je teď odpojená. Zvol Pokračovat a zopakuj kontroly od adresy serveru.</string>
+    <string name="wp09_gate_continue">Pokračovat</string>
+    <string name="wp09_gate_interrupted_title">Spustilo se připojení VPN</string>
+    <string name="wp09_gate_interrupted_text">Během konfigurace se spustilo připojení VPN. Zadané hodnoty zůstávají, ale kontroly je nutné zopakovat.</string>
+    <string name="wp09_gate_disconnect_failed">VPN se nepodařilo odpojit. Zkus to znovu, nebo ponech připojení.</string>
+
+    <!-- 12 Adresa serveru -->
+    <string name="wp09_url_placeholder">Nahraď MODIFY-THIS-URL adresou svého serveru.</string>
+    <string name="wp09_url_invalid">Zadej úplnou adresu http:// nebo https:// bez uživatele, dotazu a fragmentu.</string>
+    <string name="wp09_load_error_title">Konfigurace vyžaduje pozornost</string>
+    <string name="wp09_load_error_unreadable">Konfigurační soubor nelze přečíst.</string>
+    <string name="wp09_load_error_encoding">Konfigurační soubor není platný text v UTF-8.</string>
+    <string name="wp09_load_error_too_large">Konfigurační soubor je větší než 512 KiB.</string>
+    <string name="wp09_load_error_invalid">Konfigurační soubor není platná konfigurace.</string>
+    <string name="wp09_load_error_open">Průvodce konfigurací se nepodařilo otevřít.</string>
+    <string name="wp09_load_error_action">Zvol Začít s výchozími hodnotami a vyplň novou konfiguraci. Nic se neuloží, dokud průvodce nedokončíš. Soubor můžeš také prohlédnout v editoru konfigurace.</string>
+
+    <!-- 13 HTTP hlavičky -->
+    <string name="wp09_headers_defaults_hint">Některé webové servery vyžadují další hlavičky, hlavně Cookie nebo User-Agent. Pokud si nejsi jistý, ponech výchozí hodnoty.</string>
+    <string name="wp09_headers_error_required">Zadej alespoň jednu hlavičku.</string>
+    <string name="wp09_headers_error_line">Řádek %1$d: použij tvar Název: hodnota, bez prázdných řádků.</string>
+    <string name="wp09_headers_error_name">Řádek %1$d: název hlavičky obsahuje nepovolený znak.</string>
+    <string name="wp09_headers_error_control">Řádek %1$d: hodnota obsahuje řídicí znak.</string>
+    <string name="wp09_headers_error_managed">Řádek %1$d: hlavičku %2$s nastavuje aplikace, nelze ji přidat.</string>
+    <string name="wp09_headers_error_duplicate">Řádek %1$d: hlavička %2$s už je na jiném řádku.</string>
+    <string name="wp09_headers_error_too_large">Hlavičky se nevejdou do konfiguračního souboru (limit 512 KiB).</string>
+    <string name="wp09_headers_error_encoding">Text obsahuje neplatný znak Unicode.</string>
+    <string name="wp09_headers_error_busy">Počkej, až skončí probíhající kontrola.</string>
+
+    <!-- 14 Tajemství serveru -->
+    <string name="wp09_secret_hint">Zadej přesnou hodnotu SERVER_SECRET z phpvpn.php včetně případných mezer.</string>
+    <string name="wp09_secret_literal_field">Tajemství serveru (JSON řetězcový literál)</string>
+    <string name="wp09_secret_literal_hint">Ponech uvozovky. Řídicí znaky zapisuj jako JSON escape sekvence.</string>
+    <string name="wp09_secret_literal_invalid">Zadej jeden úplný JSON řetězcový literál.</string>
+
+    <!-- 15 IP a přístupový klíč -->
+    <string name="wp09_identity_not_reservation">Navržená IP není rezervace. Stejnou IP smí mít i jiný klient, za kolize odpovídá provozovatel. Místní kontrakt nesmí ukazovat na tento telefon.</string>
+    <string name="wp09_identity_no_suggestion">Ověřený návrh IP není k dispozici. Vypni automatický návrh a zadej IP, nebo se vrať a ověř server znovu.</string>
+    <string name="wp09_identity_ip_invalid">Zadej klientskou adresu v rozsahu %1$s.</string>
+    <string name="wp09_identity_key_invalid">Zadej přesně 64 malých hexadecimálních znaků.</string>
+    <string name="wp09_identity_default_key_hint">Výchozí klíč se odvozuje z IP adresy a je veřejně předvídatelný.</string>
+    <string name="wp09_identity_messages_title">Kontrola může zahodit čekající zprávy</string>
+    <string name="wp09_identity_messages_text">Každá kontrola tlačítkem Ověřit a pokračovat může trvale odstranit zprávy čekající pro tuto IP, i když výsledek nedorazí. Zprávy se zahodí, do VPN se nedoručí. Kontroly se nikdy automaticky neopakují.</string>
+
+    <!-- 16 Dokončení konfigurace -->
+    <string name="wp09_finish_unsupported">Výchozí kontrakty se nepřidají, protože VPN síť nemá podporovaný tvar 10.A.B.0/24.</string>
+    <string name="wp09_finish_kept">Existující kontrakty a jejich klíče zůstávají.</string>
+    <string name="wp09_finish_no_connect">Dokončení konfiguraci uloží, VPN ale nepřipojí.</string>
+    <string name="wp09_finish_failed_title">Konfigurace nebyla uložena</string>
+    <string name="wp09_finish_unknown_title">Výsledek uložení není známý</string>
+    <string name="wp09_finish_unknown_text">Soubor se už mohl změnit. Před dalším uložením ověř výsledek.</string>
+    <string name="wp09_finish_restarted">Služba se restartovala, toto uložení proto tady nelze potvrdit. Než průvodce spustíš znovu, prohlédni aktuální konfiguraci. Žádné uložení se neopakovalo.</string>
+
+    <!-- 17 Konfigurace uložena -->
+    <string name="wp09_saved_no_connect">Uložení VPN nepřipojilo. Až budeš připraven, zvol Připojit VPN.</string>
+
+    <!-- 18 Chyba ověření -->
+    <string name="wp09_error_url_heading">Adresu serveru se nepodařilo ověřit</string>
+    <string name="wp09_error_secret_heading">Server se nepodařilo ověřit</string>
+    <string name="wp09_error_identity_heading">Přístup se nepodařilo ověřit</string>
+    <string name="wp09_error_version_heading">Nekompatibilní verze serveru</string>
+    <string name="wp09_error_version_text">Tato aplikace má verzi %1$s, server má verzi %2$s.</string>
+    <string name="wp09_error_version_unrecognised">nerozpoznaná</string>
+    <string name="wp09_error_timeout_heading">Kontrola vypršela</string>
+    <string name="wp09_error_timeout_text">Zadané hodnoty zůstaly zachované. Novou kontrolu spustíš tlačítkem Ověřit a pokračovat.</string>
+    <string name="wp09_error_access_heading">Přístup byl odmítnut</string>
+    <string name="wp09_error_access_intro">Server odmítl ověření pro tuto virtuální IP.</string>
+    <string name="wp09_error_conflict_heading">Tuto IP používá kontrakt</string>
+    <string name="wp09_error_conflict_reset">Konflikt může vyřešit i Začít s výchozími hodnotami v kroku adresy serveru. Dokončení průvodce pak ale nahradí konfiguraci a odstraní všechny existující komunikační kontrakty.</string>
+    <string name="wp09_error_correct_url">Opravit adresu</string>
+    <string name="wp09_error_correct_identity">Opravit IP nebo klíč</string>
+    <string name="wp09_error_back_to_step">Zpět na krok</string>
+
+    <!-- 30 a 31 HTTP odpověď a požadavek -->
+    <string name="wp09_diag_source_connect">Pokus o připojení</string>
+    <string name="wp09_diag_source_wizard">Kontrola v průvodci</string>
+    <string name="wp09_diag_row_source">Pokus</string>
+    <string name="wp09_diag_row_action">Akce serveru</string>
+    <string name="wp09_diag_row_headers">Hlavičky</string>
+    <string name="wp09_diag_row_size">Původní velikost</string>
+    <string name="wp09_diag_size_kib">%1$s KiB</string>
+    <string name="wp09_diag_request_captured">Zachycené síťovým transportem</string>
+    <string name="wp09_diag_request_merged">Doplněné hlavičkami aplikace</string>
+    <string name="wp09_diag_request_application">Rekonstruované aplikací</string>
+    <string name="wp09_diag_response_captured">Zachycené síťovým transportem</string>
+    <string name="wp09_diag_response_available">Jen dostupné hlavičky</string>
+    <string name="wp09_diag_response_unavailable">Nejsou k dispozici</string>
+    <string name="wp09_diag_request_captured_title">Zachycený požadavek</string>
+    <string name="wp09_diag_request_captured_text">Síťový transport ohlásil tyto hlavičky požadavku. Řádek požadavku a tělo pocházejí z aplikace.</string>
+    <string name="wp09_diag_request_merged_title">Částečná rekonstrukce</string>
+    <string name="wp09_diag_request_merged_text">Systémové hlavičky byly doplněné původními hlavičkami aplikace.</string>
+    <string name="wp09_diag_request_application_text">Systémové hlavičky požadavku nejsou k dispozici. Zobrazují se hlavičky aplikace.</string>
+    <string name="wp09_diag_http_unknown">Verze HTTP není známá (HTTP/?).</string>
+    <string name="wp09_diag_incomplete">Neúplná odpověď: velikost se vztahuje k přijatému obsahu.</string>
+    <string name="wp09_diag_response_headers_partial">Kompletní systémové hlavičky odpovědi nejsou k dispozici. Zobrazují se dostupné informace.</string>
+    <string name="wp09_diag_truncated">Zkráceno: zobrazuje se prvních 63 KiB a posledních 1 KiB, vynecháno je %1$s bajtů. Čtyři tečkované řádky jsou jen oddělovač.</string>
+    <string name="wp09_diag_escaped">Neplatné nebo nezobrazitelné bajty jsou zobrazené jako \\xHH.</string>
+    <string name="wp09_diag_unavailable_title">Žádné HTTP podrobnosti</string>
+    <string name="wp09_diag_unavailable_text">Tento pokus nezachytil HTTP komunikaci, nebo už jeho podrobnosti nejsou k dispozici.</string>
+    <string name="wp09_diag_hint_wizard">Dostupná diagnostika se váže ke konkrétní kontrole v průvodci.</string>
+</resources>

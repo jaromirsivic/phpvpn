@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    WP09 texts of the Configuration Wizard (11-18, 40, 47) and the HTTP
+    diagnostic views (30, 31) that the design (assets/android-en) does not
+    contain but the contract requires: progress texts, local validation,
+    the messages panel of 15, the error variants of 18 and the data source
+    notes of 30 and 31 (client.md, tray_UX.md UX08 and UX09). Wording follows
+    wizard_text.h, adapted to the phone. values-cs/strings_wp09.xml has
+    exactly the same keys (Wp09StringResourcesTest).
+-->
+<resources>
+    <!-- Wizard progress and shared texts -->
+    <string name="wp09_loading">Loading configuration…</string>
+    <string name="wp09_checking_url">Checking the server…</string>
+    <string name="wp09_checking_secret">Verifying the server…</string>
+    <string name="wp09_checking_access">Checking access…</string>
+    <string name="wp09_waiting_disconnect">Waiting for the VPN to stop…</string>
+    <string name="wp09_saving">Saving configuration…</string>
+    <string name="wp09_resetting">Stopping the current check and resetting…</string>
+    <string name="wp09_action_failed_title">Could not complete this action</string>
+    <string name="wp09_http_status">HTTP status: %1$d</string>
+    <string name="wp09_try_again">Try again</string>
+
+    <!-- 11 Before setup -->
+    <string name="wp09_gate_status_connecting">Connecting</string>
+    <string name="wp09_gate_status_reconnecting">Reconnecting</string>
+    <string name="wp09_gate_status_disconnecting">Disconnecting</string>
+    <string name="wp09_gate_status_disconnected">Disconnected</string>
+    <string name="wp09_gate_status_error">Connection error</string>
+    <string name="wp09_gate_no_reconnect">The wizard will not reconnect the VPN automatically.</string>
+    <string name="wp09_gate_offline">The VPN is now disconnected. Choose Continue to repeat the checks from the server address.</string>
+    <string name="wp09_gate_continue">Continue</string>
+    <string name="wp09_gate_interrupted_title">A VPN connection was started</string>
+    <string name="wp09_gate_interrupted_text">A VPN connection was started while setup was open. Your entries are kept, but the checks must be repeated.</string>
+    <string name="wp09_gate_disconnect_failed">The VPN could not be disconnected. Try again, or keep the connection.</string>
+
+    <!-- 12 Server address -->
+    <string name="wp09_url_placeholder">Replace MODIFY-THIS-URL with your server address.</string>
+    <string name="wp09_url_invalid">Enter a complete http:// or https:// address without a user name, query or fragment.</string>
+    <string name="wp09_load_error_title">This configuration needs attention</string>
+    <string name="wp09_load_error_unreadable">The configuration file cannot be read.</string>
+    <string name="wp09_load_error_encoding">The configuration file is not valid UTF-8 text.</string>
+    <string name="wp09_load_error_too_large">The configuration file is larger than 512 KiB.</string>
+    <string name="wp09_load_error_invalid">The configuration file is not a valid configuration.</string>
+    <string name="wp09_load_error_open">The setup wizard could not be opened.</string>
+    <string name="wp09_load_error_action">Start with defaults to fill in a new configuration. Nothing is saved until you finish the wizard. You can also inspect the file in the configuration editor.</string>
+
+    <!-- 13 HTTP headers -->
+    <string name="wp09_headers_defaults_hint">Some web servers require additional headers, especially Cookie or User-Agent. If you are unsure, keep the default values.</string>
+    <string name="wp09_headers_error_required">Enter at least one header.</string>
+    <string name="wp09_headers_error_line">Line %1$d: use the form Name: value, without empty lines.</string>
+    <string name="wp09_headers_error_name">Line %1$d: the header name contains a character that is not allowed.</string>
+    <string name="wp09_headers_error_control">Line %1$d: the value contains a control character.</string>
+    <string name="wp09_headers_error_managed">Line %1$d: %2$s is set by the app and cannot be added.</string>
+    <string name="wp09_headers_error_duplicate">Line %1$d: %2$s is already used on another line.</string>
+    <string name="wp09_headers_error_too_large">The headers do not fit into the configuration file (512 KiB limit).</string>
+    <string name="wp09_headers_error_encoding">The text contains an invalid Unicode character.</string>
+    <string name="wp09_headers_error_busy">Wait for the running check to finish.</string>
+
+    <!-- 14 Server secret -->
+    <string name="wp09_secret_hint">Enter the exact SERVER_SECRET value from phpvpn.php, including any spaces.</string>
+    <string name="wp09_secret_literal_field">Server secret (JSON string literal)</string>
+    <string name="wp09_secret_literal_hint">Keep the quotes. JSON escapes represent control characters.</string>
+    <string name="wp09_secret_literal_invalid">Enter one complete JSON string literal.</string>
+
+    <!-- 15 IP and access key -->
+    <string name="wp09_identity_not_reservation">A suggested IP is not a reservation. Duplicate client IPs are allowed, but collisions are the operator\'s responsibility. A local contract cannot point to this phone itself.</string>
+    <string name="wp09_identity_no_suggestion">No verified IP suggestion is available. Turn off automatic suggestions to enter an IP, or go back and verify the server again.</string>
+    <string name="wp09_identity_ip_invalid">Enter a client address inside %1$s.</string>
+    <string name="wp09_identity_key_invalid">Enter exactly 64 lowercase hexadecimal characters.</string>
+    <string name="wp09_identity_default_key_hint">The default key is derived from the IP address and is publicly predictable.</string>
+    <string name="wp09_identity_messages_title">A check may discard waiting messages</string>
+    <string name="wp09_identity_messages_text">Each Verify and continue check may permanently remove waiting messages for this IP, even if no result arrives. Messages are discarded, not delivered to the VPN. Checks are never retried automatically.</string>
+
+    <!-- 16 Complete setup -->
+    <string name="wp09_finish_unsupported">No default contracts will be added because the VPN network is not in the supported 10.A.B.0/24 form.</string>
+    <string name="wp09_finish_kept">Existing contracts and their keys are kept.</string>
+    <string name="wp09_finish_no_connect">Finish saves the configuration. It does not connect the VPN.</string>
+    <string name="wp09_finish_failed_title">The configuration was not saved</string>
+    <string name="wp09_finish_unknown_title">The save result is unknown</string>
+    <string name="wp09_finish_unknown_text">The file may already have changed. Verify the result before saving again.</string>
+    <string name="wp09_finish_restarted">The service restarted, so this save cannot be confirmed here. Inspect the current configuration before you start the wizard again. No save was repeated.</string>
+
+    <!-- 17 Configuration saved -->
+    <string name="wp09_saved_no_connect">Saving did not connect the VPN. Choose Connect VPN when you are ready.</string>
+
+    <!-- 18 Verification error -->
+    <string name="wp09_error_url_heading">The server address could not be verified</string>
+    <string name="wp09_error_secret_heading">The server could not be verified</string>
+    <string name="wp09_error_identity_heading">Access could not be checked</string>
+    <string name="wp09_error_version_heading">Incompatible server version</string>
+    <string name="wp09_error_version_text">This app is version %1$s, the server is version %2$s.</string>
+    <string name="wp09_error_version_unrecognised">unrecognised</string>
+    <string name="wp09_error_timeout_heading">The check timed out</string>
+    <string name="wp09_error_timeout_text">Your entries have been kept. Choose Verify and continue to start a new check.</string>
+    <string name="wp09_error_access_heading">Access was refused</string>
+    <string name="wp09_error_access_intro">The server rejected the authentication for this virtual IP.</string>
+    <string name="wp09_error_conflict_heading">This IP is used by a contract</string>
+    <string name="wp09_error_conflict_reset">Start with defaults on the server address step may also resolve the conflict, but finishing the wizard then replaces the configuration and removes all existing communication contracts.</string>
+    <string name="wp09_error_correct_url">Correct the address</string>
+    <string name="wp09_error_correct_identity">Correct the IP or key</string>
+    <string name="wp09_error_back_to_step">Back to the step</string>
+
+    <!-- 30 and 31 HTTP response and request -->
+    <string name="wp09_diag_source_connect">Connection attempt</string>
+    <string name="wp09_diag_source_wizard">Setup wizard check</string>
+    <string name="wp09_diag_row_source">Attempt</string>
+    <string name="wp09_diag_row_action">Server action</string>
+    <string name="wp09_diag_row_headers">Headers</string>
+    <string name="wp09_diag_row_size">Original size</string>
+    <string name="wp09_diag_size_kib">%1$s KiB</string>
+    <string name="wp09_diag_request_captured">Captured by the network transport</string>
+    <string name="wp09_diag_request_merged">Merged with the app headers</string>
+    <string name="wp09_diag_request_application">Reconstructed by the app</string>
+    <string name="wp09_diag_response_captured">Captured by the network transport</string>
+    <string name="wp09_diag_response_available">Available headers only</string>
+    <string name="wp09_diag_response_unavailable">Not available</string>
+    <string name="wp09_diag_request_captured_title">Captured request</string>
+    <string name="wp09_diag_request_captured_text">The network transport reported these request headers. The request line and the body come from the app.</string>
+    <string name="wp09_diag_request_merged_title">Partly reconstructed</string>
+    <string name="wp09_diag_request_merged_text">System headers were merged with the original application headers.</string>
+    <string name="wp09_diag_request_application_text">System request headers are unavailable. Showing the application headers.</string>
+    <string name="wp09_diag_http_unknown">The HTTP version is unknown (HTTP/?).</string>
+    <string name="wp09_diag_incomplete">Incomplete response: the size refers to the received content.</string>
+    <string name="wp09_diag_response_headers_partial">Complete system response headers are unavailable. Showing the available information.</string>
+    <string name="wp09_diag_truncated">Truncated: the first 63 KiB and the last 1 KiB are shown, %1$s bytes are omitted. The four dotted lines are a display separator.</string>
+    <string name="wp09_diag_escaped">Invalid or non-displayable bytes are shown as \\xHH.</string>
+    <string name="wp09_diag_unavailable_title">No HTTP details</string>
+    <string name="wp09_diag_unavailable_text">This attempt did not capture an HTTP exchange, or its details are no longer available.</string>
+    <string name="wp09_diag_hint_wizard">Available diagnostics belong to a specific setup check.</string>
+</resources>
