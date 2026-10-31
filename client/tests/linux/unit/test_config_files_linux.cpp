@@ -2,7 +2,10 @@
 // ConfigFiles backend, durableReplaceFile and the service directory policy.
 // Everything runs without privileges; the expected owner is geteuid(). Shared
 // with macOS (plan-macos-v001 step 1): the statfs policy and the production
-// paths are platform specific, macOS paths are in tests/macos/unit.
+// paths are platform specific, macOS paths are in tests/macos/unit. Android
+// runs the same file (plan-android-v001 T-N03) inside the application sandbox,
+// with the trusted walk anchored at the temporary directory the runner points
+// TMPDIR to.
 #include "harness.h"
 
 #include <fcntl.h>
@@ -95,8 +98,18 @@ mode_t modeOf(const std::filesystem::path& path) {
     return ::lstat(path.c_str(), &info) == 0 ? (info.st_mode & 07777) : 0;
 }
 
+// Empty on Linux and macOS, where the walk starts at "/". Android always
+// anchors it (paths_posix.h); the system owned /data could never pass.
+std::filesystem::path trustRoot() {
+#if defined(__ANDROID__)
+    return std::filesystem::canonical(std::filesystem::temp_directory_path());
+#else
+    return {};
+#endif
+}
+
 LinuxConfigFilePolicy policy(std::function<Action(Stage)> hook = {}) {
-    return LinuxConfigFilePolicy{::geteuid(), std::move(hook)};
+    return LinuxConfigFilePolicy{::geteuid(), std::move(hook), trustRoot()};
 }
 
 // Fires `action` once at `stage` after arm() was called.
@@ -127,8 +140,9 @@ PHPVPN_TEST(config_files_linux, factory_rejects_invalid_paths_and_unsafe_directo
     PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.path / "missing" / "config.json", policy()),
                          ErrorCode::config_unreadable);
     // A different expected owner makes the directory foreign.
-    PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.config(), LinuxConfigFilePolicy{::geteuid() + 1, {}}),
-                         ErrorCode::config_directory_security_invalid);
+    PHPVPN_REQUIRE_ERROR(
+        createLinuxConfigFiles(fixture.config(), LinuxConfigFilePolicy{::geteuid() + 1, {}, trustRoot()}),
+        ErrorCode::config_directory_security_invalid);
     for (const mode_t unsafe : {mode_t(0720), mode_t(0702), mode_t(0777)}) {
         PHPVPN_CHECK(::chmod(fixture.path.c_str(), unsafe) == 0);
         PHPVPN_REQUIRE_ERROR(createLinuxConfigFiles(fixture.config(), policy()),
@@ -841,7 +855,7 @@ PHPVPN_TEST(paths_linux, service_directories_are_created_and_repaired_to_exact_m
     auto directories = resolveLinuxDirectories(overrides);
     PHPVPN_REQUIRE_OK(directories);
     const mode_t previous = ::umask(077);
-    auto created = secureServiceDirectories(directories.value(), ::geteuid());
+    auto created = secureServiceDirectories(directories.value(), ::geteuid(), trustRoot());
     ::umask(previous);
     PHPVPN_REQUIRE_OK(created);
     PHPVPN_CHECK_EQ(modeOf(fixture.path / "etc"), mode_t(0700));
@@ -849,7 +863,7 @@ PHPVPN_TEST(paths_linux, service_directories_are_created_and_repaired_to_exact_m
     PHPVPN_CHECK_EQ(modeOf(fixture.path / "run"), mode_t(0755));
     PHPVPN_CHECK(::chmod((fixture.path / "etc").c_str(), 0777) == 0);
     PHPVPN_CHECK(::chmod((fixture.path / "run").c_str(), 02775) == 0);
-    PHPVPN_REQUIRE_OK(secureServiceDirectories(directories.value(), ::geteuid()));
+    PHPVPN_REQUIRE_OK(secureServiceDirectories(directories.value(), ::geteuid(), trustRoot()));
     PHPVPN_CHECK_EQ(modeOf(fixture.path / "etc"), mode_t(0700));
     PHPVPN_CHECK_EQ(modeOf(fixture.path / "run"), mode_t(0755));
     // The repaired directory is accepted by the configuration backend.
@@ -863,36 +877,39 @@ PHPVPN_TEST(paths_linux, symlink_foreign_owner_or_unsafe_ancestor_fail_closed) {
     PHPVPN_CHECK(::chmod(real.c_str(), 0777) == 0);
     const auto link = fixture.path / "link";
     PHPVPN_CHECK(::symlink(real.c_str(), link.c_str()) == 0);
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(link, 0700, ::geteuid()), ErrorCode::config_directory_security_invalid);
+    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(link, 0700, ::geteuid(), trustRoot()),
+                         ErrorCode::config_directory_security_invalid);
     PHPVPN_CHECK_EQ(modeOf(real), mode_t(0777));
     PHPVPN_CHECK(std::filesystem::is_symlink(link));
 
     // Not a directory.
     writeFile(fixture.path / "file", "x");
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(fixture.path / "file", 0700, ::geteuid()),
+    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(fixture.path / "file", 0700, ::geteuid(), trustRoot()),
                          ErrorCode::config_directory_security_invalid);
 
     // Somebody else's directory is never taken over or repaired.
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(real, 0700, ::geteuid() + 1),
+    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(real, 0700, ::geteuid() + 1, trustRoot()),
                          ErrorCode::config_directory_security_invalid);
     PHPVPN_CHECK_EQ(modeOf(real), mode_t(0777));
 
     // A symbolic link or a world writable non sticky directory among the ancestors.
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(link / "phpvpn", 0700, ::geteuid()),
+    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(link / "phpvpn", 0700, ::geteuid(), trustRoot()),
                          ErrorCode::config_directory_security_invalid);
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(real / "phpvpn", 0700, ::geteuid()),
+    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(real / "phpvpn", 0700, ::geteuid(), trustRoot()),
                          ErrorCode::config_directory_security_invalid);
     PHPVPN_CHECK(!std::filesystem::exists(real / "phpvpn"));
     PHPVPN_CHECK(::chmod(real.c_str(), 01777) == 0);
-    PHPVPN_REQUIRE_OK(secureServiceDirectory(real / "phpvpn", 0700, ::geteuid()));
-    PHPVPN_REQUIRE_ERROR(openTrustedDirectory(link / "phpvpn", ::geteuid()),
+    PHPVPN_REQUIRE_OK(secureServiceDirectory(real / "phpvpn", 0700, ::geteuid(), trustRoot()));
+    PHPVPN_REQUIRE_ERROR(openTrustedDirectory(link / "phpvpn", ::geteuid(), trustRoot()),
                          ErrorCode::config_directory_security_invalid);
-    PHPVPN_REQUIRE_OK(openTrustedDirectory(real / "phpvpn", ::geteuid()));
+    PHPVPN_REQUIRE_OK(openTrustedDirectory(real / "phpvpn", ::geteuid(), trustRoot()));
 
     // The parent has to exist, only the last component is created.
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory(fixture.path / "missing" / "phpvpn", 0700, ::geteuid()),
-                         ErrorCode::config_unreadable);
-    PHPVPN_REQUIRE_ERROR(secureServiceDirectory("relative", 0700, ::geteuid()), ErrorCode::invalid_argument);
+    PHPVPN_REQUIRE_ERROR(
+        secureServiceDirectory(fixture.path / "missing" / "phpvpn", 0700, ::geteuid(), trustRoot()),
+        ErrorCode::config_unreadable);
+    PHPVPN_REQUIRE_ERROR(secureServiceDirectory("relative", 0700, ::geteuid(), trustRoot()),
+                         ErrorCode::invalid_argument);
 }
 
 }  // namespace phpvpn

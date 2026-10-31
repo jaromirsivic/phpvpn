@@ -54,7 +54,11 @@ int Registry::run(const std::string& filter) {
 
 }  // namespace phpvpn::test
 
+// A shared test library (the Android instrumented tests) calls
+// Registry::run itself and has no main.
+#if !defined(PHPVPN_TEST_HARNESS_NO_MAIN)
 int main(int argc, char** argv) {
     const std::string filter = argc > 1 ? argv[1] : std::string();
     return phpvpn::test::Registry::instance().run(filter);
 }
+#endif

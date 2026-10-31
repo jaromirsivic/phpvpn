@@ -54,8 +54,8 @@ PHPVPN_TEST(ServerVersion, OnlyTheMajorVersionIsCompared) {
 PHPVPN_TEST(ServerVersion, OnlySafeServerVersionsAreDisplayed) {
     PHPVPN_CHECK_EQ(displayableServerVersion("2.0.1-rc.1+b5"), std::string("2.0.1-rc.1+b5"));
     PHPVPN_CHECK_EQ(displayableServerVersion(std::string(32, '9')), std::string(32, '9'));
-    for (const std::string text : {std::string(), std::string(33, '9'), std::string("2.0 <b>"), std::string("2.0\n1"),
-                                   std::string("2.0\x1b[31m"), std::string("2.0/../x"), std::string("2.0\0x", 5)})
+    for (const std::string& text : {std::string(), std::string(33, '9'), std::string("2.0 <b>"), std::string("2.0\n1"),
+                                    std::string("2.0\x1b[31m"), std::string("2.0/../x"), std::string("2.0\0x", 5)})
         PHPVPN_CHECK_EQ(displayableServerVersion(text), std::string("unrecognised"));
     const auto forged = requireCompatibleServerVersion("9.0.0\r\nInjected: text", "1.0.0");
     PHPVPN_CHECK_EQ(forged.error().detail, std::string("unrecognised"));

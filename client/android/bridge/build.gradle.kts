@@ -55,6 +55,17 @@ android {
     }
 
     buildTypes {
+        debug {
+            // T-N03 (plan-android-v001 WP02): libphpvpn-android-tests.so runs
+            // the POSIX layer tests inside the application sandbox for the
+            // instrumented test. Release builds never configure the target.
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DPHPVPN_ANDROID_NATIVE_TESTS=ON"
+                    targets += "phpvpn-android-tests"
+                }
+            }
+        }
         release {
             isMinifyEnabled = false
         }

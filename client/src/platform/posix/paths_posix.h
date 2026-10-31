@@ -6,7 +6,9 @@
 // it logs to journald, so the log directory is unused there. macOS uses the
 // canonical paths of paths_macos.h. The locations are fixed for the production
 // service. Isolated end to end test instances replace whole directories through
-// PosixDirectoryOverrides, never single files.
+// PosixDirectoryOverrides, never single files. Android has no fixed location:
+// its host overrides every directory with one below the private directory of
+// the application and anchors the trusted walk there (openTrustedDirectory).
 #pragma once
 
 #include <sys/types.h>
@@ -82,18 +84,41 @@ std::filesystem::path logDirectoryPath(const PosixDirectories& directories);  //
 // directory or an unsafe component fails with config_directory_security_invalid,
 // a missing or unreadable component with config_unreadable. Production passes
 // uid 0.
-Result<UniqueFd> openTrustedDirectory(const std::filesystem::path& directory, uid_t expectedOwner = 0);
+//
+// `trustRoot` anchors the walk (plan-android-v001 point 13). Empty, the default
+// and the only value of the Linux and macOS services, starts at "/" as
+// described above. Otherwise it is an absolute, lexically normal directory
+// other than "/" that `directory` equals or lies below, else invalid_argument.
+// The anchor is opened as given: links among its ancestors are followed (they
+// are outside the trust model), its last component must not be a link. It must
+// be a directory owned by `expectedOwner` that others cannot write; its group
+// bits are not checked, because Android creates the application directories
+// 0771 with the private group of the application. Only the components below
+// the anchor are checked by the rules above.
+//
+// Android always anchors: /data and /data/user/0 belong to system, and the
+// application sandbox (own uid, SELinux untrusted_app, file based encryption)
+// already isolates the private directory. The Android host passes
+// Context.getNoBackupFilesDir() as `trustRoot` and getuid() as `expectedOwner`,
+// to this function, to secureServiceDirectory(ies) and in
+// PosixConfigFilePolicy::trustRoot; an empty anchor fails with invalid_argument
+// there.
+Result<UniqueFd> openTrustedDirectory(const std::filesystem::path& directory, uid_t expectedOwner = 0,
+                                      const std::filesystem::path& trustRoot = {});
 
 // Startup normalization of one service directory, the counterpart of the
 // Windows ACL repair. Creates the directory when missing (its parent must
 // exist), requires the owner `expectedOwner` and sets exactly `mode`. A symbolic
 // link, a foreign owner or an unsafe ancestor fails closed with
-// config_directory_security_invalid and changes nothing.
-Status secureServiceDirectory(const std::filesystem::path& directory, mode_t mode, uid_t expectedOwner = 0);
+// config_directory_security_invalid and changes nothing. With a `trustRoot`
+// (see openTrustedDirectory) the directory must lie strictly below it.
+Status secureServiceDirectory(const std::filesystem::path& directory, mode_t mode, uid_t expectedOwner = 0,
+                              const std::filesystem::path& trustRoot = {});
 
 // Configuration 0700, state 0700 and runtime 0755, in this order. The log
 // directory is secured separately by the macOS service with
 // secureServiceDirectory(directories.logs, kPosixLogDirectoryMode).
-Status secureServiceDirectories(const PosixDirectories& directories, uid_t expectedOwner = 0);
+Status secureServiceDirectories(const PosixDirectories& directories, uid_t expectedOwner = 0,
+                                const std::filesystem::path& trustRoot = {});
 
 }  // namespace phpvpn
