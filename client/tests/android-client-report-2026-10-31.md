@@ -5,6 +5,7 @@ Co se nespustilo, je NOT RUN s důvodem. Žádný výsledek z emulátoru se nevy
 
 Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-31.md),
 [WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),
+[WP03 platformní vrstva Androidu](android/wp03-platform-report-2026-10-31.md),
 [WP06 Kotlin IPC klient a stavové modely](android/wp06-ipc-report-2026-10-31.md),
 [WP07 téma, komponenty, navigace a texty](android/wp07-ui-report-2026-10-31.md).
 
