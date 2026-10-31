@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Artwork colours of the state icons (assets/phpvpn*.svg) and the launcher
+     background. They are resources, not literals in the vectors, so that a
+     values-night set can recolour the icons for a dark theme later (R7).
+     UI colours live in ui/theme/Color.kt, not here. -->
+<resources>
+    <color name="icon_brand_frame">#000099</color>
+    <color name="icon_brand_fill">#BBDEFE</color>
+    <color name="icon_brand_accent">#007EFE</color>
+    <color name="icon_connected_frame">#006600</color>
+    <color name="icon_connected_fill">#C6FFB3</color>
+    <color name="icon_connected_accent">#00DD00</color>
+    <color name="icon_connecting_frame">#994C00</color>
+    <color name="icon_connecting_fill">#FFF372</color>
+    <color name="icon_connecting_accent">#FF7D00</color>
+    <color name="icon_disconnected_frame">#990000</color>
+    <color name="icon_disconnected_fill">#FEC0C0</color>
+    <color name="icon_disconnected_accent">#FF0000</color>
+    <!-- Launcher background: the design token pale (#eaf1ff) -->
+    <color name="launcher_background">#EAF1FF</color>
+    <!-- Monochrome UI glyphs (bottom navigation, back, chevrons) are tinted at
+         runtime from the theme; this neutral default only shows in previews. -->
+    <color name="glyph_default">#627086</color>
+</resources>
