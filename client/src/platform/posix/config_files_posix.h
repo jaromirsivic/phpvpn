@@ -7,6 +7,31 @@
 // the local filesystem check uses the statfs f_type magic on Linux and the
 // f_fstypename string on macOS; the journal and publication syncs add
 // F_FULLFSYNC on macOS, where fsync does not flush the drive cache.
+//
+// Publication over an existing config.json keeps the original inode reachable
+// as config.previous until the next recovery, by one of two backup strategies
+// (PosixConfigFilePolicy::backupStrategy). Both use the same journal record
+// PHPVPN-CONFIG-1 (staged and original inode identities); the identities alone
+// tell every intermediate state apart, so no strategy marker is journaled.
+//
+//   hardLink (Linux and macOS default): linkat(config.json -> config.previous),
+//     then renameat(stage -> config.json) publishes. Between both steps the
+//     original inode has the transient pair of names config.json and
+//     config.previous.
+//   exchange (Android default, also available on Linux): SELinux refuses
+//     untrusted_app the link permission on app_data_file, so linkat fails with
+//     EACCES in the application sandbox (plan-android-v001 T-N03). Instead
+//     renameat2(stage, config.json, RENAME_EXCHANGE) publishes in one atomic
+//     swap, the directory is synced, and renameat2(RENAME_NOREPLACE) moves the
+//     original inode from the stage name to config.previous, synced again.
+//     New intermediate state after a crash between the swap and that move:
+//     config.json is the staged inode and the stage name holds the original
+//     inode. Recovery recognizes it by the journaled identities, finishes the
+//     move to config.previous and then cleans up exactly as after a hardLink
+//     publication. The swap only proceeds while config.json is still the
+//     journaled original and config.previous is absent; a target replaced
+//     during the save fails the publication instead of being overwritten.
+//     macOS has no RENAME_EXCHANGE; the factory refuses the strategy there.
 #pragma once
 
 #include <sys/types.h>
@@ -32,10 +57,13 @@ enum class PosixConfigFileStage {
     stageWritten,
     beforeStageFlush,
     stageVerified,       // stage reopened read-only, identity and hash verified
-    backupLinked,        // config.previous links the original inode
+    backupLinked,        // hardLink: config.previous links the original inode
     beforePublish,
-    afterPublish,        // rename done, directory not yet synced
+    afterPublish,        // rename (exchange: swap) done, directory not yet synced
     afterDirectorySync,
+    // exchange only, reached here and not before beforePublish: the original
+    // inode was moved from the stage name to config.previous and synced.
+    backupMoved,
     beforeConfirm,       // published identity verified, CONFIRMED not written
     beforeRecoveryCleanup,
 };
@@ -44,6 +72,17 @@ enum class PosixConfigFileStage {
 // returns at once with ErrorCode::internal and leaves every file exactly as a
 // killed process would, so a new instance can exercise recover().
 enum class PosixConfigFileAction { proceed, fail, crash };
+
+// How a publication keeps the original inode as config.previous, see the file
+// header. exchange needs renameat2(RENAME_EXCHANGE) and is refused on macOS
+// with not_supported.
+enum class PosixConfigBackupStrategy { hardLink, exchange };
+
+#if defined(__ANDROID__)
+inline constexpr PosixConfigBackupStrategy kDefaultPosixConfigBackupStrategy = PosixConfigBackupStrategy::exchange;
+#else
+inline constexpr PosixConfigBackupStrategy kDefaultPosixConfigBackupStrategy = PosixConfigBackupStrategy::hardLink;
+#endif
 
 struct PosixConfigFilePolicy {
     // Owner required for the directory and every file. Production is root, the
@@ -54,6 +93,9 @@ struct PosixConfigFilePolicy {
     // paths_posix.h. Empty on Linux and macOS; Android passes the private
     // directory of the application.
     std::filesystem::path trustRoot{};
+    // hardLink on Linux and macOS, exchange on Android, where SELinux refuses
+    // hard links in the application data. The Android host passes it explicitly.
+    PosixConfigBackupStrategy backupStrategy = kDefaultPosixConfigBackupStrategy;
 };
 
 #if defined(__linux__)
