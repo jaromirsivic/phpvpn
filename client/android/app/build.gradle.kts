@@ -16,6 +16,7 @@ val clientVersion: String = run {
 }
 val clientVersionCode: Int = clientVersion.split('.').map { it.toInt() }
     .let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
+val abiSplits: Boolean = providers.gradleProperty("phpvpn.abiSplits").orNull?.toBoolean() ?: false
 
 android {
     // The Kotlin namespace is separate from the applicationId on purpose:
@@ -41,9 +42,32 @@ android {
         }
     }
 
+    // WP12 (client/tools/android/make-android-dev.ps1): -Pphpvpn.abiSplits=true
+    // adds one APK per ABI next to the universal one. Off by default, so the
+    // plain build keeps its single app-<buildType>.apk.
+    splits {
+        abi {
+            isEnable = abiSplits
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // The bridge's debug variant also builds the T-N03 test library for
+            // its own instrumented test APK (WP02); the app never loads it.
+            excludes += "**/libphpvpn-android-tests.so"
+        }
+    }
+
     buildTypes {
         release {
-            // Release signing, R8 and the symbol stripping policy are WP12.
+            // R2: no release signing config yet, so Gradle leaves the release
+            // APK unsigned. R8 (with the JNI keep rules) stays off until the
+            // release review; the native libraries are stripped by AGP and the
+            // non-stripped copies are kept by make-android-dev.ps1.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
