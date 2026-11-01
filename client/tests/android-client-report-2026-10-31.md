@@ -14,7 +14,7 @@ Wizardem v UI NOT RUN (zamčený telefon), Wi-Fi ↔ mobilní data NOT RUN (bez 
 [wp12-packaging-report-2026-11-01.md](android/wp12-packaging-report-2026-11-01.md), první běh CI s krokem
 „Package and check“ (#18) selhal na kontrole DN debug certifikátu na Linuxu, kontrola upravena v `c3d411b`; běh #19
 ukázal příčinu (předinstalovaný build-tools 37.0.0, jehož `apksigner --print-certs` certifikát nevypíše), workflow
-nyní připíná build-tools 36.0.0.
+připíná build-tools 36.0.0 a běh #20 (`6ae25c9`, po sloučení WP11) je PASS včetně kroku „Package and check“.
 
 | Oblast | API 34 | API 35 | API 36 |
 |---|---|---|---|
@@ -105,7 +105,7 @@ Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-3
 | `gradlew assembleDebug` lokálně | PASS | `app-debug.apk` (`versionCode 10003`, `versionName 1.0.3`, `minSdkVersion 34`, `targetSdkVersion 36`, `compileSdkVersion 37`), `native-code: arm64-v8a x86_64`, `zipalign -c -P 16 -v 4` „Verification successful“ |
 | APK na `phpvpn-api34` zobrazí text z nativní knihovny | PASS | emulátor x86_64 API 34 headless (WHPX, boot 24 s), `uiautomator dump` obsahuje `text="phpvpn native client 1.0.3"`, snímek `work/build/wp00-api34.png`, žádný záznam `AndroidRuntime:E` |
 | `gradlew testDebugUnitTest` lokálně | PASS | zatím bez testů, ověřuje jen konfiguraci úlohy |
-| CI `client-android.yml` | PASS | běhy #5 (8fcef32) a #6 (3ad0c24) na ubuntu-24.04: job `deps` (cache miss → build-deps.sh, artefakt), job `app` (`assembleDebug testDebugUnitTest`, APK artefakt). První běhy #1 až #4 selhaly, protože `gradlew` byl commitnutý bez práva spuštění. Od WP12 job `app` navíc spouští `make-android-dev.ps1` a artefakt `phpvpn-android-debug` obsahuje `work/android/<verze>`. |
+| CI `client-android.yml` | PASS | běhy #5 (8fcef32) a #6 (3ad0c24) na ubuntu-24.04: job `deps` (cache miss → build-deps.sh, artefakt), job `app` (`assembleDebug testDebugUnitTest`, APK artefakt). První běhy #1 až #4 selhaly, protože `gradlew` byl commitnutý bez práva spuštění. Od WP12 job `app` navíc spouští `make-android-dev.ps1 -BuildToolsVersion 36.0.0` a artefakt `phpvpn-android-debug` obsahuje `work/android/<verze>`; běhy #18 a #19 selhaly na `apksigner` z předinstalovaných build-tools 37.0.0, běh #20 (`6ae25c9`) PASS. |
 | CI `client-linux.yml` na větvi `android` | PASS | od #24 (64d6d26); před WP02 selhával i na `main` (12e3ac1) kvůli `-Werror=range-loop-construct` v `test_server_version.cpp`, opraveno ve WP02. |
 | CI `client-macos.yml` na větvi `android` | FAIL (předchozí stav) | krok „Install test (.pkg with the system installer, root)“ selhává už na `main` od 12e3ac1 (poslední zelený běh 369298b, 2026-10-30), nesouvisí s Androidem. Z logu (běh #24): 36 kontrol PASS, `connect` přes nainstalovaného démona proti `php -S` relay skončí do 1 s ve stavu `error` ("FAIL: the installed daemon did not reach connected (state: error no)"), relay hlásí `SERVER_VERSION 1.0.3`, takže nejde o kontrolu major verze. Příčina (neobnovitelná chyba bootstrapu, možná změna obrazu runneru macos-15 nebo PHP) se řeší samostatně mimo plán Androidu. |
 | Nalezeno a opraveno | | `app` bez `abiFilters` balilo i `armeabi-v7a` a `x86` knihovny androidx; doplněno `abiFilters` do obou modulů (R4). |
