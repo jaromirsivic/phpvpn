@@ -7,6 +7,7 @@ Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-3
 [WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),
 [WP03 platformní vrstva Androidu](android/wp03-platform-report-2026-10-31.md),
 [WP04 nativní runtime a JNI most](android/wp04-runtime-report-2026-10-31.md),
+[WP05 služba, souhlas, notifikace a životní cyklus](android/wp05-service-report-2026-10-31.md),
 [WP06 Kotlin IPC klient a stavové modely](android/wp06-ipc-report-2026-10-31.md),
 [WP07 téma, komponenty, navigace a texty](android/wp07-ui-report-2026-10-31.md),
 [WP08 obrazovky Connection, Traffic, Server, Settings](android/wp08-screens-report-2026-10-31.md),
