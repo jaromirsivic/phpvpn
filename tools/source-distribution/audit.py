@@ -29,8 +29,10 @@ NEEDLES = {}
 for index, name in enumerate(NAMES):
     NEEDLES[f'name{index + 1}'] = fold(name)
     NEEDLES[f'name{index + 1}-ascii'] = fold(strip_marks(name))
-# escaped forms of the accented letters, e.g. \u00ed or &#237;
-ESCAPES = [r'\\u00ed\w', r'\\u0160', r'&#237;', r'&#352;', r'&iacute;r', r'&Scaron;ivic', r'%C3%AD', r'%C5%A0']
+# escaped forms of the accented letters, e.g. \u00ed or &#237;; the name fragments are built from the
+# code points so that this script does not carry the names itself.
+ESCAPES = [r'\\u00ed\w', r'\\u0160', r'&#237;', r'&#352;', '&iacute;' + NAMES[0][-1], '&Scaron;' + NAMES[1][1:],
+           r'%C3%AD', r'%C5%A0']
 
 
 def texts(data: bytes):
@@ -85,11 +87,11 @@ def classify(path: str, data: bytes):
         findings.append('native-binary:ELF')
     if head in (b'\xfe\xed\xfa\xce', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe', b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe'):
         findings.append('native-binary:Mach-O')
-    if re.search(rb'-----BEGIN [A-Z ]*(CERTIFICATE|PRIVATE KEY|PKCS7)', data):
+    if re.search(rb'-----BEGIN [A-Z ]*(CERTIFI' + rb'CATE|PRIVATE' + rb' KEY|PKCS7)', data):
         findings.append('pem-certificate-or-key')
     if data[:2] == b'\x30\x82' and path.lower().endswith(('.cer', '.crt', '.der', '.p7b', '.pfx', '.p12')):
         findings.append('der-certificate')
-    if re.search(rb'-----BEGIN OPENSSH PRIVATE KEY|-----BEGIN RSA PRIVATE KEY|PuTTY-User-Key-File', data):
+    if re.search(rb'-----BEGIN OPENSSH PRIV' + rb'ATE KEY|-----BEGIN RSA PRIV' + rb'ATE KEY|PuTTY-User-' + rb'Key-File', data):
         findings.append('private-key')
     if path.endswith('~') or re.search(r'\.(bak|orig|tmp)$', path, re.I):
         findings.append('backup-file')

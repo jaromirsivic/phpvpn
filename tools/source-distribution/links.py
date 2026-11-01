@@ -17,7 +17,8 @@ for p in list(folders):
         folders.add(p)
 link = re.compile(r'\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 problems = 0
-for rel in sorted(p for p in included if p.lower().endswith('.md')):
+# The inputs of the tooling (translations, extras) are meant for the staging root, not for their folder.
+for rel in sorted(p for p in included if p.lower().endswith('.md') and not p.startswith('tools/source-distribution/')):
     text = open(os.path.join(root, rel), encoding='utf-8', errors='replace').read()
     for target in link.findall(text):
         if re.match(r'^[a-z]+:', target, re.I) or target.startswith('#'):
