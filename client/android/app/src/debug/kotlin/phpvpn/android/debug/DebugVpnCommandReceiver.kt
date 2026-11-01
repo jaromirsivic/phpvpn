@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import phpvpn.android.appContainer
+import phpvpn.android.bridge.NativeBridge
 import phpvpn.android.bridge.ipc.IpcOutcome
 import phpvpn.android.bridge.ipc.SecretText
 import phpvpn.android.bridge.repository.CommandResult
@@ -20,9 +21,9 @@ import phpvpn.android.bridge.repository.ConnectionStatus
  * -n <package>/phpvpn.android.debug.DebugVpnCommandReceiver -a <action>`.
  * Connect and Disconnect take the production path (ConnectActions → VPN
  * service); results go to logcat with the tag `phpvpn-debug`, never a secret.
- * The device tests (client/tests/android/device-report-2026-11-01.md) add
- * DIAGNOSTICS (public counters of `get-diagnostics`) and CONFIGURE_FILE (a
- * whole document from the app's cacheDir, deleted after set-config).
+ * WP11 and the device tests add CONFIGURE_FILE (a whole document written by
+ * the host, deleted after set-config), DIAGNOSTICS (public counters of
+ * `get-diagnostics`) and STATUS_JSON (the get-status document).
  * Release builds do not contain it.
  */
 class DebugVpnCommandReceiver : BroadcastReceiver() {
@@ -36,8 +37,11 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
                     ACTION_DISCONNECT -> log("disconnect ${describe(container.connectActions.disconnect())}")
                     ACTION_STATUS -> log("status ${describe(container.connection.readOnce())}")
                     ACTION_CONFIGURE -> configure(context, intent)
+                    ACTION_CONFIGURE_FILE -> configureFile(context, intent)
                     ACTION_DIAGNOSTICS -> diagnostics(context)
-                    ACTION_CONFIGURE_FILE -> configureFromFile(context)
+                    // WP11: the whole get-status document on one line (recoveryCount, lastError,
+                    // counters); it holds no secret. Only while the runtime runs.
+                    ACTION_STATUS_JSON -> log("status-json ${statusJson()}")
                     else -> log("unknown action")
                 }
             } finally {
@@ -64,11 +68,20 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Device tests: store the whole document from `cacheDir/device-test-config.json` (written there by
-     * `adb shell run-as`), then overwrite and delete the file. The document is never logged.
+     * A whole configuration document (own virtual IP, a communication contract
+     * with the peer) that a host script wrote with `adb shell run-as`. With the
+     * extra `file` (WP11 peer tests) it is `filesDir/<file>`, without it
+     * (device tests, client/tests/android/device-report-2026-11-01.md) it is
+     * `cacheDir/device-test-config.json`. The file is overwritten with zeros
+     * and deleted after reading; the document is never logged.
      */
-    private suspend fun configureFromFile(context: Context) {
-        val file = java.io.File(context.cacheDir, CONFIG_FILE)
+    private suspend fun configureFile(context: Context, intent: Intent) {
+        val name = intent.getStringExtra(EXTRA_FILE)
+        val file = when {
+            name == null -> java.io.File(context.cacheDir, CONFIG_FILE)
+            name.matches(Regex("[A-Za-z0-9._-]+")) -> java.io.File(context.filesDir, name)
+            else -> return log("configure-file failed: bad file name")
+        }
         if (!file.isFile) return log("configure-file failed: no file")
         val bytes = file.readBytes()
         file.writeBytes(ByteArray(bytes.size))
@@ -100,6 +113,9 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
         }
     }
 
+    private fun statusJson(): String =
+        NativeBridge.nativeStatus()?.decodeToString()?.lines()?.joinToString(" ") { it.trim() } ?: "unavailable"
+
     private fun describe(result: CommandResult): String = when (result) {
         is CommandResult.Accepted -> "accepted state=${result.status.state?.name?.lowercase()}"
         is CommandResult.Failed -> "failed ${result.error.code}"
@@ -123,9 +139,11 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
         const val ACTION_DISCONNECT = "phpvpn.android.debug.DISCONNECT"
         const val ACTION_STATUS = "phpvpn.android.debug.STATUS"
         const val ACTION_CONFIGURE = "phpvpn.android.debug.CONFIGURE"
-        const val ACTION_DIAGNOSTICS = "phpvpn.android.debug.DIAGNOSTICS"
         const val ACTION_CONFIGURE_FILE = "phpvpn.android.debug.CONFIGURE_FILE"
+        const val EXTRA_FILE = "file"
         const val CONFIG_FILE = "device-test-config.json"
+        const val ACTION_DIAGNOSTICS = "phpvpn.android.debug.DIAGNOSTICS"
+        const val ACTION_STATUS_JSON = "phpvpn.android.debug.STATUS_JSON"
         const val EXTRA_URL = "url"
         const val EXTRA_AUTO_CONNECT = "autoConnect"
     }

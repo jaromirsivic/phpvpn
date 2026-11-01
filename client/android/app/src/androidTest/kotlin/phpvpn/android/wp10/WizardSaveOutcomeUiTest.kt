@@ -35,13 +35,13 @@ class WizardSaveOutcomeUiTest : WizardUiTestBase() {
         }
         waitForText(R.string.wizard_url_heading)
         field(R.string.wizard_url_field).performTextReplacement("https://vpn.example.com/phpvpn.php")
-        click(R.string.wizard_verify_continue)
+        clickWhenEnabled(R.string.wizard_verify_continue)
         waitForText(R.string.wizard_secret_heading)
-        click(R.string.wizard_verify_continue)
+        clickWhenEnabled(R.string.wizard_verify_continue)
         waitForText(R.string.wizard_identity_heading)
-        click(R.string.wizard_verify_continue)
+        clickWhenEnabled(R.string.wizard_verify_continue)
         waitForText(R.string.wizard_finish_heading)
-        click(R.string.wizard_finish_save)
+        clickWhenEnabled(R.string.wizard_finish_save)
         compose.waitUntil(10_000) { nav.currentDestination?.hasRoute<SaveUnknown>() == true }
         waitForText(R.string.save_unknown_heading)
         assertTrue(compose.onAllNodes(hasTestTag(TAG_SAVE_AGAIN)).fetchSemanticsNodes().isEmpty())

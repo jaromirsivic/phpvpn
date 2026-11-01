@@ -133,12 +133,15 @@ jobs:
       # WP12: the same script as on a developer machine, run by the
       # preinstalled PowerShell 7. It rebuilds with the ABI splits, adds the
       # unsigned release APK and lint, copies everything to
-      # work/android/<version> and fails on any packaging check.
+      # work/android/<version> and fails on any packaging check. The build
+      # tools are pinned to the version installed above: the runner image also
+      # carries a newer one whose apksigner prints no certificate lines for
+      # `verify --print-certs` (run #18 and #19 failed on the debug DN check).
       - name: Package and check
         shell: pwsh
         env:
           PHPVPN_ANDROID_DEPS: ${{ needs.deps.outputs.available == 'true' && format('{0}/{1}', github.workspace, env.DEPS_DIR) || '' }}
-        run: client/tools/android/make-android-dev.ps1 -GradleArguments '--no-daemon'
+        run: client/tools/android/make-android-dev.ps1 -GradleArguments '--no-daemon' -BuildToolsVersion 36.0.0
 
       - name: APKs
         if: success() || failure()

@@ -146,7 +146,12 @@ PASS, 3 FAIL, všechny `apksigner verify --print-certs` nad debug APK s hlášen
 samotný výstup neobsahuje. Oprava ve skriptu: DN se porovnává jako množina složek (`CN=Android Debug`,
 `O=Android`, `C=US` v libovolném pořadí, protože keystore vygenerovaný AGP může složky vypsat jinak než keystore
 z Android Studia), přijímá se i tvar `Signer (minSdkVersion=…)` a při selhání kontrola vypíše verdiktové řádky
-`apksigner` (bez otisků) a návratový kód. Výsledek dalšího běhu CI je v hlavním reportu.
+`apksigner` (bez otisků) a návratový kód. Běh #19 (`c3d411b`) s tímto výpisem ukázal příčinu: skript bez
+`-BuildToolsVersion` bere nejnovější složku `build-tools`, a na obrazu `ubuntu-24.04` je kromě nainstalovaných 36.0.0
+předinstalovaná verze 37.0.0, jejíž `apksigner` (zná už schéma v3.2) při `verify --print-certs -v` vypíše „Verifies“,
+schémata a „Number of signers: 1“, ale žádný řádek `Signer #1 certificate …`, návratový kód 0. Workflow proto
+předává `-BuildToolsVersion 36.0.0` (verze, kterou krok SDK instaluje a kterou používá i lokální běh). Výsledek dalšího
+běhu CI je v hlavním reportu.
 
 ## Odloženo podle R2
 

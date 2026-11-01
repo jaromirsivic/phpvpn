@@ -47,7 +47,7 @@ class WizardFlowTest : WizardUiTestBase() {
     private fun enterUrlAndVerify() {
         waitForText(R.string.wizard_url_heading)
         field(R.string.wizard_url_field).performTextReplacement(url)
-        click(R.string.wizard_verify_continue)
+        clickWhenEnabled(R.string.wizard_verify_continue)
     }
 
     @Test
@@ -86,7 +86,7 @@ class WizardFlowTest : WizardUiTestBase() {
         enterUrlAndVerify()
         waitForText(R.string.wizard_secret_heading)
         field(R.string.wizard_secret_field).performTextReplacement("synthetic-secret-value")
-        click(R.string.wizard_verify_continue)
+        clickWhenEnabled(R.string.wizard_verify_continue)
         waitForText(R.string.wizard_error_heading)
         assertTrue(at<WizardError>())
         assertTrue("18 never repeats the secret", compose.onAllNodes(hasText("synthetic-secret-value", substring = true)).fetchSemanticsNodes().isEmpty())
@@ -261,7 +261,7 @@ class WizardFlowTest : WizardUiTestBase() {
         launch(WizardUrl)
         waitForText(R.string.wizard_url_heading)
         field(R.string.wizard_url_field).performTextReplacement(url)
-        click(R.string.wizard_url_defaults)
+        clickWhenEnabled(R.string.wizard_url_defaults)
         waitForText(R.string.wizard_reset_heading)
         click(R.string.wizard_reset_confirm)
         compose.waitUntil(5_000) { service.requests("wizard-reset").size == 1 }
@@ -281,14 +281,14 @@ class WizardFlowTest : WizardUiTestBase() {
         waitForText(R.string.headers_heading)
         waitForSecure(true)
         field(R.string.headers_field).performTextReplacement("Host: example")
-        click(R.string.headers_use)
+        clickWhenEnabled(R.string.headers_use)
         compose.onNodeWithText(text(R.string.wp09_headers_error_managed, 1, "Host")).shown()
         field(R.string.headers_field).performTextReplacement("Cookie: synthetic=1\nUser-Agent: test")
-        click(R.string.headers_use)
+        clickWhenEnabled(R.string.headers_use)
         waitForText(R.string.wizard_url_heading)
         waitForSecure(false)
         field(R.string.wizard_url_field).performTextReplacement(url)
-        click(R.string.wizard_verify_continue)
+        clickWhenEnabled(R.string.wizard_verify_continue)
         compose.waitUntil(5_000) { service.requests("wizard-check-url").isNotEmpty() }
         assertEquals(
             "the accepted headers are used by the next check",

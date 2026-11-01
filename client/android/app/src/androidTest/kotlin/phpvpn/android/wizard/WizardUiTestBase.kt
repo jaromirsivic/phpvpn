@@ -5,6 +5,9 @@ import androidx.annotation.StringRes
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -75,6 +78,21 @@ abstract class WizardUiTestBase {
 
     fun click(@StringRes id: Int) {
         compose.onNodeWithText(text(id)).scrollIntoView().performClick()
+        compose.waitForIdle()
+    }
+
+    /**
+     * Clicks [id] through its semantics action once the button is enabled. After
+     * performTextReplacement the soft keyboard opens and resizes the window; an
+     * injected touch during that inset animation can land beside the moving
+     * footer button and is lost, so the next step never comes (WP11 flake,
+     * WizardSaveOutcomeUiTest on API 35: wizard-check-url never sent).
+     */
+    fun clickWhenEnabled(@StringRes id: Int, timeoutMs: Long = 10_000) {
+        compose.waitUntil(timeoutMs) {
+            runCatching { compose.onNodeWithText(text(id)).assertIsEnabled() }.isSuccess
+        }
+        compose.onNodeWithText(text(id)).scrollIntoView().performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
     }
 
