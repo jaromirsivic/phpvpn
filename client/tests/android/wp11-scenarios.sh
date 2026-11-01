@@ -34,8 +34,9 @@ APK=$3
 TESTS=${4:-"ta08"}
 PKG=io.github.jaromirsivic.phpvpn
 RECEIVER=$PKG/phpvpn.android.debug.DebugVpnCommandReceiver
-RELAY_STOP=${RELAY_STOP:-'cmd.exe /c D:\nginx\stop.bat'}
-RELAY_START=${RELAY_START:-'cmd.exe /c D:\nginx\start.bat'}
+# The commands go through eval: backslashes of a Windows path are doubled.
+RELAY_STOP=${RELAY_STOP:-'cmd.exe /c D:\\nginx\\stop.bat'}
+RELAY_START=${RELAY_START:-'cmd.exe /c D:\\nginx\\start.bat'}
 PEER_IP=${PEER_IP:-10.99.99.2}
 CONFIG_FILE=${CONFIG_FILE:-}
 TA20_IDLE_S=${TA20_IDLE_S:-600}
