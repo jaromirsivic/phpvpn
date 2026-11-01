@@ -47,6 +47,8 @@ enum class ReconnectPhase { IDLE, DISCONNECTING, FAILED }
 class SavedViewModel(
     private val connection: ConnectionRepository,
     private val clock: MonotonicClock = MonotonicClock.SYSTEM,
+    // WP05: the app's Connect goes through the VPN service (ConnectActions).
+    private val connectVpn: suspend () -> CommandResult = connection::connect,
 ) : ViewModel() {
     private val reconnect = ReconnectController()
 
@@ -112,7 +114,7 @@ class SavedViewModel(
         // The queued Connect runs only if the status is still the confirmed idle of this connection.
         val idle = (connection.readOnce() as? ConnectionStatus.Available)?.status ?: return fail()
         if (!reconnect.consume(token, idle)) return fail()
-        return connection.connect() !is CommandResult.Failed
+        return connectVpn() !is CommandResult.Failed
     }
 
     private fun fail(): Boolean {
@@ -124,7 +126,7 @@ class SavedViewModel(
     fun connect() {
         if (connectionState != SavedConnection.INACTIVE) return
         viewModelScope.launch {
-            connection.connect()
+            connectVpn()
             finished = true
         }
     }

@@ -61,6 +61,8 @@ class ExitViewModel(
             val outcome = if (alreadyOffline) Outcome.CONFIRMED else withTimeoutOrNull(IpcTimeouts.COMMAND_MS.toLong()) {
                 combine(connection.status, connection.progress, ::classify).first { it != Outcome.PENDING }
             } ?: Outcome.UNCONFIRMED
+            // Step 8: the confirmed state stops the VPN service; the task closes after it.
+            if (outcome == Outcome.CONFIRMED && !alreadyOffline) actions.awaitServiceStopped(SERVICE_STOP_MS)
             _disconnecting.value = false
             effectChannel.trySend(if (outcome == Outcome.CONFIRMED) ExitEffect.CloseTask else ExitEffect.ShowConnection)
         }
@@ -78,4 +80,9 @@ class ExitViewModel(
 
     /** The success condition of the disconnect progress (progress_model.cpp). */
     private fun confirmedOffline(status: TrayStatus) = status.offline && status.tunnelReady == Tristate.NO && !status.hasError
+
+    private companion object {
+        /** The service polls every 500 ms after its own Disconnect, then stops. */
+        const val SERVICE_STOP_MS = 3_000L
+    }
 }

@@ -175,7 +175,7 @@ class VpnPlatformTest {
         log("loadAndVerify without TunnelHost: $result")
         // Without the consent loadAndVerify stops earlier with tunnel_permission_missing.
         if (VpnService.prepare(context) == null) {
-            assertEquals("error tunnel_adapter_failed (the VPN service is not running)", result)
+            assertEquals("error tunnel_driver_unsupported (the VPN service is not running)", result)
         } else {
             assertEquals("error tunnel_permission_missing (the VPN consent is missing)", result)
         }

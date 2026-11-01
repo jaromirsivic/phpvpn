@@ -164,7 +164,7 @@ private fun EditorNavigationEffect(nav: NavHostController, vm: EditorViewModel, 
 internal fun NavGraphBuilder.saveOutcomes(nav: NavHostController) {
     composable<Saved>(deepLinks = link(MapPaths.SAVED)) {
         val deps = configFlowDependencies()
-        val vm: SavedViewModel = viewModel(factory = viewModelFactory { initializer { SavedViewModel(deps.connection, deps.clock) } })
+        val vm: SavedViewModel = viewModel(factory = viewModelFactory { initializer { SavedViewModel(deps.connection, deps.clock, deps.connectVpn) } })
         val done = { nav.navigateToMain(MainDestination.Connection) }
         LaunchedEffect(vm.finished) { if (vm.finished) done() }
         SavedScreen(vm, onDone = done)

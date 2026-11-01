@@ -38,6 +38,7 @@ typealias UiRule = AndroidComposeTestRule<ActivityScenarioRule<ComponentActivity
 /** The test application with a fresh container for each test. */
 fun freshApp(): TestApplication {
     val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as TestApplication
+    app.useFakeTransport()
     app.resetContainer()
     app.consent.granted = true
     app.consent.nextResult = false

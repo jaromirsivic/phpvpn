@@ -16,6 +16,7 @@ import phpvpn.android.ui.state.ConfigSummaryRepository
 import phpvpn.android.ui.state.ConnectActions
 import phpvpn.android.ui.state.ConnectionUiEvents
 import phpvpn.android.ui.state.KotlinServerInfoModel
+import phpvpn.android.ui.state.NotificationPermission
 import phpvpn.android.ui.state.RepositoryConnectActions
 import phpvpn.android.ui.state.ServerInfoModelResult
 import phpvpn.android.ui.state.ServerInfoModelSource
@@ -33,8 +34,9 @@ import phpvpn.android.ui.state.VpnConsent
  *
  * The seams for later work packages: WP04 passes the JNI transport, the
  * native [serverInfoModel] and [documentCheck]; WP05 passes [alwaysOn], wraps
- * [connectActions] (foreground service before Connect) and reports into
- * [connectionEvents].
+ * [connectActions] (foreground service before Connect), persists
+ * [connectionEvents] and asks for [notificationPermission]. The defaults are
+ * the inert test versions.
  */
 class AppContainer(
     val transport: IpcTransport,
@@ -43,6 +45,8 @@ class AppContainer(
     val serverInfoModel: ServerInfoModelSource = KotlinServerInfoModel,
     connectActions: ((ConnectionRepository) -> ConnectActions)? = null,
     documentCheck: ConfigDocumentCheck = StructuralConfigDocumentCheck,
+    val connectionEvents: ConnectionUiEvents = ConnectionUiEvents(),
+    val notificationPermission: NotificationPermission = NotificationPermission.GRANTED,
 ) {
     /** Background scope of the repositories, alive as long as the process. */
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -59,6 +63,5 @@ class AppContainer(
         ServerInfoHook { reply -> serverInfoModel.build(reply.result) is ServerInfoModelResult.Ok },
     )
     val configSummary: ConfigSummaryRepository = ConfigSummaryRepository(ipcClient)
-    val connectionEvents: ConnectionUiEvents = ConnectionUiEvents()
     val connectActions: ConnectActions = connectActions?.invoke(connection) ?: RepositoryConnectActions(connection)
 }

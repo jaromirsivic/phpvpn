@@ -1,6 +1,11 @@
 package phpvpn.android.ui.screens.connection
 
+import android.Manifest
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -12,6 +17,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import phpvpn.android.BuildConfig
 import phpvpn.android.R
@@ -24,6 +32,7 @@ import phpvpn.android.ui.components.ActionButton
 import phpvpn.android.ui.components.ActionStyle
 import phpvpn.android.ui.components.BottomNav
 import phpvpn.android.ui.components.CheckState
+import phpvpn.android.ui.components.DialogCard
 import phpvpn.android.ui.components.ConnectionChecks
 import phpvpn.android.ui.components.EntryRow
 import phpvpn.android.ui.components.Eyebrow
@@ -53,6 +62,7 @@ import phpvpn.android.ui.state.ConnectionUiState
 import phpvpn.android.ui.state.ConnectionViewModel
 import phpvpn.android.ui.state.DisconnectReason
 import phpvpn.android.ui.state.LastKnown
+import phpvpn.android.ui.state.NotificationPermission
 import phpvpn.android.ui.state.UiFormat
 import phpvpn.android.ui.state.VpnConsent
 import phpvpn.android.ui.state.rememberVpnConsentLauncher
@@ -80,17 +90,34 @@ object ConnectionTags {
     const val UNAVAILABLE = "connection-08"
     const val UNCONFIRMED = "connection-38"
     const val PERMISSION = "connection-37"
+    const val NOTIFICATIONS_OFF = "connection-notifications-off"
 }
 
 /**
  * Connection destination: one route that renders 01, 02, 04, 05, 06, 07, 08,
  * 38 and the permission error from [ConnectionViewModel]. Connect asks for the
- * system VPN consent through [consent] first (03 → 04 or 37).
+ * system VPN consent through [consent] first (03 → 04 or 37). The first
+ * Connect also asks for POST_NOTIFICATIONS ([notifications], Android 13+
+ * style); the answer never blocks the Connect, and a denial is explained once.
  */
 @Composable
-fun ConnectionScreen(viewModel: ConnectionViewModel, consent: VpnConsent, navigation: ConnectionNavigation) {
+fun ConnectionScreen(
+    viewModel: ConnectionViewModel,
+    consent: VpnConsent,
+    navigation: ConnectionNavigation,
+    notifications: NotificationPermission = NotificationPermission.GRANTED,
+) {
     val model by viewModel.screen.collectAsStateWithLifecycle()
     val launcher = rememberVpnConsentLauncher { granted -> viewModel.onConsentResult(granted) }
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notifications.onRequestResult(granted)
+        viewModel.connect()
+    }
+    val connect: () -> Unit = {
+        if (notifications.shouldRequest()) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) else viewModel.connect()
+    }
+    val explanationPending by notifications.explanationPending.collectAsStateWithLifecycle()
+    if (explanationPending) NotificationsOffDialog(onDismiss = notifications::explained)
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
@@ -102,7 +129,23 @@ fun ConnectionScreen(viewModel: ConnectionViewModel, consent: VpnConsent, naviga
     }
     when (val state = model.state) {
         ConnectionUiState.DisconnectUnconfirmed -> DisconnectUnconfirmedScreen(viewModel, model)
-        else -> MainConnectionScreen(state, model, viewModel, navigation)
+        else -> MainConnectionScreen(state, model, viewModel, navigation, connect)
+    }
+}
+
+/** The one explanation after POST_NOTIFICATIONS was denied: the VPN still works, only the notification is hidden. */
+@Composable
+private fun NotificationsOffDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.padding(20.dp)) {
+            DialogCard(
+                stringResource(R.string.notifications_off_title),
+                Modifier.testTag(ConnectionTags.NOTIFICATIONS_OFF),
+                paragraphs = listOf(stringResource(R.string.notifications_off_text)),
+            ) {
+                ActionButton(stringResource(R.string.notifications_off_ok), onDismiss, style = ActionStyle.Primary)
+            }
+        }
     }
 }
 
@@ -112,6 +155,7 @@ private fun MainConnectionScreen(
     model: ConnectionScreenModel,
     viewModel: ConnectionViewModel,
     navigation: ConnectionNavigation,
+    connect: () -> Unit,
 ) {
     val pending = model.commandPending
     val footer: (@Composable ColumnScope.() -> Unit)? = when (state) {
@@ -119,13 +163,13 @@ private fun MainConnectionScreen(
             { ActionButton(stringResource(R.string.action_disconnect_vpn), viewModel::disconnect, enabled = !pending) }
         }
         is ConnectionUiState.Disconnected -> {
-            { ActionButton(stringResource(R.string.action_connect_vpn), viewModel::connect, style = ActionStyle.Primary, enabled = !pending) }
+            { ActionButton(stringResource(R.string.action_connect_vpn), connect, style = ActionStyle.Primary, enabled = !pending) }
         }
         is ConnectionUiState.Connecting -> {
             { ActionButton(stringResource(R.string.connecting_cancel), viewModel::disconnect, enabled = !pending) }
         }
         is ConnectionUiState.Failed -> {
-            { ActionButton(stringResource(R.string.connection_error_try_again), viewModel::connect, style = ActionStyle.Primary, enabled = !pending) }
+            { ActionButton(stringResource(R.string.connection_error_try_again), connect, style = ActionStyle.Primary, enabled = !pending) }
         }
         ConnectionUiState.Disconnecting -> {
             { ActionButton(stringResource(R.string.disconnecting_progress), {}, enabled = false) }
@@ -134,7 +178,7 @@ private fun MainConnectionScreen(
             { ActionButton(stringResource(R.string.unavailable_check_again), viewModel::checkStatus, style = ActionStyle.Primary) }
         }
         ConnectionUiState.PermissionMissing -> {
-            { ActionButton(stringResource(R.string.permission_denied_retry), viewModel::connect, style = ActionStyle.Primary, enabled = !pending) }
+            { ActionButton(stringResource(R.string.permission_denied_retry), connect, style = ActionStyle.Primary, enabled = !pending) }
         }
         ConnectionUiState.Loading, ConnectionUiState.DisconnectUnconfirmed -> null
     }

@@ -61,6 +61,7 @@ internal fun NavGraphBuilder.mainDestinations(nav: NavHostController) {
                 openHttpDetails = { nav.navigate(DiagnosticResponse(DiagnosticSource.Connect)) { launchSingleTop = true } },
                 openWizardUrl = { nav.openWizardUrl() },
             ),
+            LocalContext.current.appContainer.notificationPermission,
         )
     }
     composable<ConnectionChecks>(deepLinks = link(MapPaths.CONNECTION_CHECKS)) { entry ->

@@ -209,12 +209,12 @@ class IpcDispatchTest {
         // VpnService.prepare() == null: the consent exists, so the missing service is the cause.
         // Without consent loadAndVerify fails with tunnel_permission_missing: not recoverable,
         // state error (screen 37). With consent (an earlier VpnService test of this APK may
-        // have granted it) the missing service is tunnel_adapter_failed, which the core
-        // publishes as tunnel_start_failed and, being recoverable on every platform, retries
-        // in state recovering instead of error (see the WP04 report, deviations).
+        // have granted it) the missing service is tunnel_driver_unsupported since WP05 (it was
+        // the recoverable tunnel_adapter_failed, which kept the engine in recovering, WP04
+        // finding 1); the core publishes it as tunnel_start_failed, not recoverable: error.
         val consent = VpnService.prepare(RuntimeHarness.context) == null
         val expectedCode = if (consent) "tunnel_start_failed" else "tunnel_permission_missing"
-        val expectedStates = if (consent) setOf(ConnectionState.RECOVERING, ConnectionState.ERROR) else setOf(ConnectionState.ERROR)
+        val expectedStates = setOf(ConnectionState.ERROR)
 
         // The tunnel stage is reached only after health, info and the access key check against
         // the relay. php -S closes right after its last write, and through the emulator network
@@ -246,7 +246,7 @@ class IpcDispatchTest {
         // The notification snapshot of WP05 reports the same state.
         val notification = json(assertNotNull(NativeBridge.nativeStatus()).decodeToString())
         assertEquals(NativeBridge.STATUS_REQUEST_ID, JsonChecks.string(notification["requestId"]))
-        assertTrue(JsonChecks.string((notification["status"] as JsonObject)["state"]) in setOf("recovering", "error"))
+        assertEquals("error", JsonChecks.string((notification["status"] as JsonObject)["state"]))
 
         assertTrue(client.disconnect() is IpcOutcome.Success)
         RuntimeHarness.waitUntil(10_000, "Disconnect") {

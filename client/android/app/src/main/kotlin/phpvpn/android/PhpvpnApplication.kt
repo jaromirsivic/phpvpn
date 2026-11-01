@@ -11,18 +11,26 @@ import phpvpn.android.bridge.jni.JniIpcTransport
 import phpvpn.android.bridge.jni.NativeConfigDocumentCheck
 import phpvpn.android.bridge.jni.NativeServerInfo
 import phpvpn.android.bridge.jni.ServerInfoParse
+import phpvpn.android.service.IntentStore
+import phpvpn.android.service.ProcessEndNotice
+import phpvpn.android.service.ServiceAlwaysOnStatus
+import phpvpn.android.service.ServiceConnectActions
+import phpvpn.android.ui.state.ConnectionUiEvents
 import phpvpn.android.ui.state.ServerClientState
 import phpvpn.android.ui.state.ServerInfoModel
 import phpvpn.android.ui.state.ServerInfoModelResult
 import phpvpn.android.ui.state.ServerInfoModelSource
 import phpvpn.android.ui.state.ServerInfoRow
+import phpvpn.android.ui.state.SystemNotificationPermission
 import phpvpn.android.ui.state.SystemVpnConsent
 
 /**
  * Owns the [AppContainer]. The native runtime starts with the first
  * transport, once per process (plan-android-v001, "Proces a životnost"); the
- * service and the boot receiver of WP05 call [NativeRuntime.ensureStarted] as
- * well, which then returns at once. The container talks to the runtime through
+ * VPN service and the boot receiver call [NativeRuntime.ensureStarted] as
+ * well, which then returns at once. Every Connect goes through the VPN service
+ * ([ServiceConnectActions], life cycle step 1), Always-on comes from the
+ * service and the 02 reason (onRevoke, R9) lives in the R9 state file. The container talks to the runtime through
  * the in-process JNI transport, checks configuration documents with the native
  * validator and classifies Server Info with the native model. If the start
  * failed, every exchange returns no reply and the UI shows the "status
@@ -41,13 +49,22 @@ open class PhpvpnApplication : Application() {
         container = createContainer()
     }
 
-    /** WP05 adds the service-backed Always-on status and wraps Connect here. */
-    protected open fun createContainer(): AppContainer = AppContainer(
-        createTransport(),
-        SystemVpnConsent(this),
-        serverInfoModel = NativeServerInfoModel,
-        documentCheck = NativeConfigDocumentCheck,
-    )
+    protected open fun createContainer(): AppContainer {
+        val transport = createTransport()
+        val intents = IntentStore.get(this)
+        val container = AppContainer(
+            transport,
+            SystemVpnConsent(this),
+            alwaysOn = ServiceAlwaysOnStatus,
+            serverInfoModel = NativeServerInfoModel,
+            connectActions = { repository -> ServiceConnectActions(this, repository) },
+            documentCheck = NativeConfigDocumentCheck,
+            connectionEvents = ConnectionUiEvents(intents.read().notice) { reason -> intents.update { it.copy(notice = reason) } },
+            notificationPermission = SystemNotificationPermission(this),
+        )
+        ProcessEndNotice.schedule(container, intents)
+        return container
+    }
 
     /** The JNI transport of the native runtime, started here on first use. */
     protected open fun createTransport(): IpcTransport {

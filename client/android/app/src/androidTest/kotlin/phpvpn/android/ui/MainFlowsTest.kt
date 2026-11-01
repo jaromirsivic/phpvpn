@@ -269,6 +269,9 @@ class MainFlowsTest {
     @Test
     fun welcome_00_whenNoConfigurationExists() {
         transport.respondText("get-config-state", IpcReplies.configState("missing", "config_not_found"))
+        // 36a reads the document itself (WP10) and opens the editor for a readable one,
+        // so the scripted service must say "missing" there too, as the real one does.
+        transport.respondText("get-config-document", IpcReplies.configDocumentMissing())
         val nav = rule.showApp(app)
         rule.waitForTag(WELCOME_TAG)
         rule.runOnUiThread { assertEquals("welcome", nav.currentDestination?.route) }

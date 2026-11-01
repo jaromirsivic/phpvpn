@@ -21,3 +21,4 @@ client/android/gradlew text eol=lf
 client/tools/android/** text eol=lf
 client/android/**/src/test/resources/** text eol=lf
 client/android/**/src/androidTest/resources/** text eol=lf
+client/tests/android/*.sh text eol=lf
