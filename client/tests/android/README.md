@@ -21,6 +21,10 @@ with a device path; the scripts set it themselves.
 emulator -avd phpvpn-api36 -port 5556 -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save
 ```
 
+On the API 34 and 35 images run `adb -s <serial> root` first: without it the `appops set … ACTIVATE_VPN allow`
+of the scripts does not stick (`appops get` stays `ignore`, Connect ends in `tunnel_permission_missing` and the
+system VPN settings list no VPN).
+
 Two test runs never share one emulator (installs and uninstalls collide) and two emulators
 never share one relay buffer (both would connect as `10.99.99.2` and take each other's packets).
 

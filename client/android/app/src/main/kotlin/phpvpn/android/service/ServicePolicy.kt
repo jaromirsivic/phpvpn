@@ -14,6 +14,7 @@ import phpvpn.android.bridge.ipc.ConnectionState
 import phpvpn.android.bridge.ipc.IpcTimeouts
 import phpvpn.android.bridge.ipc.StrictJson
 import phpvpn.android.bridge.model.TrayStatus
+import phpvpn.android.ui.state.AlwaysOnState
 import phpvpn.android.ui.state.DisconnectReason
 
 // Pure decisions of PhpvpnVpnService (plan-android-v001, "Životní cyklus
@@ -290,6 +291,25 @@ object NotificationSchedule {
 
     /** Rewrite the notification only when this key changes (state, phase, text). */
     data class Key(val model: NotificationModel?, val state: ConnectionState?, val phase: ConnectionPhase?, val text: String?)
+}
+
+/** A new sample of `isAlwaysOn()`/`isLockdownEnabled()` that differs from the last published one. */
+data class AlwaysOnChange(val state: AlwaysOnState, val lockdownSwitchedOn: Boolean, val lockdownSwitchedOff: Boolean)
+
+/**
+ * Always-on for Settings (10) and About (34), plan step 6. Android neither
+ * restarts nor commands a running Always-on service when the user toggles
+ * "Block connections without VPN" (WP11 finding B1), so the service samples
+ * the two flags on every status poll and this decides what a sample means:
+ * null when nothing changed, otherwise the state to publish and whether the
+ * lockdown warning is to be logged (its first appearance, never per poll).
+ */
+object AlwaysOnPolicy {
+    fun change(previous: AlwaysOnState?, current: AlwaysOnState): AlwaysOnChange? {
+        if (previous == current) return null
+        val wasLockdown = previous?.lockdown == true
+        return AlwaysOnChange(current, lockdownSwitchedOn = current.lockdown && !wasLockdown, lockdownSwitchedOff = !current.lockdown && wasLockdown)
+    }
 }
 
 /** `masterSetup.autoConnectOnStartup` for the boot receiver (step 7): the strict boolean of client.md, missing is false. */

@@ -10,6 +10,7 @@ import phpvpn.android.bridge.ipc.ConnectionPhase
 import phpvpn.android.bridge.ipc.ConnectionState
 import phpvpn.android.bridge.ipc.Tristate
 import phpvpn.android.bridge.model.TrayStatus
+import phpvpn.android.ui.state.AlwaysOnState
 import phpvpn.android.ui.state.DisconnectReason
 
 /**
@@ -255,6 +256,26 @@ class ServicePolicyTest {
     }
 
     // --- boot receiver --------------------------------------------------------
+
+    // --- Always-on and lockdown (B1) -------------------------------------------
+
+    @Test
+    fun lockdownToggledWhileTheServiceRunsIsPublishedAndWarnedOnce() {
+        val off = AlwaysOnState(alwaysOn = true, lockdown = false)
+        val on = AlwaysOnState(alwaysOn = true, lockdown = true)
+        // The first sample is always published; a lockdown from the start warns at once.
+        assertEquals(AlwaysOnChange(off, lockdownSwitchedOn = false, lockdownSwitchedOff = false), AlwaysOnPolicy.change(null, off))
+        assertEquals(AlwaysOnChange(on, lockdownSwitchedOn = true, lockdownSwitchedOff = false), AlwaysOnPolicy.change(null, on))
+        // Unchanged samples (every 5 s poll) publish and log nothing.
+        assertNull(AlwaysOnPolicy.change(off, off))
+        assertNull(AlwaysOnPolicy.change(on, on))
+        // The user switches "Block connections without VPN" on while the service runs (B1), then off again.
+        assertEquals(AlwaysOnChange(on, lockdownSwitchedOn = true, lockdownSwitchedOff = false), AlwaysOnPolicy.change(off, on))
+        assertEquals(AlwaysOnChange(off, lockdownSwitchedOn = false, lockdownSwitchedOff = true), AlwaysOnPolicy.change(on, off))
+        // Always-on switched off (revoke follows): published, no lockdown line.
+        val none = AlwaysOnState(alwaysOn = false, lockdown = false)
+        assertEquals(AlwaysOnChange(none, lockdownSwitchedOn = false, lockdownSwitchedOff = false), AlwaysOnPolicy.change(off, none))
+    }
 
     @Test
     fun autoConnectOnStartupIsAStrictBoolean() {

@@ -26,12 +26,14 @@ připíná build-tools 36.0.0 a běh #20 (`6ae25c9`, po sloučení WP11) je PASS
 | T-A03 peer ping a TCP echo oběma směry, T-A04 jiné aplikace a Wi-Fi ↔ mobilní data | PASS | PASS | PASS |
 | T-A08 soft recovery a plná recovery | PASS | PASS | PASS (nginx stop, 20s výpadek je kratší než detekce ~26 s) |
 | T-A12 se skutečným restartem | NOT RUN (sdílený emulátor) | NOT RUN (dtto) | PASS |
-| T-A15 Always-on s lockdownem | NOT RUN | **FAIL** (B1) | **FAIL** (B1) |
+| T-A15 Always-on s lockdownem | NOT RUN | **FAIL** (B1) → PASS po opravě | **FAIL** (B1) → PASS po opravě |
 | T-A20 Doze (emulátor), T-A21 paměť (emulátor) | T-A20 PASS | – | T-A20 PASS, T-A21 změřeno (max +87 MiB PSS, bez LMK) |
 | T-D01, T-A20 a T-A16 na zařízení, arm64 aplikace | na emulátorech NOT RUN; na Pixelu 10 (Android 17) viz [device-report](android/device-report-2026-11-01.md): T-D01 bez UI části PASS, T-A20 PASS s omezením (CPU na USB neusnulo), T-A16 pod skutečným tlakem na paměť NOT RUN | | |
 
-Nalezené chyby: **B1** varování lockdownu (Settings 10, About 34) chybí, když uživatel zapne „Block connections without
-VPN“ při běžící službě (stav Always-on se publikuje jen v `onStartCommand`); **B2** (k rozhodnutí) po čisté instalaci
+Nalezené chyby: **B1** varování lockdownu (Settings 10, About 34) chybělo, když uživatel zapnul „Block connections without
+VPN“ při běžící službě (stav Always-on se publikoval jen v `onStartCommand`); **opraveno 2026-11-01**: služba vzorkuje
+`isLockdownEnabled` při každém pollingu stavu a publikuje jen změnu (`AlwaysOnPolicy`), T-A15 PASS na API 35 a 36
+(podrobnosti v [wp11-matrix](android/wp11-matrix-report-2026-11-01.md), oddíl B1); **B2** (k rozhodnutí) po čisté instalaci
 runtime vytvoří výchozí konfiguraci s `http://127.0.0.1/phpvpn.php`, takže Welcome 00 a hlavní cesta `00 → 12` se
 neukážou. Opravené flaky testy: `WizardSaveOutcomeUiTest` a `WizardFlowTest` (klik během animace klávesnice).
 

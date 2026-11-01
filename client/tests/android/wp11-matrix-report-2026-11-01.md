@@ -86,7 +86,7 @@ odmítnuté `POST_NOTIFICATIONS` nejde bez zabití procesu nasimulovat (WP05 ho 
 | Always-on | zapnutí v systémovém nastavení spustí službu a připojí | PASS 4/4 | PASS 4/4 | PASS 4/4 |
 | T-A13 | preflight konflikt | PASS | PASS | NOT RUN (bez rootu) |
 | T-A14 | server 2.0.0: Wizard 12 → „Incompatible server version“, „This app is version 1.0.3, the server is version 2.0.0.“; Connect → `error` `server_version_incompatible`, kontrola URL `failed`, žádný tunel | PASS | PASS | PASS |
-| T-A15 | Always-on s lockdownem (manuální, automatizováno UiAutomatorem) | NOT RUN (plán: API 36 a zařízení) | **FAIL** (chyba B1) | **FAIL** (chyba B1) |
+| T-A15 | Always-on s lockdownem (manuální, automatizováno UiAutomatorem) | NOT RUN (plán: API 36 a zařízení) | **FAIL** (chyba B1) → PASS 4/4 po opravě B1 | **FAIL** (chyba B1) → PASS 4/4 po opravě B1 |
 | T-A16 a | SIGKILL při `connected` | PASS (záložní větev, sticky restart nenastal) | PASS (dtto) | PASS (dtto) |
 | T-A16 b, c, d | bez souhlasu, bez příznaku, limit tří restartů | PASS | PASS | PASS |
 | T-A20 | Doze na emulátoru (`deviceidle force-idle`, 600 s, obrazovka vypnutá, `battery unplug`) | PASS (emulátor) | NOT RUN (stačí API 34 a 36) | PASS (emulátor) |
@@ -233,6 +233,18 @@ emulátor neověří.
   startu. Typické pořadí v nastavení (nejdřív Always-on, pak blokování) tak varování nikdy neukáže, dokud se uživatel
   nepřepojí. Oprava patří do WP05 (například číst `isLockdownEnabled` při každém pollingu stavu nebo při otevření
   Settings/About), ve WP11 se kód aplikace neměnil.
+- **Oprava (2026-11-01, po WP11):** `PhpvpnVpnService` čte `isAlwaysOn()`/`isLockdownEnabled()` při každém pollingu
+  stavu (500 ms při přechodech, jinak 5 s); `AlwaysOnPolicy.change()` v `ServicePolicy.kt` publikuje jen změnu a
+  varování `Always-on lockdown is enabled; phpvpn does not support it` se loguje jen při jejím prvním výskytu
+  (`Always-on lockdown is disabled again` při vypnutí). Jednotkový test
+  `ServicePolicyTest.lockdownToggledWhileTheServiceRunsIsPublishedAndWarnedOnce`. Ověření
+  `wp11-scenarios.sh <serial> http://10.0.2.2/wp11/apiNN/phpvpn.php <apk> ta15` na API 35 (`phpvpn-api35`, 5558) a
+  API 36 (`phpvpn-api36`, 5556): varování v Settings 10 se objeví po zapnutí „Block connections without VPN“ při
+  připojené službě (PASS), zůstane po Disconnect a Connect (PASS), Always-on jde vypnout (PASS); v logu jeden řádek
+  varování při zapnutí a jeden po novém startu služby. Snímky `work/wp11/b1/ta15-app-settings-emulator-{5556,5558}.png`,
+  logy `work/wp11/b1/ta15-run*.log`. Poznámka k prostředí: na API 35 se `appops set … ACTIVATE_VPN allow` ze `setup`
+  bez `adb root` neuložilo (`appops get` ukázal `ignore`, Connect skončil `tunnel_permission_missing`, nastavení VPN
+  ukázalo „No VPNs added“); po `adb root` prošlo, viz README.
 - Ostatní pozorování T-A15 (očekávané): v lockdownu vlastní provoz aplikace na relay prochází (Connect i přepojení
   fungují), ostatní aplikace (uid 2000) nemají internet ani přístup na `10.0.2.2:80`, protože phpvpn nesměruje
   výchozí trasu; text varování to popisuje.
@@ -307,7 +319,8 @@ v WP11 neselhaly ani jednou.
    `make_peer_config.py … maxQueuedPacketAgeMs=600000` a `TA21_SECONDS=600`; zapsat maximum PSS/RSS, `MemAvailable`
    a `am_kill`.
 5. **arm64-v8a aplikace.** Body 1 až 4 na arm64 zařízení; na emulátoru prošly jen nativní testy pod ARM překladem.
-6. **T-A15 na zařízení:** jako B1 (Always-on, pak Block connections) a ověřit, zda se varování objeví; zapsat, zda
+6. **T-A15 na zařízení:** jako B1 (Always-on, pak Block connections) a ověřit, zda se varování objeví (po opravě B1
+   na emulátorech PASS); zapsat, zda
    výrobce systému chování mění.
 7. **T-A12 se skutečným restartem na API 34 a 35:** `wp11-scenarios.sh emulator-5554 http://10.0.2.2/wp11/api34/phpvpn.php
    <apk> ta12reboot` (restartuje emulátor, proto jen když ho nikdo jiný nepoužívá).

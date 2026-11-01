@@ -76,7 +76,7 @@ class PhpvpnVpnService : VpnService(), TunnelHost {
     private var pollJob: Job? = null
     private var lastStatus: TrayStatus? = null
     private var lastKey: NotificationSchedule.Key? = null
-    private var lastAlwaysOnState: Any? = null
+    private var alwaysOnState: AlwaysOnState? = null
     private var notificationText: String? = null
     private var lastStartId = 0
 
@@ -290,6 +290,9 @@ class PhpvpnVpnService : VpnService(), TunnelHost {
                 val status = readStatus()
                 // Read across a command start or reply: read again at once.
                 if (epoch != commandEpoch) continue
+                // B1: Android neither restarts nor commands a running Always-on service
+                // when the user toggles lockdown, so every poll asks again.
+                publishAlwaysOn()
                 onStatus(status)
                 if (stopping) break
                 val wait = NotificationSchedule.delayMs(status, operation, followed)
@@ -321,10 +324,6 @@ class PhpvpnVpnService : VpnService(), TunnelHost {
         val key = NotificationSchedule.Key(model, status?.state, status?.phase, notificationText)
         if (key == lastKey) return
         lastKey = key
-        if (key.state != lastAlwaysOnState) {
-            lastAlwaysOnState = key.state
-            publishAlwaysOn()
-        }
         val notification: Notification = notifications.build(model, notificationText)
         notifications.notify(notification)
     }
@@ -347,9 +346,13 @@ class PhpvpnVpnService : VpnService(), TunnelHost {
         stopSelf(lastStartId)
     }
 
+    /** `isAlwaysOn()` and `isLockdownEnabled()` as of now; published and logged only when they changed. */
     private fun publishAlwaysOn() {
-        ServiceAlwaysOnStatus.publish(AlwaysOnState(isAlwaysOn, isLockdownEnabled))
-        if (isLockdownEnabled) Log.w(TAG, "Always-on lockdown is enabled; phpvpn does not support it")
+        val change = AlwaysOnPolicy.change(alwaysOnState, AlwaysOnState(isAlwaysOn, isLockdownEnabled)) ?: return
+        alwaysOnState = change.state
+        ServiceAlwaysOnStatus.publish(change.state)
+        if (change.lockdownSwitchedOn) Log.w(TAG, "Always-on lockdown is enabled; phpvpn does not support it")
+        if (change.lockdownSwitchedOff) Log.i(TAG, "Always-on lockdown is disabled again")
     }
 
     private suspend fun configurationValid(): Boolean {

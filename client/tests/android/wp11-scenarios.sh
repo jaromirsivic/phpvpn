@@ -243,8 +243,8 @@ ta15() {
   echo "INFO T-A15 shell uid: $(sh_ "if echo | nc -w 5 www.google.com 443 >/dev/null 2>&1; then echo internet=ok; else echo internet=blocked; fi; if echo | nc -w 3 10.0.2.2 80 >/dev/null 2>&1; then echo relay_host=ok; else echo relay_host=blocked; fi" | tr '\n' ' ')"
   # Settings (10) shows the Always-on state and the lockdown warning.
   ta15_warning "T-A15 the app warns about lockdown (Settings 10), lockdown switched on while connected" "ta15-app-settings-$SERIAL"
-  # The service publishes the Always-on state on a start command: a Disconnect
-  # and Connect make it read isLockdownEnabled again (WP11 finding).
+  # Since the B1 fix the service samples isLockdownEnabled on every status poll;
+  # a Disconnect and Connect (a new start command) must keep the warning.
   disconnect
   connect 90 >/dev/null
   echo "INFO T-A15 lockdown log after the reconnect: $(sh_ logcat -d -v brief -s phpvpn:W | grep -c 'lockdown is enabled') line(s)"
