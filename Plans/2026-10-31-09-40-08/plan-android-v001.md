@@ -11,6 +11,28 @@ Podklady k plánu ve stejné složce:
 - [android-screen-map.md](android-screen-map.md) – všech 49 obrazovek návrhu, jejich Compose cesta, zdroj dat
   (IPC příkaz nebo lokální stav), pracovní balík a pravidla, která musí implementace dodržet.
 
+## Stav k 2026-11-01
+
+Souhrn sloučených balíků na větvi `android`. Rozhodnutí plánu se nemění. Kde se implementace od plánu liší,
+platí implementace a odchylka je zapsaná v reportu balíku a v [client.md, Android](../../client.md#android).
+Souhrnný report: [android-client-report-2026-10-31.md](../../client/tests/android-client-report-2026-10-31.md).
+
+| WP | Sloučeno do `android` | Report | Hlavní odchylky od plánu |
+|---|---|---|---|
+| WP00 | `06363c1`, `8fcef32` | [souhrnný report](../../client/tests/android-client-report-2026-10-31.md#wp00-prostředí-kostra-a-ci) | `compileSdk` 37.2 místo 36 (androidx vyžaduje API 37, `minSdk` 34 a `targetSdk` 36 beze změny); `secure_buffer.cpp` používá na Androidu `memset_explicit`, protože bionic nemá `explicit_bzero`; Gradle 9.8.2 a AGP 9.5.0; `abiFilters` doplněné i do `app`. |
+| WP01 | `2567237` | [wp01-deps](../../client/tests/android/wp01-deps-report-2026-10-31.md) | OpenSSL 3.5.9 a curl 8.23.0 sestavené ve WSL Ubuntu 24.04 místo Fedora VM; OpenSSL navíc `no-module no-engine no-docs no-autoload-config`; `find_package(OpenSSL … SSL)` a `CMAKE_FIND_ROOT_PATH` v `client/src/CMakeLists.txt`. |
+| WP02 | `f21112d`, follow-up `60ad67d`, `cda2ea9` | [wp02-posix](../../client/tests/android/wp02-posix-report-2026-10-31.md) | SELinux zakazuje aplikaci `linkat` (T-N03 nejprve FAIL), proto strategie zálohy `exchange` s `RENAME_EXCHANGE` v `config_files_posix` a nový mezistav recovery; kotva důvěry `trustRoot` v `paths_posix`; oprava `test_server_version.cpp` pro GCC 13. |
+| WP03 | `a3f8da8` | [wp03-platform](../../client/tests/android/wp03-platform-report-2026-10-31.md) | T-A01b PASS bez záložní cesty `addDnsServer`; `VpnSpec` navíc `allowIpv6` (`allowFamily(AF_INET6)`) a `metered=false`; registrace přes `VpnHosts` místo `NativeBridge`; `TunnelHost.lastEstablishError()`; `tunnel_permission_missing` má vlastní veřejný kód ve `status_snapshot.cpp`; T-A13 jen na API 34. |
+| WP04 | `b761882` až `f64cbd7` (fast-forward) | [wp04-runtime](../../client/tests/android/wp04-runtime-report-2026-10-31.md) | Všechny adresáře 0700 včetně `logs` a nepoužitého `run`; Connect se souhlasem bez `TunnelHost` končí v `recovering` s `tunnel_start_failed`, ne v `error` (k řešení ve WP05); `nativeDispatch` vrací `null` i pro nadlimitní a neklasifikovatelný požadavek; version script `libphpvpn-android.map`. |
+| WP05 | probíhá | – | <!-- WP05: ověřit proti reportu --> Doplní se po sloučení. |
+| WP06 | `5af4a80` | [wp06-ipc](../../client/tests/android/wp06-ipc-report-2026-10-31.md) | Strukturní kontrola dokumentu místo plného validátoru (WP04 ji nahradil nativní); mazání tajemství v Kotlinu jen best effort; polling 500 ms i během vlastního průběhu Connect a Disconnect. |
+| WP07 | `3ad0c24` | [wp07-ui](../../client/tests/android/wp07-ui-report-2026-10-31.md) | Dialogy 32, 35 a 36a jako modální okna; tlačítko Back 48 dp; CSS váha 650 jako SemiBold 600. |
+| WP08 | `6da6963` | [wp08-screens](../../client/tests/android/wp08-screens-report-2026-10-31.md) | 37 také jako varianta Connection; 29 odsazuje jednořádkovou odpověď; 55 nových textů bez schválené české předlohy. |
+| WP09 | `2f7eeba` (přes `94728ef`), `f6ab1ef` | [wp09-wizard](../../client/tests/android/wp09-wizard-report-2026-10-31.md) | Back na krocích 14 až 16 vrací předchozí krok bez dialogu 32 (desktopový Back), 32 jen tam, kde by se draft ztratil; FLAG_SECURE i na 13; 18 neukazuje pole secretu; 15 a 16 mají „Cancel setup“; T-A06 NOT RUN. |
+| WP10 | `adbab52`, sladění s WP09 `2f7eeba` | [wp10-editor](../../client/tests/android/wp10-editor-report-2026-10-31.md) | Kontrakty, heslo a klasifikace uložení běží v aplikaci nad Kotlin náhradami (`phpvpn.android.standin`), nativní JNI modely z WP04 do nich zatím zapojené nejsou; FLAG_SECURE i na 22, 39 a 42; sdílené 33 a 46 podle smlouvy `SaveOutcomeSource` z WP09; T-A07 NOT RUN. |
+| WP11, WP12 | – | – | Nezahájeno. |
+| WP13 | tato větev | – | Dokumentace: [client.md, Android](../../client.md#android), [documentation/android-client.md](../../documentation/android-client.md), [distribution.md, Android](../../distribution.md#android), poznámky v `assets/android-en`. |
+
 ## Rozhodnutí uživatele a výchozí stav
 
 - **Podporované verze:** Android 14 (API 34) a novější. `minSdk = 34`, `targetSdk = 36`. `compileSdk` je
