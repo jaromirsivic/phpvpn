@@ -20,6 +20,9 @@ import phpvpn.android.bridge.repository.ConnectionStatus
  * -n <package>/phpvpn.android.debug.DebugVpnCommandReceiver -a <action>`.
  * Connect and Disconnect take the production path (ConnectActions → VPN
  * service); results go to logcat with the tag `phpvpn-debug`, never a secret.
+ * The device tests (client/tests/android/device-report-2026-11-01.md) add
+ * DIAGNOSTICS (public counters of `get-diagnostics`) and CONFIGURE_FILE (a
+ * whole document from the app's cacheDir, deleted after set-config).
  * Release builds do not contain it.
  */
 class DebugVpnCommandReceiver : BroadcastReceiver() {
@@ -33,6 +36,8 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
                     ACTION_DISCONNECT -> log("disconnect ${describe(container.connectActions.disconnect())}")
                     ACTION_STATUS -> log("status ${describe(container.connection.readOnce())}")
                     ACTION_CONFIGURE -> configure(context, intent)
+                    ACTION_DIAGNOSTICS -> diagnostics(context)
+                    ACTION_CONFIGURE_FILE -> configureFromFile(context)
                     else -> log("unknown action")
                 }
             } finally {
@@ -58,6 +63,43 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
         log("configure ${if (outcome is IpcOutcome.Success) "ok" else "failed ${outcome.javaClass.simpleName}"} autoConnect=$autoConnect")
     }
 
+    /**
+     * Device tests: store the whole document from `cacheDir/device-test-config.json` (written there by
+     * `adb shell run-as`), then overwrite and delete the file. The document is never logged.
+     */
+    private suspend fun configureFromFile(context: Context) {
+        val file = java.io.File(context.cacheDir, CONFIG_FILE)
+        if (!file.isFile) return log("configure-file failed: no file")
+        val bytes = file.readBytes()
+        file.writeBytes(ByteArray(bytes.size))
+        file.delete()
+        val chars = String(bytes, Charsets.UTF_8).toCharArray()
+        bytes.fill(0)
+        val document = SecretText.adopt(chars)
+        val outcome = context.appContainer.ipcClient.setConfig(document)
+        document.wipe()
+        log("configure-file ${if (outcome is IpcOutcome.Success) "ok" else "failed ${outcome.javaClass.simpleName} $outcome".take(400)} fileDeleted=${!file.exists()}")
+    }
+
+    /** Device test T-A20: the public recovery counters of `get-diagnostics` (no secret, no address). */
+    private suspend fun diagnostics(context: Context) {
+        when (val outcome = context.appContainer.ipcClient.getDiagnostics()) {
+            is IpcOutcome.Success -> with(outcome.value) {
+                log(
+                    "diagnostics state=${state.name.lowercase()} phase=${phase.name.lowercase()} " +
+                        "uptimeS=$serviceUptimeSeconds recoveryCount=$recoveryCount lastRecoveryAt=$lastRecoveryAt " +
+                        "softRecoveryCount=$softRecoveryCount lastSoftRecoveryAt=$lastSoftRecoveryAt " +
+                        "tunnel=${tunnelReady.name.lowercase()} polls=${counters.dataPollsTotal} " +
+                        "pollsEmpty=${counters.dataPollsEmpty} pktSent=${counters.ipv4PacketsSent} " +
+                        "pktRecv=${counters.ipv4PacketsReceived} dropped=${counters.packetsDropped} " +
+                        "outExpired=${counters.outboundQueueExpiredPackets} inExpired=${counters.inboundQueueExpiredPackets} " +
+                        "lastError=${lastError?.code ?: "none"}",
+                )
+            }
+            else -> log("diagnostics failed ${outcome.javaClass.simpleName}")
+        }
+    }
+
     private fun describe(result: CommandResult): String = when (result) {
         is CommandResult.Accepted -> "accepted state=${result.status.state?.name?.lowercase()}"
         is CommandResult.Failed -> "failed ${result.error.code}"
@@ -81,6 +123,9 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
         const val ACTION_DISCONNECT = "phpvpn.android.debug.DISCONNECT"
         const val ACTION_STATUS = "phpvpn.android.debug.STATUS"
         const val ACTION_CONFIGURE = "phpvpn.android.debug.CONFIGURE"
+        const val ACTION_DIAGNOSTICS = "phpvpn.android.debug.DIAGNOSTICS"
+        const val ACTION_CONFIGURE_FILE = "phpvpn.android.debug.CONFIGURE_FILE"
+        const val CONFIG_FILE = "device-test-config.json"
         const val EXTRA_URL = "url"
         const val EXTRA_AUTO_CONNECT = "autoConnect"
     }

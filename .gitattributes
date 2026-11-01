@@ -22,3 +22,4 @@ client/tools/android/** text eol=lf
 client/android/**/src/test/resources/** text eol=lf
 client/android/**/src/androidTest/resources/** text eol=lf
 client/tests/android/*.sh text eol=lf
+client/tests/android/device/*.sh text eol=lf
