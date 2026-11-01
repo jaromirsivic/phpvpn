@@ -323,10 +323,14 @@ User-Agent: phpvpn-wizard-check"
     $P wait "$W" "Server secret configuration" 20 || fail "URL check did not pass"
     $P wait "$W" "Server URL
 Completed" 3 || fail "sidebar step 1 not Completed"
-    $P checked "$W" "Use default server secret" 1 || fail "default secret switch"
-    $P wait "$W" "Default server secret in use" 3 || fail "default secret warning"
+    # The default template keeps the switch off (useDefaultServerSecretInWizard false
+    # since "default secret toggle off"); switching it on shows the warning.
+    $P checked "$W" "Use default server secret" 0 || fail "default secret switch"
     $P button "$W" Back sensitive || fail "Back missing on step 2"
-    pass "step 1 verified against the relay; step 2 with default secret warning"
+    $P toggle "$W" "Use default server secret"
+    $P checked "$W" "Use default server secret" 1 || fail "switch did not turn on"
+    $P wait "$W" "Default server secret in use" 3 || fail "default secret warning"
+    pass "step 1 verified against the relay; step 2 switch off by default, warning when on"
     $P toggle "$W" "Use default server secret"
     $P checked "$W" "Use default server secret" 0 || fail "switch did not turn off"
     $P settext "$W" "Server secret" "wrong-secret"

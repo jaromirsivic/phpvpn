@@ -157,7 +157,8 @@ Do you want to set it up now?"
     echo "result version" >"$work/control"
     $P click PHPVPN Connect
     $P wait "PHPVPN connection" "Incompatible server version" 15 || fail "no incompatible server version panel"
-    $P wait "PHPVPN connection" "The server is reachable, but this client cannot communicate with it." 3 || fail "no version explanation"
+    # One label since "Refuse servers of another major version": explanation, advice and the client version.
+    $P wait-prefix "PHPVPN connection" "The server is reachable, but this client cannot communicate with it." 3 || fail "no version explanation"
     $P dump >"$work/version.txt"
     grep -q "This client is version " "$work/version.txt" || fail "client version not shown"
     grep -q "button: .Error detail.$" "$work/version.txt" && fail "an incompatible server must not offer Error detail"

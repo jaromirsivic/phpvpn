@@ -7,6 +7,7 @@ XDG_RUNTIME_DIR, WAYLAND_DISPLAY, DBUS_SESSION_BUS_ADDRESS). Needs python3-pyats
     tray_atspi.py dump                      print windows, labels, entries and buttons
     tray_atspi.py click <window> <button>   press a button in the named window
     tray_atspi.py wait <window> <text> [s]  wait until a label/entry shows the text
+    tray_atspi.py wait-prefix <window> <text> [s]  ... shows a text starting with it
     tray_atspi.py close <window>            close the window with its title bar X
     tray_atspi.py absent <window> [s]       wait until the window is gone
 
@@ -100,13 +101,14 @@ def click(title: str, button: str) -> int:
     return 1
 
 
-def wait(title: str, text: str, seconds: float) -> int:
+def wait(title: str, text: str, seconds: float, prefix: bool = False) -> int:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         window = find_window(title)
         if window is not None:
             for node, _ in walk(window):
-                if node.getState().contains(pyatspi.STATE_SHOWING) and text_of(node) == text:
+                value = text_of(node)
+                if node.getState().contains(pyatspi.STATE_SHOWING) and (value == text or (prefix and value.startswith(text))):
                     print(f"'{title}' shows '{text}'")
                     return 0
         time.sleep(0.1)
@@ -155,6 +157,8 @@ def main(arguments: list[str]) -> int:
         return click(rest[0], rest[1])
     if command == "wait" and len(rest) in (2, 3):
         return wait(rest[0], rest[1], float(rest[2]) if len(rest) == 3 else 10.0)
+    if command == "wait-prefix" and len(rest) in (2, 3):
+        return wait(rest[0], rest[1], float(rest[2]) if len(rest) == 3 else 10.0, prefix=True)
     if command == "absent" and len(rest) in (1, 2):
         return absent(rest[0], float(rest[1]) if len(rest) == 2 else 10.0)
     if command == "close" and len(rest) == 1:
