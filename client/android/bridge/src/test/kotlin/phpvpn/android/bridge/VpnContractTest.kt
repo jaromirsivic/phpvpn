@@ -58,7 +58,7 @@ class VpnContractTest {
                 route = "10.99.99.0",
                 routePrefixLength = 24,
                 mtu = 1500,
-                disallowedApplications = listOf("io.github.jaromirsivic.phpvpn"),
+                disallowedApplications = listOf("com.pilandrome.phpvpn"),
                 allowIpv6 = true,
                 metered = false,
                 dnsServers = emptyList(),
@@ -108,7 +108,7 @@ class VpnContractTest {
         const val NATIVE_SPEC =
             """{"version":1,"session":"phpvpn","address":"10.99.99.2","prefixLength":24,""" +
                 """"route":"10.99.99.0","routePrefixLength":24,"mtu":1500,""" +
-                """"disallowedApplications":["io.github.jaromirsivic.phpvpn"],""" +
+                """"disallowedApplications":["com.pilandrome.phpvpn"],""" +
                 """"allowIpv6":true,"metered":false,"dnsServers":[]}"""
     }
 }

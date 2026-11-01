@@ -20,7 +20,7 @@ URL=$3
 LOGDIR=$4
 FILTER=${5:-}
 ROOT=client/android
-APP_PKG=io.github.jaromirsivic.phpvpn
+APP_PKG=com.pilandrome.phpvpn
 case "$MODULE" in
   app)
     TEST_PKG=$APP_PKG.test

@@ -2,7 +2,7 @@
 # Prints the phone's diagnostics line (debug receiver) and the Windows status counters, one line each.
 export PATH="$PATH:/c/Users/User/AppData/Local/Android/Sdk/platform-tools"
 export ANDROID_SERIAL=64090DLCR000R5 MSYS_NO_PATHCONV=1
-adb shell am broadcast -n io.github.jaromirsivic.phpvpn/phpvpn.android.debug.DebugVpnCommandReceiver -a phpvpn.android.debug.DIAGNOSTICS >/dev/null
+adb shell am broadcast -n com.pilandrome.phpvpn/phpvpn.android.debug.DebugVpnCommandReceiver -a phpvpn.android.debug.DIAGNOSTICS >/dev/null
 sleep 1.5
 line=$(grep 'phpvpn-debug: diagnostics' work/device/logcat-app.txt | tail -1)
 echo "host $(date -u +%T) phone ${line:11:12} ${line#*diagnostics }"

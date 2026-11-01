@@ -11,7 +11,7 @@ phpvpn virtual network, it does not protect or redirect other traffic.
 **Status: development build.** The Android client is not distributed yet. There
 is no Google Play listing, no release signature and no package in the phpvpn
 distribution. Only debug signed APKs built from the repository exist. The
-application identifier `io.github.jaromirsivic.phpvpn` is provisional; if it
+application identifier `com.pilandrome.phpvpn` is provisional; if it
 changes before the first release, the new build installs as a separate
 application, the stored configuration is not carried over and the VPN
 permission must be granted again.
@@ -174,7 +174,7 @@ backups:
 ```
 
 On most devices the private no-backup directory is
-`/data/user/0/io.github.jaromirsivic.phpvpn/no_backup`; the app shows the exact
+`/data/user/0/com.pilandrome.phpvpn/no_backup`; the app shows the exact
 path in the editor and in **Configuration needs attention**. Other apps cannot
 read it. The app disables cloud backup and device-to-device transfer of its
 data, and screens that show secrets cannot be captured in screenshots.
@@ -208,7 +208,7 @@ Logs never contain keys, secrets or packet content.
 Uninstall phpvpn from the app list or with:
 
 ```sh
-adb uninstall io.github.jaromirsivic.phpvpn
+adb uninstall com.pilandrome.phpvpn
 ```
 
 Android removes the app together with its private storage, including the

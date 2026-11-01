@@ -8,7 +8,7 @@ import json, re, subprocess, sys
 
 ADB = r"C:\Users\User\AppData\Local\Android\Sdk\platform-tools\adb.exe"
 SERIAL = "64090DLCR000R5"
-PKG = "io.github.jaromirsivic.phpvpn"
+PKG = "com.pilandrome.phpvpn"
 URL = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].startswith("http") else "http://192.168.68.53/phpvpn.php"
 MY_IP = "10.99.99.5"
 PEER_IP = "10.99.99.2"

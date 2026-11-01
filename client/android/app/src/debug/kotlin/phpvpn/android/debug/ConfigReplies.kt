@@ -11,7 +11,7 @@ import phpvpn.android.bridge.ipc.FakeIpcTransport
  * from its test vectors, no real secrets.
  */
 object ConfigReplies {
-    const val CONFIG_PATH = "/data/user/0/io.github.jaromirsivic.phpvpn/no_backup/phpvpn/config/config.json"
+    const val CONFIG_PATH = "/data/user/0/com.pilandrome.phpvpn/no_backup/phpvpn/config/config.json"
 
     /** `makeDefaultEditorDocument` of client.md ("Edit Config: skutečný obsah, vytvoření a Reset"). */
     val DEFAULT_DOCUMENT: String = document()

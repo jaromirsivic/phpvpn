@@ -17,7 +17,7 @@ object Fixtures {
     const val OTHER = "00000000-0000-4000-8000-000000000002"
     const val REQUEST_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
     const val STATUS_ID = "3f2a7c1e-9b44-4b0e-8d2f-5c6a1e7b9d03"
-    const val CONFIG_PATH = "/data/user/0/io.github.jaromirsivic.phpvpn/no_backup/phpvpn/config/config.json"
+    const val CONFIG_PATH = "/data/user/0/com.pilandrome.phpvpn/no_backup/phpvpn/config/config.json"
 
     fun text(name: String): String {
         val stream = Fixtures::class.java.getResourceAsStream("/ipc/$name") ?: error("missing fixture $name")

@@ -400,7 +400,7 @@ class FakeWizardService(val transport: FakeIpcTransport = FakeIpcTransport()) {
     companion object {
         const val PLACEHOLDER_URL = WizardRules.PLACEHOLDER_URL
         const val DEFAULT_SECRET = "CHANGE_THIS_SERVER_SECRET"
-        const val CONFIG_PATH = "/data/user/0/io.github.jaromirsivic.phpvpn/no_backup/phpvpn/config/config.json"
+        const val CONFIG_PATH = "/data/user/0/com.pilandrome.phpvpn/no_backup/phpvpn/config/config.json"
         const val CONNECT_ATTEMPT = "00000000-0000-4000-8000-0000000000d1"
     }
 }

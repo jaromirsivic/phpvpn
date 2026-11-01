@@ -9,7 +9,7 @@ import phpvpn.android.bridge.ipc.FakeIpcTransport
  * is replaced by FakeIpcTransport with the request id.
  */
 object IpcReplies {
-    const val CONFIG_PATH = "/data/user/0/io.github.jaromirsivic.phpvpn/no_backup/phpvpn/config/config.json"
+    const val CONFIG_PATH = "/data/user/0/com.pilandrome.phpvpn/no_backup/phpvpn/config/config.json"
     const val ATTEMPT = "3f2a7c1e-9b44-4b0e-8d2f-5c6a1e7b9d03"
     const val STARTED_AT = "2026-01-01T00:00:00.000Z"
 

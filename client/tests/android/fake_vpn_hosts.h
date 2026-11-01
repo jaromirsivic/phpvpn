@@ -237,7 +237,7 @@ private:
 
 inline AndroidVpnContext::Options testContextOptions() {
     AndroidVpnContext::Options options;
-    options.packageName = "io.github.jaromirsivic.phpvpn";
+    options.packageName = "com.pilandrome.phpvpn";
     return options;
 }
 

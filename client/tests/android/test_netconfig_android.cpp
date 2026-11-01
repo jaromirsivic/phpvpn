@@ -401,7 +401,7 @@ PHPVPN_TEST(AndroidNetConfig, TunnelSessionStartsAndStopsOverTheContext) {
     PHPVPN_CHECK_EQ(stack.tunnelHost->lastSpecJson,
                     std::string("{\"version\":1,\"session\":\"phpvpn\",\"address\":\"10.99.99.2\",\"prefixLength\":24,"
                                 "\"route\":\"10.99.99.0\",\"routePrefixLength\":24,\"mtu\":1500,"
-                                "\"disallowedApplications\":[\"io.github.jaromirsivic.phpvpn\"],"
+                                "\"disallowedApplications\":[\"com.pilandrome.phpvpn\"],"
                                 "\"allowIpv6\":true,\"metered\":false,\"dnsServers\":[]}"));
     auto exists = stack.netConfig->interfaceExists(identity);
     PHPVPN_REQUIRE_OK(exists);

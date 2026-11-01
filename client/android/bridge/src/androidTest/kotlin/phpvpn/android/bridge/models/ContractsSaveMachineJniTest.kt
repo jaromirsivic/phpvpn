@@ -40,7 +40,7 @@ import phpvpn.android.bridge.runtime.RuntimeHarness
 class ContractsSaveMachineJniTest {
     private val requestId = "12345678-1234-4234-8234-123456789abc"
     private val unknownText = "The save result is unknown. The file may already have changed. Check the current configuration before saving again."
-    private val configPath = "/data/user/0/io.github.jaromirsivic.phpvpn/no_backup/phpvpn/config/config.json"
+    private val configPath = "/data/user/0/com.pilandrome.phpvpn/no_backup/phpvpn/config/config.json"
     private val small = document("10.99.99.2", "10.99.99.0/29")
     private val deadline = 30_000L
 

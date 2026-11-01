@@ -10,4 +10,4 @@ echo "deep=$(adb shell dumpsys deviceidle get deep) light=$(adb shell dumpsys de
 adb shell dumpsys battery | grep -E "powered|status|level"
 adb shell dumpsys deviceidle | grep -E "^  (mLightEnabled|mDeepEnabled|mForceIdle|mScreenOn|mCharging|mMotionActive|mState|mLightState)"
 adb shell dumpsys power | grep -m1 -o "mWakefulness=[A-Za-z]*"
-echo "appops ACTIVATE_VPN: $(adb shell appops get io.github.jaromirsivic.phpvpn ACTIVATE_VPN)"
+echo "appops ACTIVATE_VPN: $(adb shell appops get com.pilandrome.phpvpn ACTIVATE_VPN)"

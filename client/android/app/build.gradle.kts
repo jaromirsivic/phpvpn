@@ -28,7 +28,7 @@ android {
     compileSdkMinor = 2
 
     defaultConfig {
-        applicationId = "io.github.jaromirsivic.phpvpn"
+        applicationId = "com.pilandrome.phpvpn"
         minSdk = 34
         targetSdk = 36
         versionCode = clientVersionCode

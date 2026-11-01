@@ -22,7 +22,7 @@ import phpvpn.android.ui.theme.PhpvpnTheme
  * Debug-only route switcher: opens the app graph and then the map path given
  * in the `route` extra, on top of Connection so that Back behaves as in the
  * app. Example (Git Bash needs MSYS_NO_PATHCONV=1):
- * `adb shell am start -n io.github.jaromirsivic.phpvpn/phpvpn.android.debug.DebugRouteActivity --es route contracts/10.80.0.2/password`
+ * `adb shell am start -n com.pilandrome.phpvpn/phpvpn.android.debug.DebugRouteActivity --es route contracts/10.80.0.2/password`
  */
 class DebugRouteActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

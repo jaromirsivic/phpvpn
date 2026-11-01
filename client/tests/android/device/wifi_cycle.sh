@@ -3,7 +3,7 @@
 export PATH="$PATH:/c/Users/User/AppData/Local/Android/Sdk/platform-tools"
 export ANDROID_SERIAL=64090DLCR000R5 MSYS_NO_PATHCONV=1
 OFF=${1:-60}
-R=io.github.jaromirsivic.phpvpn/phpvpn.android.debug.DebugVpnCommandReceiver
+R=com.pilandrome.phpvpn/phpvpn.android.debug.DebugVpnCommandReceiver
 st() {
   adb shell am broadcast -n $R -a phpvpn.android.debug.STATUS >/dev/null
   sleep 0.8

@@ -8,7 +8,7 @@ adb shell dumpsys deviceidle > $P-deviceidle-full.tmp
 grep -E "^  m(State|LightState|Force|ScreenOn|Charging|MotionActive|NextAlarm|NextIdle|NextLightIdle|CurLightIdleBudget)|Idle|idle" $P-deviceidle-full.tmp | grep -v "^    [a-z]" | head -80 > $P-deviceidle.txt
 rm -f $P-deviceidle-full.tmp
 adb shell dumpsys batterystats --checkin > /dev/null 2>&1
-adb shell dumpsys batterystats io.github.jaromirsivic.phpvpn > $P-batterystats-app.txt 2>&1
+adb shell dumpsys batterystats com.pilandrome.phpvpn > $P-batterystats-app.txt 2>&1
 adb shell dumpsys batterystats > $P-batterystats-full.tmp 2>&1
 {
   grep -E "Time on battery|Time on battery screen off|Screen on:|Device light idling|Device full idling|Idle mode|Light idle mode|Idle mode time|Total run time|Discharge|Wifi (on|running)|Wi-Fi (on|running)|Connectivity changes|Battery level|Start clock|Estimated power use|Capacity:|Computed drain|Uid u0a151" $P-batterystats-full.tmp | head -60

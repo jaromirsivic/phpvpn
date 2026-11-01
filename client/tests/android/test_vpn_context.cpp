@@ -45,11 +45,11 @@ PHPVPN_TEST(AndroidVpnContext, SpecSerializesTheBuilderContract) {
     spec.address = ip("10.99.99.2");
     spec.prefixLength = 24;
     spec.route = cidr("10.99.99.0/24");
-    spec.disallowedApplication = "io.github.jaromirsivic.phpvpn";
+    spec.disallowedApplication = "com.pilandrome.phpvpn";
     PHPVPN_CHECK_EQ(serializeVpnSpec(spec),
                     std::string("{\"version\":1,\"session\":\"phpvpn\",\"address\":\"10.99.99.2\",\"prefixLength\":24,"
                                 "\"route\":\"10.99.99.0\",\"routePrefixLength\":24,\"mtu\":1500,"
-                                "\"disallowedApplications\":[\"io.github.jaromirsivic.phpvpn\"],"
+                                "\"disallowedApplications\":[\"com.pilandrome.phpvpn\"],"
                                 "\"allowIpv6\":true,\"metered\":false,\"dnsServers\":[]}"));
 }
 
@@ -126,7 +126,7 @@ PHPVPN_TEST(AndroidVpnContext, AcceptsOnlyTheRouteOfTheAddressPrefix) {
     expected.address = ip("10.99.99.2");
     expected.prefixLength = 24;
     expected.route = cidr("10.99.99.0/24");
-    expected.disallowedApplication = "io.github.jaromirsivic.phpvpn";
+    expected.disallowedApplication = "com.pilandrome.phpvpn";
     PHPVPN_CHECK(*spec == expected);
     PHPVPN_CHECK_EQ(spec->mtu, std::uint32_t{1500});
     PHPVPN_CHECK_EQ(spec->sessionName, std::string("phpvpn"));
@@ -161,7 +161,7 @@ PHPVPN_TEST(AndroidVpnContext, EstablishNeedsTheAdapterTheSpecAndTheService) {
     PHPVPN_CHECK(*descriptor >= 0);
     PHPVPN_CHECK(fixture.tunnel->lastSpec.has_value());
     PHPVPN_CHECK_EQ(fixture.tunnel->lastSpec->address, ip("10.99.99.2"));
-    PHPVPN_CHECK_EQ(fixture.tunnel->lastSpec->disallowedApplication, std::string("io.github.jaromirsivic.phpvpn"));
+    PHPVPN_CHECK_EQ(fixture.tunnel->lastSpec->disallowedApplication, std::string("com.pilandrome.phpvpn"));
 
     // Nothing changes once the interface exists.
     PHPVPN_REQUIRE_ERROR(fixture.context->establish(), ErrorCode::state_conflict);

@@ -32,7 +32,7 @@ SERIAL=$1
 URL=$2
 APK=$3
 TESTS=${4:-"ta08"}
-PKG=io.github.jaromirsivic.phpvpn
+PKG=com.pilandrome.phpvpn
 RECEIVER=$PKG/phpvpn.android.debug.DebugVpnCommandReceiver
 # The commands go through eval: backslashes of a Windows path are doubled.
 RELAY_STOP=${RELAY_STOP:-'cmd.exe /c D:\\nginx\\stop.bat'}
