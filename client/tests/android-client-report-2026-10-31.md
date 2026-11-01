@@ -3,6 +3,31 @@
 Výsledky pracovních balíků podle [plan-android-v001.md](../../Plans/2026-10-31-09-40-08/plan-android-v001.md).
 Co se nespustilo, je NOT RUN s důvodem. Žádný výsledek z emulátoru se nevydává za výsledek z reálného zařízení.
 
+## Stav k 2026-11-01
+
+Testovací matice WP11 na emulátorech API 34, 35 a 36 (x86_64), proti skutečnému relay (nginx na hostiteli, vlastní
+relay pro každý emulátor) a s Windows klientem jako druhým peerem:
+[wp11-matrix-report-2026-11-01.md](android/wp11-matrix-report-2026-11-01.md). Reálné zařízení nebylo k dispozici.
+
+| Oblast | API 34 | API 35 | API 36 |
+|---|---|---|---|
+| JVM (`bridge` 109, `app` 183) | PASS (hostitel) | | |
+| Nativní testy T-N01/T-N02 (304 + 2 + 50) | PASS | PASS (i arm64-v8a pod ARM překladem) | PASS |
+| `:bridge:connectedDebugAndroidTest` (T-N03, T-N04, T-A01, T-A01b, WP04 IPC) | PASS 49, SKIP 1 (T-A13 bez rootu; samostatně s rootem PASS) | PASS 49, SKIP 1 (T-A13 s rootem PASS) | PASS 49, SKIP 1 (T-A13 NOT RUN, bez rootu) |
+| `:app:connectedDebugAndroidTest` (T-U01 až T-U04, T-A02, T-A05, T-A09, T-A11, nový `RealRelayTest`: T-A06, T-A07, T-A14) | PASS 79, SKIP 1 | PASS 79, SKIP 1 | PASS 79, SKIP 1 |
+| WP05 `service-lifecycle-tests.sh` (T-A10, T-A16, T-A12 broadcast, Always-on) | PASS 40/0 | PASS 40/0 | PASS 32/0 (T-A12 broadcast bez rootu NOT RUN) |
+| T-A03 peer ping a TCP echo oběma směry, T-A04 jiné aplikace a Wi-Fi ↔ mobilní data | PASS | PASS | PASS |
+| T-A08 soft recovery a plná recovery | PASS | PASS | PASS (nginx stop, 20s výpadek je kratší než detekce ~26 s) |
+| T-A12 se skutečným restartem | NOT RUN (sdílený emulátor) | NOT RUN (dtto) | PASS |
+| T-A15 Always-on s lockdownem | NOT RUN | **FAIL** (B1) | **FAIL** (B1) |
+| T-A20 Doze (emulátor), T-A21 paměť (emulátor) | T-A20 PASS | – | T-A20 PASS, T-A21 změřeno (max +87 MiB PSS, bez LMK) |
+| T-D01, T-A20 a T-A16 na zařízení, arm64 aplikace | NOT RUN | NOT RUN | NOT RUN |
+
+Nalezené chyby: **B1** varování lockdownu (Settings 10, About 34) chybí, když uživatel zapne „Block connections without
+VPN“ při běžící službě (stav Always-on se publikuje jen v `onStartCommand`); **B2** (k rozhodnutí) po čisté instalaci
+runtime vytvoří výchozí konfiguraci s `http://127.0.0.1/phpvpn.php`, takže Welcome 00 a hlavní cesta `00 → 12` se
+neukážou. Opravené flaky testy: `WizardSaveOutcomeUiTest` a `WizardFlowTest` (klik během animace klávesnice).
+
 Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-31.md),
 [WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),
 [WP03 platformní vrstva Androidu](android/wp03-platform-report-2026-10-31.md),
