@@ -48,12 +48,15 @@
 
         <!-- The VPN service and TunnelHost (point 18). The system binds and
              starts it (Always-on) with android.net.VpnService; the app itself
-             starts it with its own actions. -->
+             starts it with its own actions. Lint only knows the exact alarm
+             permissions as the runtime prerequisite of systemExempted; a VPN
+             app the user consented to is the other one (WP05, API 34 and 35). -->
         <service
             android:name=".service.PhpvpnVpnService"
             android:exported="true"
             android:foregroundServiceType="systemExempted"
-            android:permission="android.permission.BIND_VPN_SERVICE">
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            tools:ignore="ForegroundServicePermission">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
@@ -68,9 +71,11 @@
         </receiver>
 
         <!-- Exported adb/benchmark hook of androidx.profileinstaller; the
-             profile is still installed at startup by its initializer. -->
+             profile is still installed at startup by its initializer. A
+             removal marker, not a reference, so MissingClass does not apply. -->
         <receiver
             android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:ignore="MissingClass"
             tools:node="remove" />
     </application>
 

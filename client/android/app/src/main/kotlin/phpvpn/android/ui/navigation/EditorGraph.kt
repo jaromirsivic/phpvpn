@@ -7,9 +7,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.composable
@@ -125,7 +127,11 @@ internal fun NavGraphBuilder.editor(nav: NavHostController) {
  */
 @Composable
 internal fun editorViewModel(nav: NavHostController): EditorViewModel {
-    val owner = remember(nav) { nav.getBackStackEntry(nav.graph.id) }
+    // Keyed by the calling destination's entry as well: the root graph entry
+    // is resolved again whenever the editor flow is composed from another
+    // destination (UnrememberedGetBackStackEntry).
+    val entry = LocalViewModelStoreOwner.current as? NavBackStackEntry
+    val owner = remember(nav, entry) { nav.getBackStackEntry(nav.graph.id) }
     val deps = configFlowDependencies()
     return viewModel(owner, factory = viewModelFactory { initializer { EditorViewModel(deps) } })
 }

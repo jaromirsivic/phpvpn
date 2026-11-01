@@ -44,9 +44,16 @@ inline fun <reified VM : ViewModel> appViewModel(
     return viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { create(container) } })
 }
 
-/** The locale of the current configuration (values-cs switches it). */
+/**
+ * The locale of the current configuration (values-cs switches it). Read only
+ * from the observable configuration; its locale list is never empty, ROOT
+ * merely guards the theoretical empty case.
+ */
 @Composable
-fun currentLocale(): Locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+fun currentLocale(): Locale {
+    val locales = LocalConfiguration.current.locales
+    return if (locales.isEmpty) Locale.ROOT else locales[0]
+}
 
 /**
  * Wall clock that ticks once a second, only while the screen is at least
