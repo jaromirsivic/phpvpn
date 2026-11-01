@@ -36,7 +36,6 @@ import phpvpn.android.ui.screens.contracts.TAG_ROW_PREFIX
 import phpvpn.android.ui.screens.contracts.TAG_SAVE
 import phpvpn.android.ui.screens.password.TAG_PASSWORD_FIELD
 import phpvpn.android.ui.screens.password.TAG_USE_KEY
-import phpvpn.android.ui.screens.save.TAG_CHECKED_CONTINUE
 import phpvpn.android.ui.screens.save.TAG_SAVED_PRIMARY
 import phpvpn.android.ui.screens.save.TAG_SAVE_AGAIN
 import phpvpn.android.ui.screens.save.TAG_VERIFY_SAVE
@@ -58,7 +57,7 @@ class ContractsUiTest {
     private fun open(harness: Wp10Harness): Wp10Harness {
         harness.transport.answerNext("get-config-document", ConfigReplies.valid())
         harness.navigate { openContracts() }
-        compose.onNodeWithTag(TAG_ROW_PREFIX + "10.99.99.3").assertExists()
+        harness.waitForTag(TAG_ROW_PREFIX + "10.99.99.3")
         return harness
     }
 
@@ -68,6 +67,7 @@ class ContractsUiTest {
         row(ip)
         compose.onNodeWithTag(TAG_ENABLE).performClick()
         field(TAG_KEY).performTextReplacement(key)
+        hideKeyboard()
         compose.onNodeWithTag(TAG_APPLY).performClick()
         compose.waitForIdle()
     }
@@ -77,17 +77,17 @@ class ContractsUiTest {
         val h = open(Wp10Harness(compose).launch())
         h.screenshot("19-contracts")
         h.enableWithKey("10.99.99.3", keyA)
-        compose.onNodeWithText(h.plural(R.plurals.contracts_unsaved_changes, 1, 1)).assertExists()
+        h.waitForText(h.plural(R.plurals.contracts_unsaved_changes, 1, 1))
         compose.onNodeWithContentDescription(h.text(R.string.contracts_page_next)).performScrollTo().performClick()
-        compose.onNodeWithText(h.text(R.string.contracts_more_kept)).assertExists()
+        h.waitForText(h.text(R.string.contracts_more_kept))
         compose.onNodeWithText(h.plural(R.plurals.contracts_page_range, 252, 21, 40, 252)).performScrollTo().assertExists()
         h.enableWithKey("10.99.99.30", keyB)
-        compose.onNodeWithTag(TAG_SAVE).assert(hasText(h.plural(R.plurals.contracts_save_changes, 2, 2)))
+        h.waitForTagText(TAG_SAVE, h.plural(R.plurals.contracts_save_changes, 2, 2))
         h.screenshot("41-contracts-page-2")
         compose.onNodeWithContentDescription(h.text(R.string.contracts_page_previous)).performScrollTo().performClick()
         compose.onNodeWithText(h.plural(R.plurals.contracts_page_range, 252, 1, 20, 252)).performScrollTo().assertExists()
         compose.onNodeWithTag(TAG_ROW_PREFIX + "10.99.99.3").assert(hasAnyDescendant(hasText(h.text(R.string.contracts_peer_unsaved))))
-        compose.onNodeWithTag(TAG_SAVE).assert(hasText(h.plural(R.plurals.contracts_save_changes, 2, 2)))
+        h.waitForTagText(TAG_SAVE, h.plural(R.plurals.contracts_save_changes, 2, 2))
         // The last page has the last address; the local IP is never a row.
         assertTrue(compose.onAllNodes(hasTestTag(TAG_ROW_PREFIX + "10.99.99.2")).fetchSemanticsNodes().isEmpty())
         assertEquals(0, h.transport.requests("set-config").size)
@@ -100,26 +100,26 @@ class ContractsUiTest {
         h.row("10.99.99.3")
         compose.onNodeWithTag(TAG_ENABLE).performClick()
         h.field(TAG_KEY).performTextReplacement("a29f00")
-        compose.onNodeWithText(h.text(R.string.contract_invalid_error, 6)).assertExists()
+        h.waitForText(h.text(R.string.contract_invalid_error, 6))
         assertTrue(h.secure)
         h.screenshot("20-contract-detail")
         compose.onNodeWithTag(TAG_APPLY).performClick()
-        compose.onNodeWithText(h.text(R.string.contract_invalid_notice_text, "10.99.99.3")).assertExists()
+        h.waitForText(h.text(R.string.contract_invalid_notice_text, "10.99.99.3"))
         compose.onNodeWithTag(TAG_SAVE).performClick()
         // 22: the error belongs to that contract and field.
-        compose.onNodeWithText(h.text(R.string.contract_invalid_heading)).assertExists()
-        compose.onNodeWithText(h.text(R.string.contract_invalid_error, 6)).assertExists()
+        h.waitForText(h.text(R.string.contract_invalid_heading))
+        h.waitForText(h.text(R.string.contract_invalid_error, 6))
         h.screenshot("22-contract-invalid")
         assertEquals(0, h.transport.requests("set-config").size)
         h.field(TAG_KEY).performTextReplacement(keyB)
         compose.onNodeWithTag(TAG_APPLY).performClick()
-        compose.onNodeWithTag(TAG_SAVE).assert(hasText(h.plural(R.plurals.contracts_save_changes, 2, 2)))
+        h.waitForTagText(TAG_SAVE, h.plural(R.plurals.contracts_save_changes, 2, 2))
         h.transport.answer("set-config", ConfigReplies.ACK)
         // A connected VPN: 25 offers Reconnect.
         h.transport.answer("get-status", ConfigReplies.CONNECTED)
         compose.onNodeWithTag(TAG_SAVE).performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag(TAG_SAVED_PRIMARY).assertExists()
+        h.waitForTag(TAG_SAVED_PRIMARY)
         val submitted = StrictJson.parse(ConfigReplies.submitted(h.transport.requests("set-config").single())) as JsonObject
         assertEquals(
             JsonObject(
@@ -142,16 +142,16 @@ class ContractsUiTest {
         compose.onNodeWithTag(TAG_ENABLE).performClick()
         compose.onNodeWithTag(TAG_PASSWORD).performScrollTo().performClick()
         assertTrue(h.secure)
-        compose.onNodeWithText(h.text(R.string.password_key_eyebrow, "10.99.99.10")).assertExists()
+        h.waitForText(h.text(R.string.password_key_eyebrow, "10.99.99.10"))
         h.field(TAG_PASSWORD_FIELD).performTextReplacement("abc")
-        compose.onNodeWithText(abcHash).assertExists()
+        h.waitForText(abcHash)
         h.screenshot("21-password-key")
         compose.onNodeWithTag(TAG_USE_KEY).assertIsEnabled().performClick()
-        compose.onNodeWithText(h.text(R.string.contract_detail_title)).assertExists()
+        h.waitForText(h.text(R.string.contract_detail_title))
         compose.onNodeWithText(h.text(R.string.common_show)).performScrollTo().performClick()
         h.field(TAG_KEY).assert(hasText(abcHash))
         compose.onNodeWithTag(TAG_APPLY).performClick()
-        compose.onNodeWithTag(TAG_SAVE).assert(hasText(h.plural(R.plurals.contracts_save_changes, 1, 1)))
+        h.waitForTagText(TAG_SAVE, h.plural(R.plurals.contracts_save_changes, 1, 1))
         assertEquals(0, h.transport.requests("set-config").size)
     }
 
@@ -160,22 +160,23 @@ class ContractsUiTest {
         val h = open(Wp10Harness(compose).launch())
         h.enableWithKey("10.99.99.3", keyA)
         // No reply: the write may have happened.
+        h.waitForText(h.plural(R.plurals.contracts_save_changes, 1, 1))
         compose.onNodeWithTag(TAG_SAVE).performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.save_unknown_heading)).assertExists()
+        h.waitForText(h.text(R.string.save_unknown_heading))
         h.screenshot("33-save-unknown")
         assertEquals(1, h.transport.requests("set-config").size)
         // Someone else saved a different document meanwhile.
         h.transport.answerNext("get-config-document", ConfigReplies.valid(ConfigReplies.document(contracts = mapOf("10.99.99.5" to keyB))))
         compose.onNodeWithTag(TAG_VERIFY_SAVE).performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.save_checked_heading)).assertExists()
+        h.waitForText(h.text(R.string.save_checked_heading))
         h.screenshot("46-save-checked")
         assertEquals(1, h.transport.requests("set-config").size)
         h.transport.answer("set-config", ConfigReplies.ACK)
         compose.onNodeWithTag(TAG_SAVE_AGAIN).performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag(TAG_SAVED_PRIMARY).assertExists()
+        h.waitForTag(TAG_SAVED_PRIMARY)
         assertEquals(2, h.transport.requests("set-config").size)
     }
 
@@ -183,17 +184,17 @@ class ContractsUiTest {
     fun aMatchingCheckIsASuccessNotARetry() {
         val h = open(Wp10Harness(compose).launch())
         h.enableWithKey("10.99.99.3", keyA)
+        h.waitForText(h.plural(R.plurals.contracts_save_changes, 1, 1))
         compose.onNodeWithTag(TAG_SAVE).performClick()
         compose.waitForIdle()
+        h.waitForText(h.text(R.string.save_unknown_heading))
         val submitted = ConfigReplies.submitted(h.transport.requests("set-config").single())
         h.transport.answerNext("get-config-document", ConfigReplies.valid(submitted))
         compose.onNodeWithTag(TAG_VERIFY_SAVE).performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.save_checked_confirmed_heading)).assertExists()
+        // CONFIRMED is success: followSaveOutcome leads straight to 25, no Save again anywhere.
+        h.waitForTag(TAG_SAVED_PRIMARY)
         assertTrue(compose.onAllNodes(hasTestTag(TAG_SAVE_AGAIN)).fetchSemanticsNodes().isEmpty())
-        h.screenshot("46-save-checked-confirmed")
-        compose.onNodeWithTag(TAG_CHECKED_CONTINUE).performClick()
-        compose.onNodeWithTag(TAG_SAVED_PRIMARY).assertExists()
         assertEquals(1, h.transport.requests("set-config").size)
     }
 }

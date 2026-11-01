@@ -31,7 +31,7 @@ import phpvpn.android.ui.components.SecretField
 import phpvpn.android.ui.components.TagKind
 import phpvpn.android.ui.components.ToggleRow
 import phpvpn.android.ui.components.TopBar
-import phpvpn.android.ui.screens.SecureWindow
+import phpvpn.android.ui.screens.secure.SecureWindow
 import phpvpn.android.ui.screens.errorMessage
 
 /** Callbacks of the contracts list (19, 41). */

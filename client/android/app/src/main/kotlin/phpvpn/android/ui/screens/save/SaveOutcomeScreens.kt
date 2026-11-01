@@ -1,15 +1,9 @@
 package phpvpn.android.ui.screens.save
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import kotlinx.coroutines.launch
 import phpvpn.android.R
 import phpvpn.android.ui.components.ActionButton
 import phpvpn.android.ui.components.ActionStyle
@@ -26,6 +20,8 @@ import phpvpn.android.ui.components.ScreenScaffold
 import phpvpn.android.ui.components.StateIcon
 import phpvpn.android.ui.components.Tag
 import phpvpn.android.ui.components.TopBar
+import phpvpn.android.ui.navigation.SaveOrigin
+import phpvpn.android.ui.screens.errorMessage
 
 /**
  * 25 Changes saved. The save is confirmed; the active VPN keeps its snapshot.
@@ -89,63 +85,69 @@ fun SavedScreen(vm: SavedViewModel, onDone: () -> Unit) {
 }
 
 /**
- * 33 Save result unknown: the draft is kept and frozen; "Verify save" asks the
- * origin's [SaveOutcomeSource] once and never writes. A decided result moves
- * to 46; an undecided check stays here with its reason.
+ * The shared outcome of an uncertain save for every [origin] (WP09
+ * contract, SaveOutcomeSource.kt). It renders the phase, not the route:
+ * UNKNOWN and CHECKING are 33 Save result unknown, NOT_SAVED and CONFLICT
+ * are 46 Save checked, CONFIRMED is the short success before the caller's
+ * [phpvpn.android.ui.screens.save.followSaveOutcome] leaves (25, or 17 for
+ * the Wizard). [source] null means nothing can be verified here (process
+ * recreated, origin closed): no check, no claim, only the inspection.
  */
 @Composable
-fun SaveUnknownScreen(
+fun SaveOutcomeScreen(
+    origin: SaveOrigin,
     source: SaveOutcomeSource?,
-    draftChanges: Int?,
+    state: SaveOutcomeState,
     onBack: () -> Unit,
     onInspect: (() -> Unit)?,
-    onDecided: (SaveVerification) -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    var checking by remember { mutableStateOf(false) }
-    var undecided by remember { mutableStateOf(false) }
+    when (state.phase) {
+        SaveOutcomePhase.NOT_SAVED, SaveOutcomePhase.CONFLICT, SaveOutcomePhase.CONFIRMED ->
+            SaveCheckedContent(origin, source, state, onBack, onInspect)
+        else -> SaveUnknownContent(source, state, onBack, onInspect)
+    }
+}
+
+/** 33: the draft is kept and frozen; "Verify save" runs the origin's one check and never writes. */
+@Composable
+private fun SaveUnknownContent(source: SaveOutcomeSource?, state: SaveOutcomeState, onBack: () -> Unit, onInspect: (() -> Unit)?) {
+    val checking = state.phase == SaveOutcomePhase.CHECKING
     ScreenScaffold(
         topBar = { TopBar(stringResource(R.string.save_unknown_title), onBack = onBack) },
         footer = {
             ActionButton(
                 stringResource(if (checking) R.string.save_unknown_checking else R.string.save_unknown_verify),
-                {
-                    val owner = source ?: return@ActionButton
-                    checking = true
-                    scope.launch {
-                        val result = owner.verify()
-                        checking = false
-                        undecided = result is SaveVerification.Unknown
-                        if (!undecided) onDecided(result)
-                    }
-                },
+                { source?.verify() },
                 Modifier.testTag(TAG_VERIFY_SAVE),
                 style = ActionStyle.Primary,
-                enabled = source != null && !checking,
+                enabled = source != null && state.phase == SaveOutcomePhase.UNKNOWN,
             )
         },
     ) {
         Eyebrow(stringResource(R.string.save_unknown_eyebrow))
         Heading(stringResource(R.string.save_unknown_heading))
         Intro(stringResource(R.string.save_unknown_intro))
-        if (source == null) {
-            Notice(stringResource(R.string.save_unknown_nothing), kind = NoticeKind.Info)
-            return@ScreenScaffold
-        }
-        if (undecided) {
-            Notice(
-                stringResource(R.string.save_unknown_check_failed_text),
+        when {
+            source == null || state.phase == SaveOutcomePhase.IDLE ->
+                Notice(stringResource(R.string.save_unknown_nothing), kind = NoticeKind.Info)
+            state.serviceRestarted -> Notice(
+                stringResource(R.string.wp09_finish_restarted),
+                kind = NoticeKind.Warn,
+                title = stringResource(R.string.save_unknown_notice_title),
+            )
+            state.errorCode != null -> Notice(
+                errorMessage(state.errorCode) + " " + stringResource(R.string.save_unknown_check_failed_text),
                 Modifier.testTag(TAG_CHECK_FAILED),
                 kind = NoticeKind.Error,
                 title = stringResource(R.string.save_unknown_check_failed_title),
             )
-        } else {
-            Notice(stringResource(R.string.save_unknown_notice_text), kind = NoticeKind.Warn, title = stringResource(R.string.save_unknown_notice_title))
+            else -> Notice(stringResource(R.string.save_unknown_notice_text), kind = NoticeKind.Warn, title = stringResource(R.string.save_unknown_notice_title))
         }
+        state.configPath?.let { if (state.serviceRestarted) Hint(stringResource(R.string.config_path_line, it)) }
         Card {
             InfoRow(
                 stringResource(R.string.save_unknown_draft),
-                draftChanges?.toString() ?: stringResource(R.string.save_unknown_draft_value),
+                state.draftChanges?.toString() ?: stringResource(R.string.save_unknown_draft_value),
             )
             InfoRow(stringResource(R.string.save_unknown_editing), stringResource(R.string.save_unknown_editing_value), divider = true)
         }
@@ -153,67 +155,74 @@ fun SaveUnknownScreen(
     }
 }
 
-/** Which flow's wording 46 uses. */
-enum class SaveCheckedOrigin { Contracts, Editor }
-
 /**
- * 46 Save checked. A confirmed write is a success that leads on to 25, never
- * a retry. A draft that is not the current state is kept and written again
- * only by the explicit "Save draft again": a conflict never overwrites
- * silently.
+ * 46: a confirmed write is success (CONFIRMED, leaving for 25), never Retry.
+ * NOT_SAVED: the write provably did not happen, the draft is kept with the
+ * reason. CONFLICT: the current configuration is not the draft; "Save draft
+ * again" writes only on this explicit choice and only while canRepeat.
  */
 @Composable
-fun SaveCheckedScreen(
-    origin: SaveCheckedOrigin,
-    verification: SaveVerification?,
-    draftChanges: Int?,
-    saving: Boolean,
-    canSaveAgain: Boolean,
+private fun SaveCheckedContent(
+    origin: SaveOrigin,
+    source: SaveOutcomeSource?,
+    state: SaveOutcomeState,
     onBack: () -> Unit,
-    onContinue: () -> Unit,
-    onSaveAgain: () -> Unit,
     onInspect: (() -> Unit)?,
 ) {
-    val confirmed = verification is SaveVerification.Confirmed
+    val confirmed = state.phase == SaveOutcomePhase.CONFIRMED
     ScreenScaffold(
         topBar = { TopBar(stringResource(R.string.save_checked_title), onBack = onBack) },
-        footer = {
-            if (confirmed) {
-                ActionButton(stringResource(R.string.save_checked_continue), onContinue, Modifier.testTag(TAG_CHECKED_CONTINUE), style = ActionStyle.Primary)
-            } else {
+        footer = if (confirmed) null else {
+            {
                 ActionButton(
-                    stringResource(if (saving) R.string.config_saving else R.string.save_checked_again),
-                    onSaveAgain,
+                    stringResource(if (state.phase == SaveOutcomePhase.CONFLICT && !state.canRepeat) R.string.config_saving else R.string.save_checked_again),
+                    { source?.repeatSave() },
                     Modifier.testTag(TAG_SAVE_AGAIN),
                     style = ActionStyle.Primary,
-                    enabled = canSaveAgain && !saving,
+                    enabled = source != null && state.canRepeat,
                 )
                 if (onInspect != null) ActionButton(stringResource(R.string.action_inspect_configuration), onInspect, style = ActionStyle.Ghost)
             }
         },
     ) {
-        Eyebrow(stringResource(if (origin == SaveCheckedOrigin.Contracts) R.string.save_checked_eyebrow else R.string.save_checked_eyebrow_editor))
+        Eyebrow(
+            stringResource(
+                when (origin) {
+                    SaveOrigin.Contracts -> R.string.save_checked_eyebrow
+                    SaveOrigin.Editor -> R.string.save_checked_eyebrow_editor
+                    SaveOrigin.Wizard -> R.string.wizard_eyebrow
+                },
+            ),
+        )
         Heading(stringResource(if (confirmed) R.string.save_checked_confirmed_heading else R.string.save_checked_heading))
         Notice(
-            stringResource(if (confirmed) R.string.save_checked_confirmed_text else R.string.save_checked_notice_text),
+            when {
+                confirmed -> stringResource(R.string.save_checked_confirmed_text)
+                state.phase == SaveOutcomePhase.NOT_SAVED && state.errorCode != null ->
+                    errorMessage(state.errorCode) + " " + stringResource(R.string.contracts_draft_kept)
+                else -> stringResource(R.string.save_checked_notice_text)
+            },
             Modifier.testTag(TAG_CHECKED_NOTICE),
-            kind = if (confirmed) NoticeKind.Success else NoticeKind.Warn,
-            title = stringResource(R.string.save_checked_notice_title),
+            kind = when (state.phase) {
+                SaveOutcomePhase.CONFIRMED -> NoticeKind.Success
+                SaveOutcomePhase.NOT_SAVED -> NoticeKind.Error
+                else -> NoticeKind.Warn
+            },
+            title = stringResource(if (state.phase == SaveOutcomePhase.NOT_SAVED) R.string.contracts_rejected_title else R.string.save_checked_notice_title),
         )
         Card {
             InfoRow(
                 stringResource(R.string.save_unknown_draft),
-                draftChanges?.toString() ?: stringResource(R.string.save_unknown_draft_value),
+                state.draftChanges?.toString() ?: stringResource(R.string.save_unknown_draft_value),
             )
             InfoRow(stringResource(R.string.save_checked_check), stringResource(R.string.save_checked_check_value), divider = true)
         }
-        if (!confirmed) Intro(stringResource(R.string.save_checked_intro))
+        if (state.phase == SaveOutcomePhase.CONFLICT) Intro(stringResource(R.string.save_checked_intro))
     }
 }
 
 const val TAG_SAVED_PRIMARY = "saved-primary"
 const val TAG_VERIFY_SAVE = "save-verify"
 const val TAG_CHECK_FAILED = "save-check-failed"
-const val TAG_CHECKED_CONTINUE = "save-checked-continue"
 const val TAG_SAVE_AGAIN = "save-again"
 const val TAG_CHECKED_NOTICE = "save-checked-notice"

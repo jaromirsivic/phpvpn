@@ -73,6 +73,8 @@ data class WizardUiState(
     val receipt: Receipt? = null,
     /** Commit unknown after a service restart: the one config-state read (no write repeated). */
     val restartState: ConfigStateResult? = null,
+    /** The explicit receipt check of 33 (wizard-get-commit) is running. */
+    val commitChecking: Boolean = false,
 )
 
 /**
@@ -117,6 +119,7 @@ class WizardController(
     private var sequence = 0uL
     private var receipt: Receipt? = null
     private var restartState: ConfigStateResult? = null
+    private var commitChecking = false
     private var commitId: String? = null
     private var commitOperation: String? = null
     private var commitDeadline = 0L
@@ -241,8 +244,18 @@ class WizardController(
         val current = session ?: return false
         val id = commitId ?: return false
         if (step != WizardStep.COMMIT_UNKNOWN || primaryBusy) return false
+        commitChecking = true
+        publish()
+        val owner = generation
         return primary {
-            when (val outcome = client.wizardGetCommit(current, id)) {
+            val outcome = client.wizardGetCommit(current, id)
+            // Explicit receipt verification discovered a restarted service.
+            // One fresh state read informs the user, never repeats publication.
+            val restarted = outcome is IpcOutcome.ServiceError && outcome.code == ErrorCode.WIZARD_SESSION_EXPIRED.wireName
+            val restart = if (restarted) (client.getConfigState() as? IpcOutcome.Success)?.value else null
+            if (owner != generation) return@primary
+            commitChecking = false
+            when (outcome) {
                 is IpcOutcome.Success -> {
                     val value = outcome.value
                     when (value.commitState) {
@@ -252,10 +265,8 @@ class WizardController(
                     }
                 }
                 is IpcOutcome.ServiceError -> {
-                    if (outcome.code == ErrorCode.WIZARD_SESSION_EXPIRED.wireName) {
-                        // Explicit receipt verification discovered a restarted service.
-                        // One fresh state read informs the user, never repeats publication.
-                        (client.getConfigState() as? IpcOutcome.Success)?.let { restartState = it.value }
+                    if (restarted) {
+                        restart?.let { restartState = it }
                         commitUnknown(outcome.wizard)
                     } else {
                         commitUnknown(outcome.wizard ?: errorOf(outcome))
@@ -308,6 +319,8 @@ class WizardController(
             else -> return false
         }
         clearDiagnostic()
+        // WizardModel::back resets the error: it belonged to the step left behind.
+        error = null
         publish()
         return true
     }
@@ -337,6 +350,10 @@ class WizardController(
     fun reset(): Boolean {
         if (session == null || committing || step == WizardStep.COMMIT_UNKNOWN || controlBusy || closing || resetting) return false
         resetting = true
+        // A failed HTTP detail is invalidated with its one cancel-attempt before
+        // the reset (wizard_window.cpp cancel); the reset then follows on the
+        // control channel, at the latest with the next 500 ms tick.
+        clearDiagnostic()
         closeOpenAttempt()
         publish()
         sendCloseOrReset()
@@ -690,6 +707,9 @@ class WizardController(
         invalidate(0)
         step = WizardStep.DISCONNECT_GATE
         error = WizardErrors.local(ErrorCode.WIZARD_CONNECTION_INTERRUPTED)
+        // A Connect was accepted: "disconnected" is known again only from the next gate status read,
+        // so an immediate "Disconnect and continue" sends the disconnect instead of a bare resume.
+        offlineKnown = false
     }
 
     private fun sessionExpired() {
@@ -760,6 +780,7 @@ class WizardController(
         sequence = 0uL
         receipt = null
         restartState = null
+        commitChecking = false
         commitId = null
         commitOperation = null
         primaryBusy = false
@@ -806,6 +827,7 @@ class WizardController(
             attempt = attempt,
             receipt = receipt,
             restartState = restartState,
+            commitChecking = commitChecking,
         )
     }
 

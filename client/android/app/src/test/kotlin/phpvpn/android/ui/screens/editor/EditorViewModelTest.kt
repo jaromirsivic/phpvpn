@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import phpvpn.android.bridge.controller.EditorNotice
@@ -15,7 +16,9 @@ import phpvpn.android.debug.ConfigReplies
 import phpvpn.android.debug.ConfigReplies.answer
 import phpvpn.android.debug.ConfigReplies.answerNext
 import phpvpn.android.ui.screens.runFlowTest
-import phpvpn.android.ui.screens.save.SaveVerification
+import phpvpn.android.ui.navigation.SaveOrigin
+import phpvpn.android.ui.screens.save.SaveOutcomePhase
+import phpvpn.android.ui.screens.save.SaveOutcomeRegistry
 import phpvpn.android.ui.screens.writes
 
 /**
@@ -194,9 +197,23 @@ class EditorViewModelTest {
             advanceUntilIdle()
             assertEquals(EditorNavigation.Unknown, vm.navigation.value)
             assertTrue(vm.state.value is EditorState.SaveUnknown)
+            val source = vm.saveOutcome
+            assertSame(source, SaveOutcomeRegistry.source(SaveOrigin.Editor))
+            assertEquals(SaveOutcomePhase.UNKNOWN, source.state.value.phase)
+            assertFalse(source.repeatSave())
             transport.answerNext("get-config-document", ConfigReplies.valid(edited))
-            assertEquals(SaveVerification.Confirmed(ConfigReplies.CONFIG_PATH), vm.verify())
+            assertTrue(source.verify())
+            assertEquals(SaveOutcomePhase.CHECKING, source.state.value.phase)
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFIRMED, source.state.value.phase)
+            assertEquals(ConfigReplies.CONFIG_PATH, source.state.value.configPath)
+            // The confirmed session is wiped; the next open starts without an outcome.
+            assertEquals(EditorState.Closed, vm.state.value)
             assertEquals(1, transport.requests("set-config").size)
+            transport.answerNext("get-config-document", ConfigReplies.valid())
+            vm.open()
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.IDLE, source.state.value.phase)
         }
     }
 
@@ -212,15 +229,45 @@ class EditorViewModelTest {
             vm.save()
             advanceUntilIdle()
             transport.answerNext("get-config-document", ConfigReplies.missing())
-            assertEquals(SaveVerification.Failed(EditorViewModel.DIFFERENT), vm.verify())
+            vm.saveOutcome.verify()
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFLICT, vm.saveOutcome.state.value.phase)
+            assertTrue(vm.saveOutcome.state.value.canRepeat)
             assertEquals(1, transport.requests("set-config").size)
             assertEquals(edited, vm.text)
-            transport.answer("set-config", ConfigReplies.ACK)
-            vm.saveAgain()
+            transport.answerNext("set-config", ConfigReplies.INVALID_JSON, ConfigReplies.ACK)
+            assertTrue(vm.saveOutcome.repeatSave())
             advanceUntilIdle()
-            assertEquals(EditorNavigation.Saved, vm.navigation.value)
+            // Rejected before publication: not saved, the draft is back in the editor.
+            assertEquals(SaveOutcomePhase.NOT_SAVED, vm.saveOutcome.state.value.phase)
+            assertEquals(ErrorCode.CONFIG_INVALID_JSON.wireName, vm.saveOutcome.state.value.errorCode)
+            assertTrue(vm.state.value is EditorState.Editing)
+            assertFalse(vm.saveOutcome.repeatSave())
             assertEquals(2, transport.requests("set-config").size)
             assertEquals(edited, ConfigReplies.submitted(transport.requests("set-config")[1]))
+        }
+    }
+
+    @Test
+    fun aRepeatAfterAConflictIsConfirmedAndLeadsTo25() {
+        val transport = FakeIpcTransport()
+        transport.answerNext("get-config-document", ConfigReplies.valid())
+        runFlowTest(transport) { deps ->
+            val vm = EditorViewModel(deps)
+            vm.open()
+            advanceUntilIdle()
+            vm.edit(edited)
+            vm.save()
+            advanceUntilIdle()
+            transport.answerNext("get-config-document", ConfigReplies.valid())
+            vm.saveOutcome.verify()
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFLICT, vm.saveOutcome.state.value.phase)
+            transport.answer("set-config", ConfigReplies.ACK)
+            assertTrue(vm.saveOutcome.repeatSave())
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.CONFIRMED, vm.saveOutcome.state.value.phase)
+            assertEquals(2, transport.requests("set-config").size)
         }
     }
 
@@ -235,7 +282,10 @@ class EditorViewModelTest {
             vm.edit(edited)
             vm.save()
             advanceUntilIdle()
-            assertEquals(SaveVerification.Unknown, vm.verify())
+            assertTrue(vm.saveOutcome.verify())
+            advanceUntilIdle()
+            assertEquals(SaveOutcomePhase.UNKNOWN, vm.saveOutcome.state.value.phase)
+            assertEquals(ErrorCode.TIMEOUT.wireName, vm.saveOutcome.state.value.errorCode)
             assertTrue(vm.state.value is EditorState.SaveUnknown)
             assertEquals(1, transport.requests("set-config").size)
         }

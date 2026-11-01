@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- View tags of WP09: the FLAG_SECURE reference count of SecureWindow. -->
+<resources>
+    <item name="secure_window_count" type="id" />
+    <item name="secure_window_previous" type="id" />
+</resources>

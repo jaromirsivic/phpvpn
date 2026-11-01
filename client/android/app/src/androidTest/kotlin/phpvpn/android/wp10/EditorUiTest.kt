@@ -53,9 +53,9 @@ class EditorUiTest {
         val h = Wp10Harness(compose).launch()
         h.transport.answer("get-config-document", ConfigReplies.missing())
         h.navigate { openEditor() }
-        compose.onNodeWithTag(TAG_CREATE_DIALOG).assertExists()
+        h.waitForTag(TAG_CREATE_DIALOG)
         // The actual absolute path reported by the service.
-        compose.onNodeWithText(h.text(R.string.create_default_text, path)).assertExists()
+        h.waitForText(h.text(R.string.create_default_text, path))
         return h
     }
 
@@ -79,7 +79,7 @@ class EditorUiTest {
         h.transport.answer("create-default-config", ConfigReplies.createDefault(created = true))
         compose.onNodeWithTag(TAG_CREATE_YES).performScrollTo().performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.editor_created_title)).assertExists()
+        h.waitForText(h.text(R.string.editor_created_title))
         h.field(TAG_EDITOR_TEXT).assert(hasText(ConfigReplies.DEFAULT_DOCUMENT))
         assertTrue(h.secure)
         h.screenshot("23-editor-created")
@@ -89,7 +89,7 @@ class EditorUiTest {
         h.field(TAG_EDITOR_TEXT).performTextReplacement(ConfigReplies.document(virtualIp = "10.99.99.9"))
         compose.waitForIdle()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
-        compose.onNodeWithText(h.text(R.string.discard_heading)).assertExists()
+        h.waitForText(h.text(R.string.discard_heading))
         compose.onNode(hasText(h.text(R.string.action_discard_changes)) and hasAnyAncestor(isDialog())).performClick()
         compose.waitForIdle()
         assertTrue(compose.onAllNodes(hasTestTag(TAG_EDITOR_SAVE)).fetchSemanticsNodes().isEmpty())
@@ -104,7 +104,7 @@ class EditorUiTest {
         h.transport.answer("create-default-config", ConfigReplies.createDefault(created = false, document = appeared))
         compose.onNodeWithTag(TAG_CREATE_YES).performScrollTo().performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.editor_existing_title)).assertExists()
+        h.waitForText(h.text(R.string.editor_existing_title))
         h.field(TAG_EDITOR_TEXT).assert(hasText(appeared))
         assertEquals(0, h.transport.requests("set-config").size)
         assertEquals(1, h.transport.requests("create-default-config").size)
@@ -120,11 +120,11 @@ class EditorUiTest {
         h.navigate { openEditor() }
         h.field(TAG_EDITOR_TEXT).assert(hasText(current))
         compose.onNodeWithTag(TAG_EDITOR_RESET).performScrollTo().performClick()
-        compose.onNodeWithText(h.text(R.string.reset_heading)).assertExists()
+        h.waitForText(h.text(R.string.reset_heading))
         h.screenshot("24-reset")
         compose.onNodeWithTag(TAG_RESET_CONFIRM).performScrollTo().performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.editor_default_heading)).assertExists()
+        h.waitForText(h.text(R.string.editor_default_heading))
         h.screenshot("42-editor-default")
         assertEquals(0, h.transport.requests("set-config").size)
         compose.onNodeWithTag(TAG_RESET_CONTINUE).performClick()
@@ -134,9 +134,9 @@ class EditorUiTest {
         h.transport.answer("set-config", ConfigReplies.ACK)
         compose.onNodeWithTag(TAG_EDITOR_SAVE).performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag(TAG_SAVED_PRIMARY).assertExists()
+        h.waitForTag(TAG_SAVED_PRIMARY)
         // Not connected: Connect instead of Reconnect.
-        compose.onNodeWithText(h.text(R.string.saved_connect_notice_title)).assertExists()
+        h.waitForText(h.text(R.string.saved_connect_notice_title))
         h.screenshot("25-saved-inactive")
         assertEquals(ConfigReplies.DEFAULT_DOCUMENT, ConfigReplies.submitted(h.transport.requests("set-config").single()))
     }
@@ -151,7 +151,7 @@ class EditorUiTest {
         h.field(TAG_EDITOR_TEXT).performTextReplacement(draft)
         compose.onNodeWithTag(TAG_EDITOR_SAVE).performClick()
         compose.waitForIdle()
-        compose.onNodeWithText(h.text(R.string.editor_invalid_heading)).assertExists()
+        h.waitForText(h.text(R.string.editor_invalid_heading))
         compose.onNodeWithTag(TAG_EDITOR_ERROR).assert(
             hasText("masterSetup.httpHeaders line 2: empty line or missing colon " + h.text(R.string.editor_invalid_changes_kept), substring = true),
         )
