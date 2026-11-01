@@ -13,6 +13,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavController
 import kotlinx.coroutines.launch
 import phpvpn.android.R
+import phpvpn.android.appContainer
 import phpvpn.android.ui.components.ActionButton
 import phpvpn.android.ui.components.ActionStyle
 import phpvpn.android.ui.components.Card
@@ -47,7 +48,8 @@ fun WizardSavedRoute(nav: NavController) {
     val vpnCidr = rememberSaveable { latest?.vpnCidr.orEmpty() }
     val connect = {
         val connection = dependencies.connection
-        dependencies.backgroundScope.launch { connection?.connect() }
+        // WP05: through the VPN service (ConnectActions), never the repository directly.
+        dependencies.backgroundScope.launch { if (connection != null) context.appContainer.connectActions.connect() }
         nav.navigateToMain(MainDestination.Connection)
     }
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
