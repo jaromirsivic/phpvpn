@@ -5,10 +5,10 @@ installed, packaged or used by the production tray.
 
 | File | Purpose |
 |---|---|
-| `mock_service.cpp` | `phpvpn-tray-mock-service` (built with `BUILD_TESTING` and `PHPVPN_BUILD_TRAY`): scripted phpvpn service on a private Unix socket, valid IPC v1 replies, Connect/Disconnect scenarios and errors. Usage in the file header. |
+| `mock_service.cpp` | `phpvpn-tray-mock-service` (built with `BUILD_TESTING` and `PHPVPN_BUILD_TRAY`): scripted phpvpn service on a private Unix socket, valid IPC v1 replies, Connect/Disconnect scenarios and errors. `--config configured|placeholder` (also the stdin line `config ...`) selects the served document: the default template with the server URL `http://127.0.0.1/phpvpn.php`, or with the placeholder `https://change-this-server-url.invalid` it really carries; as the service, Connect against the placeholder is refused with `config_server_url_unset`. Usage in the file header. |
 | `tray_atspi.py` | AT-SPI probe: dump windows, press buttons, wait for texts, close windows. |
 | `sni_stub.py` | Minimal `org.kde.StatusNotifierWatcher`, item inspection (IconName, Title, dbusmenu layout) and menu activation. |
-| `run-tray-checks.sh` | End-to-end checks in a private D-Bus session with a headless mutter: `fallback` (control window, progress window, countdown, errors, Exit) and `sni` (indicator registration and menu). |
+| `run-tray-checks.sh` | End-to-end checks in a private D-Bus session with a headless mutter: `fallback` (control window, the set-up question of the placeholder server URL, progress window, countdown, errors, Exit) and `sni` (indicator registration and menu). |
 | `mock_config.cpp` | WP10b extension (mock_extension.h): with `--config-dir <dir>` the mock serves get-config, set-config, get-config-state, get-config-document, get-default-config and create-default-config from `<dir>/config.json` through the real core `ConfigStore` (real validation errors). stdin lines `config missing|invalid`, `setconfig normal|busy|foreign|delay <ms>`, `connect delay <ms>` (a command still running in the tray). |
 | `config_checks.py`, `run-config-checks.sh` | WP10b: AT-SPI scenarios of Edit Config, Communication contracts and Password SHA (`editor`, `deadline`, `contracts`) in the same kind of private session. |
 | `wizard_atspi.py`, `run-wizard-checks.sh` | WP10a: Configuration Wizard, HTTP headers and HTTP error detail. `wizard`/`compact` use a real isolated `phpvpn-service` (sudo, own network namespaces, real Python relay) for the Wizard checks; `detail` uses the mock for the Connect Error detail. |

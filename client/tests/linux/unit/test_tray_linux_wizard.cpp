@@ -440,7 +440,7 @@ PHPVPN_TEST(tray_linux_wizard, complete_flow_url_secret_identity_contracts_finis
     p = rig.wizard.presentation();
     PHPVPN_CHECK_EQ(p.primaryLabel, std::string("Verify & continue"));
     PHPVPN_CHECK(p.primaryEnabled && p.resetEnabled && !p.backVisible && !p.detailVisible && !p.locked);
-    PHPVPN_CHECK_EQ(p.url, std::string("http://MODIFY-THIS-URL/phpvpn.php"));
+    PHPVPN_CHECK_EQ(p.url, std::string("https://change-this-server-url.invalid"));
     PHPVPN_CHECK(p.sidebar[0].active && p.sidebar[0].color == ui::Color::primary && p.sidebar[0].status.empty());
     PHPVPN_CHECK_EQ(p.sidebar[1].status, std::string("Upcoming"));
     PHPVPN_CHECK_EQ(p.sidebar[3].name, std::string("Contracts"));
@@ -449,11 +449,20 @@ PHPVPN_TEST(tray_linux_wizard, complete_flow_url_secret_identity_contracts_finis
     // The placeholder is refused locally, before any IPC, with the focus on the URL.
     rig.wizard.next();
     p = rig.wizard.presentation();
-    PHPVPN_CHECK_EQ(p.errorText, std::optional<std::string>("Replace MODIFY-THIS-URL with your server address."));
+    PHPVPN_CHECK_EQ(p.errorText,
+                    std::optional<std::string>("Replace change-this-server-url.invalid with your server address."));
     PHPVPN_CHECK(p.invalidField == WizardField::url);
     PHPVPN_CHECK(rig.host.focused == WizardField::url);
     // A local refusal creates no attempt, so the step stays pending (Windows model).
     PHPVPN_CHECK(p.sidebar[0].status.empty());
+    PHPVPN_CHECK_EQ(rig.service.count("wizard-check-url"), 0u);
+    // The placeholder is recognised by host: any case, scheme, port or path.
+    rig.wizard.editUrl("http://CHANGE-THIS-SERVER-URL.Invalid:8080/phpvpn.php");
+    rig.wizard.next();
+    p = rig.wizard.presentation();
+    PHPVPN_CHECK_EQ(p.errorText,
+                    std::optional<std::string>("Replace change-this-server-url.invalid with your server address."));
+    PHPVPN_CHECK(p.invalidField == WizardField::url);
     PHPVPN_CHECK_EQ(rig.service.count("wizard-check-url"), 0u);
 
     rig.wizard.editUrl("http://192.0.2.1/phpvpn.php");
@@ -676,7 +685,7 @@ PHPVPN_TEST(tray_linux_wizard, reset_asks_first_and_close_sends_wizard_close) {
     rig.wizard.cancel(true);
     PHPVPN_CHECK_EQ(rig.wizard.presentation().statusText, std::string("Stopping the current check and resetting…"));
     PHPVPN_CHECK(rig.ui.pumpUntil([&] { return rig.service.count("wizard-reset") == 1 && !rig.wizard.presentation().locked; }));
-    PHPVPN_CHECK_EQ(rig.wizard.presentation().url, std::string("http://MODIFY-THIS-URL/phpvpn.php"));
+    PHPVPN_CHECK_EQ(rig.wizard.presentation().url, std::string("https://change-this-server-url.invalid"));
     PHPVPN_CHECK(rig.wizard.wizardSnapshot().dirty);  // a reset draft is not the file
 
     // X / Escape: wizard-close, then the window goes away.

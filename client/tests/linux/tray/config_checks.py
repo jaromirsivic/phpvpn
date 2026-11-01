@@ -305,7 +305,7 @@ def default_document() -> dict:
     return {
         "masterSetup": {
             "serverSecret": "CHANGE_THIS_SERVER_SECRET",
-            "serverUrl": "http://127.0.0.1/phpvpn.php",
+            "serverUrl": "https://change-this-server-url.invalid",
             "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; "
                            "Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
             "trustAnyTlsCertificate": True,
@@ -499,8 +499,11 @@ def editor_checks() -> None:
     passed("invalid JSON opens verbatim in Edit Config; Contracts refuses it with the repair hint")
 
     # Repair through the editor, then save while connected -> reconnect question.
+    # A real server URL: the reconnect below sends connect, which the service (and
+    # the mock) refuses with config_server_url_unset for the placeholder.
     open_editor()
     document = default_document()
+    document["masterSetup"]["serverUrl"] = "http://127.0.0.1/repaired.php"
     set_text(editor(), "Configuration JSON", json.dumps(document, indent=2))
     press(editor(), "Save")
     absent(EDITOR, "frame")

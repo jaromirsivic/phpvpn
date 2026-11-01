@@ -5,9 +5,11 @@
 #
 # Runs in a private D-Bus session with a headless mutter (virtual monitor), so it
 # needs no unlocked desktop and never touches the user's session bus:
-#   fallback  no StatusNotifierWatcher: control window, Connect -> progress window
-#             with four checks -> "Connected successfully" countdown -> auto close,
-#             Disconnect -> "Disconnected", Exit keeps the (mock) VPN untouched.
+#   fallback  no StatusNotifierWatcher: control window, Connect against the
+#             placeholder server URL -> the set-up question (No, Yes opens the
+#             Wizard), Connect -> progress window with four checks -> "Connected
+#             successfully" countdown -> auto close, Disconnect -> "Disconnected",
+#             Exit keeps the (mock) VPN untouched.
 #   sni       sni_stub.py owns org.kde.StatusNotifierWatcher: the tray registers an
 #             item; IconName, Title and the dbusmenu labels follow the status.
 # Needs mutter, python3-gobject and python3-pyatspi. Exit code 0 when every check passed.
@@ -73,6 +75,8 @@ PHPVPN_TRAY_TEST_SOCKET="$socket" PHPVPN_TRAY_TEST_SERVER_UID=$(id -u) \
 tray=$!
 pids="$pids $tray"
 P="python3 $here/tray_atspi.py"
+# wizard_atspi.py addresses a message dialog titled like its parent ("alert:PHPVPN").
+A="python3 $here/wizard_atspi.py"
 
 if [ "$mode" = fallback ]; then
     $P wait PHPVPN "PHPVPN: disconnected" 15 || fail "control window without disconnected status"
@@ -94,6 +98,33 @@ if [ "$mode" = fallback ]; then
     $P click "About PHPVPN" OK
     $P absent "About PHPVPN" 5 || fail "OK did not close About"
     pass "About shows the version, licence and copyright and closes with OK"
+    # The default configuration still carries the placeholder server URL: the service
+    # refuses connect with config_server_url_unset and the tray asks instead of failing.
+    question="The server URL has not been configured yet.
+Do you want to set it up now?"
+    echo "config placeholder" >"$work/control"
+    sleep 0.5
+    $P click PHPVPN Connect
+    $A wait "alert:PHPVPN" "$question" 10 || fail "no set-up question for the placeholder server URL"
+    $A button "alert:PHPVPN" No visible || fail "question lacks No"
+    $A button "alert:PHPVPN" Yes visible || fail "question lacks Yes"
+    $A click "alert:PHPVPN" No
+    $A absent "alert:PHPVPN" 5 || fail "No did not close the question"
+    $P dump >"$work/unset.txt" 2>&1 || true
+    grep -q "window .PHPVPN connection." "$work/unset.txt" && fail "a progress window opened for the refused Connect"
+    grep -q "window .Configuration Wizard." "$work/unset.txt" && fail "No opened the Wizard"
+    $P wait PHPVPN "PHPVPN: disconnected" 5 || fail "status not disconnected after the refused Connect"
+    $P click PHPVPN Connect
+    $A wait "alert:PHPVPN" "$question" 10 || fail "no second set-up question"
+    $A click "alert:PHPVPN" Yes
+    $A present "Configuration Wizard" 10 || fail "Yes did not open the Configuration Wizard"
+    $A absent "alert:PHPVPN" 5 || fail "Yes did not close the question"
+    $A close "Configuration Wizard"
+    $A absent "Configuration Wizard" 10 || fail "the Wizard did not close"
+    grep -c "request connect" "$work/mock.log" | grep -qx 2 || fail "the refused Connects were not sent to the service"
+    pass "placeholder server URL: question instead of an error, No does nothing, Yes opens the Wizard"
+    echo "config configured" >"$work/control"
+    sleep 0.5
     $P click PHPVPN Connect
     $P wait "PHPVPN connection" "Connecting client to the server." 10 || fail "no Connect progress window"
     $P wait "PHPVPN connection" "http://127.0.0.1/phpvpn.php" 10 || fail "Server URL detail missing"

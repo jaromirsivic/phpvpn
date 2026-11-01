@@ -15,6 +15,10 @@ constexpr std::int64_t kDisconnectObservationMs = 30000;
 constexpr std::int64_t kSavedStatusBudgetMs = 30000;
 constexpr std::string_view kSavedStatusUnverified =
     "Your changes were saved, but the current connection status could not be verified. Reconnect manually to apply them.";
+// Connect refused with config_server_url_unset (client.md): the stored
+// configuration still carries the placeholder server URL.
+constexpr std::string_view kServerUrlUnsetQuestion =
+    "The server URL has not been configured yet.\nDo you want to set it up now?";
 }  // namespace
 
 TrayApp::TrayApp(TrayOptions options)
@@ -221,9 +225,7 @@ void TrayApp::onMenuAction(MenuAction action) {
             startCommand(connectedOrConnecting(snapshot_) ? IpcCommand::disconnect : IpcCommand::connect);
             break;
         case MenuAction::wizard:
-            cancelReconnect();
-            if (!hooks_.openWizard) mac::showMessage(unavailableWindowText(action), "PHPVPN");
-            else if (!hooks_.openWizard()) showErrorText("Configuration Wizard could not be opened.");
+            openWizard();
             break;
         case MenuAction::contracts:
         case MenuAction::edit:
@@ -318,10 +320,14 @@ void TrayApp::finishCommand(IpcCommand command, std::string& response) {
         return;
     }
     if (const auto* error = parsed.value().find("error"); error && error->isObject()) {
+        const auto* code = error->find("code");
+        const std::string codeText = code && code->isString() ? code->stringValue() : std::string{};
+        // The placeholder server URL is a question, not an error; the state stays disconnected.
+        if (command == IpcCommand::connect && codeText == "config_server_url_unset") { askToConfigureServerUrl(); return; }
         // Never display raw transport/system/configuration text as an error.
         const auto* description = error->find("description");
         std::string text = description && description->isString() ? description->stringValue() : "The command failed.";
-        if (const auto* code = error->find("code"); code && code->isString() && code->stringValue().starts_with("config_"))
+        if (codeText.starts_with("config_"))
             text += "\nExpected configuration: " + expectedConfigurationPath() +
                     "\nOpen Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
         showErrorText(text);
@@ -333,6 +339,18 @@ void TrayApp::finishCommand(IpcCommand command, std::string& response) {
         onSnapshot(status);
         progress_.onSnapshot(status);
     }
+}
+
+void TrayApp::openWizard() {
+    cancelReconnect();
+    if (!hooks_.openWizard) mac::showMessage(unavailableWindowText(MenuAction::wizard), "PHPVPN");
+    else if (!hooks_.openWizard()) showErrorText("Configuration Wizard could not be opened.");
+}
+
+void TrayApp::askToConfigureServerUrl() {
+    // Yes opens the Wizard exactly like the menu action; No does nothing.
+    if (!mac::confirm(kServerUrlUnsetQuestion, "PHPVPN") || endingSession_) return;
+    openWizard();
 }
 
 void TrayApp::finishDisconnect(std::string& response) {

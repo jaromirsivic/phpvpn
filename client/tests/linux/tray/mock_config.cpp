@@ -23,6 +23,8 @@
 //   setconfig delay <ms>  wait before handling set-config (saving state, deadline)
 //   connect delay <ms>    wait before answering connect (a command still running in
 //                         the tray; 0 restores the immediate reply)
+// As the service, connect is refused with config_server_url_unset while the stored
+// document still carries the placeholder server URL (mock_extension.h).
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -146,6 +148,9 @@ std::optional<std::string> handleIpc(const IpcRequest& request) {
             delay = s.connectDelayMs;
         }
         if (delay > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        std::lock_guard lock(s.mutex);
+        if (auto snapshot = s.store->read(); snapshot && snapshot->document)
+            if (auto refused = serverUrlUnsetReply(request, *snapshot->document)) return refused;
         return std::nullopt;  // the base scenario answers
     }
     if (request.command == IpcCommand::get_config) {
