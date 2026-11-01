@@ -7,6 +7,7 @@
 #include <shlobj.h>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "core/protocol/json.h"
 #include "editor_window.h"
@@ -35,6 +36,7 @@ constexpr UINT kConfigMessage = WM_APP + 4, kDisconnectMessage = WM_APP + 5;
 constexpr UINT kSavedStatusMessage = WM_APP + 6, kReconnectMessage = WM_APP + 7;
 constexpr UINT kInstallationMessage = WM_APP + 8;
 constexpr UINT kWizardMenu = 206, kContractsMenu = 207;
+constexpr wchar_t kServerUrlUnsetQuestion[] = L"The server URL has not been configured yet.\nDo you want to set it up now?";
 constexpr UINT_PTR kStatusTimer = 1;
 constexpr UINT_PTR kExitTimer = 90;
 constexpr UINT_PTR kReconnectTimer = 91;
@@ -185,10 +187,7 @@ LRESULT CALLBACK TrayApplication::procedure(HWND window, UINT message, WPARAM wP
                     self->infoWindow_.open(self->instance_);
                     return 0;
                 }
-                case kWizardMenu:
-                    self->cancelReconnect();
-                    if (!self->wizard_.open(self->instance_)) self->showError(L"Configuration Wizard could not be opened.");
-                    return 0;
+                case kWizardMenu: self->openWizard(); return 0;
                 case kContractsMenu: self->startConfigAction(MenuAction::contracts); return 0;
                 case IDM_TOGGLE:
                     self->startCommand(self->connectedOrConnecting() ? IpcCommand::disconnect : IpcCommand::connect);
@@ -467,8 +466,16 @@ void TrayApplication::finishCommand() {
     if (const auto* error = parsed.value().find("error"); error && error->isObject()) {
         // Never display raw transport/system/configuration text as an error.
         const auto* description = error->find("description");
+        const auto* code = error->find("code");
+        const std::string_view codeName = code && code->isString() ? std::string_view(code->stringValue()) : std::string_view{};
+        if (codeName == "config_server_url_unset") {
+            // The placeholder server URL is not a broken configuration: offer the
+            // Wizard instead of an error. The status re-read above already ran.
+            if (askSystemQuestion(window_, kServerUrlUnsetQuestion, L"PHPVPN")) openWizard();
+            return;
+        }
         auto text = description && description->isString() ? widen(description->stringValue()) : L"The command failed.";
-        if (const auto* code = error->find("code"); code && code->isString() && code->stringValue().starts_with("config_"))
+        if (codeName.starts_with("config_"))
             text += L"\nExpected configuration: " + expectedConfigurationPath() + L"\nOpen Configuration Wizard, or copy a configuration supplied by your administrator to this path.";
         showError(text.c_str());
         return;
@@ -493,6 +500,10 @@ void TrayApplication::finishCommand() {
             break;
         default: break;
     }
+}
+void TrayApplication::openWizard() {
+    cancelReconnect();
+    if (!wizard_.open(instance_)) showError(L"Configuration Wizard could not be opened.");
 }
 void TrayApplication::showConfigWarning(std::string_view availability, std::string_view path, std::string_view reason) {
     const auto text = L"The configuration is " + widen(availability) + L".\n" + widen(reason) + L"\nExpected configuration: " + widen(path) +

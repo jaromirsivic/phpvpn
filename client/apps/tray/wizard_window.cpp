@@ -3,6 +3,7 @@
 #include "system_dialog.h"
 #include "wizard_layout.h"
 #include "wizard_text.h"
+#include "server_url_placeholder.h"
 #include "ui_controls.h"
 #include "window_utils.h"
 #include "core/crypto/crypto_provider.h"
@@ -517,7 +518,7 @@ void WizardWindow::render() {
         std::wstring text = widen(failure.description) + L"\n" + widen(failure.suggestedAction);
         if (failure.code == "timeout" || failure.code == "transport_timeout") text = wizardText::timeout;
         if (failure.code == "wizard_connection_interrupted") text = wizardText::interrupted;
-        if (step == WizardStep::serverUrl && model_.fields().serverUrl.find("MODIFY-THIS-URL") != std::string::npos)
+        if (step == WizardStep::serverUrl && mentionsPlaceholderServerUrl(model_.fields().serverUrl))
             text = wizardText::urlPlaceholder;
         if (step == WizardStep::serverSecret && failure.code == "crypto_tag_mismatch" &&
             failure.field == "serverSecret")

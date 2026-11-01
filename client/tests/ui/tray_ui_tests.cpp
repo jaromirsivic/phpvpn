@@ -137,6 +137,7 @@ struct Backend {
     std::condition_variable changed;
     bool stopping = false, editMode = false, heartbeatInterrupt = false, defaultError = false;
     bool lostFinish = false, lostClose = false, gateHeld = false;
+    bool connectServerUrlUnset = false;  // connect answers with the config_server_url_unset envelope
     bool pendingFinish = false, holdStatus = false, releaseHeld = false;
     std::optional<WizardCommand> heldCommand;
     unsigned heldStarted = 0, heldCompleted = 0;
@@ -233,7 +234,10 @@ struct Backend {
             if (legacy->command == IpcCommand::disconnect) {
                 ++disconnects; ++epoch; disconnectReceivedAt = GetTickCount64();
             }
-            if (legacy->command == IpcCommand::connect) ++connects;
+            if (legacy->command == IpcCommand::connect) {
+                ++connects;
+                if (connectServerUrlUnset) return IpcProtocol::buildError(legacy->requestId, Error(ErrorCode::config_server_url_unset));
+            }
             StatusSnapshot snapshot;
             if (gateHeld) { snapshot.state = gateState; snapshot.phase = gatePhase; }
             snapshot.stateChangedAtUtc = "2026-09-06T12:00:00.000Z";
@@ -498,7 +502,7 @@ void captureWizard(HWND window, const wchar_t* name) {
 void happyPath() {
     Gui gui;
     gui.open();
-    check(text(child(gui.hwnd(), urlId)).find(L"MODIFY-THIS-URL") != std::wstring::npos, "missing config did not show placeholder URL");
+    check(text(child(gui.hwnd(), urlId)).find(L"change-this-server-url.invalid") != std::wstring::npos, "missing config did not show placeholder URL");
     click(gui.hwnd(), nextId);
     gui.wait(100);
     check(gui.backend.count(&Backend::totalStarts) == 0, "placeholder URL reached the service");
@@ -927,6 +931,48 @@ void editorClick(HWND window, int id) {
     check(button && IsWindowEnabled(button), "editor button missing or disabled");
     SetActiveWindow(window);
     SendMessageW(button, BM_CLICK, 0, 0);
+}
+// A connect refused with config_server_url_unset asks a Yes/No question
+// instead of showing a configuration error. Yes opens the Wizard, No leaves
+// no window open; the Connect progress window never appears.
+void connectServerUrlUnsetPrompt() {
+    Gui gui;
+    { std::lock_guard lock(gui.backend.mutex); gui.backend.connectServerUrlUnset = true; }
+    TrayApplication app({gui.pipe, L"Local\\phpvpn-url-unset-" + widen(uuid()), std::make_unique<WizardFixtureShell>(), L"URL unset synthetic"});
+    check(app.initialise(GetModuleHandleW(nullptr)), "production TrayApplication could not initialise");
+    const auto asked = [&](std::size_t from) {
+        for (std::size_t i = from; i < phpvpn::tray::test::dialogTexts.size(); ++i) {
+            const auto& shown = phpvpn::tray::test::dialogTexts[i];
+            // The TaskDialog content is read through MSAA; the title is the window text.
+            if (shown.starts_with(L"PHPVPN") && shown.find(L"The server URL has not been configured yet.") != std::wstring::npos &&
+                shown.find(L"Do you want to set it up now?") != std::wstring::npos) return true;
+        }
+        return false;
+    };
+    const auto connect = [&](int button, unsigned expectedConnects) {
+        const auto from = phpvpn::tray::test::dialogTexts.size();
+        phpvpn::tray::test::answer(button, [&] {
+            SendMessageW(app.window(), WM_COMMAND, IDM_TOGGLE, 0);
+            gui.until([&] { return gui.backend.count(&Backend::connects) == expectedConnects && asked(from); },
+                      "refused connect did not ask the server URL question", 6000);
+        });
+        gui.until([&] { return !findTop(L"#32770"); }, "question dialog did not close");
+        bool errorShown = false;
+        for (std::size_t i = from; i < phpvpn::tray::test::dialogTexts.size(); ++i)
+            if (phpvpn::tray::test::dialogTexts[i].find(L"Expected configuration") != std::wstring::npos) errorShown = true;
+        check(!errorShown, "config_server_url_unset was shown as a configuration error");
+        check(!findTop(L"PhpVpnConnectingProgress"), "refused connect opened the progress window");
+    };
+    connect(IDNO, 1);
+    gui.wait(200);
+    check(!gui.hwnd() && !findTop(L"#32770") && !findTop(L"PhpVpnConnectingProgress"), "No left a window open");
+    connect(IDYES, 2);
+    gui.until([&] { return gui.hwnd() && child(gui.hwnd(), urlId); }, "Yes did not open the Configuration Wizard");
+    check(text(child(gui.hwnd(), urlId)).find(L"change-this-server-url.invalid") != std::wstring::npos, "Wizard did not start from the placeholder URL");
+    check(!findTop(L"PhpVpnConnectingProgress"), "Yes opened the progress window");
+    app.endWizardSession();
+    gui.until([&] { return !gui.hwnd(); }, "Wizard did not close");
+    std::cout << "[ EVIDENCE ] config_server_url_unset asked the Yes/No question twice (connects=2); No left no window, Yes opened the Wizard, progress window never opened\n";
 }
 void connectDefaultResultFits() {
     Gui gui;
@@ -1549,7 +1595,7 @@ void storedIdentityAndLiteral() {
     check(child(gui.hwnd(), ipId) != nullptr && gui.backend.count(&Backend::resetCalls) == 0, "Reset No discarded the current step");
     answer(IDYES, [&] { click(gui.hwnd(), resetId); });
     gui.until([&] { return child(gui.hwnd(), urlId) && IsWindowEnabled(child(gui.hwnd(), nextId)); }, "Reset Yes did not return to URL");
-    check(text(child(gui.hwnd(), urlId)).find(L"MODIFY-THIS-URL") != std::wstring::npos, "Reset did not load new defaults");
+    check(text(child(gui.hwnd(), urlId)).find(L"change-this-server-url.invalid") != std::wstring::npos, "Reset did not load new defaults");
     check(gui.backend.count(&Backend::finishCalls) == 0, "Reset published configuration");
     gui.escape();
     check(gui.backend.count(&Backend::closeCalls) == 1, "Escape did not close the remote session exactly once");
@@ -2275,6 +2321,7 @@ int main(int argc, char** argv) {
         {"plan_v001_server_information_tabs", serverInformationTabs},
         {"server_information_idle_paint", serverInformationIdlePaint},
         {"connect_default_result_fits", connectDefaultResultFits},
+        {"connect_server_url_unset_prompt", connectServerUrlUnsetPrompt},
         {"server_information_refresh_and_pagination", serverInformationRefresh},
         {"server_information_auto_refresh_lifecycle", serverInformationAutoRefresh},
         {"server_information_close_pending_reopen_resize", serverInformationClosePending},

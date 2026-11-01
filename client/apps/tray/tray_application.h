@@ -70,6 +70,7 @@ private:
     void openEditor(const std::string& text, const std::string& path);
     void advanceExit();
     void showError(const wchar_t* message) { showSystemMessage(window_, message, L"PHPVPN", SystemDialogIcon::error); }
+    void openWizard();
     bool connectedOrConnecting() const {
         return snapshot_.state == "connected" || snapshot_.state == "connecting" || snapshot_.state == "recovering";
     }

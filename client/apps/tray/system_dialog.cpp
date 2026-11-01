@@ -61,7 +61,8 @@ PCWSTR taskDialogIcon(SystemDialogIcon icon) noexcept {
 
 HRESULT runTaskDialog(HWND owner, const wchar_t* text, const wchar_t* title,
                       TASKDIALOG_COMMON_BUTTON_FLAGS buttons, int defaultButton,
-                      PCWSTR icon, int& selectedButton, const wchar_t* heading = nullptr) noexcept {
+                      PCWSTR icon, int& selectedButton, const wchar_t* heading = nullptr,
+                      HICON mainIcon = nullptr) noexcept {
     TASKDIALOGCONFIG configuration{};
     configuration.cbSize = sizeof(configuration);
     configuration.hwndParent = owner;
@@ -69,11 +70,14 @@ HRESULT runTaskDialog(HWND owner, const wchar_t* text, const wchar_t* title,
     if (owner && IsWindowVisible(owner)) {
         configuration.dwFlags |= TDF_POSITION_RELATIVE_TO_WINDOW;
     }
+    // Task dialogs have no stock question icon; the shared system one is passed by handle.
+    if (mainIcon) configuration.dwFlags |= TDF_USE_HICON_MAIN;
     configuration.dwCommonButtons = buttons;
     configuration.pszWindowTitle = title;
     configuration.pszContent = text;
     configuration.pszMainInstruction = heading;
-    configuration.pszMainIcon = icon;
+    if (mainIcon) configuration.hMainIcon = mainIcon;
+    else configuration.pszMainIcon = icon;
     configuration.nDefaultButton = defaultButton;
     DialogIcons icons;
     configuration.pfCallback = dialogCreated;
@@ -98,6 +102,17 @@ bool confirmSystemAction(HWND owner, const wchar_t* text, const wchar_t* title, 
                                          TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
                                          defaultYes ? IDYES : IDNO, nullptr, selectedButton);
     if (FAILED(result)) return fallbackMessage(owner, text, title, MB_YESNO | (defaultYes ? MB_DEFBUTTON1 : MB_DEFBUTTON2)) == IDYES;
+    return selectedButton == IDYES;
+}
+
+bool askSystemQuestion(HWND owner, const wchar_t* text, const wchar_t* title, bool defaultYes) noexcept {
+    int selectedButton = IDNO;
+    const HRESULT result = runTaskDialog(owner, text, title,
+                                         TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
+                                         defaultYes ? IDYES : IDNO, nullptr, selectedButton, nullptr,
+                                         LoadIconW(nullptr, IDI_QUESTION));
+    if (FAILED(result))
+        return fallbackMessage(owner, text, title, MB_YESNO | MB_ICONQUESTION | (defaultYes ? MB_DEFBUTTON1 : MB_DEFBUTTON2)) == IDYES;
     return selectedButton == IDYES;
 }
 
