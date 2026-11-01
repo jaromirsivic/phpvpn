@@ -7,7 +7,8 @@
 #           --runtime-dir under /run/phpvpn-wp10a) in the private network namespace
 #           phpvpn-wp10a-svc, and the real Python relay phpvpn.py in
 #           phpvpn-wp10a-relay (192.168.91.1:18096, memory storage). The tray talks
-#           to the instance through PHPVPN_TRAY_TEST_SOCKET. Covers every Wizard
+#           to the instance through PHPVPN_TRAY_TEST_SOCKET. Covers the Connect
+#           refusal of the placeholder server URL (set-up question), every Wizard
 #           step with real checks, HTTP headers, the Wizard HTTP error detail,
 #           Finish with the receipt, the disconnect gate, Reset, keepalive and close.
 #           Needs sudo for the namespaces and the service only; the GUI runs as
@@ -221,11 +222,33 @@ Upcoming" 5 || fail "sidebar texts shown in the compact layout"
     $P close "$W"
     $P absent "$W" 10 || fail "X did not close the Wizard"
 else
+    # --- 0: Connect against the default configuration ---------------------------------
+    # The service created the default configuration at startup; its placeholder server
+    # URL is refused with config_server_url_unset and the tray asks instead of failing.
+    question="The server URL has not been configured yet.
+Do you want to set it up now?"
+    $P click PHPVPN Connect
+    $P wait "alert:PHPVPN" "$question" 15 || fail "no set-up question for the placeholder server URL"
+    focus "alert:PHPVPN" No || fail "set-up question default is not No"
+    $P click "alert:PHPVPN" No
+    $P absent "alert:PHPVPN" 5 || fail "No did not close the question"
+    $P absent "PHPVPN connection" 1 || fail "a progress window opened for the refused Connect"
+    $P absent "$W" 1 || fail "No opened the Wizard"
+    [ "$(vpn_state)" = "disconnected idle" ] || fail "the refused Connect changed the state: $(vpn_state)"
+    $P click PHPVPN Connect
+    $P wait "alert:PHPVPN" "$question" 15 || fail "no second set-up question"
+    $P click "alert:PHPVPN" Yes
+    $P wait "$W" "Server URL configuration" 15 || fail "Yes did not open the Wizard on the Server URL step"
+    $P absent "alert:PHPVPN" 5 || fail "Yes did not close the question"
+    pass "placeholder server URL: question instead of an error, No does nothing, Yes opens the Wizard"
+    $P close "$W"
+    $P absent "$W" 10 || fail "X did not close the Wizard"
+
     # --- 1: new configuration, Server URL step ------------------------------------
     $P click PHPVPN "Configuration Wizard"
     $P wait "$W" "Server URL configuration" 15 || fail "Wizard step 1 not shown"
     # The service creates the default configuration at startup (config startup: default created).
-    $P text "$W" "Server URL" "http://127.0.0.1/phpvpn.php" || fail "URL of the default configuration"
+    $P text "$W" "Server URL" "https://change-this-server-url.invalid" || fail "URL of the default configuration"
     $P dump "$W" > "$work/step1.txt"
     for text in "Configure this computer" "Set up this computer for your PHPVPN server. Changes are saved with Finish." \
         "Enter the complete address of the PHPVPN server script." "Example: https://vpn.example.com/phpvpn.php" \
@@ -244,9 +267,10 @@ else
     $P samerow "$W" Reset "Verify & continue" || fail "footer actions are not in one row"
     pass "step 1 texts, footer, focus on Server URL, narrow fixed step panel"
 
-    $P settext "$W" "Server URL" "http://MODIFY-THIS-URL/phpvpn.php"
+    # The placeholder is recognised by host, whatever the case, scheme or path.
+    $P settext "$W" "Server URL" "http://CHANGE-THIS-SERVER-URL.invalid/phpvpn.php"
     $P click "$W" "Verify & continue"
-    $P wait "$W" "Replace MODIFY-THIS-URL with your server address." 5 || fail "placeholder not refused"
+    $P wait "$W" "Replace change-this-server-url.invalid with your server address." 5 || fail "placeholder not refused"
     focus "$W" "Server URL" || fail "focus not on the refused field"
     $P wait "$W" "Could not complete this action" 2 || fail "error panel heading"
     pass "placeholder refused locally before any network check"
@@ -382,7 +406,7 @@ Failed" 3 || fail "sidebar step 2 not Failed"
     $P click "$W" Reset
     $P click "alert:$W" Yes
     $P wait "$W" "Server URL configuration" 15 || fail "Reset did not return to step 1"
-    $P text "$W" "Server URL" "http://MODIFY-THIS-URL/phpvpn.php" || fail "Reset draft is not the default"
+    $P text "$W" "Server URL" "https://change-this-server-url.invalid" || fail "Reset draft is not the default"
     sudo python3 -c "import json,sys; assert json.load(open(sys.argv[1]))[\"masterSetup\"][\"serverUrl\"]==sys.argv[2]" \
         "$base/config/config.json" "$relay_url" || fail "Reset changed the file"
     pass "Reset asks (default No), resets only the draft; the file is unchanged"

@@ -8,11 +8,29 @@
 #include <string_view>
 #include <vector>
 
+#include "core/config/config.h"
 #include "core/ipc/ipc_protocol.h"
 #include "core/ipc/wizard_ipc.h"
+#include "core/protocol/json.h"
 #include "platform/iface/ipc_server.h"
 
 namespace phpvpn::mock {
+// The service's Connect refusal of a configuration that still carries the
+// placeholder server URL (VpnEngine, config_server_url_unset; the state stays
+// disconnected). nullopt when the served document names a real server or cannot
+// be read: the scenario answers then.
+inline std::optional<std::string> serverUrlUnsetReply(const IpcRequest& request, std::string_view document) {
+    auto parsed = Json::parse(document);
+    if (!parsed.ok() || !parsed.value().isObject()) return std::nullopt;
+    const auto* setup = parsed.value().find("masterSetup");
+    if (!setup || !setup->isObject()) return std::nullopt;
+    const auto* url = setup->find("serverUrl");
+    if (!url || !url->isString()) return std::nullopt;
+    auto server = parseServerUrl(url->stringValue());
+    if (!server.ok() || !isPlaceholderServerUrl(server.value())) return std::nullopt;
+    return IpcProtocol::buildError(request.requestId, Error(ErrorCode::config_server_url_unset));
+}
+
 struct MockExtension {
     // Answers an IPC v1 request before the base mock; nullopt leaves it to the base.
     std::function<std::optional<std::string>(const IpcRequest&)> ipc;

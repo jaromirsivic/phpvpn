@@ -115,6 +115,8 @@ private:
     void updateIndicator();
     bool startCommand(IpcCommand command, bool reconnectDisconnect = false);
     void finishCommand(IpcCommand command, std::string& response);
+    void openWizard();
+    void askToConfigureServerUrl();
     void finishDisconnect(std::string& response);
     void startConfigAction(MenuAction action);
     void finishConfigAction(MenuAction action, WizardResult& response);

@@ -2,7 +2,9 @@
 // (macos_text.h: UTF-8 conversion and the macOS configuration path).
 #include "wizard_controller.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 
 #include "core/base/secure_buffer.h"
 #include "core/config/config.h"
@@ -27,6 +29,14 @@ bool terminal(WizardOperationState state) {
            state != WizardOperationState::cancelling;
 }
 std::string text(const wchar_t* value) { return utf8(value); }
+// The placeholder server URL of the default configuration (core kPlaceholderServerUrl),
+// recognised by host; a URL that does not parse counts when it names the host, in any case.
+bool placeholderServerUrl(std::string_view url) {
+    if (auto parsed = parseServerUrl(url); parsed.ok()) return isPlaceholderServerUrl(parsed.value());
+    std::string lower(url);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lower.find(kPlaceholderServerHost) != std::string::npos;
+}
 std::string stringMember(const JsonValue& value, const char* name) {
     const auto* member = value.find(name);
     return member && member->isString() ? member->stringValue() : std::string{};
@@ -668,7 +678,7 @@ WizardPresentation WizardController::presentation() const {
         std::string panel = failure.description + "\n" + failure.suggestedAction;
         if (failure.code == "timeout" || failure.code == "transport_timeout") panel = text(wizardText::timeout);
         if (failure.code == "wizard_connection_interrupted") panel = text(wizardText::interrupted);
-        if (step == WizardStep::serverUrl && model_.fields().serverUrl.find("MODIFY-THIS-URL") != std::string::npos)
+        if (step == WizardStep::serverUrl && placeholderServerUrl(model_.fields().serverUrl))
             panel = text(wizardText::urlPlaceholder);
         if (step == WizardStep::serverSecret && failure.code == "crypto_tag_mismatch" && failure.field == "serverSecret")
             panel = text(wizardText::secretMismatchPrefix) + model_.secretEditorText() + text(wizardText::secretMismatchSuffix);

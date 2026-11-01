@@ -6,7 +6,7 @@
 //
 //   phpvpn-tray-mock-service --socket /run/user/1000/phpvpn-mock/control.sock
 //       [--result success|endpoint|http|secret|access|contracts|tunnel|timeout]
-//       [--step-ms 700] [--initial disconnected|connected]
+//       [--step-ms 700] [--initial disconnected|connected] [--config configured|placeholder]
 //
 // and the tray is pointed at it with the test-only environment variables
 //   PHPVPN_TRAY_TEST_SOCKET=<socket> PHPVPN_TRAY_TEST_SERVER_UID=$(id -u)
@@ -14,12 +14,19 @@
 // Scenario: connect walks disconnected -> connecting (health, info, access-key-check,
 // communication-contracts-check, starting-tunnel) one checkpoint per step and ends
 // connected/running or in the selected error. disconnect passes through stopping.
-// Handled commands: get-status, connect, disconnect, get-config (synthetic default
+// Handled commands: get-status, connect, disconnect, get-config (synthetic
 // document, no envelope), dismiss-connect-diagnostic, get-config-state and
 // get-config-document. Everything else is answered ipc_unknown_command.
 //
+// The synthetic document is the shared default template (core config_defaults)
+// with the server URL http://127.0.0.1/phpvpn.php ("configured", the default) or
+// the placeholder https://change-this-server-url.invalid it really carries
+// ("placeholder"). As the service, connect against the placeholder is refused
+// with config_server_url_unset and nothing changes.
+//
 // Lines on stdin change the scenario while running: "connect", "disconnect",
-// "result <name>", "recover", "quit". EOF on stdin keeps serving until SIGINT/SIGTERM.
+// "result <name>", "config configured|placeholder", "recover", "quit". EOF on stdin
+// keeps serving until SIGINT/SIGTERM.
 // Every handled request is logged to stdout as "request <command>".
 //
 // Area mocks in their own files register through mock_extension.h (extra
@@ -39,6 +46,7 @@
 #include <string>
 #include <thread>
 
+#include "core/config/config.h"
 #include "core/config/config_defaults.h"
 #include "core/crypto/crypto_provider.h"
 #include "core/ipc/ipc_protocol.h"
@@ -99,6 +107,15 @@ std::string uuid() {
     auto id = crypto.value()->randomUuidV4();
     return id ? id.value() : "3f2a7c1e-9b44-4b0e-8d2f-5c6a1e7b9d03";
 }
+constexpr std::string_view kConfiguredServerUrl = "http://127.0.0.1/phpvpn.php";
+// The served document: the shared default template, with or without its placeholder.
+std::string syntheticDocument(bool placeholder) {
+    std::string document = makeDefaultEditorDocument();
+    if (placeholder) return document;
+    const auto at = document.find(kPlaceholderServerUrl);
+    if (at != std::string::npos) document.replace(at, kPlaceholderServerUrl.size(), kConfiguredServerUrl);
+    return document;
+}
 
 class MockService {
 public:
@@ -107,6 +124,17 @@ public:
     void setResult(std::string value) {
         std::lock_guard lock(mutex_);
         result = std::move(value);
+    }
+    // "configured" (a real server URL) or "placeholder" (the default template as is).
+    bool setConfig(const std::string& value) {
+        if (value != "configured" && value != "placeholder") return false;
+        std::lock_guard lock(mutex_);
+        document_ = syntheticDocument(value == "placeholder");
+        return true;
+    }
+    std::string document() {
+        std::lock_guard lock(mutex_);
+        return document_;
     }
     void connectNow() {
         std::lock_guard lock(mutex_);
@@ -232,10 +260,13 @@ private:
             if (extension.ipc)
                 if (auto response = extension.ipc(request)) return std::move(*response);
         switch (request.command) {
-            case IpcCommand::connect: connectNow(); break;
+            case IpcCommand::connect:
+                if (auto refused = mock::serverUrlUnsetReply(request, document())) return std::move(*refused);
+                connectNow();
+                break;
             case IpcCommand::disconnect: disconnectNow(); break;
             case IpcCommand::get_status: break;
-            case IpcCommand::get_config: return makeDefaultEditorDocument();
+            case IpcCommand::get_config: return document();
             case IpcCommand::dismiss_connect_diagnostic: {
                 std::lock_guard lock(mutex_);
                 if (request.connectionEpoch == epoch_ && request.connectAttemptId == attemptId_) dismissed_ = true;
@@ -269,7 +300,7 @@ private:
         if (request.command == WizardCommand::get_config_document) {
             return WizardIpc::buildResult(request.requestId, J::makeObject({
                 {"configPath", J::makeString("/etc/phpvpn/config.json")}, {"availability", J::makeString("valid")},
-                {"reasonCode", J::makeNull()}, {"document", J::makeString(makeDefaultEditorDocument())},
+                {"reasonCode", J::makeNull()}, {"document", J::makeString(document_)},
                 {"revisionToken", J::makeString("mock-revision-1")}}));
         }
         return WizardIpc::buildError(request.requestId, WizardIpc::safeError(Error(ErrorCode::ipc_unknown_command)));
@@ -278,13 +309,15 @@ private:
     std::mutex mutex_, logMutex_;
     std::uint64_t epoch_ = 0;
     std::string attemptId_, changedAt_ = isoNow(), startedAtUtc_, instanceId_ = uuid();
+    std::string document_ = syntheticDocument(false);
     bool active_ = false, stopping_ = false, recovering_ = false, dismissed_ = false;
     Clock::time_point started_{}, stoppingSince_{};
 };
 
 int usage() {
     std::fputs("usage: phpvpn-tray-mock-service --socket <absolute path> [--result success|endpoint|http|secret|access|"
-               "contracts|tunnel|timeout] [--step-ms <n>] [--initial disconnected|connected] [area options of mock_*.cpp]\n",
+               "contracts|tunnel|timeout] [--step-ms <n>] [--initial disconnected|connected] "
+               "[--config configured|placeholder] [area options of mock_*.cpp]\n",
                stderr);
     return 2;
 }
@@ -301,6 +334,7 @@ int main(int argc, char** argv) {
         else if (argument == "--result") service.setResult(value);
         else if (argument == "--step-ms") service.step = std::chrono::milliseconds(std::max(50, std::atoi(value.c_str())));
         else if (argument == "--initial") initial = value;
+        else if (argument == "--config") { if (!service.setConfig(value)) return usage(); }
         else if (!std::any_of(mock::mockExtensions().begin(), mock::mockExtensions().end(),
                               [&](const auto& e) { return e.option && e.option(argument, value); }))
             return usage();
@@ -348,6 +382,7 @@ int main(int argc, char** argv) {
             if (line == "connect") service.connectNow();
             else if (line == "disconnect") service.disconnectNow();
             else if (line.rfind("result ", 0) == 0) service.setResult(line.substr(7));
+            else if (line.rfind("config ", 0) == 0 && service.setConfig(line.substr(7))) continue;
             else if (line == "recover") service.recover();
             else if (line == "quit") { kill(getpid(), SIGTERM); return; }
             else for (const auto& extension : mock::mockExtensions())
