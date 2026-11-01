@@ -15,6 +15,31 @@ Open the HTML files in a browser. No server, internet connection or build is req
 
 Each screen includes a phone mockup and a design note, feature source and scenario selector beside it. On a mobile display, the note moves below the phone. Content inside the phone scrolls when needed, while primary actions stay outside the scrolling area. PNGs in `previews` show the initial phone viewport. The `previews/full` directory contains the complete expanded view of every screen, including content below the fold. The PNG link beside each mockup opens this full version.
 
+## Implementation status
+
+The Android client implements this design in [client/android](../../client/android) on the `android` branch, following [plan-android-v001.md](../../Plans/2026-10-31-09-40-08/plan-android-v001.md) and its [screen map](../../Plans/2026-10-31-09-40-08/android-screen-map.md). The design itself does not change and remains the binding visual and behavioral reference; where the implementation differs, the work package reports in `client/tests/android/` record the deviation.
+
+The implementation covers all 49 screens and adds one screen the design does not have: **36a Create default configuration**, a confirmation dialog over 00, 10 and 36 that shows the real configuration path before the default file is written. Screen 03 is the system VPN permission dialog owned by Android. Screen 09, the service notification, belongs to the VPN service work package (WP05). <!-- WP05: ověřit proti reportu -->
+
+| Screens | Registered in (`ui/navigation`) | Code (`client/android/app/src/main/kotlin/phpvpn/android/`) |
+| --- | --- | --- |
+| 01, 02, 04–08, 37, 38, 48 | `MainGraph` (Connection) | `ui/screens/connection`, state in `ui/state` |
+| 26, 27, 43 | `MainGraph` (Traffic) | `ui/screens/traffic` |
+| 28, 29, 44, 45 | `MainGraph` (Server) | `ui/screens/server` |
+| 00, 10, 34, 35, 36 | `MainGraph` (Settings, start) | `ui/screens/settings` |
+| 11–16, 18, 40 | `WizardGraph` (nested graph) | `ui/screens/wizard` |
+| 17, 47 | `WizardGraph.kt`, replace the wizard graph | `ui/screens/wizard` |
+| 30, 31 | `WizardGraph.kt`, shared by Connect and the wizard | `ui/screens/diagnostic` |
+| 19, 20, 22, 41 | `ContractsGraph` | `ui/screens/contracts` |
+| 21 | `ContractsGraph` | `ui/screens/password` |
+| 23, 24, 39, 42 | `EditorGraph` (nested graph) | `ui/screens/editor` |
+| 36a | dialog in `EditorGraph.kt` | `ui/screens/editor` |
+| 25, 33, 46 | `EditorGraph.kt`, shared by every saving flow | `ui/screens/save` |
+| 32 | dialog over every editing flow | `ui/navigation/UnsavedChanges.kt` |
+| 03, 09 | system dialog, service notification | `ui/state/Platform.kt` (consent), VPN service (WP05) |
+
+The graphs are in `ui/navigation`, the shared components and the theme tokens taken from `styles.css` in `ui/components` and `ui/theme`. English texts are in `res/values`, Czech texts in `res/values-cs`.
+
 ## Interaction scope
 
 Links navigate between prepared sample states. Text fields can be edited, switches toggled and secrets revealed. Selecting the default secret, automatic IP or default access key disables the corresponding input. Actions without a real result show a short message explaining the simulation.

@@ -10,6 +10,8 @@ Each of the 49 screen descriptions separates three kinds of information:
 
 Shared navigation, sample-data conventions, platform boundaries and regeneration instructions are in [README.md](README.md). They are not repeated in full on every screen. The source reference on each screen provides the basis for its existing-client rules. These documents do not introduce additional protocol, security or service guarantees.
 
+**Implementation note.** The Android client in [client/android](../../client/android) implements all 49 screens plus the confirmation dialog 36a (Create default configuration) that this design does not contain; where each screen's code lives is listed in [README.md, Implementation status](README.md#implementation-status). The rules below remain the binding reference for that implementation and are not changed by it. Deviations are recorded in the work package reports in `client/tests/android/`. This note is maintained by hand: `generate-rules.cjs` does not write it, so add it again after regenerating this file.
+
 | Screen | Rules and pitfalls | Mockup |
 | --- | --- | --- |
 | 00 | [Welcome](screens/00-welcome.md) | [Open screen](00-welcome.html) |
