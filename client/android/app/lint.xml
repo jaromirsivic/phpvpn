@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lint configuration of the app (plan-android-v001 WP12). Only warnings
+     explained in client/tests/android/wp12-packaging-report-2026-11-01.md are
+     ignored here; errors are never ignored. -->
+<lint>
+    <!-- targetSdk 36 is a plan decision (API 37 is only the compile SDK of the
+         current androidx releases). -->
+    <issue id="OldTargetApi" severity="ignore" />
+    <!-- Debug-only fixtures and fakes name the app's real private path on the
+         test emulators; the app itself resolves it from Context. -->
+    <issue id="SdCardPath">
+        <ignore path="src/debug" />
+    </issue>
+    <!-- DebugVpnCommandReceiver (WP05) is the adb hook of the host-driven
+         service tests and exists only in debug builds. -->
+    <issue id="ExportedReceiver">
+        <ignore path="src/debug/AndroidManifest.xml" />
+    </issue>
+</lint>
