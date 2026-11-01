@@ -50,8 +50,10 @@ the server configuration and in every client.
 
 Paths of tools, test servers, the Linux build host and the signing certificate are kept in one file,
 [phpvpn.config.json](phpvpn.config.json), read by `tools/phpvpn_config.py` and
-`tools/phpvpn-config.ps1`. The file contains the values of the original development machine. Adapt
-it to your environment before you build or test, or point the environment variable `PHPVPN_CONFIG`
+`tools/phpvpn-config.ps1`. In this distribution the file is a template: every value that belongs to
+one computer (tool paths, the signing certificate thumbprint, the Linux build host, the Android test
+phone and relay, the Hyper-V VM) is empty, the keys and the relative test server paths are kept.
+Fill in what you use before you build or test, or point the environment variable `PHPVPN_CONFIG`
 to your own copy. An empty tool path means a lookup in `PATH`; relative paths resolve against the
 repository root.
 

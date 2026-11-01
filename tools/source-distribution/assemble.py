@@ -154,7 +154,8 @@ for rel in included + EXTRAS:
         changes.append(f'{rel}: machine specific values emptied ({", ".join(MACHINE_KEYS)})')
     else:
         source = os.path.join(snapshot, rel)
-        if rel.lower().endswith('.md'):
+        # The inputs of this tooling are copied byte for byte: their links are meant for the staging root.
+        if rel.lower().endswith('.md') and not rel.startswith('tools/source-distribution/'):
             raw = open(source, 'rb').read()
             text = raw.decode('utf-8')
             fixed = fix_links(rel, text)
