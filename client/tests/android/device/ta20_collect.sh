@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # T-A20 collection after wake ($1 = label/prefix). Keeps only the app's and Doze-related lines.
-export PATH="$PATH:/c/Users/User/AppData/Local/Android/Sdk/platform-tools"
-export ANDROID_SERIAL=64090DLCR000R5 MSYS_NO_PATHCONV=1
+. "$(dirname "$0")/env.sh"
 P=work/device/$1
 bash client/tests/android/device/diag.sh > $P-diag.txt 2>&1
 adb shell dumpsys deviceidle > $P-deviceidle-full.tmp

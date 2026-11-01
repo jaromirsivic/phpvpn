@@ -121,6 +121,19 @@ jobs:
 
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.8.2"
+
+      # A source distribution of this repository carries no gradle-wrapper.jar; the
+      # wrapper is recreated from the installed Gradle of the same version first.
+      - name: Gradle wrapper
+        working-directory: client/android
+        run: |
+          set -eu
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            gradle wrapper --gradle-version 9.8.2 --no-daemon
+          fi
+          sh ./gradlew --version
 
       - name: Build and test
         working-directory: client/android
@@ -128,7 +141,7 @@ jobs:
           PHPVPN_ANDROID_DEPS: ${{ needs.deps.outputs.available == 'true' && format('{0}/{1}', github.workspace, env.DEPS_DIR) || '' }}
         run: |
           set -eu
-          ./gradlew --no-daemon assembleDebug testDebugUnitTest
+          sh ./gradlew --no-daemon assembleDebug testDebugUnitTest
 
       # WP12: the same script as on a developer machine, run by the
       # preinstalled PowerShell 7. It rebuilds with the ABI splits, adds the

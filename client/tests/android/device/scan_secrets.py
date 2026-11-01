@@ -1,8 +1,19 @@
-"""Checks that no access key or payload key of the relay or the Windows config occurs in the given trees."""
-import glob, json, os, re, sys
+"""Checks that no access key or payload key of the relay or the Windows config occurs in the given trees.
 
-win = json.loads(open(r"C:\ProgramData\phpvpn\config.json", encoding="utf-8-sig").read())
-php = open(r"D:\nginx\html\phpvpn.php", encoding="utf-8").read()
+The relay file is android.relayServerFile of phpvpn.config.json, the Windows client configuration
+%ProgramData%\\phpvpn\\config.json.
+"""
+import glob, json, os, re, sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "tools"))
+import phpvpn_config  # noqa: E402
+
+RELAY_FILE = phpvpn_config.path("android.relayServerFile")
+if RELAY_FILE is None:
+    sys.exit("set android.relayServerFile in phpvpn.config.json")
+win = json.loads((Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "phpvpn" / "config.json").read_text(encoding="utf-8-sig"))
+php = RELAY_FILE.read_text(encoding="utf-8")
 block = re.search(r"const ACCESS_KEYS = \[(.*?)\];", php, re.S).group(1)
 keys = set(re.findall(r"'([0-9a-fA-F]{64})'", block))
 keys |= {c["payloadKey"] for c in win["communicationContracts"].values()}

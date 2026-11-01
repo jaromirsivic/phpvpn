@@ -1,17 +1,27 @@
 """Builds the phone's configuration from the relay and the Windows config without printing any secret.
 
-Usage: python push_config.py [--dry]
+Usage: python push_config.py [relay url] [--dry]
+adb, the phone and the relay come from phpvpn.config.json (tools.adb, android.deviceSerial,
+android.relayUrl, android.relayServerFile, android.virtualIp, android.peerIp); ANDROID_SERIAL wins.
 The document goes to the app's cacheDir through `adb exec-in run-as` (no file on shared storage), the
 debug receiver stores it with set-config and deletes it. Only key names and lengths are printed.
 """
-import json, re, subprocess, sys
+import json, os, re, subprocess, sys
+from pathlib import Path
 
-ADB = r"C:\Users\User\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-SERIAL = "64090DLCR000R5"
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "tools"))
+import phpvpn_config  # noqa: E402
+
+ADB = phpvpn_config.tool("adb")
+SERIAL = os.environ.get("ANDROID_SERIAL") or phpvpn_config.get("android.deviceSerial")
 PKG = "com.pilandrome.phpvpn"
-URL = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].startswith("http") else "http://192.168.68.53/phpvpn.php"
-MY_IP = "10.99.99.5"
-PEER_IP = "10.99.99.2"
+URL = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].startswith("http") else phpvpn_config.get("android.relayUrl")
+MY_IP = phpvpn_config.get("android.virtualIp", "10.99.99.5")
+PEER_IP = phpvpn_config.get("android.peerIp", "10.99.99.2")
+WINDOWS_CONFIG = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "phpvpn" / "config.json"
+RELAY_FILE = phpvpn_config.path("android.relayServerFile")
+if not ADB or not SERIAL or not URL or RELAY_FILE is None:
+    sys.exit("set tools.adb, android.deviceSerial, android.relayUrl and android.relayServerFile in phpvpn.config.json")
 
 
 def adb(*args, data=None):
@@ -19,8 +29,8 @@ def adb(*args, data=None):
 
 
 default = json.loads(adb("exec-out", "run-as", PKG, "cat", "no_backup/phpvpn/config/config.json"))
-win = json.loads(open(r"C:\ProgramData\phpvpn\config.json", encoding="utf-8-sig").read())
-php = open(r"D:\nginx\html\phpvpn.php", encoding="utf-8").read()
+win = json.loads(WINDOWS_CONFIG.read_text(encoding="utf-8-sig"))
+php = RELAY_FILE.read_text(encoding="utf-8")
 secret = re.search(r"const SERVER_SECRET = '([^']*)'", php).group(1)
 block = re.search(r"const ACCESS_KEYS = \[(.*?)\];", php, re.S).group(1)
 keys = dict(re.findall(r"'([0-9.]+)'\s*=>\s*'([0-9a-fA-F]+)'", block))

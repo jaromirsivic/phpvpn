@@ -103,7 +103,7 @@ The URL contains only `?action=<action>`. Client identity, tokens, authenticatio
 
 ### 4.2 Protection boundaries over HTTP
 
-Local diagnostics for the first two steps of the client Configuration Wizard and the initial health/info exchanges of Connect do not change this server wire protocol. They capture a specific application request and the received response before protocol parsing so that hosting-injected contents can also be shown as plain inert text. This reconstructs information available in WinHTTP; it is not a packet or TLS capture. Sent bodies, endpoints, authentication and cryptographic verification remain unchanged. Only local IPC between the service and tray is extended. The exact byte slice, reversible `http-octets-v1`, Unicode projection, lifetime and limit are defined in [HTTP details of a failed Wizard probe in client.md](client.md#http-detail-neúspěšného-wizard-probe). Correlation of Connect by epoch and attempt UUID, state snapshots and precisely correlated detail cancellation are defined in [HTTP details of a failed Connect](client.md#http-detail-neúspěšného-connect). Diagnostics do not affect data requests or recovery exchanges, and raw contents are not logged.
+Local diagnostics for the first two steps of the client Configuration Wizard and the initial health/info exchanges of Connect do not change this server wire protocol. They capture a specific application request and the received response before protocol parsing so that hosting-injected contents can also be shown as plain inert text. This reconstructs information available in WinHTTP; it is not a packet or TLS capture. Sent bodies, endpoints, authentication and cryptographic verification remain unchanged. Only local IPC between the service and tray is extended. The exact byte slice, reversible `http-octets-v1`, Unicode projection, lifetime and limit are defined in [HTTP details of a failed Wizard probe in client.md](../client.md#http-detail-neúspěšného-wizard-probe). Correlation of Connect by epoch and attempt UUID, state snapshots and precisely correlated detail cancellation are defined in [HTTP details of a failed Connect](../client.md#http-detail-neúspěšného-connect). Diagnostics do not affect data requests or recovery exchanges, and raw contents are not logged.
 
 Plain HTTP is a valid, supported mode. Application cryptography protects secret values and authenticity to the extent described here, but does not replace secure transport.
 
@@ -456,7 +456,7 @@ aad = "PHPVPN-DATA" LF
 
 Client `maxQueuedPacketAgeMs`, default 5000 ms, uses a local monotonic clock and bounds waiting before local selection. It is independent of server `QUEUE_TTL_SECONDS` and protocol UTC timestamp. It introduces no server reservation, server TTL requirement or limit on a transmission already underway.
 
-Local flow fair queuing does not change the wire format, AES-GCM, HMAC authentication, server API or data record meaning. The authoritative description of peer queues, sixteen sub-buckets, DRR and logical reservations is in [client.md](client.md#symetrické-flow-fronty-a-logické-rezervace). Selection before batch construction and scheduling after complete batch verification are internal client operations. Packet order in an already constructed plaintext and authenticated NDJSON line order are preserved during encoding, decoding and verification. Bucket, owner, deficit and monotonic-time metadata is not serialized.
+Local flow fair queuing does not change the wire format, AES-GCM, HMAC authentication, server API or data record meaning. The authoritative description of peer queues, sixteen sub-buckets, DRR and logical reservations is in [client.md](../client.md#symetrické-flow-fronty-a-logické-rezervace). Selection before batch construction and scheduling after complete batch verification are internal client operations. Packet order in an already constructed plaintext and authenticated NDJSON line order are preserved during encoding, decoding and verification. Bucket, owner, deficit and monotonic-time metadata is not serialized.
 
 Plaintext is one binary batch of IPv4 packets for the exact ordered pair `src`, `dst`. All multibyte values use network byte order (big-endian):
 
@@ -476,7 +476,7 @@ The sender constructs a batch only from packets whose inner source and destinati
 4. verify the GCM tag and only then obtain plaintext;
 5. validate `packetCount`, the length table, exact plaintext length and every IPv4 packet;
 6. verify each packet's inner source and destination against `src`, `dst`;
-7. only after validating the whole batch, pass valid packets in plaintext order to local client scheduling. An invalid batch must not be passed partially. Subsequent virtual-adapter write order follows the client flow policy in [client.md](client.md#symetrické-flow-fronty-a-logické-rezervace), with FIFO inside sub-buckets.
+7. only after validating the whole batch, pass valid packets in plaintext order to local client scheduling. An invalid batch must not be passed partially. Subsequent virtual-adapter write order follows the client flow policy in [client.md](../client.md#symetrické-flow-fronty-a-logické-rezervace), with FIFO inside sub-buckets.
 
 The relay does not verify the tag because it has no `PAYLOAD_KEY`. Changing `src`, `dst`, `messageId`, IV or ciphertext invalidates the recipient's tag verification.
 
@@ -507,7 +507,7 @@ The `data-result` record:
 ```
 
 - `acceptedMessageIds` are the only entries the sender may remove from its outbound queue;
-  Unacknowledged local selections return to their original client buckets with the same first-enqueue time under [rollback and expiry rules](client.md#monotónní-expirace-a-rozpracované-pakety). Client expiry before the next selection is neither a server acknowledgement nor a new delivery guarantee.
+  Unacknowledged local selections return to their original client buckets with the same first-enqueue time under [rollback and expiry rules](../client.md#monotónní-expirace-a-rozpracované-pakety). Client expiry before the next selection is neither a server acknowledgement nor a new delivery guarantee.
 
 - `deferredMessageIds` remain with the client for a later attempt;
 - the two disjoint arrays exactly cover every request `messageId`;

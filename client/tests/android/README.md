@@ -54,6 +54,15 @@ powershell -NoProfile -File client\tests\android\deploy-wp11-relays.ps1         
 | `wp11-scenarios.sh` | T-A08, T-A12 with `adb reboot`, T-A15, T-A20 (emulator), T-A21 | `RELAY_STOP`/`RELAY_START` (default nginx `stop.bat`/`start.bat`), `CONFIG_FILE`, `PEER_IP`, `PEER_PYTHON`, `TA20_IDLE_S`, `TA21_SECONDS` |
 | `tcp_echo.py` | helper | TCP echo server/client and UDP sink on the peer |
 
+`device/` holds the helpers of the tests on a real phone (device-report): `diag.sh`, `snapshot.sh`,
+`force_idle.sh`, `ta20_sleep.sh`, `ta20_collect.sh`, `wifi_cycle.sh`, `doze_watch.sh` and `logcat.sh`
+source `device/env.sh`, which takes adb from PATH or `tools.adb`, the phone from `ANDROID_SERIAL` or
+`android.deviceSerial`, and the phone's VPN address and the relay host from `android.virtualIp` and
+`android.relayHost` of `phpvpn.config.json`. `push_config.py`, `scan_secrets.py` and
+`win_add_contract.py` read the same file (`android.relayUrl`, `android.relayServerFile`,
+`android.peerIp`, `tools.phpvpnClient`) and the Windows client configuration under `%ProgramData%`.
+`other_traffic.sh`, `http_get.sh` and `listen.sh` run on the phone and take their addresses as arguments.
+
 The debug build's `DebugVpnCommandReceiver` takes the commands of the host scripts: `CONNECT`,
 `DISCONNECT`, `STATUS`, `CONFIGURE` (default document with a relay URL), `CONFIGURE_FILE`
 (a whole document the script wrote with `run-as` into `files/`) and `STATUS_JSON` (the whole

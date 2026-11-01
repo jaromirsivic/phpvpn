@@ -4,11 +4,18 @@ A fresh random payload key is generated; nothing secret is printed. The document
 `phpvpn.exe set-config <file>` from a temporary file that is overwritten and deleted afterwards.
 """
 import json, os, secrets, subprocess, sys, tempfile
+from pathlib import Path
 
-EXE = r"C:\Program Files\phpvpn\1.0.2\phpvpn.exe"
-PEER = sys.argv[1] if len(sys.argv) > 1 else "10.99.99.5"
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "tools"))
+import phpvpn_config  # noqa: E402
 
-doc = json.loads(open(r"C:\ProgramData\phpvpn\config.json", encoding="utf-8-sig").read())
+# The installed Windows client: tools.phpvpnClient of phpvpn.config.json, otherwise phpvpn from PATH.
+EXE = phpvpn_config.tool("phpvpnClient", "phpvpn")
+if not EXE:
+    sys.exit("set tools.phpvpnClient in phpvpn.config.json or put phpvpn.exe into PATH")
+PEER = sys.argv[1] if len(sys.argv) > 1 else phpvpn_config.get("android.virtualIp", "10.99.99.5")
+
+doc = json.loads((Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "phpvpn" / "config.json").read_text(encoding="utf-8-sig"))
 contracts = doc["communicationContracts"]
 if PEER in contracts:
     print("contract already present for", PEER, "- unchanged")

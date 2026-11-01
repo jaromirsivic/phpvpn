@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Wi-Fi off for $1 s with the VPN up, then on; logs the phone's state every 2 s (debug STATUS) to stdout.
-export PATH="$PATH:/c/Users/User/AppData/Local/Android/Sdk/platform-tools"
-export ANDROID_SERIAL=64090DLCR000R5 MSYS_NO_PATHCONV=1
+. "$(dirname "$0")/env.sh"
 OFF=${1:-60}
 R=com.pilandrome.phpvpn/phpvpn.android.debug.DebugVpnCommandReceiver
 st() {

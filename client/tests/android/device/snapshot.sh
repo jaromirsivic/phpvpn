@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Phone settings and Doze snapshot (label in $1).
-export PATH="$PATH:/c/Users/User/AppData/Local/Android/Sdk/platform-tools"
-export ANDROID_SERIAL=64090DLCR000R5 MSYS_NO_PATHCONV=1
+. "$(dirname "$0")/env.sh"
 echo "== $1 $(date -u +%T)"
 echo "stay_on_while_plugged_in=$(adb shell settings get global stay_on_while_plugged_in)"
 echo "screen_off_timeout=$(adb shell settings get system screen_off_timeout)"

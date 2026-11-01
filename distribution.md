@@ -288,6 +288,9 @@ výchozí tokeny, přístupové klíče a výchozí hesla. Tato výjimka zachov�
 chování klienta a serverů, neopravňuje k přenosu skutečných lokálních tajemství.
 Předchozí pravidla běžné binární distribuce v tomto dokumentu se nemění.
 
+Nástroje pro tuto operaci (inventář, audit, sestavení stagingu s překlady, manifest, kontrola
+odkazů, zápis do cíle) jsou v [tools/source-distribution](tools/source-distribution/README.md).
+
 Zahrň potřebné zdroje klienta i serverů, build a instalační šablony, konfigurace,
 prostředky, dependency locky a návody. Například `client/packaging/linux/dist`
 obsahuje zdrojové vstupy a nelze jej vyřadit jen podle názvu `dist`.
