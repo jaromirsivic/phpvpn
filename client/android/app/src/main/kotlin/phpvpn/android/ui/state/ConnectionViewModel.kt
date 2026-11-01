@@ -45,6 +45,12 @@ sealed interface ConnectionEffect {
 
     /** 36: Connect was refused because of the stored configuration. */
     data object ConfigAttention : ConnectionEffect
+
+    /**
+     * `config_server_url_unset`: the configuration is valid but still has the
+     * placeholder server URL; the screen asks whether to set it up now (12).
+     */
+    data object ServerUrlUnset : ConnectionEffect
 }
 
 /**
@@ -164,6 +170,8 @@ class ConnectionViewModel(
         val known = ErrorCode.fromWire(code)
         when {
             known == ErrorCode.TUNNEL_PERMISSION_MISSING -> effectChannel.trySend(ConnectionEffect.PermissionDenied)
+            // Before the generic config_* routing: the document is valid, only the URL is the placeholder.
+            known == ErrorCode.CONFIG_SERVER_URL_UNSET -> effectChannel.trySend(ConnectionEffect.ServerUrlUnset)
             code.startsWith(CONFIG_PREFIX) || known == ErrorCode.CONTRACT_MISSING ->
                 effectChannel.trySend(ConnectionEffect.ConfigAttention)
             else -> refused.value = ErrorTexts.messageKey(code)

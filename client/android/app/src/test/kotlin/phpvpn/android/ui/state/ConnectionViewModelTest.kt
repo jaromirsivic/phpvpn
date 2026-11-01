@@ -18,6 +18,8 @@ import phpvpn.android.bridge.ipc.ConfigAvailability
 import phpvpn.android.bridge.ipc.FakeIpcTransport
 import phpvpn.android.bridge.repository.ConnectionRepository
 import phpvpn.android.testing.IpcReplies
+import phpvpn.android.ui.screens.connection.hasPlaceholderServerUrl
+import phpvpn.android.ui.screens.wizard.WizardRules
 import phpvpn.android.testing.respondText
 import phpvpn.android.testing.respondTimeout
 
@@ -204,6 +206,36 @@ class ConnectionViewModelTest {
         h.viewModel.connect()
         runCurrent()
         assertEquals(ConnectionEffect.PermissionDenied, h.effects.last())
+    }
+
+    @Test
+    fun refusedConnectWithThePlaceholderUrlAsksToSetItUpInsteadOf36() = runTest(main.dispatcher) {
+        val h = harness()
+        h.transport.respondText("get-config-document", IpcReplies.configDocument(serverUrl = WizardRules.PLACEHOLDER_URL))
+        h.viewModel.refreshConfig()
+        runCurrent()
+        val config = h.viewModel.screen.value.config!!
+        assertEquals(ConfigAvailability.VALID, config.availability)
+        assertEquals(WizardRules.PLACEHOLDER_HOST, config.serverHost)
+        assertTrue(config.hasPlaceholderServerUrl())
+        h.transport.respondText("connect", IpcReplies.error("config_server_url_unset"))
+        h.viewModel.connect()
+        runCurrent()
+        assertEquals(1, h.transport.requests("connect").size)
+        // Its own question, not the generic config_* attention and not the 02 refusal notice.
+        assertEquals(listOf<ConnectionEffect>(ConnectionEffect.ServerUrlUnset), h.effects)
+        assertNull(h.viewModel.screen.value.refusedConnect)
+        assertEquals(ConnectionUiState.Disconnected(null), h.state)
+    }
+
+    @Test
+    fun placeholderServerUrlIsRecognisedByHostOnly() {
+        fun summary(url: String?) = ConfigSummary(ConfigAvailability.VALID, "/config.json", null, serverUrl = url)
+        assertTrue(summary("https://change-this-server-url.invalid").hasPlaceholderServerUrl())
+        assertTrue(summary("http://CHANGE-THIS-SERVER-URL.INVALID:8080/phpvpn.php").hasPlaceholderServerUrl())
+        assertTrue(!summary("https://vpn.example.com/phpvpn.php").hasPlaceholderServerUrl())
+        assertTrue(!summary("https://change-this-server-url.invalid.example.com/").hasPlaceholderServerUrl())
+        assertTrue(!summary(null).hasPlaceholderServerUrl())
     }
 
     @Test

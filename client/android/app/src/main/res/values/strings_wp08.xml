@@ -28,6 +28,12 @@
     <string name="disconnected_restarted_text">Android stopped the app while the VPN was active. Connect again when you need the virtual network.</string>
     <string name="disconnected_attention_detail">Connect needs a valid configuration</string>
     <string name="connect_refused_title">Connect was not started</string>
+    <!-- 02 placeholder server URL (kPlaceholderServerUrl): the notice and the dialog of config_server_url_unset -->
+    <string name="server_url_unset_title">Server address not set</string>
+    <string name="server_url_unset_notice_text">Enter the address of your PHPVPN server before connecting.</string>
+    <string name="server_url_unset_dialog_text">The server URL has not been configured yet. Do you want to set it up now?</string>
+    <string name="server_url_unset_set_up">Set up</string>
+    <string name="server_url_unset_not_now">Not now</string>
 
     <!-- 04 Connecting: status read failed during the attempt -->
     <string name="connecting_status_unavailable_title">Progress not confirmed</string>

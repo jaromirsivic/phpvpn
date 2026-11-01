@@ -28,6 +28,7 @@
     <string name="error_config_invalid_json">The configuration is not a valid JSON document.</string>
     <string name="error_config_invalid_value">A configuration value has an unexpected type or content.</string>
     <string name="error_config_invalid_url">The server URL must be a full http or https address.</string>
+    <string name="error_config_server_url_unset">The server URL has not been configured yet.</string>
     <string name="error_config_invalid_cidr">The VPN network is not a valid IPv4 network prefix.</string>
     <string name="error_config_invalid_address">The virtual IP is not a valid client address of the VPN network.</string>
     <string name="error_config_invalid_key">A key must be exactly 64 lowercase hexadecimal characters.</string>

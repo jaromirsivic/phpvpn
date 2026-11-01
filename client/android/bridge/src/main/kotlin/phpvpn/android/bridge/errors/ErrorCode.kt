@@ -35,6 +35,7 @@ enum class ErrorCode(val wireName: String, val recoverable: Boolean) {
     CONFIG_INVALID_JSON("config_invalid_json", false),
     CONFIG_INVALID_VALUE("config_invalid_value", false),
     CONFIG_INVALID_URL("config_invalid_url", false),
+    CONFIG_SERVER_URL_UNSET("config_server_url_unset", false),
     CONFIG_INVALID_CIDR("config_invalid_cidr", false),
     CONFIG_INVALID_ADDRESS("config_invalid_address", false),
     CONFIG_INVALID_KEY("config_invalid_key", false),

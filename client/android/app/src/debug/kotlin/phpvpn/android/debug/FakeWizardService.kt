@@ -12,6 +12,7 @@ import phpvpn.android.bridge.ipc.FakeIpcTransport.Reply
 import phpvpn.android.bridge.ipc.HttpHeaders
 import phpvpn.android.bridge.ipc.IpcJson
 import phpvpn.android.bridge.ipc.JsonChecks
+import phpvpn.android.ui.screens.wizard.WizardRules
 
 /**
  * Debug and test only: a scripted in-memory stand-in for the Wizard part of
@@ -397,7 +398,7 @@ class FakeWizardService(val transport: FakeIpcTransport = FakeIpcTransport()) {
     private fun nextId(): String = "00000000-0000-4000-8000-%012x".format(idCounter++)
 
     companion object {
-        const val PLACEHOLDER_URL = "http://MODIFY-THIS-URL/phpvpn.php"
+        const val PLACEHOLDER_URL = WizardRules.PLACEHOLDER_URL
         const val DEFAULT_SECRET = "CHANGE_THIS_SERVER_SECRET"
         const val CONFIG_PATH = "/data/user/0/io.github.jaromirsivic.phpvpn/no_backup/phpvpn/config/config.json"
         const val CONNECT_ATTEMPT = "00000000-0000-4000-8000-0000000000d1"

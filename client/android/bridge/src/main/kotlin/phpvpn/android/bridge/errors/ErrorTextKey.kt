@@ -34,6 +34,7 @@ enum class ErrorTextKey(val resourceName: String) {
     ERROR_CONFIG_INVALID_JSON("error_config_invalid_json"),
     ERROR_CONFIG_INVALID_VALUE("error_config_invalid_value"),
     ERROR_CONFIG_INVALID_URL("error_config_invalid_url"),
+    ERROR_CONFIG_SERVER_URL_UNSET("error_config_server_url_unset"),
     ERROR_CONFIG_INVALID_CIDR("error_config_invalid_cidr"),
     ERROR_CONFIG_INVALID_ADDRESS("error_config_invalid_address"),
     ERROR_CONFIG_INVALID_KEY("error_config_invalid_key"),

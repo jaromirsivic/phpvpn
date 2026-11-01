@@ -35,7 +35,7 @@
     <string name="wp09_gate_disconnect_failed">The VPN could not be disconnected. Try again, or keep the connection.</string>
 
     <!-- 12 Server address -->
-    <string name="wp09_url_placeholder">Replace MODIFY-THIS-URL with your server address.</string>
+    <string name="wp09_url_placeholder">Replace change-this-server-url.invalid with your server address.</string>
     <string name="wp09_url_invalid">Enter a complete http:// or https:// address without a user name, query or fragment.</string>
     <string name="wp09_load_error_title">This configuration needs attention</string>
     <string name="wp09_load_error_unreadable">The configuration file cannot be read.</string>

@@ -55,6 +55,7 @@ import phpvpn.android.ui.screens.common.ServerCard
 import phpvpn.android.ui.screens.common.currentLocale
 import phpvpn.android.ui.screens.common.durationText
 import phpvpn.android.ui.screens.common.rememberNowUtcMs
+import phpvpn.android.ui.screens.wizard.WizardRules
 import phpvpn.android.ui.state.ConfigSummary
 import phpvpn.android.ui.state.ConnectionEffect
 import phpvpn.android.ui.state.ConnectionScreenModel
@@ -91,6 +92,13 @@ object ConnectionTags {
     const val UNCONFIRMED = "connection-38"
     const val PERMISSION = "connection-37"
     const val NOTIFICATIONS_OFF = "connection-notifications-off"
+    /** 02: the warning that the configuration still has the placeholder server URL. */
+    const val SERVER_URL_UNSET_NOTICE = "connection-02-server-url-unset"
+    const val SERVER_URL_UNSET_SET_UP = "connection-02-server-url-unset-set-up"
+    /** The question after a Connect refused with `config_server_url_unset`. */
+    const val SERVER_URL_UNSET_DIALOG = "connection-server-url-unset-dialog"
+    const val SERVER_URL_UNSET_DIALOG_SET_UP = "connection-server-url-unset-dialog-set-up"
+    const val SERVER_URL_UNSET_DIALOG_NOT_NOW = "connection-server-url-unset-dialog-not-now"
 }
 
 /**
@@ -118,12 +126,23 @@ fun ConnectionScreen(
     }
     val explanationPending by notifications.explanationPending.collectAsStateWithLifecycle()
     if (explanationPending) NotificationsOffDialog(onDismiss = notifications::explained)
+    var serverUrlUnset by rememberSaveable { mutableStateOf(false) }
+    if (serverUrlUnset) {
+        ServerUrlUnsetDialog(
+            onSetUp = {
+                serverUrlUnset = false
+                navigation.openWizardUrl()
+            },
+            onNotNow = { serverUrlUnset = false },
+        )
+    }
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
                 ConnectionEffect.RequestConsent -> if (!consent.request(launcher)) viewModel.onConsentResult(true)
                 ConnectionEffect.PermissionDenied -> navigation.openPermissionDenied()
                 ConnectionEffect.ConfigAttention -> navigation.openConfigAttention()
+                ConnectionEffect.ServerUrlUnset -> serverUrlUnset = true
             }
         }
     }
@@ -148,6 +167,39 @@ private fun NotificationsOffDialog(onDismiss: () -> Unit) {
         }
     }
 }
+
+/**
+ * The question of the service's `config_server_url_unset` refusal, like the
+ * Yes/No box of the desktop trays: Set up opens 12, Not now only closes it.
+ */
+@Composable
+private fun ServerUrlUnsetDialog(onSetUp: () -> Unit, onNotNow: () -> Unit) {
+    Dialog(onDismissRequest = onNotNow, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.padding(20.dp)) {
+            DialogCard(
+                stringResource(R.string.server_url_unset_title),
+                Modifier.testTag(ConnectionTags.SERVER_URL_UNSET_DIALOG),
+                paragraphs = listOf(stringResource(R.string.server_url_unset_dialog_text)),
+            ) {
+                ActionButton(
+                    stringResource(R.string.server_url_unset_set_up),
+                    onSetUp,
+                    Modifier.testTag(ConnectionTags.SERVER_URL_UNSET_DIALOG_SET_UP),
+                    style = ActionStyle.Primary,
+                )
+                ActionButton(
+                    stringResource(R.string.server_url_unset_not_now),
+                    onNotNow,
+                    Modifier.testTag(ConnectionTags.SERVER_URL_UNSET_DIALOG_NOT_NOW),
+                )
+            }
+        }
+    }
+}
+
+/** True when the configuration still carries the placeholder of `kPlaceholderServerUrl` (host compare). */
+internal fun ConfigSummary.hasPlaceholderServerUrl(): Boolean =
+    serverHost?.equals(WizardRules.PLACEHOLDER_HOST, ignoreCase = true) == true
 
 @Composable
 private fun MainConnectionScreen(
@@ -290,6 +342,21 @@ private fun Disconnected(state: ConnectionUiState.Disconnected, model: Connectio
     val config = model.config
     when {
         config == null -> Unit
+        // Valid document, placeholder URL: Connect stays enabled, the service
+        // refuses it with config_server_url_unset and the dialog appears.
+        config.availability == ConfigAvailability.VALID && config.hasPlaceholderServerUrl() -> Notice(
+            stringResource(R.string.server_url_unset_notice_text),
+            Modifier.testTag(ConnectionTags.SERVER_URL_UNSET_NOTICE),
+            kind = NoticeKind.Warn,
+            title = stringResource(R.string.server_url_unset_title),
+        ) {
+            ActionButton(
+                stringResource(R.string.server_url_unset_set_up),
+                navigation.openWizardUrl,
+                Modifier.testTag(ConnectionTags.SERVER_URL_UNSET_SET_UP),
+                style = ActionStyle.Primary,
+            )
+        }
         config.availability == ConfigAvailability.VALID -> Notice(
             stringResource(R.string.disconnected_notice_text),
             title = stringResource(R.string.disconnected_notice_title),

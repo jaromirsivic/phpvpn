@@ -37,6 +37,7 @@ object ErrorStrings {
         ErrorTextKey.ERROR_CONFIG_INVALID_JSON -> R.string.error_config_invalid_json
         ErrorTextKey.ERROR_CONFIG_INVALID_VALUE -> R.string.error_config_invalid_value
         ErrorTextKey.ERROR_CONFIG_INVALID_URL -> R.string.error_config_invalid_url
+        ErrorTextKey.ERROR_CONFIG_SERVER_URL_UNSET -> R.string.error_config_server_url_unset
         ErrorTextKey.ERROR_CONFIG_INVALID_CIDR -> R.string.error_config_invalid_cidr
         ErrorTextKey.ERROR_CONFIG_INVALID_ADDRESS -> R.string.error_config_invalid_address
         ErrorTextKey.ERROR_CONFIG_INVALID_KEY -> R.string.error_config_invalid_key
