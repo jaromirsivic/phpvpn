@@ -6,6 +6,7 @@
 #include <functional>
 #include <thread>
 #include "../../apps/tray/reconnect_controller.h"
+#include "../../apps/tray/server_url_placeholder.h"
 
 namespace {
 using namespace phpvpn::tray;
@@ -152,6 +153,19 @@ PHPVPN_TEST(Reconnect, expired_disconnect_reply_cannot_win_race_with_timer) {
         PHPVPN_CHECK(!controller.observeDisconnect(reconnectIdle(),30002,30000));
     }
 }
+PHPVPN_TEST(ServerUrlPlaceholder, RecognisedByHostCaseInsensitivelyWithTextFallback) {
+    PHPVPN_CHECK(mentionsPlaceholderServerUrl("https://change-this-server-url.invalid"));
+    PHPVPN_CHECK(mentionsPlaceholderServerUrl(std::string(phpvpn::kPlaceholderServerUrl)));
+    PHPVPN_CHECK(mentionsPlaceholderServerUrl("http://CHANGE-This-Server-URL.invalid:8080/phpvpn.php"));
+    PHPVPN_CHECK(mentionsPlaceholderServerUrl("Change-This-Server-Url.Invalid"));
+    PHPVPN_CHECK(mentionsPlaceholderServerUrl("not a url change-this-server-url.INVALID either"));
+    PHPVPN_CHECK(!mentionsPlaceholderServerUrl(""));
+    PHPVPN_CHECK(!mentionsPlaceholderServerUrl("https://vpn.example.com/phpvpn.php"));
+    PHPVPN_CHECK(!mentionsPlaceholderServerUrl("http://MODIFY-THIS-URL/phpvpn.php"));
+    PHPVPN_CHECK(!mentionsPlaceholderServerUrl("https://change-this-server-url.invalid.example.com/"));
+    PHPVPN_CHECK(!mentionsPlaceholderServerUrl("https://other.invalid/change-this-server-url.invalid"));
+}
+
 PHPVPN_TEST(TrayApplicationSeam, OwnMutexShellAndMissingEndpointAreIsolated) {
     ShellCounts first, second, duplicate;
     const auto suffix = uniqueName();

@@ -13,6 +13,8 @@ enum class SystemDialogIcon {
 void showSystemMessage(HWND owner, const wchar_t* text, const wchar_t* title,
                        SystemDialogIcon icon, const wchar_t* heading = nullptr) noexcept;
 bool confirmSystemAction(HWND owner, const wchar_t* text, const wchar_t* title, bool defaultYes = false) noexcept;
+// Yes/No question with the system question icon; true when Yes was chosen.
+bool askSystemQuestion(HWND owner, const wchar_t* text, const wchar_t* title, bool defaultYes = true) noexcept;
 void showStartupError(const wchar_t* text, const wchar_t* title) noexcept;
 
 } // namespace phpvpn::tray
