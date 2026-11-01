@@ -375,7 +375,16 @@ function Get-IntentFilterValues($element, [string]$kind) {
 }
 
 $componentKinds = @('activity', 'activity-alias', 'service', 'receiver', 'provider')
-$debugCertificateDn = 'C=US, O=Android, CN=Android Debug'
+# The AGP debug certificate. apksigner prints the subject as the JDK
+# formats it, so the relative distinguished names are compared as a set:
+# Android Studio's keystore reads `C=US, O=Android, CN=Android Debug`, a
+# keystore AGP generates itself (CI runner) may list them the other way.
+$debugCertificateRdns = @('CN=Android Debug', 'O=Android', 'C=US')
+function Test-DebugCertificateDn([string]$dn) {
+    $rdns = @($dn -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    return ($rdns.Count -eq $debugCertificateRdns.Count) -and
+        -not @(Compare-Object $rdns $debugCertificateRdns).Count
+}
 $apkFacts = @{}
 
 foreach ($apk in $apks) {
@@ -387,11 +396,20 @@ foreach ($apk in $apks) {
     # --- signature
     $verify = Invoke-Tool $apksigner @('verify', '--print-certs', '-v', $apk.Path)
     $dn = ''
-    $dnLine = Get-Lines $verify '^Signer #1 certificate DN: ' | Select-Object -First 1
-    if ($dnLine) { $dn = $dnLine -replace '^Signer #1 certificate DN: ', '' }
-    $schemes = (Get-Lines $verify '^Verified using v\d+(\.\d+)? scheme .*: true$' | ForEach-Object { ($_ -split ' ')[2] }) -join ','
+    $dnLine = Get-Lines $verify '^Signer (#1|\(.*\)) certificate DN: ' | Select-Object -First 1
+    if ($dnLine) { $dn = ($dnLine -replace '^Signer (#1|\(.*\)) certificate DN: ', '').Trim() }
+    $schemes = (Get-Lines $verify '^Verified using v\d+(\.\d+)? scheme .*: true' | ForEach-Object { ($_ -split ' ')[2] }) -join ','
     if ($isDebug) {
-        Add-Check 'apksigner verify --print-certs' $label ($verify.ExitCode -eq 0 -and $dn -eq $debugCertificateDn) "DN '$dn', schemes $schemes"
+        $signed = $verify.ExitCode -eq 0 -and (Test-DebugCertificateDn $dn)
+        $detail = "DN '$dn', schemes $schemes"
+        if (-not $signed) {
+            # Keep the evidence: the verdict lines of apksigner (never the
+            # digests), so a CI log shows why the debug signature was rejected.
+            $evidence = Get-Lines $verify '^(Verifies|Verified |DOES NOT VERIFY|ERROR|WARNING|Signer|Number of signers)' |
+                Where-Object { $_ -notmatch 'digest' }
+            $detail += "; exit $($verify.ExitCode); apksigner: " + ($evidence -join ' | ')
+        }
+        Add-Check 'apksigner verify --print-certs' $label $signed $detail
     } else {
         # R2: no release signing config yet, Gradle leaves the APK unsigned.
         $unsigned = $verify.ExitCode -ne 0 -and $dn -eq ''

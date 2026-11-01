@@ -140,6 +140,14 @@ Skript je napsaný tak, aby běžel i na Linuxu (přípony `.exe`/`.bat` jen na 
 host adresář NDK se hledá, ZIP přes .NET), ale **pwsh na Linuxu jsem nespustil** (lokálně pwsh není, push dělá
 uživatel): NOT RUN, ověří první běh workflow.
 
+Doplněno po sloučení (běh `client-android` #18 nad `95f8478`, 2026-11-01): krok na `ubuntu-24.04` doběhl, 34 kontrol
+PASS, 3 FAIL, všechny `apksigner verify --print-certs` nad debug APK s hlášením `DN '', schemes v2`. Linuxový
+`apksigner` tedy ověřil schéma v2, ale skript z jeho výstupu nezískal řádek `Signer #1 certificate DN`. Log CI
+samotný výstup neobsahuje. Oprava ve skriptu: DN se porovnává jako množina složek (`CN=Android Debug`,
+`O=Android`, `C=US` v libovolném pořadí, protože keystore vygenerovaný AGP může složky vypsat jinak než keystore
+z Android Studia), přijímá se i tvar `Signer (minSdkVersion=…)` a při selhání kontrola vypíše verdiktové řádky
+`apksigner` (bez otisků) a návratový kód. Výsledek dalšího běhu CI je v hlavním reportu.
+
 ## Odloženo podle R2
 
 - Release keystore mimo repozitář (cesta a hesla z prostředí nebo `local.properties`) a release `signingConfig`.
@@ -177,7 +185,7 @@ uživatel): NOT RUN, ověří první běh workflow.
 
 | Položka | Důvod |
 |---|---|
-| Krok „Package and check“ v GitHub Actions (pwsh na `ubuntu-24.04`) | Push a sledování CI dělá uživatel. Lokálně pwsh ani Linux pwsh nebyl k dispozici. |
+| Krok „Package and check“ v GitHub Actions (pwsh na `ubuntu-24.04`) | Push a sledování CI dělá uživatel. Lokálně pwsh ani Linux pwsh nebyl k dispozici. Po sloučení viz „CI“: běh #18 selhal na kontrole DN debug certifikátu, skript opraven. |
 | Instalace výstupních APK na reálné zařízení `arm64-v8a` | Žádné zařízení; patří k WP11. |
 | Instalace `phpvpn-1.0.3-x86_64-debug.apk` na sdílené emulátory | Nepřepisoval jsem aplikaci, kterou mohou používat jiné balíky; aplikace ze stejných zdrojů prošla Compose testy na `emulator-5560`. |
 | `:bridge:lintDebug` | Mimo zadání (`:app:lintDebug`). |
