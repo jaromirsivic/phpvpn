@@ -37,7 +37,8 @@ VPN“ při běžící službě (stav Always-on se publikoval jen v `onStartComm
 runtime vytvořil výchozí konfiguraci s `http://127.0.0.1/phpvpn.php`, takže Welcome 00 a hlavní cesta `00 → 12` se
 neukázaly; **vyřešeno 2026-11-01** rozhodnutím uživatele: sdílený výchozí `serverUrl` je placeholder
 `https://change-this-server-url.invalid`, Connect s ním služba odmítne kódem `config_server_url_unset`, obrazovka 02 ukáže
-upozornění „Server address not set“ s tlačítkem Set up a po Connect dialog Set up / Not now na krok 12 (client.md, Android). Opravené flaky testy: `WizardSaveOutcomeUiTest` a `WizardFlowTest` (klik během animace klávesnice).
+upozornění „Server address not set“ s tlačítkem Set up a po Connect dialog Set up / Not now na krok 12 (client.md, Android;
+ověření na API 36 v [b2-placeholder](android/b2-placeholder-report-2026-11-01.md)). Opravené flaky testy: `WizardSaveOutcomeUiTest` a `WizardFlowTest` (klik během animace klávesnice).
 
 Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-31.md),
 [WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),
