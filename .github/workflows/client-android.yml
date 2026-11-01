@@ -1,8 +1,10 @@
-# Android client: debug APK and JVM tests on an Ubuntu runner
-# (plan-android-v001 step 0). Two jobs: `deps` rebuilds the static OpenSSL and
-# curl only on a cache miss (WP01 provides client/tools/android/build-deps.sh),
-# `app` restores them from the cache and never compiles them itself. The
-# emulator matrix (API 34 and 36, KVM) is added once WP02 and WP05 land.
+# Android client: development APKs, their packaging checks and the JVM tests
+# on an Ubuntu runner (plan-android-v001 steps 0 and 12). Two jobs: `deps`
+# rebuilds the static OpenSSL and curl only on a cache miss (WP01 provides
+# client/tools/android/build-deps.sh), `app` restores them from the cache and
+# never compiles them itself, then runs client/tools/android/make-android-dev.ps1
+# and publishes work/android/<version>. The emulator matrix (API 34 and 36,
+# KVM) is added once WP02 and WP05 land.
 name: client-android
 
 on:
@@ -128,9 +130,20 @@ jobs:
           set -eu
           ./gradlew --no-daemon assembleDebug testDebugUnitTest
 
-      - name: APK
+      # WP12: the same script as on a developer machine, run by the
+      # preinstalled PowerShell 7. It rebuilds with the ABI splits, adds the
+      # unsigned release APK and lint, copies everything to
+      # work/android/<version> and fails on any packaging check.
+      - name: Package and check
+        shell: pwsh
+        env:
+          PHPVPN_ANDROID_DEPS: ${{ needs.deps.outputs.available == 'true' && format('{0}/{1}', github.workspace, env.DEPS_DIR) || '' }}
+        run: client/tools/android/make-android-dev.ps1 -GradleArguments '--no-daemon'
+
+      - name: APKs
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: phpvpn-android-debug
-          path: client/android/app/build/outputs/apk/debug/*.apk
+          path: work/android
           if-no-files-found: error
