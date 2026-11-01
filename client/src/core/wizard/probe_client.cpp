@@ -19,7 +19,7 @@ Status ProbeClient::prepare(const WizardContext& context, const WizardFields& fi
     std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) {
         return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
     });
-    if (host == "modify-this-url") return Error(ErrorCode::config_invalid_url, "replace the placeholder with the complete server URL");
+    if (host == kPlaceholderServerHost) return Error(ErrorCode::config_invalid_url, "replace the placeholder with the complete server URL");
     if (!isStrictUtf8(fields.serverSecret)) return Error(ErrorCode::config_encoding_error);
     secret_ = normalizeServerSecret(fields.serverSecret);
     bodyLimit_ = context.runtime.maxResponseBodyBytes;

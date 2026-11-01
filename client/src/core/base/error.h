@@ -39,6 +39,7 @@ enum class ErrorCode {
     config_invalid_json,
     config_invalid_value,
     config_invalid_url,
+    config_server_url_unset,
     config_invalid_cidr,
     config_invalid_address,
     config_invalid_key,

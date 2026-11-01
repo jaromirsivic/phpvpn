@@ -21,6 +21,12 @@ namespace phpvpn {
 
 // Shared defaults.
 inline constexpr std::string_view kDefaultServerSecret = "CHANGE_THIS_SERVER_SECRET";
+// The server URL of a fresh configuration and of a Wizard Reset draft. The host
+// is a valid registered name under the reserved .invalid TLD (RFC 2606), so the
+// document passes the validator, the Wizard rejects it before any DNS and a
+// Connect that still carries it is refused with config_server_url_unset.
+inline constexpr std::string_view kPlaceholderServerUrl = "https://change-this-server-url.invalid";
+inline constexpr std::string_view kPlaceholderServerHost = "change-this-server-url.invalid";
 inline constexpr const char* kDefaultVpnCidr = "10.99.99.0/24";
 inline constexpr bool kDefaultTrustAnyTlsCertificate = true;
 inline constexpr std::int64_t kDefaultMaxOutboundQueueBytes = 134217728;
@@ -40,7 +46,7 @@ inline constexpr char kDefaultHttpHeaders[] = "Cache-Control: no-cache\r\nPragma
 inline constexpr std::string_view kDefaultConfigDocument = R"json({
   "masterSetup": {
     "serverSecret": "CHANGE_THIS_SERVER_SECRET",
-    "serverUrl": "http://127.0.0.1/phpvpn.php",
+    "serverUrl": "https://change-this-server-url.invalid",
     "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
     "trustAnyTlsCertificate": true,
     "useDefaultServerSecretInWizard": false,
@@ -81,6 +87,10 @@ struct ServerUrl {
     std::string path;  // begins with '/'
     std::string original;
 };
+
+// True for the placeholder of kPlaceholderServerUrl (any scheme, port or
+// path): parseServerUrl lower-cases the host.
+inline bool isPlaceholderServerUrl(const ServerUrl& url) noexcept { return url.host == kPlaceholderServerHost; }
 
 struct CommunicationContract {
     Ipv4Address peer;

@@ -7,7 +7,6 @@
 namespace phpvpn {
 inline constexpr std::size_t kMaxConfigFileBytes = 524288;
 inline constexpr std::int64_t kMaxHttpTimeoutSeconds = 2147483;
-inline constexpr std::string_view kWizardPlaceholderUrl = "http://MODIFY-THIS-URL/phpvpn.php";
 
 enum class ConfigAvailability { missing, unreadable, encoding_error, too_large, invalid, repairable, valid };
 const char* configAvailabilityName(ConfigAvailability value) noexcept;

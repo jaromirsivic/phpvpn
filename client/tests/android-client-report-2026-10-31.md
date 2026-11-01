@@ -33,9 +33,11 @@ připíná build-tools 36.0.0 a běh #20 (`6ae25c9`, po sloučení WP11) je PASS
 Nalezené chyby: **B1** varování lockdownu (Settings 10, About 34) chybělo, když uživatel zapnul „Block connections without
 VPN“ při běžící službě (stav Always-on se publikoval jen v `onStartCommand`); **opraveno 2026-11-01**: služba vzorkuje
 `isLockdownEnabled` při každém pollingu stavu a publikuje jen změnu (`AlwaysOnPolicy`), T-A15 PASS na API 35 a 36
-(podrobnosti v [wp11-matrix](android/wp11-matrix-report-2026-11-01.md), oddíl B1); **B2** (k rozhodnutí) po čisté instalaci
-runtime vytvoří výchozí konfiguraci s `http://127.0.0.1/phpvpn.php`, takže Welcome 00 a hlavní cesta `00 → 12` se
-neukážou. Opravené flaky testy: `WizardSaveOutcomeUiTest` a `WizardFlowTest` (klik během animace klávesnice).
+(podrobnosti v [wp11-matrix](android/wp11-matrix-report-2026-11-01.md), oddíl B1); **B2** po čisté instalaci
+runtime vytvořil výchozí konfiguraci s `http://127.0.0.1/phpvpn.php`, takže Welcome 00 a hlavní cesta `00 → 12` se
+neukázaly; **vyřešeno 2026-11-01** rozhodnutím uživatele: sdílený výchozí `serverUrl` je placeholder
+`https://change-this-server-url.invalid`, Connect s ním služba odmítne kódem `config_server_url_unset`, obrazovka 02 ukáže
+upozornění „Server address not set“ s tlačítkem Set up a po Connect dialog Set up / Not now na krok 12 (client.md, Android). Opravené flaky testy: `WizardSaveOutcomeUiTest` a `WizardFlowTest` (klik během animace klávesnice).
 
 Dílčí reporty balíků: [WP01 závislosti](android/wp01-deps-report-2026-10-31.md),
 [WP02 POSIX vrstva a nativní testy](android/wp02-posix-report-2026-10-31.md),

@@ -4,7 +4,7 @@ namespace phpvpn {
 std::string makeDefaultEditorDocument() { return std::string(kDefaultConfigDocument); }
 WizardDocument makeNewWizardDocument() {
     WizardDocument document;
-    document.fields.serverUrl = kWizardPlaceholderUrl;
+    document.fields.serverUrl = kPlaceholderServerUrl;
     document.fields.serverSecret = kDefaultServerSecret;
     document.context.httpHeaders = kDefaultHttpHeaders;
     document.fields.httpHeaders = kDefaultHttpHeaders;

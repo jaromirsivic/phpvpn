@@ -30,6 +30,14 @@ struct Store {
         auto value = std::make_unique<FakeConfigFiles>(*crypto); files = value.get(); return value;
     }
 };
+// The shared default document with the placeholder server URL replaced by a
+// reachable fixture address: a complete configuration that passes the checks.
+std::string configuredDefaultDocument() {
+    auto text = makeDefaultEditorDocument();
+    const auto at = text.find(kPlaceholderServerUrl);
+    if (at != std::string::npos) text.replace(at, kPlaceholderServerUrl.size(), "http://127.0.0.1/phpvpn.php");
+    return text;
+}
 WizardView viewFor(std::string_view text) {
     auto doc = analyzeWizardDocument(text).value();
     WizardView view;
@@ -239,7 +247,7 @@ PHPVPN_TEST(fix2, contracts_are_additive_preserve_keys_and_preview_matches_publi
 
 PHPVPN_TEST(fix2, automatic_ip_replaces_placeholder_only_in_automatic_mode_and_can_be_disabled) {
     for (bool automatic : {false, true}) {
-        auto view = viewFor(makeDefaultEditorDocument());
+        auto view = viewFor(configuredDefaultDocument());
         view.fields->autoDetectIpAddressInWizard = automatic;
         WizardModel model; model.load(view);
         complete(model); complete(model, "10.99.99.10");
@@ -252,7 +260,7 @@ PHPVPN_TEST(fix2, automatic_ip_replaces_placeholder_only_in_automatic_mode_and_c
         model.interrupt(); model.load(view, true);
         PHPVPN_CHECK(!model.hasSuggestedIp());
     }
-    WizardModel model; model.load(viewFor(makeDefaultEditorDocument()));
+    WizardModel model; model.load(viewFor(configuredDefaultDocument()));
     complete(model); complete(model);
     PHPVPN_CHECK_EQ(model.step(), WizardStep::identity);
     PHPVPN_CHECK(!model.validateCurrent());

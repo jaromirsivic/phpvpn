@@ -39,6 +39,7 @@ constexpr ErrorInfo kErrors[] = {
     {ErrorCode::config_invalid_json,           "config_invalid_json",           "The configuration is not a valid JSON document.",                  false},
     {ErrorCode::config_invalid_value,          "config_invalid_value",          "A configuration value has an unexpected type or content.",         false},
     {ErrorCode::config_invalid_url,            "config_invalid_url",            "The server URL is not an absolute http or https URL.",             false},
+    {ErrorCode::config_server_url_unset,       "config_server_url_unset",       "The server URL has not been configured yet.",                      false},
     {ErrorCode::config_invalid_cidr,           "config_invalid_cidr",           "The VPN CIDR is not a canonical IPv4 network prefix.",              false},
     {ErrorCode::config_invalid_address,        "config_invalid_address",        "A VPN address is not a valid client address of the prefix.",       false},
     {ErrorCode::config_invalid_key,            "config_invalid_key",            "A key is not exactly 64 lowercase hexadecimal characters.",        false},

@@ -157,7 +157,7 @@ Musí platit `maxNdjsonLineBytes <= maxResponseBodyBytes`. Rovnost je dovolená.
 
 ## Stavový automat připojení
 
-1. **Načtení konfigurace.** Klient validuje URL, kanonický IPv4 tvar `vpnCidr`, příslušnost `virtualIp` a všech adres kontraktů do tohoto prefixu, pravidla platných klientských adres, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost podporované platformní vrstvy. Na Windows v této fázi smí ověřit distribuční manifest, DLL, architekturu a povinné Wintun API, ale NESMÍ ještě vytvořit ani otevřít adaptér, zahájit Wintun session nebo měnit síť.
+1. **Načtení konfigurace.** Klient validuje URL, kanonický IPv4 tvar `vpnCidr`, příslušnost `virtualIp` a všech adres kontraktů do tohoto prefixu, pravidla platných klientských adres, hex formát a délky klíčů, jedinečnost kontraktů a dostupnost podporované platformní vrstvy. Na Windows v této fázi smí ověřit distribuční manifest, DLL, architekturu a povinné Wintun API, ale NESMÍ ještě vytvořit ani otevřít adaptér, zahájit Wintun session nebo měnit síť. Platnou konfiguraci, jejíž `serverUrl` má hostitele placeholderu `kPlaceholderServerHost`, Connect odmítne kódem `config_server_url_unset` před krokem Health; stav zůstane `disconnected`.
 2. **Health.** Před prvním `info` nebo `data` vygeneruje nový UUIDv4 `requestId`, zaznamená monotónní `sendMono` a odešle `auth-none` na `?action=health`.
 3. **Ověření serveru a času.** Po přijetí celé odpovědi zaznamená monotónní `receiveMono`. Pokud odpověď odpovídá syntaxi `health` a nese stav `running`, klient ověří shodu `requestId` a GCM tag podle protokolu. Teprve potom přijme autentizovaný UTC čas serveru a atomicky vytvoří počáteční časový odhad podle následující části; lokální systémový čas nikdy nemění.
 4. **Časová rezerva.** Timestamp každého následujícího autentizovaného `info` nebo `data` requestu vznikne výhradně z posledního ověřeného odhadu serverového času, aktuálního monotónního času a normativní bezpečnostní rezervy podle následující části. Po synchronizaci se nesmí přímo odvozovat z aktuálních systémových hodin.
@@ -398,7 +398,7 @@ Sdílená validace struktury, známých členů, URL, secretu, TLS, kanonického
 
 V režimu edit/repair patchovat čtyři konkrétní hodnoty a tři příznaky `InWizard` v původním DOM a při efektivní true aditivně doplnit chybějící kontrakty. Dokument nerekonstruovat z `ClientConfig`. Hodnoty, typy a přítomnost ostatních členů zůstávají zachované, změna whitespace a formátování JSON je povolená.
 
-Reset Wizardu vytvoří nový koncept s URL `http://MODIFY-THIS-URL/phpvpn.php`, secretem `CHANGE_THIS_SERVER_SECRET`, `trustAnyTlsCertificate=true`, `vpnCidr=10.99.99.0/24`, současnými runtime defaulty, třemi true příznaky InWizard a nově rozhodnutou sadou kontraktů. Runtime lze v JSON vynechat a využít sdílené defaulty. Původní obsah se po Resetu nepoužije pro slučování ani jako podmínka zápisu. Odlišný úplný default editoru je definován v části Edit Config: skutečný obsah, vytvoření a Reset.
+Reset Wizardu vytvoří nový koncept s URL `https://change-this-server-url.invalid` (sdílený placeholder `kPlaceholderServerUrl`), secretem `CHANGE_THIS_SERVER_SECRET`, `trustAnyTlsCertificate=true`, `vpnCidr=10.99.99.0/24`, současnými runtime defaulty, třemi true příznaky InWizard a nově rozhodnutou sadou kontraktů. Runtime lze v JSON vynechat a využít sdílené defaulty. Původní obsah se po Resetu nepoužije pro slučování ani jako podmínka zápisu. Odlišný úplný default editoru je definován v části Edit Config: skutečný obsah, vytvoření a Reset.
 
 Při unreadable se může po Resetu vyplňovat nový koncept, ale Finish nesmí obejít souborovou chybu přístupu. Pokud služba při publikaci stále nemůže bezpečně pracovat s aktuálním cílem a obnovou po chybě, zápis odmítne a navede na opravu přístupu. Nevyžaduje shodu s revizí při otevření. Reset neopravuje ACL ani nepřesměrovává cestu.
 
@@ -470,7 +470,7 @@ Vytvoření i Reset editoru používají jedinou továrnu `makeDefaultEditorDocu
 {
   "masterSetup": {
     "serverSecret": "CHANGE_THIS_SERVER_SECRET",
-    "serverUrl": "http://127.0.0.1/phpvpn.php",
+    "serverUrl": "https://change-this-server-url.invalid",
     "httpHeaders": "Cache-Control: no-cache\r\nPragma: no-cache\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
     "trustAnyTlsCertificate": true,
     "useDefaultServerSecretInWizard": false,
@@ -485,7 +485,7 @@ Vytvoření i Reset editoru používají jedinou továrnu `makeDefaultEditorDocu
 }
 ```
 
-Sekce runtime je vynechána a používá sdílené defaulty včetně 30s timeoutu. Šablona musí projít syntaktickou i úplnou konfigurační validací bez výjimek. Loopback URL označuje relay na stejném počítači, nikoli ověřenou dostupnost serveru. Úspěšné vytvoření ani Save nenahrazují síťové ověření při Connect. Předvídatelné výchozí hodnoty a prázdný objekt communicationContracts jsou součástí společné šablony.
+Sekce runtime je vynechána a používá sdílené defaulty včetně 30s timeoutu. Šablona musí projít syntaktickou i úplnou konfigurační validací bez výjimek. Výchozí `serverUrl` je placeholder `https://change-this-server-url.invalid` (konstanty `kPlaceholderServerUrl` a `kPlaceholderServerHost` v `config.h`): hostitel je platné jméno pod rezervovanou doménou `.invalid` (RFC 2606), která se nikdy nepřeloží, takže dokument projde validací a identita, kontrakty i editor fungují. Connect s ním služba odmítne kódem `config_server_url_unset` ještě před prvním síťovým krokem a klienti na tento kód nabídnou průvodce (viz Chyby a bezpečnost rozšíření IPC). Placeholder se pozná podle hostitele bez ohledu na velikost písmen, schéma, port a cestu. Dřívější výchozí adresa `http://127.0.0.1/phpvpn.php` se nemigruje: žádný klient s ní nebyl nasazen. Úspěšné vytvoření ani Save nenahrazují síťové ověření při Connect. Předvídatelné výchozí hodnoty a prázdný objekt communicationContracts jsou součástí společné šablony.
 
 ## Configuration Wizard
 
@@ -546,7 +546,7 @@ Guard commitu a přijetí Connect mají jednoznačné pořadí. Connect přijat�
 
 ### Server URL
 
-Použít existující `parseServerUrl`: HTTP/HTTPS, bez userinfo, query a fragmentu. Zachovat podporu jiného názvu skriptu a cesty, protože stávající validátor i testy přijímají například `vpn.php` a `relay.php`. Nápověda doporučí úplnou URL phpvpn.php, nevytvoří nové povinné pravidlo přípony. Placeholder `MODIFY-THIS-URL` odmítnout v průvodci s konkrétní nápovědou před DNS.
+Použít existující `parseServerUrl`: HTTP/HTTPS, bez userinfo, query a fragmentu. Zachovat podporu jiného názvu skriptu a cesty, protože stávající validátor i testy přijímají například `vpn.php` a `relay.php`. Nápověda doporučí úplnou URL phpvpn.php, nevytvoří nové povinné pravidlo přípony. Placeholder `https://change-this-server-url.invalid` (hostitel `kPlaceholderServerHost`, porovnání bez ohledu na velikost písmen, libovolné schéma, port a cesta) odmítnout v průvodci s nápovědou „Replace change-this-server-url.invalid with your server address.“ před DNS.
 
 TLS politika a limity pocházejí z zachovaného kontextu nebo nových defaultů. Nikdy nezměnit `trustAnyTlsCertificate=false` na true jen proto, aby kontrola prošla. Nepovolit redirect, proxy ani automatickou přenosovou autentizaci oproti dnešnímu transportu.
 
@@ -744,6 +744,8 @@ Služba a tray se nasazují společně. Starší striktní parser statusu nová 
 ### Chyby a bezpečnost rozšíření IPC
 
 Stabilní kódy zahrnují `config_unreadable`, `config_directory_security_invalid`, `config_encoding_error`, `config_too_large`, `wizard_session_expired`, `wizard_prerequisite_failed`, `wizard_attempt_closed`, `wizard_connection_interrupted`, `wizard_commit_unknown`, `wizard_contract_self_conflict` a `wizard_unsupported`, dále rozlišit busy, timeout a chybu souborové publikace. Nezavádět config_conflict pro zastaralou uloženou revizi. Původní chyby neměnit na raw systémové výpisy.
+
+Kód `config_server_url_unset` („The server URL has not been configured yet.“, skupina `config_*`, neobnovitelný) vrací `connect`, když je uložená konfigurace platná, ale `serverUrl` má hostitele placeholderu `kPlaceholderServerHost`. Nic se nekontaktuje, stav zůstane `disconnected`; automatické připojení při startu služby ho publikuje jako `error` s tímto kódem. Tray na Windows, Linuxu i macOS na tento kód místo chybového dialogu položí otázku Ano/Ne „The server URL has not been configured yet. Do you want to set it up now?“ a Ano otevře Configuration Wizard na kroku Server URL; Ne nic nedělá. Android zobrazí stejný dialog nad obrazovkou 02 s tlačítky Set up a Not now (viz Android). CLI vrací chybový envelope jako u ostatních `config_*` kódů.
 
 Android přidává do slovníku IPC v1 kód `tunnel_permission_missing` ve skupině `tunnel_*` ([error.h](client/src/core/base/error.h)) s popisem „The permission to create the VPN interface is missing or was revoked.“. Znamená, že systémový souhlas s VPN chybí nebo byl odebrán ve chvíli, kdy engine potřebuje vytvořit rozhraní, například při Connect z BootReceiveru nebo Always-on po odebrání souhlasu. Je neobnovitelný: `recoverable: false`, stav `error`, žádné opakování. `get-status` ho v `lastError` hlásí pod vlastním veřejným kódem `tunnel_permission_missing`, nikoli jako `tunnel_start_failed`, aby UI mohlo místo chyby serveru zobrazit obrazovku souhlasu (37). Windows, Linux ani macOS ho nikdy nevracejí. Platformní pravidla stanoví část [Android](#vpnservice-služba-a-životní-cyklus).
 
@@ -1582,6 +1584,8 @@ Obsah souboru je stejný JSON dokument jako na desktopu, protože editor zobrazu
 Vytvoření chybějícího souboru je pro obě strategie shodné (`renameat2(RENAME_NOREPLACE)`). Formát journalu se nemění a strategie se nezapisuje, protože identity inodů rozliší každý mezistav. Recovery proto na nastavené strategii nezávisí. Strategie přidává jediný mezistav: `config.json` je nová stage, jméno stage drží původní inode a `config.previous` chybí (pád mezi kroky 3 a 4). Recovery ho vyhodnotí jako `confirmed`, dokončí přesun na `config.previous` s `fsync` adresáře a pak uklidí jako po publikaci `hardLink`. Krok je opakovatelný. Záruky části [Atomický zápis](#atomický-zápis-poslední-úspěšné-uložení-vyhrává) platí beze změny. T-N03 ověřil publikaci i recovery v sandboxu aplikace na API 34 a 36.
 
 Chybějící konfiguraci editor nevytváří tiše. Otevření editoru z obrazovek 00, 10 a 36 nejprve pošle `get-config-document`. Při `availability` `missing` zobrazí potvrzovací dialog 36a se skutečnou absolutní cestou ze služby. Ano pošle `create-default-config` bez cesty a obsahu a editor otevře skutečný výsledek, při `created:false` dokument, který mezitím vznikl, bez přepsání. Ne nic nevytvoří. Cancel editoru po potvrzeném vytvoření soubor nemaže. Reset v editoru dál používá `get-default-config` a mění jen draft. Jde o stejné chování jako [Edit Config na desktopu](#edit-config-skutečný-obsah-vytvoření-a-reset).
+
+Výchozí konfigurace vytvořená při startu služby nese placeholder `https://change-this-server-url.invalid`. Obrazovka 02 ho pozná podle hostitele (`WizardRules.PLACEHOLDER_HOST`, zrcadlo `kPlaceholderServerHost`) v souhrnu z `get-config-document` a místo upozornění „Configuration ready“ ukáže upozornění, že adresa serveru není nastavená, s tlačítkem Set up na krok 12. Connect takovou konfiguraci stejně nabídne (uživatel může konfiguraci kdykoli změnit v editoru); služba ho odmítne kódem `config_server_url_unset` a aplikace zobrazí dialog „The server URL has not been configured yet. Do you want to set it up now?“ s tlačítky Set up a Not now; Set up otevře 12, Not now zavře dialog bez dalšího textu. Welcome 00 zůstává jen pro chybějící soubor.
 
 #### Rozhraní VpnService a vlastnictví
 

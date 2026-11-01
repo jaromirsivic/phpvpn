@@ -71,6 +71,52 @@ PHPVPN_TEST(default_config, engine_start_and_connect_do_not_create_missing_file)
     engine.shutdown();
 }
 
+PHPVPN_TEST(default_config, connect_refuses_the_placeholder_server_url_before_any_network_step) {
+    TemporaryDirectory directory;
+    auto cryptoResult = createPlatformCryptoProvider();
+    PHPVPN_REQUIRE_OK(cryptoResult);
+    auto transportResult = createPlatformTransport();
+    PHPVPN_REQUIRE_OK(transportResult);
+    auto crypto = std::move(cryptoResult).value();
+    auto transport = std::move(transportResult).value();
+    auto clock = createPlatformClock();
+    auto tunnel = createPlatformTunnelDriver();
+    auto netConfig = createPlatformNetConfig();
+
+    EnginePaths paths;
+    paths.configFile = directory.path() / "config.json";
+    paths.journalFile = directory.path() / "ownership.json";
+    paths.installDirectory = directory.path().wstring();
+    auto backend = std::make_unique<FakeConfigFiles>(*crypto);
+    auto* files = backend.get();
+    files->bytes = std::string(kDefaultConfigDocument);
+    ConfigStore store(*crypto, std::move(backend));
+    VpnEngine engine(*crypto, *transport, *clock, *tunnel, *netConfig, std::move(paths), store);
+    PHPVPN_REQUIRE_OK(engine.start());
+
+    // The default document is valid, so the refusal is the placeholder, not a configuration error.
+    PHPVPN_REQUIRE_ERROR(engine.connect(), ErrorCode::config_server_url_unset);
+    PHPVPN_CHECK(files->reads > 0u);
+    PHPVPN_CHECK_EQ(files->writes, 0u);
+    PHPVPN_CHECK(engine.status().state == ConnectionState::disconnected);
+    engine.shutdown();
+}
+
+PHPVPN_TEST(default_config, the_placeholder_is_recognised_by_host_only) {
+    for (const char* text : {"https://change-this-server-url.invalid", "http://CHANGE-THIS-SERVER-URL.invalid/phpvpn.php",
+                             "https://change-this-server-url.invalid:8443/relay.php"}) {
+        auto url = parseServerUrl(text);
+        PHPVPN_REQUIRE_OK(url);
+        PHPVPN_CHECK(isPlaceholderServerUrl(url.value()));
+    }
+    for (const char* text : {"http://127.0.0.1/phpvpn.php", "https://vpn.example.com/phpvpn.php",
+                             "https://change-this-server-url.invalid.example.com/phpvpn.php"}) {
+        auto url = parseServerUrl(text);
+        PHPVPN_REQUIRE_OK(url);
+        PHPVPN_CHECK(!isPlaceholderServerUrl(url.value()));
+    }
+}
+
 PHPVPN_TEST(default_config, document_passes_the_current_validator) {
     ConfigWarnings warnings;
     auto parsed = parseAndValidateConfig(kDefaultConfigDocument, warnings);
@@ -83,6 +129,8 @@ PHPVPN_TEST(default_config, document_passes_the_current_validator) {
     PHPVPN_CHECK_EQ(parsed.value()->serverSecret,
                     std::string("CHANGE_THIS_SERVER_SECRET"));
     PHPVPN_CHECK_EQ(parsed.value()->accessKey.size(), std::size_t(32));
+    PHPVPN_CHECK_EQ(parsed.value()->serverUrl.original, std::string(kPlaceholderServerUrl));
+    PHPVPN_CHECK(isPlaceholderServerUrl(parsed.value()->serverUrl));
 }
 
 }  // namespace phpvpn

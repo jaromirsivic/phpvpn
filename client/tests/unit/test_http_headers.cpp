@@ -91,7 +91,7 @@ PHPVPN_TEST(http_headers_config, mandatory_string_type_and_order_independence) {
     PHPVPN_REQUIRE_OK(reordered);
     PHPVPN_CHECK_EQ(reordered.value()->httpHeaders, "X: own\nY: two");
     PHPVPN_CHECK_EQ(reordered.value()->serverSecret, kDefaultServerSecret);
-    PHPVPN_CHECK_EQ(reordered.value()->serverUrl.original, "http://127.0.0.1/phpvpn.php");
+    PHPVPN_CHECK_EQ(reordered.value()->serverUrl.original, std::string(kPlaceholderServerUrl));
     PHPVPN_CHECK_EQ(reordered.value()->virtualIp.toString(), "10.99.99.2");
 }
 PHPVPN_TEST(http_headers_config, owned_names_reject_whole_document_and_preserve_saved_snapshot) {

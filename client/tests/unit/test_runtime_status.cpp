@@ -84,6 +84,14 @@ namespace {
 constexpr const char* kConfig = R"({"masterSetup":{"httpHeaders":"X-Test: fixture","serverUrl":"https://runtime.invalid/secret-path","serverSecret":"runtime-fixture-secret","vpnCidr":"10.99.99.0/24","virtualIp":"10.99.99.2","accessKey":"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"},"communicationContracts":{"10.99.99.3":{"payloadKey":"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"}}})";
 constexpr const char* kMessageId = "1f4d8c1a-3b2e-4a51-8c7d-9e0f1a2b3c4d";
 constexpr const char* kTimestamp = "2026-09-04T10:00:00.000Z";
+// The shared default document with the placeholder server URL replaced by a
+// reachable fixture address: a complete configuration that passes the checks.
+std::string configuredDefaultDocument() {
+    auto text = makeDefaultEditorDocument();
+    const auto at = text.find(kPlaceholderServerUrl);
+    if (at != std::string::npos) text.replace(at, kPlaceholderServerUrl.size(), "http://127.0.0.1/phpvpn.php");
+    return text;
+}
 
 // Server versions relative to this build, so a MAJOR release keeps the fixtures valid.
 std::string compatibleServerVersion() { return PHPVPN_CLIENT_VERSION; }
@@ -807,7 +815,7 @@ PHPVPN_TEST(probe, url_requires_only_fresh_health_syntax_then_secret_verifies_cr
     PHPVPN_CHECK_EQ(transport.healthCalls.load(), 2);
     PHPVPN_CHECK_EQ(transport.infoCalls.load(), 0);
     auto fields = document.fields;
-    fields.serverUrl = std::string(kWizardPlaceholderUrl);
+    fields.serverUrl = std::string(kPlaceholderServerUrl);
     ProbeClient placeholder(crypto, transport, clock);
     PHPVPN_REQUIRE_ERROR(placeholder.checkUrl(document.context, fields), ErrorCode::config_invalid_url);
     PHPVPN_CHECK_EQ(transport.healthCalls.load(), 2);
@@ -2654,7 +2662,7 @@ PHPVPN_TEST(runtime, fix2_degraded_storage_keeps_diagnostics_and_blocks_connect_
 
 PHPVPN_TEST(wizard_service, fix2_stored_false_survives_model_suggestion_finish_and_new_open) {
     WizardServiceFixture fixture;
-    auto dom = Json::parse(makeDefaultEditorDocument()).value();
+    auto dom = Json::parse(configuredDefaultDocument()).value();
     for (auto& section : dom.objectValue()) if (section.first == "masterSetup")
         for (auto& field : section.second.objectValue())
             if (field.first.ends_with("InWizard")) field.second = JsonValue::makeBool(false);
@@ -2719,7 +2727,7 @@ PHPVPN_TEST(wizard_service, fix2_stored_false_survives_model_suggestion_finish_a
 PHPVPN_TEST(wizard_service, fix2_all_preferences_persist_through_verified_finish_and_reopen) {
     for (unsigned mask = 0; mask < 8; ++mask) {
         WizardServiceFixture fixture;
-        fixture.runtime.files->bytes = makeDefaultEditorDocument();
+        fixture.runtime.files->bytes = configuredDefaultDocument();
         ConfigWarnings warnings;
         fixture.relayConfig = parseAndValidateConfig(*fixture.runtime.files->bytes, warnings).value();
         const auto view = WizardIpc::parseView(fixture.call(WizardCommand::open).result).value();

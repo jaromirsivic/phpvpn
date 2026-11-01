@@ -441,6 +441,12 @@ void run(bool udp) {
     client.awaitVpn("disconnected", "idle", 5000);
     check(readConfig(config) == makeDefaultEditorDocument(), "SCM startup did not create the shared default");
     const auto startupBytes = readConfig(config);
+    // The shared default carries the placeholder server URL: Connect is refused
+    // before any network step and the file stays untouched.
+    const auto placeholder = client.legacy(IpcCommand::connect, true);
+    check(placeholder.find("error") && placeholder.find("error")->find("code") &&
+          placeholder.find("error")->find("code")->stringValue() == "config_server_url_unset", "Connect on the placeholder server URL was not refused with config_server_url_unset");
+    check(readConfig(config) == startupBytes, "the placeholder Connect changed the configuration");
     service.stop();
     service.start();
     client.awaitVpn("disconnected", "idle", 5000);

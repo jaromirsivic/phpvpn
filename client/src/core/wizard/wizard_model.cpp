@@ -125,7 +125,7 @@ Status WizardModel::validateCurrent() const {
         if (!url) return url.error();
         auto host = url->host;
         std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c); });
-        if (host == "modify-this-url") return Error(ErrorCode::config_invalid_url);
+        if (host == kPlaceholderServerHost) return Error(ErrorCode::config_invalid_url);
     } else if (step_ == WizardStep::serverSecret) {
         if (!secretValid_) return Error(ErrorCode::config_invalid_value, "enter a complete JSON string literal");
     } else if (step_ == WizardStep::identity) {

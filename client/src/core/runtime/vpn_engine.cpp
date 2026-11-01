@@ -325,6 +325,10 @@ Status VpnEngine::connectWithGeneration(std::uint64_t generation, std::optional<
         storedWarnings_ = snapshot->warnings;
     }
     if (!snapshot->config) return Error(snapshot->reasonCode.value_or(ErrorCode::config_invalid_value));
+    // A fresh configuration still carries the placeholder server URL: the
+    // document is valid, but nothing can be contacted. Refused before any
+    // network step so that the clients can offer the Wizard instead of a DNS error.
+    if (isPlaceholderServerUrl(snapshot->config->serverUrl)) return Error(ErrorCode::config_server_url_unset);
     if (beforeConnect_) PHPVPN_TRY(beforeConnect_());
     std::string attemptId;
     PHPVPN_TRY_ASSIGN(attemptId, crypto_.randomUuidV4());
