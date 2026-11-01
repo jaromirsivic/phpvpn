@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import phpvpn.android.appContainer
+import phpvpn.android.bridge.NativeBridge
 import phpvpn.android.bridge.ipc.IpcOutcome
 import phpvpn.android.bridge.ipc.SecretText
 import phpvpn.android.bridge.repository.CommandResult
@@ -33,6 +34,10 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
                     ACTION_DISCONNECT -> log("disconnect ${describe(container.connectActions.disconnect())}")
                     ACTION_STATUS -> log("status ${describe(container.connection.readOnce())}")
                     ACTION_CONFIGURE -> configure(context, intent)
+                    ACTION_CONFIGURE_FILE -> configureFile(context, intent)
+                    // WP11: the whole get-status document on one line (recoveryCount, lastError,
+                    // counters); it holds no secret. Only while the runtime runs.
+                    ACTION_STATUS_JSON -> log("status-json ${statusJson()}")
                     else -> log("unknown action")
                 }
             } finally {
@@ -58,6 +63,26 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
         log("configure ${if (outcome is IpcOutcome.Success) "ok" else "failed ${outcome.javaClass.simpleName}"} autoConnect=$autoConnect")
     }
 
+    /**
+     * WP11 peer tests: a whole configuration document (own virtual IP and a
+     * communication contract with the peer) that the host script wrote with
+     * `run-as` into `filesDir/<file>`. The file is deleted after reading.
+     */
+    private suspend fun configureFile(context: Context, intent: Intent) {
+        val name = intent.getStringExtra(EXTRA_FILE)
+        if (name == null || !name.matches(Regex("[A-Za-z0-9._-]+"))) return log("configure-file failed: bad file name")
+        val file = java.io.File(context.filesDir, name)
+        if (!file.isFile) return log("configure-file failed: no file")
+        val document = SecretText.adopt(file.readText().toCharArray())
+        file.delete()
+        val outcome = context.appContainer.ipcClient.setConfig(document)
+        document.wipe()
+        log("configure-file ${if (outcome is IpcOutcome.Success) "ok" else "failed ${outcome.javaClass.simpleName}"}")
+    }
+
+    private fun statusJson(): String =
+        NativeBridge.nativeStatus()?.decodeToString()?.lines()?.joinToString(" ") { it.trim() } ?: "unavailable"
+
     private fun describe(result: CommandResult): String = when (result) {
         is CommandResult.Accepted -> "accepted state=${result.status.state?.name?.lowercase()}"
         is CommandResult.Failed -> "failed ${result.error.code}"
@@ -81,6 +106,9 @@ class DebugVpnCommandReceiver : BroadcastReceiver() {
         const val ACTION_DISCONNECT = "phpvpn.android.debug.DISCONNECT"
         const val ACTION_STATUS = "phpvpn.android.debug.STATUS"
         const val ACTION_CONFIGURE = "phpvpn.android.debug.CONFIGURE"
+        const val ACTION_CONFIGURE_FILE = "phpvpn.android.debug.CONFIGURE_FILE"
+        const val EXTRA_FILE = "file"
+        const val ACTION_STATUS_JSON = "phpvpn.android.debug.STATUS_JSON"
         const val EXTRA_URL = "url"
         const val EXTRA_AUTO_CONNECT = "autoConnect"
     }
