@@ -24,7 +24,7 @@ object ConfigReplies {
     ): String = buildString {
         append("{\n  \"masterSetup\": {\n")
         append("    \"serverSecret\": \"CHANGE_THIS_SERVER_SECRET\",\n")
-        append("    \"serverUrl\": \"http://127.0.0.1/phpvpn.php\",\n")
+        append("    \"serverUrl\": \"https://change-this-server-url.invalid\",\n")
         append("    \"httpHeaders\": \"Cache-Control: no-cache\\r\\nPragma: no-cache\\r\\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0\",\n")
         append("    \"trustAnyTlsCertificate\": true,\n")
         append("    \"useDefaultServerSecretInWizard\": false,\n")

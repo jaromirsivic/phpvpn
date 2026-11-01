@@ -3,6 +3,7 @@ package phpvpn.android.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -23,11 +24,18 @@ import phpvpn.android.ui.theme.PhpvpnTokens
 enum class NoticeKind { Info, Warn, Error, Success }
 
 /**
- * Callout with an optional bold title (`.notice`). Errors are a polite live
- * region so TalkBack announces them when they appear.
+ * Callout with an optional bold title (`.notice`) and an optional [action]
+ * under the text (one ActionButton, 02 "Server address not set"). Errors are
+ * a polite live region so TalkBack announces them when they appear.
  */
 @Composable
-fun Notice(text: String?, modifier: Modifier = Modifier, kind: NoticeKind = NoticeKind.Info, title: String? = null) {
+fun Notice(
+    text: String?,
+    modifier: Modifier = Modifier,
+    kind: NoticeKind = NoticeKind.Info,
+    title: String? = null,
+    action: (@Composable ColumnScope.() -> Unit)? = null,
+) {
     val colors = PhpvpnTokens.colors
     val (background, foreground, border) = when (kind) {
         NoticeKind.Info -> Triple(colors.noticeInfoBg, colors.noticeInfoFg, colors.noticeInfoBorder)
@@ -56,6 +64,9 @@ fun Notice(text: String?, modifier: Modifier = Modifier, kind: NoticeKind = Noti
                 color = foreground,
                 style = PhpvpnTokens.text.notice,
             )
+        }
+        if (action != null) {
+            Column(Modifier.padding(top = 12.dp), content = action)
         }
     }
 }

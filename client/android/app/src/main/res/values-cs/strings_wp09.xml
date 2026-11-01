@@ -32,7 +32,7 @@
     <string name="wp09_gate_disconnect_failed">VPN se nepodařilo odpojit. Zkus to znovu, nebo ponech připojení.</string>
 
     <!-- 12 Adresa serveru -->
-    <string name="wp09_url_placeholder">Nahraď MODIFY-THIS-URL adresou svého serveru.</string>
+    <string name="wp09_url_placeholder">Nahraď change-this-server-url.invalid adresou svého serveru.</string>
     <string name="wp09_url_invalid">Zadej úplnou adresu http:// nebo https:// bez uživatele, dotazu a fragmentu.</string>
     <string name="wp09_load_error_title">Konfigurace vyžaduje pozornost</string>
     <string name="wp09_load_error_unreadable">Konfigurační soubor nelze přečíst.</string>

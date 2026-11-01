@@ -173,7 +173,7 @@ class WizardDraftTest {
     fun localValidationPerStep() {
         val draft = loaded()
         assertNull(draft.validate(DraftStep.SERVER_URL, null))
-        draft.setUrl("http://MODIFY-THIS-URL/phpvpn.php")
+        draft.setUrl("https://change-this-server-url.invalid")
         assertEquals(LocalProblem.URL_PLACEHOLDER, draft.validate(DraftStep.SERVER_URL, null))
         for (bad in listOf("", "ftp://host/phpvpn.php", "https://user@host/p.php", "https://host/p.php?x=1", "https://host/p.php#f", "https://host:0/")) {
             draft.setUrl(bad)

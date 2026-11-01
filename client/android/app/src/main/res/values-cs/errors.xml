@@ -28,6 +28,7 @@
     <string name="error_config_invalid_json">Konfigurace není platný dokument JSON.</string>
     <string name="error_config_invalid_value">Hodnota v konfiguraci má neočekávaný typ nebo obsah.</string>
     <string name="error_config_invalid_url">URL serveru musí být úplná adresa http nebo https.</string>
+    <string name="error_config_server_url_unset">Adresa serveru zatím není nastavená.</string>
     <string name="error_config_invalid_cidr">Síť VPN není platný prefix sítě IPv4.</string>
     <string name="error_config_invalid_address">Virtuální IP není platná adresa klienta v síti VPN.</string>
     <string name="error_config_invalid_key">Klíč musí mít přesně 64 malých šestnáctkových znaků.</string>

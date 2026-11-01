@@ -52,8 +52,8 @@ class WizardRulesTest {
         assertEquals(WizardRules.UrlCheck.VALID, WizardRules.checkServerUrl("https://vpn.example.com/phpvpn.php"))
         assertEquals(WizardRules.UrlCheck.VALID, WizardRules.checkServerUrl("http://127.0.0.1:8080/relay.php"))
         assertEquals(WizardRules.UrlCheck.VALID, WizardRules.checkServerUrl("HTTPS://VPN.EXAMPLE.COM"))
-        assertEquals(WizardRules.UrlCheck.PLACEHOLDER, WizardRules.checkServerUrl("http://MODIFY-THIS-URL/phpvpn.php"))
-        assertEquals(WizardRules.UrlCheck.PLACEHOLDER, WizardRules.checkServerUrl("https://modify-this-url:443/x.php"))
+        assertEquals(WizardRules.UrlCheck.PLACEHOLDER, WizardRules.checkServerUrl("https://change-this-server-url.invalid"))
+        assertEquals(WizardRules.UrlCheck.PLACEHOLDER, WizardRules.checkServerUrl("http://CHANGE-THIS-SERVER-URL.INVALID:443/x.php"))
         for (bad in listOf(
             "", "vpn.example.com", "ftp://h/", "https://u:p@h/", "https://h/?q", "https://h/#f", "https://h:/",
             "https://h:65536/", "https://h:12a/", "https://-h/", "https://h../", "https://[::1]/", "https://h/a b",

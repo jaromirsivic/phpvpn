@@ -24,6 +24,12 @@
     <string name="disconnected_restarted_text">Android ukončil aplikaci během aktivní VPN. Až budeš virtuální síť potřebovat, připoj se znovu.</string>
     <string name="disconnected_attention_detail">Připojení vyžaduje platnou konfiguraci</string>
     <string name="connect_refused_title">Připojení se nespustilo</string>
+    <!-- 02 placeholder adresy serveru (kPlaceholderServerUrl): upozornění a dialog kódu config_server_url_unset -->
+    <string name="server_url_unset_title">Adresa serveru není nastavená</string>
+    <string name="server_url_unset_notice_text">Před připojením zadejte adresu svého serveru PHPVPN.</string>
+    <string name="server_url_unset_dialog_text">Adresa serveru zatím není nastavená. Chcete ji nastavit teď?</string>
+    <string name="server_url_unset_set_up">Nastavit</string>
+    <string name="server_url_unset_not_now">Teď ne</string>
 
     <!-- 04 Připojování: čtení stavu během pokusu selhalo -->
     <string name="connecting_status_unavailable_title">Průběh není potvrzený</string>

@@ -77,7 +77,7 @@ object RuntimeHarness {
 
     /** The default configuration document (config.h) pointing at [url]. */
     fun document(url: String = serverUrl, autoConnect: Boolean = false): String = fixture("default-config-document.json")
-        .replace("\"http://127.0.0.1/phpvpn.php\"", "\"$url\"")
+        .replace("\"https://change-this-server-url.invalid\"", "\"$url\"")
         .replace("\"autoConnectOnStartup\": false", "\"autoConnectOnStartup\": $autoConnect")
 
     /** A set-config request carrying [document] as its JSON string. */

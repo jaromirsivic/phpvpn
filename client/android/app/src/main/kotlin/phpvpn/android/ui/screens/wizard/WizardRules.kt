@@ -15,8 +15,15 @@ object WizardRules {
     /** `kDefaultServerSecret` (core/config/config.h). */
     const val DEFAULT_SERVER_SECRET = "CHANGE_THIS_SERVER_SECRET"
 
-    /** Host of `kWizardPlaceholderUrl`, compared case-insensitively before any DNS. */
-    const val PLACEHOLDER_HOST = "modify-this-url"
+    /**
+     * Mirror of `kPlaceholderServerHost` (core/config/config.h): the host of the
+     * placeholder `kPlaceholderServerUrl` in the default configuration and in
+     * every new Wizard draft, compared case-insensitively before any DNS.
+     */
+    const val PLACEHOLDER_HOST = "change-this-server-url.invalid"
+
+    /** `kPlaceholderServerUrl`: the server URL of the default configuration and of a new draft. */
+    const val PLACEHOLDER_URL = "https://$PLACEHOLDER_HOST"
 
     /** `kMaxConfigFileBytes`: the whole document, also the escaped header block. */
     const val MAX_CONFIG_FILE_BYTES = 524_288L
@@ -73,7 +80,7 @@ object WizardRules {
     /**
      * `parseServerUrl` plus the Wizard placeholder rule: http or https, no
      * userinfo, query or fragment, a valid host and port; the placeholder host
-     * `MODIFY-THIS-URL` is rejected with its own advice before DNS.
+     * `change-this-server-url.invalid` is rejected with its own advice before DNS.
      */
     fun checkServerUrl(text: String): UrlCheck {
         val host = serverUrlHost(text) ?: return UrlCheck.INVALID

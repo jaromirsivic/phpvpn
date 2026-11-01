@@ -2,7 +2,10 @@ package phpvpn.android.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -26,6 +29,7 @@ import phpvpn.android.ui.screens.settings.EXIT_TAG
 import phpvpn.android.ui.screens.settings.SETTINGS_TAG
 import phpvpn.android.ui.screens.settings.WELCOME_TAG
 import phpvpn.android.ui.screens.traffic.TrafficTags
+import phpvpn.android.ui.screens.wizard.WizardRules
 import phpvpn.android.ui.state.DisconnectReason
 
 /**
@@ -279,6 +283,43 @@ class MainFlowsTest {
         rule.click(rule.text(R.string.welcome_open_editor))
         rule.waitForText(rule.text(R.string.create_default_title))
         assertEquals(0, transport.count("create-default-config"))
+    }
+
+    @Test
+    fun placeholderServerUrl_02_noticeAndRefusedConnectDialogLeadTo12() {
+        transport.respondText("get-config-document", IpcReplies.configDocument(serverUrl = WizardRules.PLACEHOLDER_URL))
+        val nav = rule.showApp(app)
+        rule.waitForTag(ConnectionTags.DISCONNECTED)
+        // The warning replaces "Configuration ready"; Connect stays enabled.
+        rule.waitForTag(ConnectionTags.SERVER_URL_UNSET_NOTICE)
+        assertTrue(rule.hasNoText(rule.text(R.string.disconnected_notice_title)))
+        transport.respondText("connect", IpcReplies.error("config_server_url_unset"))
+        rule.click(rule.text(R.string.action_connect_vpn))
+        rule.waitForTag(ConnectionTags.SERVER_URL_UNSET_DIALOG)
+        rule.waitForText(rule.text(R.string.server_url_unset_dialog_text))
+        assertEquals(1, transport.count("connect"))
+        // Not now closes the question without any further text and stays on 02.
+        rule.onNodeWithTag(ConnectionTags.SERVER_URL_UNSET_DIALOG_NOT_NOW, useUnmergedTree = true).performClick()
+        rule.waitForIdle()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag(ConnectionTags.SERVER_URL_UNSET_DIALOG, useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
+        assertTrue(rule.hasNoText(rule.text(R.string.connect_refused_title)))
+        rule.waitForTag(ConnectionTags.DISCONNECTED)
+        // Set up in the dialog opens 12.
+        rule.click(rule.text(R.string.action_connect_vpn))
+        rule.waitForTag(ConnectionTags.SERVER_URL_UNSET_DIALOG)
+        rule.onNodeWithTag(ConnectionTags.SERVER_URL_UNSET_DIALOG_SET_UP, useUnmergedTree = true).performClick()
+        rule.waitUntil(5_000) { nav.currentDestination?.route == "wizard/url" }
+        assertEquals(2, transport.count("connect"))
+    }
+
+    @Test
+    fun placeholderServerUrl_02_setUpInTheNoticeOpens12() {
+        transport.respondText("get-config-document", IpcReplies.configDocument(serverUrl = WizardRules.PLACEHOLDER_URL))
+        val nav = rule.showApp(app)
+        rule.waitForTag(ConnectionTags.SERVER_URL_UNSET_NOTICE)
+        rule.onNodeWithTag(ConnectionTags.SERVER_URL_UNSET_SET_UP, useUnmergedTree = true).performScrollTo().performClick()
+        rule.waitUntil(5_000) { nav.currentDestination?.route == "wizard/url" }
+        assertEquals(0, transport.count("connect"))
     }
 
     @Test
