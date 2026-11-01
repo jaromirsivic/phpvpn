@@ -20,12 +20,19 @@ permission must be granted again.
 
 | File | Purpose |
 |---|---|
-| `app-debug.apk` | Debug signed application for `arm64-v8a` (phones) and `x86_64` (emulator) |
+| `phpvpn-<version>-debug.apk` | Debug signed application for `arm64-v8a` (phones) and `x86_64` (emulator) |
+| `phpvpn-<version>-arm64-v8a-debug.apk` | The same for phones only |
+| `phpvpn-<version>-x86_64-debug.apk` | The same for the emulator only |
+| `phpvpn-<version>-release-unsigned.apk` | Unsigned release build, cannot be installed as is |
+| `symbols/<abi>/libphpvpn-android.so` | Native library with symbols, for reading crash reports |
+| `SHA256SUMS`, `manifest.json` | Checksums, versions and the results of the build checks |
 
-The APK comes from `gradlew assembleDebug` in `client/android`
-(`client/android/app/build/outputs/apk/debug/app-debug.apk`) or from the
-`phpvpn-android-debug` artifact of the `client-android` GitHub Actions
-workflow. Building it needs the prebuilt OpenSSL and curl, see
+`client/tools/android/make-android-dev.ps1` builds these files into
+`work/android/<version>` and checks them; the `phpvpn-android-debug` artifact
+of the `client-android` GitHub Actions workflow holds the same folder. A plain
+`gradlew assembleDebug` in `client/android` gives the same debug application
+as `client/android/app/build/outputs/apk/debug/app-debug.apk`. Building needs
+the prebuilt OpenSSL and curl, see
 [client/tools/android/README.md](../client/tools/android/README.md).
 
 ## Requirements
@@ -43,7 +50,7 @@ From a computer with the Android platform tools and USB debugging enabled on
 the phone:
 
 ```sh
-adb install -r app-debug.apk
+adb install -r phpvpn-<version>-debug.apk
 ```
 
 `-r` replaces an installed build of the same application and keeps its data,
