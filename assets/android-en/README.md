@@ -19,7 +19,7 @@ Each screen includes a phone mockup and a design note, feature source and scenar
 
 The Android client implements this design in [client/android](../../client/android) on the `android` branch, following [plan-android-v001.md](../../Plans/2026-10-31-09-40-08/plan-android-v001.md) and its [screen map](../../Plans/2026-10-31-09-40-08/android-screen-map.md). The design itself does not change and remains the binding visual and behavioral reference; where the implementation differs, the work package reports in `client/tests/android/` record the deviation.
 
-The implementation covers all 49 screens and adds one screen the design does not have: **36a Create default configuration**, a confirmation dialog over 00, 10 and 36 that shows the real configuration path before the default file is written. Screen 03 is the system VPN permission dialog owned by Android. Screen 09, the service notification, belongs to the VPN service work package (WP05). <!-- WP05: ověřit proti reportu -->
+The implementation covers all 49 screens and adds one screen the design does not have: **36a Create default configuration**, a confirmation dialog over 00, 10 and 36 that shows the real configuration path before the default file is written. Screen 03 is the system VPN permission dialog owned by Android. Screen 09 is the notification of the foreground VPN service. As implemented, tapping it opens the app like the launcher icon instead of always showing Connection, so an open editor or wizard is not lost, and it also disappears after a connection error, not only after a confirmed disconnection.
 
 | Screens | Registered in (`ui/navigation`) | Code (`client/android/app/src/main/kotlin/phpvpn/android/`) |
 | --- | --- | --- |
@@ -36,7 +36,7 @@ The implementation covers all 49 screens and adds one screen the design does not
 | 36a | dialog in `EditorGraph.kt` | `ui/screens/editor` |
 | 25, 33, 46 | `EditorGraph.kt`, shared by every saving flow | `ui/screens/save` |
 | 32 | dialog over every editing flow | `ui/navigation/UnsavedChanges.kt` |
-| 03, 09 | system dialog, service notification | `ui/state/Platform.kt` (consent), VPN service (WP05) |
+| 03, 09 | system dialog, service notification | `ui/state/Platform.kt` (consent), `service/PhpvpnVpnService.kt` and `service/VpnNotifications.kt` (notification) |
 
 The graphs are in `ui/navigation`, the shared components and the theme tokens taken from `styles.css` in `ui/components` and `ui/theme`. English texts are in `res/values`, Czech texts in `res/values-cs`.
 

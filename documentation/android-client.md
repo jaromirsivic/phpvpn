@@ -88,14 +88,22 @@ Troubleshooting).
 
 ## Notification
 
-<!-- WP05: ověřit proti reportu -->
-While the client is connecting, connected or reconnecting, it runs as a
-foreground service with a notification in the **VPN connection** channel. The
-notification shows the state, the server and the virtual IP, offers
-**Disconnect** and opens the Connection screen when tapped. It disappears when
-the client is disconnected. The app needs the Android
-notification permission to show it; if you refuse it, the VPN keeps working
-and the app explains this once.
+While a connection is being set up, is up or is being restored, the client
+runs as a foreground service with a quiet, ongoing notification in the
+**VPN connection** channel. The title is the state (Connecting, Connected,
+Reconnecting, Disconnecting); the text is the server host and your virtual IP,
+for example `vpn.example.org · 10.99.99.2`. While connecting, connected or
+reconnecting it offers **Disconnect**. Tapping it opens the app like the
+launcher icon: a closed app starts on the Connection screen, an open app comes
+back where you left it, so an unsaved edit is not lost.
+
+The notification and the service end when the client is confirmed
+disconnected, and also after a connection error, because then nothing is
+running any more. A disconnection that is not confirmed never removes it.
+
+The first time you tap **Connect**, the app asks for Android's notification
+permission. If you refuse, the VPN still works and the app explains once that
+the notification will be missing.
 
 ## Running in the background and battery
 
@@ -180,8 +188,8 @@ Logs never contain keys, secrets or packet content.
 |---|---|
 | **Status unavailable** | The app did not get the connection state within its time limit. Nothing was confirmed or changed. **Check status again** reads it again. |
 | **VPN permission denied** | The system VPN dialog was cancelled, or the permission was revoked in the system settings (error `tunnel_permission_missing`). Tap **Request permission again** and accept the dialog. |
-| **Another VPN app took over** | Another VPN app was started and Android ended phpvpn. This is a normal disconnection, phpvpn does not reconnect by itself. Tap **Connect** to take the VPN back. |
-| **The connection ended** (process restarted) <!-- WP05: ověřit proti reportu --> | Android stopped the app while it was connected. The client reconnects by itself only if you had connected, the VPN permission is still granted and the configuration is valid, and at most three times within 10 minutes. Otherwise connect again and consider the battery optimisation exemption. |
+| **Another VPN app took over** | Another VPN app was started and Android ended phpvpn. This is a normal disconnection, phpvpn does not reconnect by itself. Tap **Connect** to take the VPN back. Removing phpvpn with **Forget VPN** in Android's VPN settings shows the same message, because Android reports both cases the same way. |
+| **The connection ended** | Android stopped the app while the VPN was active. If Android restarts the VPN service, the client reconnects by itself only if you had connected, the VPN permission is still granted and the configuration is valid, at most three times within 10 minutes. After such a stop with the VPN up, Android 14 and 15 often do not restart the service at all; the next time the app starts (for example when you open it), it shows this message instead and does not reconnect. Connect again, and consider the battery optimisation exemption. |
 | **Disconnection unconfirmed** | The client did not confirm the disconnection in time. **Check status** shows the real state, **Try disconnecting again** sends a new request. |
 | **Configuration needs attention** | The configuration is missing, invalid or unreadable. Use the setup wizard, or the editor when the document is readable. |
 | `config_directory_security_invalid` | The private configuration directory failed its safety checks. Restart the app; it repairs the directory at every start. |
