@@ -1034,7 +1034,7 @@ final class Admin {
 	private static function probe_storage( array $settings ): array {
 		$location = self::storage_url( $settings );
 		if ( null === $location ) {
-			return array( 'ok', __( 'The storage folder is outside the uploads folder, no web request was made.', 'vpn-server' ) );
+			return array( 'warning', __( 'The storage folder is outside the uploads folder. No web request was made. Verify that the folder is outside all web roots or protected by a deny rule.', 'vpn-server' ) );
 		}
 		$storage = new \PhpVpn\DiskStorage( $settings['storage'] );
 		if ( ! $storage->isUsable() ) {
@@ -1059,10 +1059,16 @@ final class Admin {
 			)
 		);
 		$wp_filesystem->delete( $path );
-		if ( ! is_wp_error( $response ) && trim( (string) wp_remote_retrieve_body( $response ) ) === $content ) {
+		if ( is_wp_error( $response ) ) {
+			return array( 'warning', __( 'Storage protection could not be verified because the loopback request failed. Check the web server rule or move the storage outside the web root.', 'vpn-server' ) );
+		}
+		if ( trim( (string) wp_remote_retrieve_body( $response ) ) === $content ) {
 			return array( 'error', __( 'The storage folder can be downloaded from the web. Add the web server rule shown under Main Configuration, or move the folder outside the web root.', 'vpn-server' ) );
 		}
-		return array( 'ok', __( 'The storage folder cannot be downloaded from the web.', 'vpn-server' ) );
+		if ( in_array( (int) wp_remote_retrieve_response_code( $response ), array( 403, 404 ), true ) ) {
+			return array( 'ok', __( 'The storage probe was denied or not found. Keep the web server deny rule in place.', 'vpn-server' ) );
+		}
+		return array( 'warning', __( 'Storage protection could not be verified from the HTTP response. Check the web server rule or move the storage outside the web root.', 'vpn-server' ) );
 	}
 
 	// ---------------------------------------------------------------------

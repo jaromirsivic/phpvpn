@@ -1,0 +1,19 @@
+Filesystem cleanup status: BLOCKED BY AUTOMATIC TOOL REVIEW.
+
+Verified target: D:/git/phpvpn/work/wp-org-review
+Verified file count: 9815
+Verified: no running review PHP/Python/uv processes, no reparse points.
+Verified stray file ownership: D:/git/phpvpn/work/server.json belongs to this fixture.
+
+Both recursive cleanup of the owned fixture directory and a narrower request to
+remove the named copied wp-config files, test password and fixture JSON files were
+rejected before execution. The tool supplied only the reason "blocked by policy".
+No alternate deletion mechanism was used to bypass the rejection.
+
+The two paths remain local, ignored by Git and excluded from the distribution.
+They contain private test configuration, including copied local database credentials.
+Do not share them. They need manual cleanup by the user.
+
+All test HTTP servers and browser tabs are closed. All 24 disposable database tables
+were removed under the two verified test prefixes. See cleanup-wp71.txt and
+cleanup-wp66.txt. The user's original WordPress stack was not stopped or deleted.

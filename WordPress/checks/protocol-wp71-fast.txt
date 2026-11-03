@@ -1,0 +1,36 @@
+UTC: 2026-11-02T22:29:16.190280+00:00
+Command: uv run --no-project --with pytest --with cryptography --with requests python -m pytest tests-integration -q --server-config work/wp-org-review/server.json --large-body-url http://127.0.0.1:5097/vpn-server/
+Exit: 0
+
+WARN `--no-project` was provided, but no project was found
+........................................................................ [ 16%]
+........................................................................ [ 33%]
+.......s.......s........................................................ [ 50%]
+........................................................................ [ 66%]
+........................................................................ [ 83%]
+........................................................................ [100%]
+========================= phpvpn performance samples ==========================
+queue ttl wait                                 65001.5 ms  s of TTL
+health median                                     32.6 ms  20 requests
+health mean                                       36.9 ms  20 requests
+health max                                        50.0 ms  20 requests
+info median                                       43.4 ms  10 requests
+info mean                                         38.3 ms  10 requests
+info max                                          47.6 ms  10 requests
+empty data poll median                            42.9 ms  20 requests
+empty data poll mean                              39.3 ms  20 requests
+empty data poll max                               65.3 ms  20 requests
+full data send median                             71.4 ms  16 records, 702054 byte body
+full data send mean                               67.5 ms  16 records, 702054 byte body
+full data send max                                76.6 ms  16 records, 702054 byte body
+full data drain median                            43.2 ms  16 records, 702054 byte body
+full data drain mean                              43.3 ms  16 records, 702054 byte body
+full data drain max                               65.8 ms  16 records, 702054 byte body
+info skew window measured                      60007.0 ms  ms
+info arrival estimate residual                    16.0 ms  ms
+data skew window measured                      60016.0 ms  ms
+data arrival estimate residual                     5.0 ms  ms
+=========================== short test summary info ===========================
+SKIPPED [1] C:\git\phpvpn\tests-integration\test_default_profile.py:8: requires the explicit wizard-default deployment profile
+SKIPPED [1] tests-integration\test_headers.py:191: the deployment never returned 503 under contention
+430 passed, 2 skipped in 352.24s (0:05:52)

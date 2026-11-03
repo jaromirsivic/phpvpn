@@ -1,0 +1,64 @@
+UTC: 2026-11-02T22:30:33.254812+00:00
+Command: D:/git/phpvpn/work/wp-org-review/php82/php.exe server/php/tests/tests.php
+Exit: 0
+
+
+== Cryptography
+  [ok] AES-256-GCM known answer self test
+  [ok] AES-256-GCM rejects single bit changes and hides plaintext
+  [ok] GMAC over empty plaintext with non empty AAD
+  [ok] HMAC-SHA-256 RFC 4231 vectors
+  [ok] HKDF-SHA-256 RFC 5869 vectors
+  [ok] Key derivation separation and sensitivity
+  [ok] SERVER_SECRET normalization
+  [ok] Poll intervals of an embedding host reach info
+
+== Wire format
+  [ok] Canonical base64url
+  [ok] Strict millisecond timestamps
+  [ok] Address and UUID validation
+  [ok] Flat JSON object scanner
+  [ok] Strict data record scanner
+
+== Routing
+  [ok] Status page and method routing
+  [ok] Insecure secret warning
+  [ok] Embedded status template and complete warning removal
+  [ok] Status page shows received headers for the Configuration Wizard
+
+== health
+  [ok] Successful health response is authenticated
+  [ok] health rejects malformed auth-none
+
+== info
+  [ok] Successful info response decrypts
+  [ok] info authentication and skew
+
+== data
+  [ok] Empty poll returns only result and mac
+  [ok] Store and forward between two clients
+  [ok] Records addressed to the sender are returned immediately
+  [ok] data authentication failures
+  [ok] NDJSON framing and limits
+  [ok] Deferred delivery when the destination queue is full
+  [ok] A full destination does not affect another destination
+
+== Storage
+  [ok] Atomic claim, expiry and sweep
+  [ok] Best effort lastSeen marker
+  [ok] info reports lastSeen after a data request
+  [ok] Storage failures never break the protocol result
+
+== Replay
+  [ok] A replayed request inside the window is processed again
+  [ok] No replay or nonce state is persisted
+
+== InfoExtensions
+  [ok] Cross-language fixed canonical vectors
+  [ok] Stored snapshot validation and bounded temp cleanup
+  [ok] Authenticated publication, privacy and compatible touch
+  [ok] Validation, signed presence and size boundaries
+
+----------------------------------------
+assertions passed: 552
+ALL TESTS PASSED

@@ -1,0 +1,26 @@
+UTC: 2026-11-02T23:00:21.882996+00:00
+Command: uv run --no-project python WordPress/tests/lifecycle.py --php D:/git/phpvpn/work/wp-org-review/php82/php.exe --wp-cli D:/nginx_wordpress/tools/wp-cli.phar --site D:/git/phpvpn/work/wp-org-review/wp66/wordpress
+Exit: 0
+
+WARN `--no-project` was provided, but no project was found
+PASS: Prepared managed storage, settings, transient and fast route.
+Plugin 'vpn-server' deactivated.
+Success: Deactivated 1 of 1 plugins.
+PASS: Deactivation preserves settings and data and removes the fast route.
+Plugin 'vpn-server' activated.
+Success: Activated 1 of 1 plugins.
+PASS: Reactivation preserves configuration.
+Plugin 'vpn-server' deactivated.
+Success: Deactivated 1 of 1 plugins.
+Ran uninstall procedure for 'vpn-server' plugin without deleting.
+Success: Uninstalled 1 of 1 plugins.
+PASS: Uninstall removes settings, transient, managed storage and loader.
+Plugin 'vpn-server' activated.
+Success: Activated 1 of 1 plugins.
+PASS: Prepared administrator-selected storage.
+Plugin 'vpn-server' deactivated.
+Success: Deactivated 1 of 1 plugins.
+Ran uninstall procedure for 'vpn-server' plugin without deleting.
+Success: Uninstalled 1 of 1 plugins.
+PASS: Uninstall preserves administrator-selected storage.
+All lifecycle checks passed. Plugin files retained, plugin inactive and uninstalled.

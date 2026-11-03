@@ -1,0 +1,38 @@
+uv : WARN `--no-project` was provided, but no project was found
+At line:2 char:1
++ uv -q run --no-project --with pytest --with cryptography --with reque ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARN `--no-proj...oject was found:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+........................................................................ [ 16%]
+........................................................................ [ 33%]
+.......s.......s........................................................ [ 50%]
+........................................................................ [ 66%]
+........................................................................ [ 83%]
+........................................................................ [100%]
+========================= phpvpn performance samples ==========================
+queue ttl wait                                 65000.4 ms  s of TTL
+health median                                     32.9 ms  20 requests
+health mean                                       31.4 ms  20 requests
+health max                                        50.0 ms  20 requests
+info median                                       45.9 ms  10 requests
+info mean                                         40.1 ms  10 requests
+info max                                          57.8 ms  10 requests
+empty data poll median                            35.2 ms  20 requests
+empty data poll mean                              30.7 ms  20 requests
+empty data poll max                               50.3 ms  20 requests
+full data send median                             47.8 ms  16 records, 702054 byte body
+full data send mean                               48.6 ms  16 records, 702054 byte body
+full data send max                                56.0 ms  16 records, 702054 byte body
+full data drain median                            27.9 ms  16 records, 702054 byte body
+full data drain mean                              28.1 ms  16 records, 702054 byte body
+full data drain max                               41.7 ms  16 records, 702054 byte body
+info skew window measured                      59985.5 ms  ms
+info arrival estimate residual                     2.5 ms  ms
+data skew window measured                      59984.5 ms  ms
+data arrival estimate residual                    -1.5 ms  ms
+=========================== short test summary info ===========================
+SKIPPED [1] C:\git\phpvpn\tests-integration\test_default_profile.py:8: requires the explicit wizard-default deployment profile
+SKIPPED [1] tests-integration\test_headers.py:191: the deployment never returned 503 under contention
+430 passed, 2 skipped in 363.41s (0:06:03)

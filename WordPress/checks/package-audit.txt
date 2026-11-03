@@ -1,0 +1,8 @@
+UTC: 2026-11-02T22:29:26.340472+00:00
+Command: uv run --no-project python work/wp-org-review/audit-package.py
+Exit: 0
+
+WARN `--no-project` was provided, but no project was found
+PASS: ZIP integrity, exact source bytes, 15-file manifest, SHA-256, safe paths, version consistency, author, contributors, readme length/tags and license.
+PASS: No test administrator password or generated fixture server secrets in the ZIP. No configuration, nested ZIP, repository metadata or credential files.
+SHA256 73d3634be9feed337ee1d4252c190adf128c89068951a70415ff896a47ef695c

@@ -616,7 +616,7 @@ $runner->run('Status page and method routing', function (Runner $t): void {
     try {
         $page = $harness->call('', 'GET', null, '');
         $t->same(200, $page->status, 'status page');
-        $t->ok(str_contains($page->body, '<h1>PHPVPN server is running</h1>'), 'H1 present');
+        $t->ok(str_contains($page->body, '<h1>VPN server is running</h1>'), 'H1 present');
         $t->ok(str_contains($page->headers['Content-Type'], 'text/html'), 'html content type');
 
         $post = $harness->call('', 'POST', null, '');
@@ -655,7 +655,9 @@ $runner->run('Insecure secret warning', function (Runner $t): void {
 });
 
 $runner->run('Embedded status template and complete warning removal', function (Runner $t): void {
-    $mockup = trim((string) file_get_contents(dirname(__DIR__, 3) . '/assets/index.html'));
+    // The historical assets/index.html design predates the client download controls.
+    // Keep the current public response snapshot local to this test suite.
+    $mockup = trim((string) file_get_contents(__DIR__ . '/fixtures/status-page.html'));
     foreach ([true, false] as $insecure) {
         $writer = new BufferedResponseWriter();
         (new \PhpVpn\StatusPageHandler())->handle($writer, $insecure, []);

@@ -8,22 +8,22 @@ Stable tag: 1.0.4
 License: MIT
 License URI: https://opensource.org/license/mit
 
-Runs a VPN server on this site, enabling individuals and small businesses to quickly set up a lightweight virtual private network.
+Connect your own devices in a private IPv4 network using a self-hosted PHPVPN relay and the PHPVPN desktop clients.
 
 == Description ==
 
 This is an implementation of PHPVPN (Packet Handoff Protocol VPN) for WordPress. To connect, please install the PHPVPN client for Windows, macOS, or Linux.
 
-VPN Server turns a WordPress site into a PHPVPN server. PHPVPN connects your own computers and servers into one private IPv4 network (10.99.99.0/24) over ordinary HTTPS, so it works wherever a web page can be opened, even behind NAT and firewalls that allow nothing else.
+VPN Server turns a WordPress site into a PHPVPN server. PHPVPN connects your own computers and servers into one private IPv4 network (10.99.99.0/24) over ordinary HTTPS. Clients initiate outgoing requests, so no incoming port forwarding is needed on the client devices. A host, firewall or security plugin may still block or limit this traffic.
 
 The plugin does not route your devices to the internet and does not hide your public IP address. It only forwards traffic between your own PHPVPN clients.
 
 **How it works**
 
 * Every client polls the Server URL over HTTP or HTTPS and exchanges small encrypted messages with it.
-* Payloads are encrypted end to end with AES-256-GCM between each pair of clients. The VPN server stores only ciphertext and cannot read it, the payload keys never reach the server.
+* Payloads are encrypted end to end with AES-256-GCM between each pair of clients. The VPN server stores encrypted payloads alongside routing metadata. It cannot decrypt the payloads because the payload keys never reach the server.
 * Requests are authenticated with HMAC-SHA-256 using the server secret and a per client access key.
-* Messages wait in a short lived queue on disk for at most 60 seconds and are deleted after delivery.
+* Queued messages expire after 60 seconds and are deleted after delivery. Expired files are removed by request-driven maintenance, so they can remain on disk while the server is idle.
 
 **Features**
 
@@ -32,9 +32,20 @@ The plugin does not route your devices to the internet and does not hide your pu
 * Client App Download Links: a separate section below Clients with an editable list of the entries offered in the select box of the status page, prefilled with the PHPVPN downloads for Windows, macOS and Linux and the source code link.
 * Checks and a self test of the permalinks, HTTPS, the endpoint and the storage protection.
 * Fast: client requests are answered right after the plugins load, before the theme. The optional fast route answers them even before other plugins load.
-* No external services, no tracking, no ads. All cryptography runs in plain PHP without extensions.
+* No vendor service, subscription, telemetry or advertising. The protocol cryptography runs in plain PHP without an additional cryptography extension.
 
-The PHPVPN clients and the protocol specification are available from [www.pilandrome.com](https://www.pilandrome.com).
+The PHPVPN clients are available from [www.pilandrome.com](https://www.pilandrome.com). The [source repository](https://github.com/pilandrome/phpvpn) includes the client source, protocol specification and build instructions. No client application is installed or executed on the WordPress server.
+
+Developed by Jaromír Šivic, an independent developer. The plugin code and included tutorial image are distributed under the MIT license in LICENSE.txt.
+
+**Requirements and safe deployment**
+
+* WordPress 6.6 or newer, PHP 8.2 or newer with 64-bit integers, pretty permalinks and writable local storage.
+* Use HTTPS and exclude the endpoint from page caching, CDN caching and proxy response caching.
+* The initial server secret is random. Initial client access keys are deliberately predictable for compatibility with the client wizard. Anyone who knows the shared server secret can impersonate a client whose default key is unchanged. Use New Key for every client requiring separate authentication, distribute the configuration privately and remove unused clients.
+* Use private storage outside every web root where possible. Apache/IIS guard files require a server configuration that honors them. nginx requires an explicit deny rule. Test the actual deployment.
+* The plugin exposes a polling endpoint. Account for PHP workers, bandwidth, storage and abuse protection, and check your hosting provider's terms. It does not provide DDoS protection.
+* Multisite is supported through per-site activation only. Network activation is refused. Only a network administrator can manage the shared fast route.
 
 == Installation ==
 
@@ -50,7 +61,7 @@ The PHPVPN clients and the protocol specification are available from [www.piland
 
 = Can I run it on shared hosting? =
 
-Technically yes, the plugin needs only 64-bit PHP 8.2 and a writable folder. Many hosting providers forbid proxy or VPN services in their terms, though. Check the terms of your provider first.
+It needs a working WordPress installation, 64-bit PHP 8.2 or newer, pretty permalinks and a writable folder. Many hosting providers forbid proxy or VPN services in their terms. Check the terms and resource limits of your provider first.
 
 = Why do the clients poll so often? =
 
@@ -76,18 +87,53 @@ In Settings, VPN Server, use the separate Client App Download Links section belo
 
 It writes wp-content/mu-plugins/vpn-server-fast-route.php, which answers client requests before the regular plugins load. You install and remove it in the settings, and deactivating VPN Server removes it.
 
+The fast route is off by default. Because it runs before regular plugins, security and logging plugins may not see VPN requests. The VPN protocol still authenticates its requests. Do not enable it when those other plugins must inspect the endpoint. A pre-existing file owned by another tool is not overwritten.
+
+= Does the public status page connect to the developer's website automatically? =
+
+No. The status page is on by default, with local JavaScript and a local tutorial image. Its download selector contains functional links to the required client software and source code. Only following a link contacts its destination. Administrators can change or remove every entry in Client App Download Links, or disable the status page. There is no author-credit footer or promotional backlink on the public page.
+
+= What happens when I deactivate or delete the plugin? =
+
+Deactivation stops the endpoint and removes the managed fast route, except while another site in a multisite network still uses the plugin. Settings and queued data remain for reactivation. Deleting the plugin removes its settings and self-test transient and attempts to remove the storage folder it created using the WordPress filesystem API. An administrator-selected storage folder is preserved and must be cleaned up manually. Filesystem permissions can prevent removal. Backup copies are outside the plugin's control.
+
 == Privacy ==
 
-The plugin stores its settings (server secret, client VPN addresses and access keys) in the WordPress options table. Its storage folder holds encrypted client messages for at most 60 seconds, and per client a small info.json file with the time it was last seen and the masked list of its communication contracts, which the client replaces whenever it publishes a new one. Uninstalling the plugin deletes the storage folder it created. It does not store IP addresses, does not use cookies and does not contact any external service.
+The plugin stores the server secret, client VPN addresses and access keys, endpoint and other configuration in the WordPress options table. These authentication secrets are readable to a site administrator and anyone with database or backup access. Exported config.json files contain credentials and must be shared privately.
 
-The status page shows a visitor the request headers of their own request (without cookies, credentials and proxy headers), so they can copy them into the client. The self test in the settings sends requests from the site to its own Server URL and storage folder only.
+The storage folder holds encrypted client payloads and routing metadata, including virtual IPv4 addresses, message identifiers and expiry times. Messages stop being eligible for delivery after 60 seconds. Physical removal of expired files is request-driven and may occur later, especially while the server is idle. Per-client info.json files retain last-seen metadata and masked communication contracts until replaced or the storage is removed. Masked contracts do not contain payload keys.
+
+The plugin does not deliberately log clients' public IP addresses, set its own cookies or send telemetry. WordPress login cookies and the host's, proxy's or security plugins' access logs operate independently. Those logs may include public IP addresses. The site administrator controls retention and access to storage, logs and backups.
+
+The status page shows a visitor the request headers of their own request, omitting Cookie, Authorization and common proxy headers, so they can copy them into the client. Custom headers may still contain sensitive information, so review them before copying or sharing. The self test in the settings sends requests from the site to its own Server URL and storage folder only.
+
+== External connections ==
+
+No account, license server or hosted vendor service is required. The plugin answers incoming PHPVPN client requests. Its administrator-initiated self-test uses the WordPress HTTP API for loopback requests to this site's configured URL. It does not download executable code or implement an external updater.
+
+The default client download links point to https://www.pilandrome.com/downloads/phpvpn/client/1.x/ and the source link points to https://github.com/pilandrome/phpvpn. Clicking a link makes the visitor's browser contact that destination, which receives ordinary web request information. These are optional, editable download links rather than a required service API. All runtime scripts and images are included locally.
+
+== Development ==
+
+All plugin PHP and JavaScript is readable in this distribution. The maintained source is server/wordpress/version7/vpn-server in the source repository. includes/server-core.php is generated from server/php/phpvpn.php by tools/build-wordpress-plugin.py. The WordPress status page has its own template and is not copied from the standalone server.
+
+From a source checkout, run `uv run --no-project python tools/build-wordpress-plugin.py` to regenerate the core, then `uv run --no-project python tools/build-wordpress-plugin.py --check`. `uv run --no-project python WordPress/build-release.py` creates the submission ZIP and SHA-256 manifest. Development tools and test fixtures are not required on a production site.
 
 == Changelog ==
 
+= 1.0.4 =
+* Initial WordPress.org submission package aligned with PHPVPN server 1.0.4.
+* Default maximum polling interval is 3600 ms.
+* Include the full MIT license and clarify privacy, retention and client requirements.
+* Remove the public author-credit footer from the WordPress status page.
+* Report inconclusive storage protection tests accurately.
+* Preserve an existing fast-route file owned by another tool.
+* Remove the PHP runtime identification header from VPN endpoint responses.
+
 = 1.0.1 =
-* First release, PHPVPN protocol version 1.
+* Initial development release, PHPVPN protocol version 1.
 
 == Upgrade Notice ==
 
-= 1.0.1 =
-First release.
+= 1.0.4 =
+Initial directory submission. Existing settings are retained. Review storage protection and replace predictable client access keys where separate client authentication is required.

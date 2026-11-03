@@ -1,0 +1,72 @@
+UTC: 2026-11-02T22:30:51.842615+00:00
+Command: uv run --no-project python WordPress/tests/lifecycle.py --php D:/nginx_wordpress/php8.5.9/php.exe --wp-cli D:/nginx_wordpress/tools/wp-cli.phar --site D:/git/phpvpn/work/wp-org-review/site
+Exit: 1
+
+WARN `--no-project` was provided, but no project was found
+PASS: Prepared managed storage, settings, transient and fast route.
+Traceback (most recent call last):
+  File "D:\git\phpvpn\WordPress\tests\lifecycle.py", line 109, in <module>
+    main()
+    ~~~~^^
+  File "D:\git\phpvpn\WordPress\tests\lifecycle.py", line 62, in main
+    print(wp('plugin', 'deactivate', 'vpn-server'))
+          ~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\git\phpvpn\WordPress\tests\lifecycle.py", line 31, in wp
+    assert marker not in result.stdout + result.stderr, result.stdout + result.stderr
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Plugin 'vpn-server' deactivated.
+Success: Deactivated 1 of 1 plugins.
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+Deprecated: Using null as an array offset is deprecated, use an empty string instead in phar://D:/nginx_wordpress/tools/wp-cli.phar/vendor/wp-cli/php-cli-tools/lib/cli/Colors.php on line 95
+

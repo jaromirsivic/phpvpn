@@ -1,0 +1,19 @@
+UTC: 2026-11-02T22:28:13.160310+00:00
+Command: uv run --no-project python WordPress/tests/build-regression.py
+Exit: 0
+
+WARN `--no-project` was provided, but no project was found
+Wrote server\wordpress\version7\vpn-server\includes\server-core.php from phpvpn.php 1.0.4.
+Wrote D:\git\phpvpn\work\wp-build-regression-p0yqp0h1\vpn-server-1.0.4.zip.
+VPN Server plugin 1.0.4 is up to date.
+D:\git\phpvpn\WordPress\vpn-server-1.0.4.zip
+15 files, 84907 bytes
+SHA256 73d3634be9feed337ee1d4252c190adf128c89068951a70415ff896a47ef695c
+VPN Server plugin 1.0.4 is up to date.
+D:\git\phpvpn\WordPress\vpn-server-1.0.4.zip
+15 files, 84907 bytes
+SHA256 73d3634be9feed337ee1d4252c190adf128c89068951a70415ff896a47ef695c
+PASS: Actual core regeneration preserves both independent status templates.
+PASS: distribution.zip contains the maintained footer-free WordPress template.
+PASS: vpn-server-1.0.4.zip contains the maintained footer-free WordPress template.
+PASS: Submission ZIP is byte-reproducible and contains the same footer-free template.

@@ -1,0 +1,7 @@
+UTC: 2026-11-02T23:00:11.809633+00:00
+Command: uv run --no-project python work/wp-org-review/verify-installed.py
+Exit: 0
+
+WARN `--no-project` was provided, but no project was found
+PASS: site contains exactly all 15 files of the final ZIP, byte for byte.
+PASS: wp66/wordpress contains exactly all 15 files of the final ZIP, byte for byte.

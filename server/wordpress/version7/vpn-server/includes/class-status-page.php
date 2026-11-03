@@ -151,7 +151,6 @@ final class Status_Page {
 </section>
 <noscript>JavaScript must be enabled so that a key can be generated and copied and HTTP headers can be viewed.</noscript>
 </main>
-<p id="vpn-server-footer">Developed by <a href=https://www.pilandrome.com>www.pilandrome.com</a> (MIT License)</p>
 <dialog id="vpn-server-dialog">
 <form method=dialog><button id="vpn-server-close" aria-label=Close>&times;</button>
 <h2>HTTP headers</h2>

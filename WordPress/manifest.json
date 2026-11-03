@@ -1,0 +1,83 @@
+{
+  "plugin": "vpn-server",
+  "version": "1.0.4",
+  "archive": "vpn-server-1.0.4.zip",
+  "sha256": "73d3634be9feed337ee1d4252c190adf128c89068951a70415ff896a47ef695c",
+  "files": [
+    {
+      "path": "vpn-server/LICENSE.txt",
+      "bytes": 1093,
+      "sha256": "4e51f41114973233ddcdebccf4c0368bd2552c4f3273888eb959971054977465"
+    },
+    {
+      "path": "vpn-server/assets/admin.css",
+      "bytes": 11893,
+      "sha256": "13806dc53e5a3f0ce48e06dd699eaf388d9e6d6896f273e253bc98ca978633f3"
+    },
+    {
+      "path": "vpn-server/assets/admin.js",
+      "bytes": 9462,
+      "sha256": "5182877a8124e189fdcd361ab32f39a8ed50b275ba8df0d8794c73f30e424380"
+    },
+    {
+      "path": "vpn-server/assets/status-page.js",
+      "bytes": 2903,
+      "sha256": "4440e1698d2e3a6d23c4500d9cb949bcb73aabe5b170dcb0e9359dc9b2b9f9fe"
+    },
+    {
+      "path": "vpn-server/assets/tutorial.png",
+      "bytes": 17402,
+      "sha256": "467dc50cb05babf055cf85f65fdfd0b6022ea4ececf462e0e43cfc7888b4c892"
+    },
+    {
+      "path": "vpn-server/includes/class-admin.php",
+      "bytes": 58272,
+      "sha256": "367e8eb2962fea2c41a94c90391bb2095521710d1c3673b55b489b4eab2d68ae"
+    },
+    {
+      "path": "vpn-server/includes/class-fast-route.php",
+      "bytes": 5281,
+      "sha256": "0a9f07804eba70a2500780888daef747104c50cb61406b9f8b12ac13ae3f4047"
+    },
+    {
+      "path": "vpn-server/includes/class-server.php",
+      "bytes": 6103,
+      "sha256": "7011eef8e7360c6280bc9ef30099984e85a3230b77c6dec328ddff97a97d814a"
+    },
+    {
+      "path": "vpn-server/includes/class-settings.php",
+      "bytes": 12906,
+      "sha256": "68844b79f67f7bf965e82e06079a04acc7dc93d52ce338194f9471640c53c1f4"
+    },
+    {
+      "path": "vpn-server/includes/class-status-page.php",
+      "bytes": 10867,
+      "sha256": "b4ae9d886e5f39a9d521b7cfac76ce44f53533632b049f879be848c717cc61e1"
+    },
+    {
+      "path": "vpn-server/includes/server-core.php",
+      "bytes": 91025,
+      "sha256": "35ce36b810fa2ef67cecb6e4239a4fee18891f6a11df344ab2b3f0b1660de271"
+    },
+    {
+      "path": "vpn-server/languages/vpn-server.pot",
+      "bytes": 17195,
+      "sha256": "ffa102eeb15d42677bc5e2c149dacb6960b8f75e9bfad0a1dd73dfe65e2c417e"
+    },
+    {
+      "path": "vpn-server/readme.txt",
+      "bytes": 13219,
+      "sha256": "a8464e99e55829d237419a5b7db8160bce51a74edbd7172ddcacbcbb44cb7c7a"
+    },
+    {
+      "path": "vpn-server/uninstall.php",
+      "bytes": 1271,
+      "sha256": "b75c7a84d024bc09363013c1e9a5637a381842821e3df6c09c404e6de5631e21"
+    },
+    {
+      "path": "vpn-server/vpn-server.php",
+      "bytes": 1318,
+      "sha256": "8aecb7381fa45417476a1b9ed8e807b33dcc15688d577ad759fbad3becbace42"
+    }
+  ]
+}

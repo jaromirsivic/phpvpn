@@ -69,6 +69,10 @@ final class Server {
 		require_once __DIR__ . '/server-core.php';
 		require_once __DIR__ . '/class-status-page.php';
 
+		// The standalone runtime removes this header too. Do it only for this endpoint,
+		// without changing PHP settings or the headers of ordinary WordPress requests.
+		header_remove( 'X-Powered-By' );
+
 		// A notice or warning printed into the body would break the HMAC protected response,
 		// chapter 4.1. The handler is active only while this request is answered.
 		set_error_handler( array( self::class, 'ignore_error' ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- restored in finally below.

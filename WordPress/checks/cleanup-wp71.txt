@@ -1,0 +1,7 @@
+UTC: 2026-11-02T22:41:16.635624+00:00
+Command: D:/git/phpvpn/work/wp-org-review/php82/php.exe D:/nginx_wordpress/tools/wp-cli.phar --path=D:/git/phpvpn/work/wp-org-review/site --skip-plugins=plugin-check eval-file D:/git/phpvpn/work/wp-org-review/cleanup-database.php
+Exit: 0
+
+Verified disposable prefix: wpvpnreview261102_
+Tables: wpvpnreview261102_commentmeta, wpvpnreview261102_comments, wpvpnreview261102_links, wpvpnreview261102_options, wpvpnreview261102_postmeta, wpvpnreview261102_posts, wpvpnreview261102_term_relationships, wpvpnreview261102_term_taxonomy, wpvpnreview261102_termmeta, wpvpnreview261102_terms, wpvpnreview261102_usermeta, wpvpnreview261102_users
+Removed 12 disposable tables. Other prefixes were not touched.

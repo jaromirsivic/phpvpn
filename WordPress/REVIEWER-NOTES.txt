@@ -1,0 +1,123 @@
+VPN Server 1.0.4: technical notes for the WordPress.org Plugin Review Team
+
+Author: Jaromír Šivic, independent developer
+WordPress.org account: pilandrome
+Author website: https://www.pilandrome.com
+License: MIT (full license included in LICENSE.txt)
+Requested slug / text domain: vpn-server
+
+PURPOSE
+
+This is the WordPress implementation of the PHPVPN protocol. It relays encrypted
+messages between the operator's own desktop clients in a private IPv4 network.
+It does not provide public internet egress, anonymize browsing, execute client
+payloads, or proxy arbitrary URLs submitted by an unauthenticated visitor.
+It has no vendor service, subscription, license check, telemetry or external updater.
+It is functional without a WordPress.org account or a developer-hosted service.
+The desktop client is required, just as a VPN client is needed to use a VPN server.
+
+PUBLIC STATUS PAGE AND CLIENT DOWNLOADS
+
+The status page is enabled by default, as an intentional product decision.
+It displays a functional Download/Open selector for the required desktop clients
+and their source. Administrators can change each HTTP(S) URL, its label, file/link
+type and OS selection, or remove individual entries and save an empty list.
+The server does not fetch these URLs. Browser navigation occurs only after a
+visitor follows a link. JavaScript and the tutorial image are shipped locally.
+The page contains no author-credit footer or promotional homepage backlink.
+
+These links provide the required client software and access to its source code.
+Their editability is not asserted to be a substitute for explicit opt-in under
+Guideline 10. The default visibility of these functional links remains a point
+for the Review Team's interpretation. No blanket exception or prior approval
+is claimed. The site's ordinary pages are not modified or branded by this plugin.
+
+AUTHENTICATION AND DEFAULTS
+
+Administrative mutations and credential export use manage_options and action
+nonces. Public protocol operations use protocol-specific authentication, not
+WordPress login cookies or nonces. health provides limited public server status.
+info/data validate protocol fields and HMACs. The generated core is shared with
+the standalone PHP server. Payload keys remain on the clients.
+
+First activation creates a random server secret. Client addresses .2 through .15
+deliberately retain deterministic default access keys compatible with the client
+wizard. They are not production secrets hidden in the package. Anyone knowing the
+shared server secret can act as any client still using a default access key.
+The UI and readme explain this, provide New Key per client and recommend replacing
+defaults when separate client authentication is needed. Existing settings are
+not silently rotated. This default was explicitly retained by the author.
+
+FILESYSTEM, RETENTION AND PRIVACY
+
+The queue uses local files, flock and atomic rename for concurrent message
+handoff. The limited PHPCS exceptions for native filesystem operations are
+intentional: WP_Filesystem's FTP/SSH abstractions cannot supply this locking
+contract. Binary protocol output is not HTML escaped, which would corrupt the
+authenticated bytes. HTML output is escaped separately.
+
+Messages expire for delivery after 60 seconds. Physical cleanup is request-driven
+and bounded, not a guarantee of erasure within 60 seconds of wall-clock time.
+Routing metadata and last-seen / masked-contract information are described in
+readme.txt. No payload decryption key is stored on the relay. The server secret
+and client access keys are stored in options and included in explicit exports.
+Host, proxy and security-plugin logs are outside this plugin's control.
+
+By default the queue directory has a random name below uploads and includes
+Apache/IIS deny files. nginx requires an explicit deny rule. Administrators can
+choose storage outside the web root. A failed loopback probe now returns an
+inconclusive warning instead of claiming protection. An unreachable URL or an
+unexpected HTTP response is never treated as proof of a protected directory.
+Administrators must also verify webserver aliases and rules independently.
+
+Deletion removes options/transients and attempts deletion of plugin-managed
+storage. Administrator-selected storage is preserved. Deactivation preserves
+configuration and data. Backup retention belongs to the hosting operator.
+
+OPTIONAL FAST ROUTE
+
+The normal handler runs at plugins_loaded, before the theme. The optional fast
+route is off by default and is installed only by an explicit privileged action.
+It writes one fixed local PHP loader to mu-plugins, using WP_Filesystem. It does
+not accept arbitrary PHP input or obtain executable code remotely. It checks
+whether this plugin is active on the current site and loads only its local code.
+A foreign file at the same path is not overwritten. Deactivation/uninstall removes
+the managed loader, with shared-loader handling for per-site multisite activation.
+Only network administrators can change the shared loader on multisite.
+
+Because the optional loader runs before regular plugins, other security/logging
+plugins may not inspect these requests. This tradeoff is documented. Protocol
+authentication remains in place. Network-wide activation is deliberately refused.
+
+SOURCE, LICENSE AND REPRODUCTION
+
+All PHP and JavaScript is readable in the ZIP. There are no bundled third-party
+libraries, desktop executables or build dependencies. tutorial.png is included
+under MIT with the author's express authorization. The source repository is
+https://github.com/pilandrome/phpvpn. The standalone source and generator remain
+the source of truth for includes/server-core.php, while the WordPress status page
+is its own template. The generator cannot restore the removed author footer.
+
+See readme.txt, Development, for the exact build commands. WordPress/build-release.py
+uses an explicit file allowlist, fixed ZIP timestamps and permissions, and writes
+a SHA-256 manifest. Registration documents, test data and credentials are excluded.
+
+TEST EVIDENCE
+
+Plugin Check 2.1.0 completed with no findings, including experimental and runtime
+checks. The shared protocol suite completed with 430 passed and 2 skipped both
+on WordPress 7.1.4 / PHP 8.5.9 with the optional fast route and on WordPress 6.6 /
+PHP 8.2.32 with the normal hook. Skips cover a deliberately unused default-secret
+profile and a deployment that did not produce 503 under contention.
+
+Each environment also passed 38 focused configuration/regression assertions and
+23 HTTP assertions covering authorization, nonces, credential exports, direct PHP
+access and local assets. Real WordPress deactivation/reactivation/uninstall
+commands verified preservation of custom storage and deletion of managed data.
+The final ZIP was installed and activated through the WordPress installer, and
+both installed plugin copies were verified byte-for-byte against its 15 files.
+
+The local report WordPress/OVERENI.md records exact commands, evidence and test
+environment limitations and can be supplied separately. It is outside the plugin
+ZIP. The checks are not a security certification or a guarantee of acceptance.
+No submission or publication was performed by the preparation process.

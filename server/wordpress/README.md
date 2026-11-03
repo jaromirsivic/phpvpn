@@ -22,7 +22,7 @@ own PHP VPN clients.
 | Item | Value |
 |---|---|
 | WordPress | 6.6 or newer |
-| PHP | 8.2 or newer, 64-bit build, no extensions |
+| PHP | 8.2 or newer, 64-bit build, standard WordPress requirements, no additional cryptography extension |
 | Permalinks | pretty permalinks (Settings, Permalinks, anything except Plain) |
 | Storage | a folder writable by PHP, by default a folder with a random name inside `wp-content/uploads` |
 
@@ -73,7 +73,9 @@ version are kept, a saved empty list hides the select box.
 ## Storage protection
 
 Client messages are encrypted end to end between the clients and wait in the storage folder for
-at most 60 seconds. The folder is protected by generated `.htaccess` and `web.config` files.
+delivery for at most 60 seconds. Expired files are removed by request-driven cleanup and may remain
+on disk while the server is idle. The folder has generated `.htaccess` and `web.config` deny files,
+which require a web server configuration that honors them.
 nginx ignores them and needs the rule shown in the settings. The settings can also move the
 folder outside the web root.
 
@@ -101,15 +103,36 @@ many plugins.
 
 ## Uninstall and privacy
 
-Deactivating the plugin removes the fast route. Deleting the plugin deletes the storage folder
-it created.
+Deactivating the plugin removes the fast route, except while another site in a multisite network
+still uses it. Deleting the plugin removes settings and attempts to delete its managed storage
+folder. Administrator-selected folders are preserved, and filesystem permissions can prevent
+removal. Verify cleanup and handle backups separately.
 
 The plugin stores its settings (server secret, client VPN addresses and access keys) in the
-WordPress options table. The storage folder holds encrypted client messages for at most 60
-seconds, and per client a small `info.json` with the time it was last seen and the masked list
-of its communication contracts. The plugin stores no IP addresses, uses no cookies and contacts
-no external service. The self test sends requests only from the site to its own Server URL and
-storage folder.
+WordPress options table. Messages expire for delivery after 60 seconds, with physical cleanup
+performed by later requests. Per-client `info.json` files retain last-seen metadata and masked
+communication contracts. The queue also contains virtual IPv4 routing addresses. The plugin
+does not deliberately log public IP addresses, set its own cookies or send telemetry. Host logs,
+WordPress login cookies and backups operate independently. The self-test sends requests only
+from the site to its own configured Server URL and storage folder. Following client download
+links contacts the selected destination from the visitor's browser. See the plugin readme for
+the complete privacy and retention description.
+
+The WordPress status page keeps the functional client download selector but has no promotional
+author footer. The standalone server's status page is separate and is not changed by this.
+
+## WordPress.org submission package
+
+The repository's top-level `WordPress/` directory holds the deterministic submission ZIP, its
+SHA-256 manifest, registration instructions, reviewer notes and current verification evidence.
+The maintained plugin source remains `server/wordpress/version7/vpn-server`.
+
+```sh
+uv run --no-project python WordPress/build-release.py
+```
+
+The build checks the generated core and uses an explicit file allowlist. It does not publish
+anything. All registration and test files remain outside the installable ZIP.
 
 ## Development
 

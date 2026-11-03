@@ -55,6 +55,9 @@ final class Fast_Route {
 	 * @return true|\WP_Error
 	 */
 	public static function install() {
+		if ( file_exists( self::path() ) && ! self::is_installed() ) {
+			return new \WP_Error( 'vpn_server_mu_exists', __( 'The fast route path contains a file not managed by VPN Server. It was not overwritten.', 'vpn-server' ) );
+		}
 		$filesystem = self::filesystem();
 		if ( null === $filesystem ) {
 			return new \WP_Error( 'vpn_server_filesystem', __( 'WordPress cannot write files directly on this server.', 'vpn-server' ) );

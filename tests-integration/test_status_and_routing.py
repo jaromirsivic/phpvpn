@@ -25,7 +25,7 @@ def test_status_page_reports_the_running_server(client: PhpVpnClient) -> None:
     response = client.request("GET")
     assert response.status_code == 200
     assert_protocol_headers(response, HTML_CONTENT_TYPE)
-    assert "<h1>PHPVPN server is running</h1>" in response.text
+    assert "<h1>VPN server is running</h1>" in response.text
 
 
 def test_status_page_hides_the_configuration(client: PhpVpnClient) -> None:
@@ -150,7 +150,7 @@ def test_empty_action_value_is_treated_as_no_action(client: PhpVpnClient) -> Non
     """
     page = client.request("GET", raw_query="action=")
     assert page.status_code == 200
-    assert "<h1>PHPVPN server is running</h1>" in page.text
+    assert "<h1>VPN server is running</h1>" in page.text
 
     posted = client.request("POST", raw_query="action=", body=b"")
     assert posted.status_code == 405

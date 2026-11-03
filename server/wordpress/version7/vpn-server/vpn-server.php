@@ -1,12 +1,12 @@
 <?php
 /**
  * Plugin Name:       VPN Server
- * Plugin URI:        https://www.pilandrome.com
- * Description:       Runs a VPN server on this site, enabling individuals and small businesses to quickly set up a lightweight virtual private network. This is an implementation of PHPVPN (Packet Handoff Protocol VPN) for WordPress. To connect, please install the PHPVPN client for Windows, macOS, or Linux.
+ * Plugin URI:        https://www.pilandrome.com/projects/phpvpn/index.html
+ * Description:       Connect your own devices in a private IPv4 network using a self-hosted PHPVPN relay and the PHPVPN desktop clients.
  * Version:           1.0.4
  * Requires at least: 6.6
  * Requires PHP:      8.2
- * Author:            pilandrome.com
+ * Author:            Jaromír Šivic
  * Author URI:        https://www.pilandrome.com
  * License:           MIT
  * License URI:       https://opensource.org/license/mit

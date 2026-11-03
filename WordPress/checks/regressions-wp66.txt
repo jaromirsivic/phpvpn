@@ -1,0 +1,43 @@
+UTC: 2026-11-02T22:58:44.283057+00:00
+Command: D:/git/phpvpn/work/wp-org-review/php82/php.exe D:/nginx_wordpress/tools/wp-cli.phar --path=D:/git/phpvpn/work/wp-org-review/wp66/wordpress eval-file D:/git/phpvpn/WordPress/tests/regressions.php
+Exit: 0
+
+PASS: Fresh activation generates a 256-bit random server secret.
+PASS: Fresh activation keeps the status page enabled.
+PASS: Fresh activation creates the fourteen agreed default clients.
+PASS: Default access key preserved for 10.99.99.2.
+PASS: Default access key preserved for 10.99.99.3.
+PASS: Default access key preserved for 10.99.99.4.
+PASS: Default access key preserved for 10.99.99.5.
+PASS: Default access key preserved for 10.99.99.6.
+PASS: Default access key preserved for 10.99.99.7.
+PASS: Default access key preserved for 10.99.99.8.
+PASS: Default access key preserved for 10.99.99.9.
+PASS: Default access key preserved for 10.99.99.10.
+PASS: Default access key preserved for 10.99.99.11.
+PASS: Default access key preserved for 10.99.99.12.
+PASS: Default access key preserved for 10.99.99.13.
+PASS: Default access key preserved for 10.99.99.14.
+PASS: Default access key preserved for 10.99.99.15.
+PASS: Reactivation preserves all existing settings and keys.
+PASS: Unreachable storage probe is inconclusive, never secure.
+PASS: HTTP 200 without the probe is inconclusive.
+PASS: HTTP 301 without the probe is inconclusive.
+PASS: HTTP 401 without the probe is inconclusive.
+PASS: HTTP 429 without the probe is inconclusive.
+PASS: HTTP 500 without the probe is inconclusive.
+PASS: HTTP 503 without the probe is inconclusive.
+PASS: HTTP 403 reports a denied or missing probe.
+PASS: HTTP 404 reports a denied or missing probe.
+PASS: A publicly readable probe is an error.
+PASS: Outside uploads does not prove outside the web root.
+PASS: Probe files are cleaned up after every result.
+PASS: Fixture has no pre-existing fast route.
+PASS: Fast route refuses to overwrite another owner.
+PASS: Foreign fast route file remains byte-identical.
+PASS: Uninstall preserves a foreign fast route file.
+PASS: Managed fast route installs.
+PASS: Managed fast route matches current plugin.
+PASS: Deactivation removes managed fast route.
+PASS: Checks preserve existing settings.
+Passed 38 assertions.

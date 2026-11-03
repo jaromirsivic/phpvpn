@@ -1,0 +1,29 @@
+UTC: 2026-11-02T22:22:45.251130+00:00
+Command: uv run --no-project --with requests python WordPress/tests/http-smoke.py --url http://127.0.0.1:5097 --password-file work/wp-org-review/local-admin-password.txt --fixture work/wp-org-review/server.json
+Exit: 0
+
+WARN `--no-project` was provided, but no project was found
+PASS: Exact requested public heading and HTTP 200.
+PASS: Protocol endpoint does not expose the PHP runtime header.
+PASS: No author-credit footer.
+PASS: Functional client download selector is visible by default.
+PASS: Public page does not reveal fixture credentials.
+PASS: Local asset served: assets/admin.js
+PASS: Local asset served: assets/status-page.js
+PASS: Local asset served: assets/tutorial.png
+PASS: Direct PHP access is inert: vpn-server.php
+PASS: Direct PHP access is inert: includes/server-core.php
+PASS: Direct PHP access is inert: includes/class-admin.php
+PASS: Direct PHP access is inert: uninstall.php
+PASS: Local login succeeds for review-admin
+PASS: Administrator can view configuration.
+PASS: Invalid nonce blocks credential export.
+PASS: Missing nonce blocks credential export.
+PASS: Authorized export includes the correct server configuration.
+PASS: Authorized export selects the correct client key.
+PASS: Credential export is an attachment and is not cacheable.
+PASS: Local login succeeds for review-subscriber
+PASS: Subscriber cannot view VPN settings.
+PASS: Subscriber cannot export credentials even with an administrator form.
+PASS: Anonymous request cannot export credentials.
+Passed 23 HTTP assertions.
