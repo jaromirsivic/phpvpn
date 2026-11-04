@@ -41,6 +41,18 @@ endpoint is a path and the site needs pretty permalinks.
 
 ## Checks
 
+The status page keeps same-origin plugin assets relative to the web root, so accessing
+the endpoint through a LAN address also loads its image and JavaScript through that address.
+WordPress still resolves the plugin paths. Assets configured on a different origin keep
+their absolute URLs (for example a CDN or a separate WordPress core host).
+
+Check the rendered image and script URLs against real WordPress helpers without changing
+saved settings (run WP-CLI against a local WordPress installation):
+
+```
+wp --skip-plugins --skip-themes eval-file /ABSOLUTE/REPO/WordPress/tests/status-page-assets.php
+```
+
 On a local test WordPress (here `D:\nginx_wordpress`, nginx on port 5080) with the plugin
 folder linked into `wp-content/plugins` and the Plugin Check plugin installed:
 

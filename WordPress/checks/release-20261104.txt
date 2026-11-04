@@ -1,0 +1,63 @@
+PHPVPN WordPress plugin: sestavení a místní instalace, 4. listopadu 2026
+
+Výsledek
+Verze: 1.0.4
+Balíček: D:\git\phpvpn\WordPress\vpn-server-1.0.4.zip
+Velikost: 85218 bajtů, 15 souborů pod jediným kořenem vpn-server/
+SHA-256: 7403bffb2baf381a26e5a032f3f8443549e8b6979705425a8bb7b385271cc395
+Manifest a SHA256SUMS.txt byly obnoveny balicím skriptem.
+
+Verze 1.0.4 zůstala zachována. WordPress/README.md označuje tento balíček
+jako dosud neodeslané a nepublikované první podání. Verze pluginu i serverového
+jádra jsou provázané generátorem. Původní distribuční soubory jsou zachovány v:
+D:\git\phpvpn\work\wp-release-backup-20261104-223559
+
+Místní instalace
+D:\Nginx_WordPress\html\wp-content\plugins\vpn-server
+je junction na D:\git\phpvpn\server\wordpress\version7\vpn-server.
+Propojení bylo zachováno. Nebylo třeba kopírovat plugin sám přes sebe.
+WP-CLI potvrzuje vpn-server 1.0.4, status active.
+Všech 15 souborů distribučního ZIPu se bajtově shoduje se soubory aktivní
+instalace. SHA-256 a velikost každého souboru odpovídají manifestu.
+Nginx místní instalace běží. Restart nebyl potřeba, oprava se již projevuje.
+Nastavení WordPressu ani údaje pluginu nebyly měněny.
+
+Provedené kontroly
+PASS: uv run --no-project python tools/build-wordpress-plugin.py --check
+PASS: uv run --no-project python WordPress/build-release.py
+PASS: uv run --no-project python WordPress/tests/build-regression.py
+      Skutečná regenerace zachovává samostatnou WordPress šablonu.
+      Python i PowerShell balení obsahují opravenou šablonu.
+      Opakované sestavení submission ZIPu dává stejný SHA-256.
+PASS: WP-CLI se --skip-plugins --skip-themes eval-file
+      D:\git\phpvpn\WordPress\tests\status-page-assets.php
+      Všech 22 vykreslených případů prošlo na místním WordPressu s PHP 8.5.9.
+PASS: Integrita ZIPu, úplnost manifestu, SHA256SUMS.txt a porovnání všech
+      15 souborů se skutečně aktivní místní instalací.
+PASS: git diff --check
+PASS: HTTP 200, text/html, pro localhost:5080/phpvpn/ a 172.19.32.1:5080/phpvpn/.
+PASS: Síťový endpoint používá src="/wp-content/plugins/vpn-server/assets/tutorial.png"
+      a src="/wp-content/plugins/vpn-server/assets/status-page.js?ver=1793436551".
+PASS: Obrázek přes 172.19.32.1:5080 vrací HTTP 200, image/png, 17402 bajtů.
+PASS: JavaScript přes 172.19.32.1:5080 vrací HTTP 200,
+      application/javascript, 2903 bajtů.
+
+Vizuální kontrola a její hranice
+V již otevřeném místním Chromu na http://localhost:5080/phpvpn je na snímku
+vidět tutorial obrázek a vyplněná adresa http://localhost:5080/phpvpn.
+Nové načtení přes síťovou adresu ani vizuální stav ve VM nebyly ověřeny.
+Computer Use při ovládání Chrome i okna Virtual Machine Connection opakovaně
+vrátilo chybu "failed to activate captured window". Okno VM navíc hlásí vyšší
+Windows integrity než pomocný proces. Snímky a čtení místního Chromu fungují.
+Úspěšná HTTP kontrola přes síťovou adresu proběhla na hostiteli, nikoli ve VM.
+Nevznikly žádné nové karty, servery ani relace vyžadující úklid.
+
+Změny vytvořené touto částí práce
+WordPress/vpn-server-1.0.4.zip
+WordPress/manifest.json
+WordPress/SHA256SUMS.txt
+WordPress/checks/release-20261104.txt
+
+Zdrojovou opravu a test připravené před sestavením tento krok zachoval.
+Nesouvisející rozpracované soubory v assets/ nebyly měněny.
+Nebyl proveden commit, push ani publikace.

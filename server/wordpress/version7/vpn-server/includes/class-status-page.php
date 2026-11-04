@@ -84,6 +84,28 @@ final class Status_Page {
 	}
 
 	/**
+	 * Keep local assets on the endpoint's current origin, including LAN aliases and proxies.
+	 * WordPress still resolves custom content paths and filters. Assets on a separate origin
+	 * (for example a CDN or a separate WordPress core host) retain their configured URL.
+	 *
+	 * @param string $path        Asset path relative to the plugin directory.
+	 * @param string $plugin_file Main plugin file.
+	 * @return string
+	 */
+	private static function asset_url( string $path, string $plugin_file ): string {
+		$url   = plugins_url( $path, $plugin_file );
+		$asset = wp_parse_url( $url );
+		$home  = wp_parse_url( home_url() );
+		if ( isset( $asset['host'], $home['host'] )
+			&& 0 === strcasecmp( $asset['host'], $home['host'] )
+			&& ( $asset['scheme'] ?? '' ) === ( $home['scheme'] ?? '' )
+			&& ( $asset['port'] ?? null ) === ( $home['port'] ?? null ) ) {
+			return wp_make_link_relative( $url );
+		}
+		return $url;
+	}
+
+	/**
 	 * Prints the document.
 	 *
 	 * @param bool     $insecure    True when the server secret is predictable.
@@ -92,8 +114,8 @@ final class Status_Page {
 	 */
 	private static function output( bool $insecure, array $lines, string $plugin_file ): void {
 		$settings = Settings::get();
-		$tutorial = plugins_url( 'assets/tutorial.png', $plugin_file );
-		$script   = plugins_url( 'assets/status-page.js', $plugin_file );
+		$tutorial = self::asset_url( 'assets/tutorial.png', $plugin_file );
+		$script   = self::asset_url( 'assets/status-page.js', $plugin_file );
 		$version  = (string) filemtime( dirname( $plugin_file ) . '/assets/status-page.js' );
 		?>
 <!doctype html>

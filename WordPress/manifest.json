@@ -2,7 +2,7 @@
   "plugin": "vpn-server",
   "version": "1.0.4",
   "archive": "vpn-server-1.0.4.zip",
-  "sha256": "73d3634be9feed337ee1d4252c190adf128c89068951a70415ff896a47ef695c",
+  "sha256": "7403bffb2baf381a26e5a032f3f8443549e8b6979705425a8bb7b385271cc395",
   "files": [
     {
       "path": "vpn-server/LICENSE.txt",
@@ -51,8 +51,8 @@
     },
     {
       "path": "vpn-server/includes/class-status-page.php",
-      "bytes": 10867,
-      "sha256": "b4ae9d886e5f39a9d521b7cfac76ce44f53533632b049f879be848c717cc61e1"
+      "bytes": 11799,
+      "sha256": "28217e45b2446bd72d350a46407caee833646fbcba1bdf29bde3869847ad2625"
     },
     {
       "path": "vpn-server/includes/server-core.php",
